@@ -37,6 +37,30 @@ duas instâncias disputando o mesmo socket).
 | `WGPU_ADAPTER_NAME=…` | escolhe adaptador (útil para testar llvmpipe) |
 | `SHELL=…` | shell padrão quando não há `--cmd` |
 
+## Verificação visual sem roubar a tela do dono (Xvfb)
+
+Abrir a janela na sessão gráfica de quem está trabalhando atrapalha: ela sobe por
+cima e, com `xdotool`, rouba o foco. Para captura e teclado/mouse use um display
+próprio — a janela existe, mas não na tela de ninguém:
+
+```sh
+Xvfb :77 -screen 0 1280x800x24 &
+HOME=/tmp/bzhome DISPLAY=:77 BZMUX_RS_PIDFILE=/tmp/bz-xvfb.pid \
+    ./tools/devrun.sh --cols 70 --rows 10 --debug-socket /tmp/bzx.sock
+WID=$(DISPLAY=:77 xdotool search --class bzmux | tail -1)
+DISPLAY=:77 import -window "$WID" /tmp/tela.png     # ou xwd -id "$WID"
+DISPLAY=:77 xdotool key --window "$WID" a            # teclado/mouse isolados
+```
+
+O `HOME` de mentira é o que instala uma fonte de teste ou uma configuração sem
+tocar no `~/.config` real; o PID file separado evita que o `devkill` derrube a
+instância que o dono esteja usando. `import -window`/`xwd` não precisam de foco —
+é `xdotool` que precisa, e no Xvfb ele manda para a janela do display isolado.
+
+Custo: sem `/dev/dri`, o `wgpu` cai em llvmpipe. Serve para conferir **conteúdo e
+geometria** (texto, ligadura, cor, cursor) e para A/B; número de desempenho só
+vale na GPU, na sessão real.
+
 ## Verificação com janela (sem depender de olho)
 
 ```sh

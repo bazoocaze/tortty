@@ -887,3 +887,51 @@ pendente era do llvmpipe, não do GL.
 Fica registrado em [`DEBUG.md`](DEBUG.md) que a primeira pergunta diante de
 "janela não pinta" é `ls -la /dev/dri`: sem os nós, os dois backends ficam em
 llvmpipe e nada chega na tela.
+
+## 2026-11-02 — G8 fechado: ligaduras (shaping) e a chave `ligatures`
+
+O `G8` era o último `falta` do painel: `swash` rasteriza glifo, não faz shaping, e
+o Python fazia shaping pelo Pango. O que decidiu o desenho foi medir a fonte, não
+a documentação dela:
+
+| fonte | features no GSUB | `->`/`fi` com `calt` ligado | com `calt=0` |
+|---|---|---|---|
+| DejaVu Sans Mono (default do app) | `liga`, `dlig` | **2 glifos, sem ligadura** | igual |
+| Fira Code | só `calt` | `->` → glifos `[1186,1458]` | `[1221,1580]` (puro) |
+| JetBrains Mono | só `calt` | `->` → `[1742,881]` | `[855,1051]` (puro) |
+| DejaVu Sans (proporcional, controle) | `liga` | `fi` → **1 glifo, cluster `[0,0]`** | 2 glifos |
+
+Ou seja: **fonte mono não funde célula**. O `calt` troca o glifo de cada célula por
+uma peça que se emenda com a vizinha, e o avanço continua uma célula por célula.
+Isso simplificou tudo: a célula continua sendo um caractere, o desenho só pede ao
+HarfBuzz o glifo certo **com o contexto do trecho**. O caminho "um glifo cobre N
+células" só aparece em fonte que mescla (o caso DejaVu Sans acima) e é guardado
+por uma regra de avanço: se o glifo não fechar com N células (±10%), o trecho
+volta para célula a célula. Cluster fora de ordem (RTL) também volta — reordenar
+bidi não é feito aqui.
+
+Como ficou:
+
+- `crates/bzmux/src/shape.rs` — shaping por trecho de mesma face e estilo, mapa
+  cluster → célula, cache por `(face, modo, texto)`. O plano fala posição
+  **dentro do trecho** (foi um bug: com coluna absoluta, todo trecho fora da
+  coluna 0 desenhava glifo trocado — pego na captura, fixado com teste).
+- trecho de **uma célula** não shapeia: sem contexto não há ligadura, e é o caso
+  de quem pinta célula a célula. O doom-fire (2400 trechos de 1) segue sem custo.
+- **cursor e seleção quebram a ligadura**: a célula do cursor (e a vizinha) viram
+  trecho sozinho. Sem isso o cursor pinta no meio de um glifo.
+- chave `ligatures` (`off`/`standard`/`all`, padrão `standard`) em
+  [`CONFIG.md`](CONFIG.md). `off` desliga as **ligaduras**, não o shaping: árabe e
+  devanágari dependem dele e continuam sendo shapeados.
+- fonte de teste **JetBrains Mono** (SIL OFL 1.1) embutida em `assets/fonts/`, com
+  a licença: `cargo test` prova a ligadura sem depender de fonte instalada.
+
+Custo medido (`cargo test --release -- --ignored --nocapture`, linha de 64
+células): **88,5 µs** por linha nova — 32,4 µs de parse da fonte e 56,4 µs de
+shaping — e **57 ns** no cache. Como o dano já é por linha (A17), só linha que
+mudou paga isso.
+
+Verificação visual **sem janela na sessão do dono**: `Xvfb :77` +
+`DISPLAY=:77` + `import -window <id>` (receita em [`DEBUG.md`](DEBUG.md)).
+JetBrains Mono na tela: `->` vira seta, `!=` vira ≠, `fi`/`ffi`/`fl` ligados, e o
+cursor no meio de `fi` desfaz o par.
