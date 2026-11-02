@@ -143,6 +143,7 @@ pub fn encode(ev: Ev, proto: Proto) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bzmux_core::term::Term;
 
     fn ev(button: u8, col: usize, row: usize) -> Ev {
         Ev {
@@ -226,5 +227,91 @@ mod tests {
         assert_eq!(v.len(), 3 + 1 + 2 + 1);
         assert_eq!(&v[4..6], &[0xc5, 0x8d]);
         assert_eq!(v[6], 33);
+    }
+
+    // -- N3: o check `mouse_modes_and_sgr()` do `checks.py` ------------------
+
+    /// O dialeto que o app monta a partir do que o filho pediu no `Term`.
+    fn proto(t: &Term) -> Proto {
+        Proto {
+            sgr: t.mouse_sgr,
+            utf8: t.mouse_utf8,
+        }
+    }
+
+    #[test]
+    fn modos_do_term_e_o_byte_de_cada_evento() {
+        let mut t = Term::new(80, 24);
+        // `?1002` reporta press/release e arrasto com botão; `?1006` pede SGR
+        t.feed(b"\x1b[?1002h\x1b[?1006h");
+        assert_eq!((t.mouse_mode, t.mouse_sgr, t.mouse_utf8), (2, true, false));
+        // coordenada é 0-based no evento e 1-based no byte
+        assert_eq!(encode(ev(LEFT, 0, 0), proto(&t)), b"\x1b[<0;1;1M");
+        let mut release = ev(LEFT, 4, 2);
+        release.pressed = false;
+        assert_eq!(encode(release, proto(&t)), b"\x1b[<0;5;3m");
+        // arrasto com o botão apertado (?1002): bit 32 no código do botão
+        let mut drag = ev(LEFT, 4, 2);
+        drag.motion = true;
+        assert_eq!(encode(drag, proto(&t)), b"\x1b[<32;5;3M");
+        // `?1003` reporta movimento sem botão: botão 3 + 32 = 35
+        t.feed(b"\x1b[?1003h");
+        assert_eq!(t.mouse_mode, 3);
+        let mut hover = ev(RELEASE, 7, 1);
+        hover.motion = true;
+        assert_eq!(encode(hover, proto(&t)), b"\x1b[<35;8;2M");
+        // o app desliga: mouse_mode 0 é o que faz o app voltar à seleção (o
+        // encoder é puro — quem decide se manda é o `app.rs`)
+        t.feed(b"\x1b[?1003l\x1b[?1002l\x1b[?1000l");
+        assert_eq!(t.mouse_mode, 0);
+        // `?1006l` volta ao X10: `CSI M` + 3 bytes, release é sempre 3
+        t.feed(b"\x1b[?1006l");
+        assert!(!t.mouse_sgr);
+        assert_eq!(
+            encode(ev(LEFT, 0, 0), proto(&t)),
+            vec![0x1b, b'[', b'M', 32, 33, 33]
+        );
+    }
+
+    #[test]
+    fn roda_e_modificadores_em_cada_protocolo() {
+        // no SGR a roda tem release, e ele sai em minúsculo
+        assert_eq!(encode(ev(WHEEL_UP, 9, 4), sgr()), b"\x1b[<64;10;5M");
+        let mut baixo = ev(WHEEL_DOWN, 9, 4);
+        baixo.pressed = false;
+        assert_eq!(encode(baixo, sgr()), b"\x1b[<65;10;5m");
+        // ctrl+shift+roda: 64 | 16 | 4 = 84
+        let mut mods = ev(WHEEL_UP, 0, 0);
+        mods.mods = MOD_SHIFT | MOD_CTRL;
+        assert_eq!(encode(mods, sgr()), b"\x1b[<84;1;1M");
+        // no protocolo antigo o modificador entra no byte do botão, e o
+        // release da roda não existe: o app vê só o press
+        assert_eq!(encode(mods, old()), vec![0x1b, b'[', b'M', 32 + 84, 33, 33]);
+        let mut solta = ev(WHEEL_UP, 0, 0);
+        solta.pressed = false;
+        assert_eq!(encode(solta, old()), Vec::<u8>::new());
+        // release do esquerdo com Alt no antigo: 3 | 8 = 11
+        let mut alt = ev(LEFT, 0, 0);
+        alt.mods = MOD_ALT;
+        alt.pressed = false;
+        assert_eq!(encode(alt, old()), vec![0x1b, b'[', b'M', 32 + 11, 33, 33]);
+    }
+
+    #[test]
+    fn sgr_ganha_do_utf8_e_botoes_laterais() {
+        let mut t = Term::new(80, 24);
+        t.feed(b"\x1b[?1000h\x1b[?1005h\x1b[?1006h");
+        assert_eq!((t.mouse_mode, t.mouse_utf8, t.mouse_sgr), (1, true, true));
+        // com os dois ligados o SGR (decimal) tem precedência: 300 vira 301
+        assert_eq!(encode(ev(LEFT, 300, 0), proto(&t)), b"\x1b[<0;301;1M");
+        // botão "voltar"/"avançar" tem código próprio (128/129)
+        assert_eq!(encode(ev(BACK, 2, 0), proto(&t)), b"\x1b[<128;3;1M");
+        assert_eq!(encode(ev(FORWARD, 2, 0), proto(&t)), b"\x1b[<129;3;1M");
+        // sem o SGR o X10 manda 32+128 = 160 no byte do botão
+        t.feed(b"\x1b[?1006l");
+        assert_eq!(
+            encode(ev(BACK, 2, 0), proto(&t)),
+            vec![0x1b, b'[', b'M', 160, 35, 33]
+        );
     }
 }

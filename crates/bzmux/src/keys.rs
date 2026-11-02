@@ -543,3 +543,292 @@ mod tests {
         );
     }
 }
+
+/// N3: o check `kitty_keyboard()` do `checks.py`, de ponta a ponta — o parser do
+/// `Term` liga as flags (`CSI > u`, `CSI = u`, `CSI < u`, `CSI ? u`) e o encoder
+/// deste arquivo produz os bytes que vão para o filho.
+#[cfg(test)]
+mod checks_teclado {
+    use super::*;
+    use bzmux_core::term::Term;
+
+    const NONE: ModifiersState = ModifiersState::empty();
+
+    fn term() -> Term {
+        Term::new(80, 24)
+    }
+
+    /// O encoder com o estado que o app usa de verdade (`?1` e `kbd_flags` do
+    /// `Term`), para comparar bytes como o check do Python faz.
+    fn enc(
+        t: &Term,
+        named: Option<NamedKey>,
+        ch: Option<&str>,
+        mods: ModifiersState,
+    ) -> Option<String> {
+        encode_parts(named, ch, ch, mods, t.app_cursor, t.kbd_flags)
+            .map(|v| String::from_utf8_lossy(&v).to_string())
+    }
+
+    /// Com texto associado diferente do caractere — é o caso da flag 16.
+    fn enc_texto(t: &Term, ch: &str, texto: &str) -> Option<String> {
+        encode_parts(None, Some(ch), Some(texto), NONE, t.app_cursor, t.kbd_flags)
+            .map(|v| String::from_utf8_lossy(&v).to_string())
+    }
+
+    /// Press/repeat/release, que no winit chegam como estado do `KeyEvent`.
+    fn enc_ev(
+        t: &Term,
+        named: Option<NamedKey>,
+        ch: Option<&str>,
+        mods: ModifiersState,
+        evento: u8,
+    ) -> Option<String> {
+        encode_event(named, ch, ch, mods, t.app_cursor, t.kbd_flags, evento)
+            .map(|v| String::from_utf8_lossy(&v).to_string())
+    }
+
+    #[test]
+    fn push_pop_set_e_consulta_do_teclado_pelo_term() {
+        let mut t = term();
+        assert_eq!(t.kbd_flags, 0);
+        // `CSI > 1 u`: empilha o estado atual (0) e passa a desambiguar
+        t.feed(b"\x1b[>1u");
+        assert_eq!(t.kbd_flags, F_DISAMBIGUATE);
+        // `CSI ? u`: o terminal responde o estado atual
+        t.feed(b"\x1b[?u");
+        assert_eq!(t.take_child_out(), b"\x1b[?1u".to_vec());
+        // `CSI = 3 ; 1 u` (modo 1 = substitui): flags 1|2
+        t.feed(b"\x1b[=3;1u");
+        assert_eq!(t.kbd_flags, F_DISAMBIGUATE | F_EVENT_TYPES);
+        t.feed(b"\x1b[?u");
+        assert_eq!(t.take_child_out(), b"\x1b[?3u".to_vec());
+        // modo 2 acrescenta, modo 3 remove
+        t.feed(b"\x1b[=8;2u");
+        assert_eq!(t.kbd_flags, 11);
+        t.feed(b"\x1b[=8;3u");
+        assert_eq!(t.kbd_flags, 3);
+        // push de 8|16 e pop devolve o que estava guardado
+        t.feed(b"\x1b[>24u");
+        assert_eq!(t.kbd_flags, F_ALL_KEYS | F_TEXT);
+        t.feed(b"\x1b[<u");
+        assert_eq!(t.kbd_flags, 3);
+        t.feed(b"\x1b[?u");
+        assert_eq!(t.take_child_out(), b"\x1b[?3u".to_vec());
+        // `CSI < 2 u` esvazia a pilha: o kitty manda os flags voltarem a 0
+        t.feed(b"\x1b[<2u");
+        assert_eq!(t.kbd_flags, 0);
+        t.feed(b"\x1b[?u");
+        assert_eq!(t.take_child_out(), b"\x1b[?0u".to_vec());
+    }
+
+    #[test]
+    fn flag_1_do_term_desambigua_escape_e_modificadores() {
+        let mut t = term();
+        t.feed(b"\x1b[>1u");
+        // ESC, Enter, Tab e Backspace saem como `CSI codigo u`
+        assert_eq!(
+            enc(&t, Some(NamedKey::Escape), None, NONE).as_deref(),
+            Some("\x1b[27u")
+        );
+        assert_eq!(
+            enc(&t, Some(NamedKey::Enter), None, NONE).as_deref(),
+            Some("\x1b[13u")
+        );
+        assert_eq!(
+            enc(&t, Some(NamedKey::Tab), None, NONE).as_deref(),
+            Some("\x1b[9u")
+        );
+        assert_eq!(
+            enc(&t, Some(NamedKey::Backspace), None, NONE).as_deref(),
+            Some("\x1b[127u")
+        );
+        // Ctrl+a deixa de ser ^A; Alt+a deixa de ser ESC + "a"
+        assert_eq!(
+            enc(&t, None, Some("a"), ModifiersState::CONTROL).as_deref(),
+            Some("\x1b[97;5u")
+        );
+        assert_eq!(
+            enc(&t, None, Some("a"), ModifiersState::ALT).as_deref(),
+            Some("\x1b[97;3u")
+        );
+        assert_eq!(
+            enc(
+                &t,
+                None,
+                Some("a"),
+                ModifiersState::CONTROL | ModifiersState::ALT
+            )
+            .as_deref(),
+            Some("\x1b[97;7u")
+        );
+        // Shift+Tab é a forma do kitty, não o `\t` do legado
+        assert_eq!(
+            enc(&t, Some(NamedKey::Tab), None, ModifiersState::SHIFT).as_deref(),
+            Some("\x1b[9;2u")
+        );
+        // F1..F4 sem modificador continuam `SS3 P`.., que já é a forma do kitty
+        assert_eq!(
+            enc(&t, Some(NamedKey::F3), None, NONE).as_deref(),
+            Some("\x1bOR")
+        );
+        // e F3 com Shift é `CSI 1;2R` (não o `CSI 13~` do `kitty_kbd.py`)
+        assert_eq!(
+            enc(&t, Some(NamedKey::F3), None, ModifiersState::SHIFT).as_deref(),
+            Some("\x1b[1;2R")
+        );
+    }
+
+    #[test]
+    fn decckm_decide_o_legado_e_nao_a_forma_do_kitty() {
+        let mut t = term();
+        assert!(!t.app_cursor);
+        assert_eq!(
+            enc(&t, Some(NamedKey::ArrowUp), None, NONE).as_deref(),
+            Some("\x1b[A")
+        );
+        // `CSI ? 1 h` liga DECCKM: seta e Home sem modificador viram SS3
+        t.feed(b"\x1b[?1h");
+        assert!(t.app_cursor);
+        assert_eq!(
+            enc(&t, Some(NamedKey::ArrowUp), None, NONE).as_deref(),
+            Some("\x1bOA")
+        );
+        assert_eq!(
+            enc(&t, Some(NamedKey::Home), None, NONE).as_deref(),
+            Some("\x1bOH")
+        );
+        // com modificador a forma do kitty é a mesma nos dois modos
+        t.feed(b"\x1b[>1u");
+        assert_eq!(
+            enc(&t, Some(NamedKey::ArrowUp), None, ModifiersState::CONTROL).as_deref(),
+            Some("\x1b[1;5A")
+        );
+        t.feed(b"\x1b[?1l");
+        assert!(!t.app_cursor);
+        assert_eq!(
+            enc(&t, Some(NamedKey::ArrowUp), None, ModifiersState::CONTROL).as_deref(),
+            Some("\x1b[1;5A")
+        );
+        // flag 8 manda a seta na forma do kitty mesmo com DECCKM ligado
+        t.feed(b"\x1b[?1h\x1b[=8;2u");
+        assert!(t.app_cursor);
+        assert_eq!(t.kbd_flags, F_DISAMBIGUATE | F_ALL_KEYS);
+        assert_eq!(
+            enc(&t, Some(NamedKey::ArrowUp), None, NONE).as_deref(),
+            Some("\x1b[A")
+        );
+        assert_eq!(
+            enc(&t, Some(NamedKey::Home), None, NONE).as_deref(),
+            Some("\x1b[H")
+        );
+        assert_eq!(
+            enc(&t, Some(NamedKey::ArrowLeft), None, NONE).as_deref(),
+            Some("\x1b[D")
+        );
+    }
+
+    #[test]
+    fn flag_8_manda_tudo_inclusive_super() {
+        let mut t = term();
+        t.feed(b"\x1b[>8u");
+        assert_eq!(enc(&t, None, Some("a"), NONE).as_deref(), Some("\x1b[97u"));
+        // Shift+letra sai com o código PÓS-shift (LIMITATIONS §Teclado): o winit
+        // entrega "A" e desfazer o Shift exigiria tabela de layout
+        assert_eq!(
+            enc(&t, None, Some("A"), ModifiersState::SHIFT).as_deref(),
+            Some("\x1b[65;2u")
+        );
+        // mas Ctrl+Shift+a relata a tecla base (97), mods 1+shift+ctrl = 6
+        assert_eq!(
+            enc(
+                &t,
+                None,
+                Some("A"),
+                ModifiersState::CONTROL | ModifiersState::SHIFT
+            )
+            .as_deref(),
+            Some("\x1b[97;6u")
+        );
+        // Super deixa de ser "atalho do WM": entra na conta (1+8 = 9)
+        assert_eq!(
+            enc(&t, None, Some("a"), ModifiersState::SUPER).as_deref(),
+            Some("\x1b[97;9u")
+        );
+        // e sem flag nenhuma o Super continua não indo para o filho
+        let sem_flags = term();
+        assert_eq!(
+            enc(&sem_flags, None, Some("a"), ModifiersState::SUPER),
+            None
+        );
+    }
+
+    #[test]
+    fn flag_2_tecla_segurada_e_soltura() {
+        let mut t = term();
+        t.feed(b"\x1b[>10u"); // 2|8
+        assert_eq!(
+            enc_ev(&t, None, Some("a"), NONE, PRESS).as_deref(),
+            Some("\x1b[97u")
+        );
+        // `:2` é a tecla segurada (auto-repeat), `:3` é a soltura
+        assert_eq!(
+            enc_ev(&t, None, Some("a"), NONE, REPEAT).as_deref(),
+            Some("\x1b[97;1:2u")
+        );
+        assert_eq!(
+            enc_ev(&t, None, Some("a"), NONE, RELEASE).as_deref(),
+            Some("\x1b[97;1:3u")
+        );
+        // seta também ganha o campo de evento
+        assert_eq!(
+            enc_ev(&t, Some(NamedKey::ArrowUp), None, NONE, REPEAT).as_deref(),
+            Some("\x1b[1;1:2A")
+        );
+        // só a flag 2: texto continua texto e a soltura não sai duas vezes
+        // (E19 — o legado não sabe "a tecla saiu")
+        let mut so_eventos = term();
+        so_eventos.feed(b"\x1b[>2u");
+        assert_eq!(
+            enc_ev(&so_eventos, None, Some("a"), NONE, PRESS).as_deref(),
+            Some("a")
+        );
+        assert_eq!(enc_ev(&so_eventos, None, Some("a"), NONE, RELEASE), None);
+        // ESC sem disambiguate também não tem release
+        assert_eq!(
+            enc_ev(&so_eventos, Some(NamedKey::Escape), None, NONE, RELEASE),
+            None
+        );
+        // com a flag 1 junto (1|2) o ESC ganha `:3` e o press perde o sufixo
+        so_eventos.feed(b"\x1b[=1;2u");
+        assert_eq!(so_eventos.kbd_flags, F_DISAMBIGUATE | F_EVENT_TYPES);
+        assert_eq!(
+            enc_ev(&so_eventos, Some(NamedKey::Escape), None, NONE, RELEASE).as_deref(),
+            Some("\x1b[27;1:3u")
+        );
+        assert_eq!(
+            enc_ev(&so_eventos, Some(NamedKey::Escape), None, NONE, PRESS).as_deref(),
+            Some("\x1b[27u")
+        );
+    }
+
+    #[test]
+    fn flag_16_embute_o_texto_da_tecla() {
+        let mut t = term();
+        t.feed(b"\x1b[>24u"); // 8|16
+        assert_eq!(t.kbd_flags, F_ALL_KEYS | F_TEXT);
+        assert_eq!(enc_texto(&t, "a", "a").as_deref(), Some("\x1b[97;97u"));
+        // 'é' = U+00E9 = 233: a tecla e o texto são o mesmo codepoint
+        assert_eq!(enc_texto(&t, "é", "é").as_deref(), Some("\x1b[233;233u"));
+        // texto com mais de um codepoint sai separado por ':'
+        assert_eq!(enc_texto(&t, "a", "aé").as_deref(), Some("\x1b[97;97:233u"));
+        // sem a flag 16 o texto não viaja junto
+        t.feed(b"\x1b[=16;3u");
+        assert_eq!(t.kbd_flags, F_ALL_KEYS);
+        assert_eq!(enc_texto(&t, "a", "a").as_deref(), Some("\x1b[97u"));
+        // e com as flags nenhuma o texto é o caminho legado de sempre
+        t.feed(b"\x1b[=8;3u");
+        assert_eq!(t.kbd_flags, 0);
+        assert_eq!(enc_texto(&t, "a", "a").as_deref(), Some("a"));
+    }
+}
