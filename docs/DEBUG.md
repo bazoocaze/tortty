@@ -155,6 +155,22 @@ função com o motivo — não no topo do crate, e não em `#![allow]` global.
 Antes de rodar GUI, lembre do resto deste arquivo: matar processo é por PID
 file, e `pkill` por nome derruba sessão.
 
+### Mouse
+
+`mouse.rs` é puro (como o `mouse.py`): traduz `(botão, col, row)` em bytes do
+protocolo. Quem decide se o evento vai para o filho é o `Term`
+(`mouse_mode` 0/1/2/3, `mouse_sgr`, `mouse_utf8`). O `state` do socket expõe os
+três, que é como se descobre, sem chutar, se o app ligou o mouse.
+
+Sonda que fecha o ciclo (o que o app *recebeu*, não o que ele fez):
+
+```sh
+./tools/devrun.sh --cmd 'python3 /tmp/mtest.py' --cols 60 --rows 12 --debug-socket /tmp/bz.sock
+# mtest.py faz tty.setraw(0), liga ?1000/?1006 e imprime o hex do que chegar
+xdotool mousemove $((X+120)) $((Y+60)) click 1
+# ler a tela: {"cmd":"text","where":"view"} -> 1b5b3c303b31313b344d = ESC[<0;11;4M
+```
+
 ## Medição
 
 Ver [`BENCHMARKS.md`](BENCHMARKS.md) — é o único lugar com número. Resumo do

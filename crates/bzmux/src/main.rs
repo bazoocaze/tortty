@@ -6,6 +6,7 @@ mod cli;
 mod debugsock;
 mod glyph;
 mod keys;
+mod mouse;
 mod prof;
 mod pty;
 mod render;

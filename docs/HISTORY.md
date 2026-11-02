@@ -62,3 +62,17 @@ abortar era "se não fizer ≥3× o MB/s do Python e não abrir vim/mc, não pag
 - Verificado na tela: 14 combinações de SGR numa sessão só (`negrito`,
   `faint`, `itálico`, riscado, overline, os 5 sublinhados, `58` em 256 e em
   truecolor, reverso) + 4 testes novos no núcleo (26 no total).
+
+## 2026-11-02 — mouse reporting (F1-F6, F19, F20)
+
+- `mouse.rs` porta o `mouse.py`: botão/modificador/movimento, SGR (`?1006`) e o
+  protocolo antigo (release = botão 3, coordenada saturando em 222).
+- `?1005` (coordenada UTF-8) implementado — o Python ignora; sem ele, coluna
+  acima de 222 em protocolo antigo reporta errado por saturação.
+- `app.rs` ganhou `on_cursor_moved`/`on_mouse_input`/`on_wheel` (o `window_event`
+  passava de 100 linhas). Clique com mouse ligado volta ao vivo antes de
+  reportar (F19); roda lendo histórico continua rolando a visão, não vai ao app.
+- Verificado com sonda que lê o *recebido* (não o desenhado): clique 1 e 3 e
+  roda em `?1000/?1006` → `ESC[<0;11;4M`, `ESC[<0;11;4m`, `ESC[<2;11;4M`,
+  `ESC[<64;…M` + `m`. E com `vim -c 'set mouse=a'`: clique na linha 6 moveu o
+  cursor para 7,7 (lido no `state` e na barra de status).

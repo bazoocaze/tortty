@@ -95,8 +95,12 @@ pub struct Term {
     pub app_cursor: bool,
     /// `(forma 1..6, pisca)` do DECSCUSR; None = configuração.
     pub app_cursor_style: Option<(u8, bool)>,
+    /// `?1000`=1 press, `?1002`=2 com arrasto, `?1003`=3 tudo (0 = não).
     pub mouse_mode: u8,
+    /// `?1006`: coordenada decimal com botão explícito no release.
     pub mouse_sgr: bool,
+    /// `?1005`: coordenada como UTF-8 no protocolo antigo.
+    pub mouse_utf8: bool,
     pub focus_report: bool,
     pub bracketed_paste: bool,
     pub sync_output: bool,
@@ -158,6 +162,7 @@ impl Term {
             app_cursor_style: None,
             mouse_mode: 0,
             mouse_sgr: false,
+            mouse_utf8: false,
             focus_report: false,
             bracketed_paste: false,
             sync_output: false,
@@ -886,6 +891,7 @@ impl Term {
                     }
                 },
                 1006 => self.mouse_sgr = on,
+                1005 => self.mouse_utf8 = on,
                 1004 => self.focus_report = on,
                 2004 => self.bracketed_paste = on,
                 2026 => self.sync_output = on,

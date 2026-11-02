@@ -196,13 +196,14 @@ Rust (sem linha, para não envelhecer a cada commit).
 
 | # | funcionalidade | ref (Python → Rust) | estado |
 |---|---|---|---|
-| F1 | Encoding X10 legado (`CSI M` + 3 bytes, release=3, coord ≤222) | `mouse.py:57-64` | falta |
-| F2 | Encoding SGR (`CSI < b;x;y M/m`) | `mouse.py:51-64` | falta |
-| F3 | Modificadores no código do botão (+4/+8/+16) | `mouse.py:26,34-36` | falta |
-| F4 | Roda como botões 64-67 (press e release no SGR) | `mouse.py:21-23,46-47` | falta |
-| F5 | Botões 8/9 (back/forward) | `mouse.py:22,30` | falta |
-| F6 | Motion com botão (`?1002`) e sem botão (`?1003`) | `view.py:1199-1205` | falta |
+| F1 | Encoding X10 legado (`CSI M` + 3 bytes, release=3, coord ≤222) | `mouse.py:57-64` → `mouse.rs` | feito |
+| F2 | Encoding SGR (`CSI < b;x;y M/m`) | `mouse.py:51-64` → `mouse.rs` | feito |
+| F3 | Modificadores no código do botão (+4/+8/+16) | `mouse.py:26,34-36` → `mouse.rs` | feito |
+| F4 | Roda como botões 64-67 (press e release no SGR) | `mouse.py:21-23,46-47` → `mouse.rs` | feito |
+| F5 | Botões 8/9 (back/forward) | `mouse.py:22,30` → `mouse.rs` | feito |
+| F6 | Motion com botão (`?1002`) e sem botão (`?1003`) | `view.py:1199-1205` → `app.rs` | feito |
 | F7 | Mouse reporting em pixels (`?1016`) | não existe | falta (**melhoria**) |
+| F20 | `?1005` coordenada em UTF-8 (sai do teto de 222) | Python ignora (`term.py:644`) | feito (**melhoria**) |
 | F8 | Seleção por arrasto com limiar de 3 px | `view.py:1145-1200` | falta |
 | F9 | Seleção em âncora absoluta (sobrevive a rolagem e output) | `view.py:854-881`, `term.py:1056-1075` | falta (depende de A21) |
 | F10 | Seleção por palavra (duplo clique) e por linha (triplo) | não existe (`LIMITATIONS.md:71-72`) | falta (**melhoria**) |
@@ -214,7 +215,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | F16 | Clipboard sobrevive ao exit / integração com o sistema | `Gtk.Clipboard` | falta |
 | F17 | Abrir link com Ctrl+clique | não existe | falta (depende de C14) |
 | F18 | Menu de contexto | não existe | falta |
-| F19 | Clique com mouse mode ativo volta ao vivo antes de reportar | `view.py:1136-1141` | falta |
+| F19 | Clique com mouse mode ativo volta ao vivo antes de reportar | `view.py:1136-1141` → `app.rs` | feito |
 
 ## 7. Desenho: fonte, geometria, cores
 

@@ -60,6 +60,10 @@ pub struct App {
     rx: Option<Receiver<Vec<u8>>>,
     mods: ModifiersState,
     view_off: usize,
+    /// Última posição do mouse em pixels físicos (base do `cell_at`).
+    cursor_px: (f64, f64),
+    /// Botão que está apertado, para reportar release/movimento com ele.
+    held: Option<u8>,
     debug: Option<DebugServer>,
     /// Grid pedido pelo verbo `resize`; o WM pode arredondar em pixels, então
     /// `apply_size` corrige em passos até bater (como um terminal de verdade).
@@ -83,6 +87,8 @@ impl App {
             rx: None,
             mods: ModifiersState::empty(),
             view_off: 0,
+            cursor_px: (0.0, 0.0),
+            held: None,
             debug: None,
             want: None,
             adjust_left: 0,
@@ -102,6 +108,134 @@ impl App {
                 ((h as f32 / r.fonts.ch + 1e-3).floor() as usize).max(1),
             ),
             None => (self.opts.cols, self.opts.rows),
+        }
+    }
+
+    /// Pixel -> (col, row) 0-based, preso à grade (sem padding: G9 ainda falta).
+    fn cell_at(&self, px: f64, py: f64) -> (usize, usize) {
+        let (cw, ch) = self
+            .renderer
+            .as_ref()
+            .map_or((10.0, 19.0), |r| (r.fonts.cw, r.fonts.ch));
+        let col = (px / f64::from(cw)) as usize;
+        let row = (py / f64::from(ch)) as usize;
+        (
+            col.min(self.term.cols.saturating_sub(1)),
+            row.min(self.term.rows.saturating_sub(1)),
+        )
+    }
+
+    fn mouse_mods(&self) -> u8 {
+        let mut m = 0;
+        if self.mods.shift_key() {
+            m |= crate::mouse::MOD_SHIFT;
+        }
+        if self.mods.alt_key() {
+            m |= crate::mouse::MOD_ALT;
+        }
+        if self.mods.control_key() {
+            m |= crate::mouse::MOD_CTRL;
+        }
+        m
+    }
+
+    /// Manda um evento de mouse para o filho. Só é chamado quando o app pediu
+    /// (`?1000/1002/1003`); o resto do mouse é nosso (seleção).
+    fn report_mouse(&mut self, button: u8, pressed: bool, motion: bool) {
+        let (col, row) = self.cell_at(self.cursor_px.0, self.cursor_px.1);
+        let bytes = crate::mouse::encode(
+            crate::mouse::Ev {
+                button,
+                col,
+                row,
+                pressed,
+                motion,
+                mods: self.mouse_mods(),
+            },
+            crate::mouse::Proto {
+                sgr: self.term.mouse_sgr,
+                utf8: self.term.mouse_utf8,
+            },
+        );
+        if let Some(pty) = self.pty.as_mut() {
+            pty.write(&bytes);
+        }
+    }
+
+    /// Movimento: só interessa ao app quando ele pediu `?1002`/`?1003`.
+    fn on_cursor_moved(&mut self, x: f64, y: f64) {
+        self.cursor_px = (x, y);
+        match self.term.mouse_mode {
+            // 1002: movimento só com botão apertado
+            2 if self.held.is_some() => {
+                if let Some(b) = self.held {
+                    self.report_mouse(b, true, true);
+                }
+            },
+            // 1003: movimento sem botão também (código 35 = 3 + 32)
+            3 => self.report_mouse(crate::mouse::RELEASE, true, true),
+            _ => {},
+        }
+    }
+
+    /// Press/release de botão. Sem `?1000/1002/1003` o evento é nosso
+    /// (seleção), não do filho.
+    fn on_mouse_input(&mut self, state: ElementState, button: winit::event::MouseButton) {
+        let Some(btn) = crate::mouse::from_winit(button) else {
+            return;
+        };
+        if self.term.mouse_mode == 0 {
+            return;
+        }
+        match state {
+            ElementState::Pressed => {
+                // F19: o app desenha o vivo; clique no histórico só faz
+                // sentido depois de voltar para ele
+                self.view_off = 0;
+                self.held = Some(btn);
+                self.report_mouse(btn, true, false);
+            },
+            ElementState::Released => {
+                let b = self.held.take().unwrap_or(btn);
+                self.report_mouse(b, false, false);
+            },
+        }
+        if let Some(w) = self.window.as_ref() {
+            w.request_redraw();
+        }
+    }
+
+    /// Roda: do app quando ele pediu mouse e estamos no vivo; senão é rolagem
+    /// do histórico (o wheel lendo histórico continua sendo nosso).
+    fn on_wheel(&mut self, delta: MouseScrollDelta) {
+        let (hx, lines) = match delta {
+            MouseScrollDelta::LineDelta(x, y) => (x, y),
+            // pixel delta (trackpad): uma "linha" de roda a cada 24 px
+            MouseScrollDelta::PixelDelta(p) => (0.0, p.y as f32 / 24.0),
+        };
+        if self.term.mouse_mode != 0 && self.view_off == 0 && (lines != 0.0 || hx != 0.0) {
+            for (v, up, down) in [
+                (lines, crate::mouse::WHEEL_UP, crate::mouse::WHEEL_DOWN),
+                (hx, crate::mouse::WHEEL_RIGHT, crate::mouse::WHEEL_LEFT),
+            ] {
+                if v == 0.0 {
+                    continue;
+                }
+                let btn = if v > 0.0 { up } else { down };
+                self.report_mouse(btn, true, false);
+                self.report_mouse(btn, false, false);
+            }
+            return;
+        }
+        // roda para cima (delta positivo) entra no histórico
+        let sb = self.term.scrollback.len();
+        if lines > 0.0 {
+            self.view_off = (self.view_off + lines.ceil() as usize).min(sb);
+        } else {
+            self.view_off = self.view_off.saturating_sub((-lines).ceil() as usize);
+        }
+        if let Some(w) = self.window.as_ref() {
+            w.request_redraw();
         }
     }
 
@@ -207,6 +341,9 @@ impl App {
                     "scrollback": self.term.scrollback.len(),
                     "alt": self.term.in_alt_screen(),
                     "sync": self.term.sync_output,
+                    "mouse_mode": self.term.mouse_mode,
+                    "mouse_sgr": self.term.mouse_sgr,
+                    "mouse_utf8": self.term.mouse_utf8,
                     "cell": [cw, ch],
                     "font": match &self.renderer { Some(r) => r.fonts.family.clone(), None => String::new() },
                     "font_px": match &self.renderer { Some(r) => r.fonts.px, None => 0.0 },
@@ -522,21 +659,14 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
             },
+            WindowEvent::CursorMoved { position, .. } => {
+                self.on_cursor_moved(position.x, position.y);
+            },
+            WindowEvent::MouseInput { state, button, .. } => {
+                self.on_mouse_input(state, button);
+            },
             WindowEvent::MouseWheel { delta, .. } => {
-                let lines = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y,
-                    MouseScrollDelta::PixelDelta(p) => p.y as f32 / 24.0,
-                };
-                // roda para cima (delta positivo) entra no histórico
-                let sb = self.term.scrollback.len();
-                if lines > 0.0 {
-                    self.view_off = (self.view_off + lines.ceil() as usize).min(sb);
-                } else {
-                    self.view_off = self.view_off.saturating_sub((-lines).ceil() as usize);
-                }
-                if let Some(w) = self.window.as_ref() {
-                    w.request_redraw();
-                }
+                self.on_wheel(delta);
             },
             WindowEvent::Focused(focused) if self.term.focus_report => {
                 let seq = if focused { "\x1b[I" } else { "\x1b[O" };
