@@ -23,15 +23,15 @@ não por estimativa.
 | 6. Entrada: mouse, seleção, clipboard, paste | 14 | 0 | 0 | 0 | 14 |
 | 7. Desenho: fonte, geometria, cores | 11 | 2 | 3 | 0 | 16 |
 | 8. Imagens do protocolo kitty | 0 | 0 | 13 | 3 | 16 |
-| 9. Janela: abas, workspaces, cromo | 18 | 0 | 0 | 0 | 18 |
+| 9. Janela: abas, workspaces, cromo | 17 | 1 | 0 | 0 | 18 |
 | 10. Janela: ciclo de vida, geometria, estado | 5 | 0 | 5 | 0 | 10 |
 | 11. Configuração e CLI | 18 | 0 | 0 | 0 | 18 |
 | 12. Debug socket e instrumentação | 14 | 0 | 0 | 0 | 14 |
 | 13. Plataforma e distribuição | 5 | 0 | 5 | 0 | 10 |
-| 14. Testes e verificação | 3 | 2 | 4 | 0 | 9 |
-| **total** | **169** | **5** | **31** | **3** | **208** |
+| 14. Testes e verificação | 7 | 2 | 0 | 0 | 9 |
+| **total** | **172** | **6** | **27** | **3** | **208** |
 
-Equivalente pronto: **82.5%** (feito conta 1, parcial conta 0,5). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
+Equivalente pronto: **84.1%** (feito conta 1, parcial conta 0,5). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
 tendência; o que decide o que fazer agora é a linha e a seção 16.
 
 ## Regras deste documento
@@ -327,11 +327,11 @@ Rust (sem linha, para não envelhecer a cada commit).
 
 | # | funcionalidade | ref (Python → Rust) | estado |
 |---|---|---|---|
-| N1 | Suíte de checks do núcleo sem display (`checks.py`, 27 checks) | `checks.py:820-838` → `checks.rs` + `#[test]` | parcial: 14 checks de fumaça + 52 testes; falta socket/teclado/mouse |
-| N2 | Checks de config/CLI | `checks.py:125-287` | falta (depende de K1) |
-| N3 | Checks de teclado/mouse | `checks.py:325-343,554-562` | falta (depende de E/F) |
-| N4 | Checks de socket | `checks.py:702-810` | falta |
-| N5 | Checks de reflow/seleção/âncora | `checks.py:380-520` | falta |
+| N1 | Suíte de checks do núcleo sem display (`checks.py`, 27 checks) | `checks.py:820-838` → `checks.rs` + `#[test]` | parcial: 24 checks de fumaça no `--selftest` (e no `cargo test`, via `selftest_completo`) + 93 testes; o que falta é o que depende de janela/GPU |
+| N2 | Checks de config/CLI | `checks.py:125-287` | feito: `config_file`, `config_options` e `scrollback_and_bell` no `--selftest` (formato do kitty, merge com padrões, erro por linha com motivo, teto de histórico, RIS não é dono da config, BEL só conta) + 7 testes de argv e do merge CLI > arquivo > padrão em `cli.rs` |
+| N3 | Checks de teclado/mouse | `checks.py:325-343,554-562` | feito: 6 testes de kitty keyboard (push/pop/set/query, flags 1/2/8/16, `:2`/`:3`, DECCKM, texto da flag 16) e 3 de mouse (modos 1000/1002/1003/1005/1006, SGR vs X10, roda e modificadores) |
+| N4 | Checks de socket | `checks.py:702-810` | feito: `DebugServer` aceita um `Sink` (o `EventLoopProxy` no app, um canal no teste), então 8 testes rodam sem janela: framing de uma linha JSON, `ok`/`err`, vários pedidos na mesma conexão e num `write` só, `0600`, órfão vs socket vivo vs arquivo que não é socket, `resolve("auto")` |
+| N5 | Checks de reflow/seleção/âncora | `checks.py:380-520` | feito: `history`, `scroll_anchor`, `redraw_keeps_history_position`, `draw_damage`, `selection`, `truecolor` e `style_contrast` no `--selftest` (`paste_markers` e `selection_follows_history` já existiam) |
 | N6 | `--selftest` no binário (roda N1..N5 sem display) | `cli.py:92` → `checks.rs` | feito: `bzmux --selftest` (14 checks), no `check.sh` e no CI |
 | N7 | Verificação visual automatizada (captura + comparação) | `tools/pixel.py`, `xtest.py` → `tools/` | parcial: captura manual (`xwd`) |
 | N8 | Benchmark reprodutível com grade travada | `tools/benchrun.py` → `tools/benchrun.py` | feito |

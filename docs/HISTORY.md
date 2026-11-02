@@ -483,3 +483,56 @@ workspaces e duas abas: 78 linhas, três cabeçalhos, processo fora depois do
 arranque; agora arquivo que não é socket nunca é tocado (`caminho existe e não
 é socket`) e o órfão só sai quando o `connect` recusa. Verificado com um
 arquivo de texto no lugar do socket: sobreviveu com o conteúdo intacto.
+
+## 2026-11-02 — Onda 0 + Onda 1: reconciliação e a bateria de checks (B3, F12, K18, K19, N2-N5)
+
+Quatro itens que estavam no painel como pendência **não eram pendência de
+código**, e quatro checks que faltavam viraram código.
+
+**Reconciliação (Onda 0).** `B3` (C1 0x80-0x9F) e `F12` (PRIMARY/CLIPBOARD)
+já estavam no comportamento do Python — provado por execução, não por leitura:
+C1 no meio de `abc` dá 5 células (`a\u{80}b\u{9b}c`), e o release copia PRIMARY
+sempre com CLIPBOARD só sob `copy_on_select`. `K18` revelou que o `.desktop` e
+o ícone já saem do `install.sh` com `StartupWMClass`: o `--install-shortcut`
+como flag do binário **não** existe e não deve existir — dois donos para o mesmo
+artefato é o defeito que acabamos de consertar no Python. `K19` era código de
+verdade: `WM_CLASS` agora é explícito (`with_name`), conferido rodando o binário
+renomeado — sem isso o `StartupWMClass` do `.desktop` só casaria por sorte.
+
+**Checks (Onda 1).** `--selftest` foi de 14 para 24 e o `cargo test` de 52/board
+para 93 testes. Cada área ganhou módulo próprio (`checks_n2.rs`, `checks_n5.rs`)
+para não virar um arquivo de três mil linhas.
+
+- **N2** — config: formato do kitty, merge chave a chave com os padrões,
+  comentário de linha inteira e no fim da linha, chave repetida (a última
+  vence), erro **por linha** com o motivo; teto de histórico (corta pela mais
+  antiga, não pela que chega), RIS não é dono da configuração, BEL só conta
+  (quem decide visual/audível é a view). Mais 7 testes de argv: `--help`/
+  `--version` saem pelo mesmo caminho de erro, opção desconhecida nomeia a
+  opção, e o merge é CLI > arquivo > padrão.
+- **N3** — teclado do kitty de ponta a ponta (parser do `Term` + encoder):
+  `push/pop/set/query` com modos 1/2/3, flags 1/2/8/16, `:2` e `:3`, DECCKM
+  decidindo o legado, Super entrando na conta só com a flag 8. Mouse: os cinco
+  modos, SGR ganhando do `?1005`, X10 com release sempre 3, roda com e sem
+  modificador.
+- **N4** — o servidor do socket ganhou a costura que faltava: um trait `Sink`
+  (o `EventLoopProxy` no app, um canal no teste). Isso não é enfeite de teste —
+  era o que impedia exercitar o socket sem janela. 8 testes: framing de uma
+  linha JSON por pedido e por resposta, vários pedidos na mesma conexão, dois
+  num `write` só, `0600`, e as três decisões conflitantes do `clear_stale`
+  (órfão sai, socket vivo não é roubado, arquivo que não é socket nunca é
+  apagado).
+- **N5** — histórico como janela (nunca mais de `rows`, clampa no mais antigo),
+  âncora absoluta contra a deriva quando o histórico bate no teto (13 linhas de
+  deriva provadas), `?2026` + `2J`/`3J` matando a âncora absoluta mas não o pin
+  de distância, dano por linha (1 célula suja 1 linha; ED2/rolagem/resize/RIS
+  sujam a grade), seleção (ordem invertida, pontas inclusivas, sem espaço à
+  direita), truecolor nas duas sintaxes (`;` e `:`) sobrevivendo ao resize, e
+  contraste WCAG do tema.
+
+**Uma costura que faltava na infraestrutura:** os checks do `--selftest` não
+rodavam no `cargo test` — só no binário. Um `cargo test -p bzmux-core` verde não
+dizia nada sobre eles. Agora há um `selftest_completo` que roda `run_all()` e
+mostra as falhas, e a verificação foi feita por mutação: quebrar
+`view_after_output` faz o `scroll_anchor` falhar com "esperado 7, obtido 2";
+tirar a guarda de "não é socket" do `clear_stale` faz o teste do L12 falhar.
