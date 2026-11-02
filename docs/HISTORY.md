@@ -111,3 +111,19 @@ abortar era "se não fizer ≥3× o MB/s do Python e não abrir vim/mc, não pag
   PID file só guarda a última). O `cargo build` troca o arquivo, então o
   processo antigo aparece como `bzmux (deleted)` — é preciso tirar o sufixo
   antes de comparar, senão a sobra sobrevive e responde no lugar do build novo.
+
+## 2026-11-02 — grade inicial: uma coluna perdida e o filho nascendo cedo
+
+Sintoma: `bat`, `dmesg` e `seq` "embaralhados" nos primeiros KB. Não era
+parser (a mesma saída lida de arquivo reproduzia igual): eram duas coisas.
+
+- `round(cols*cw)` pedia pixels a menos (1304,4 → 1304 → 99 colunas). Passou a
+  `ceil`.
+- o filho nascia antes do tamanho final, então o primeiro resize do WM chegava
+  com ele escrevendo. Agora o `apply_size` roda primeiro e o `spawn_shell` só
+  acontece no primeiro tamanho aplicado.
+
+Verificado: `--cols 100 --rows 10` → `stty size` = `10 100` e linha de 250
+caracteres quebra em 100/100/50. (A suspeita inicial de "texto intercalado" era
+leitura errada minha: as linhas 17 e 18 do `keys.rs` quebravam nos lugares
+certos.)

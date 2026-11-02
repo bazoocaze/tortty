@@ -62,6 +62,7 @@ pub fn logln(msg: &str) {
     }
 }
 
+#[allow(clippy::struct_excessive_bools)] // estado do app é booleano por natureza
 pub struct App {
     opts: Options,
     proxy: EventLoopProxy<UserEvent>,
@@ -82,6 +83,10 @@ pub struct App {
     press: Option<(Anchor, (f64, f64))>,
     dragging: bool,
     clip: Clip,
+    /// Acorda o loop quando chega dado do pty (o filho nasce depois da
+    /// janela, quando o grid já é o definitivo).
+    wake: Option<Arc<dyn Fn() + Send + Sync>>,
+    spawned: bool,
     /// Fração de linha acumulada da roda (trackpad manda fração).
     scroll_frac: f32,
     debug: Option<DebugServer>,
@@ -113,6 +118,8 @@ impl App {
             press: None,
             dragging: false,
             clip: Clip::new(),
+            wake: None,
+            spawned: false,
             scroll_frac: 0.0,
             debug: None,
             want: None,
@@ -501,6 +508,12 @@ impl App {
             }
             self.view_off = 0;
         }
+        if !self.spawned {
+            if let Some(wake) = self.wake.clone() {
+                self.spawned = true;
+                self.spawn_shell(cols, rows, wake);
+            }
+        }
         // o alvo do socket manda: se o WM entregou menos células, pede a
         // diferença de volta (o `request_inner_size` é só uma sugestão)
         if let Some((wc, wr)) = self.want {
@@ -752,8 +765,10 @@ impl ApplicationHandler<UserEvent> for App {
                 return;
             },
         };
-        let w = (self.opts.cols as f32 * fonts.cw).round() as u32;
-        let h = (self.opts.rows as f32 * fonts.ch).round() as u32;
+        // `ceil`: pedir `round` dá pixels a menos que o grid precisa e a
+        // janela nasce com uma coluna/linha de menos (o WM não devolve)
+        let w = (self.opts.cols as f32 * fonts.cw).ceil() as u32;
+        let h = (self.opts.rows as f32 * fonts.ch).ceil() as u32;
         let attrs = Window::default_attributes()
             .with_title("bzmux")
             .with_inner_size(PhysicalSize::new(w.max(1), h.max(1)));
@@ -775,19 +790,17 @@ impl ApplicationHandler<UserEvent> for App {
         };
         // o grid real vem do tamanho que a janela conseguiu, não do pedido
         let size = window.inner_size();
-        let (cols, rows) = (
-            ((size.width as f32 / renderer.fonts.cw + 1e-3).floor() as usize).max(1),
-            ((size.height as f32 / renderer.fonts.ch + 1e-3).floor() as usize).max(1),
-        );
         self.renderer = Some(renderer);
-        self.term.resize(cols, rows);
         self.window = Some(window.clone());
-
         let proxy = self.proxy.clone();
-        let wake = Arc::new(move || {
+        self.wake = Some(Arc::new(move || {
             let _ = proxy.send_event(UserEvent::Wake);
-        });
-        self.spawn_shell(cols, rows, wake);
+        }));
+        // aplica o tamanho agora e **só então** o filho nasce: com o filho
+        // nascendo antes, os primeiros KB saem na largura do pedido e o
+        // primeiro resize do WM embaralha o que já estava na tela
+        self.apply_size(size.width, size.height);
+        let (cols, rows) = (self.term.cols, self.term.rows);
 
         if let Some(path) = self.opts.debug_socket.clone() {
             match DebugServer::start(&path, self.proxy.clone()) {

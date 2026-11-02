@@ -171,6 +171,22 @@ xdotool mousemove $((X+120)) $((Y+60)) click 1
 # ler a tela: {"cmd":"text","where":"view"} -> 1b5b3c303b31313b344d = ESC[<0;11;4M
 ```
 
+### Tamanho inicial da grade
+
+Duas armadilhas juntas, e as duas aparecem como "texto embaralhado no
+primeiro segundo":
+
+1. Pedir a janela em `round(cols*cw)` dá pixels **a menos** que o grid precisa
+   (100 células de 13,044 px = 1304,4 → 1304 → 99 colunas). Por isso o pedido é
+   `ceil`.
+2. O filho nascia antes de saber o tamanho final; o primeiro `resize` do WM
+   chegava com o filho já escrevendo, e o que estava na tela ficava com a
+   largura velha. Agora o `apply_size` roda primeiro e o `spawn_shell` só
+   acontece no primeiro tamanho aplicado.
+
+Sonda: `bzmux --cmd 'stty size'` tem que imprimir exatamente
+`<rows> <cols>` do pedido, sem resize depois.
+
 ### Teclado
 
 O verbo `keys` do socket passa pelo **encoder real** e devolve os bytes em hex,
