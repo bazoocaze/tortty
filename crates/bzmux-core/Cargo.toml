@@ -1,0 +1,13 @@
+[package]
+name = "bzmux-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Núcleo de emulação do bzmux: célula, paleta, parser VT e grade (sem GUI)"
+
+[dependencies]
+unicode-width = "0.2"
+
+[[bin]]
+name = "parsebench"
+path = "src/bin/parsebench.rs"

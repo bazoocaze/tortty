@@ -1,0 +1,24 @@
+[package]
+name = "bzmux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Terminal com workspaces e abas (experimento Rust do bzmux)"
+
+[dependencies]
+bzmux-core = { path = "../bzmux-core" }
+winit = "0.30"
+wgpu = "30"
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+fontdb = "0.23"
+swash = "0.2"
+portable-pty = "0.9"
+serde_json = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[[bin]]
+name = "bzmux"
+path = "src/main.rs"
