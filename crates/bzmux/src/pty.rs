@@ -123,12 +123,15 @@ impl Pty {
         })
     }
 
-    pub fn write(&mut self, data: &[u8]) {
+    /// Escreve no pty. Devolve `false` quando o kernel não aceitou tudo
+    /// (`EAGAIN` num pty não-bloqueante, ou erro): quem chama conta e repete.
+    pub fn write(&mut self, data: &[u8]) -> bool {
         if data.is_empty() {
-            return;
+            return true;
         }
-        let _ = self.writer.write_all(data);
+        let ok = self.writer.write_all(data).is_ok();
         let _ = self.writer.flush();
+        ok
     }
 
     pub fn resize(&mut self, cols: u16, rows: u16) {

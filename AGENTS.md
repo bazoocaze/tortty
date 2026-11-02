@@ -77,6 +77,12 @@ por categoria, na ordem).
 
 ## Convenções de código
 
+- Versão: incrementar o patch em `Cargo.toml` (raiz, `workspace.package`) quando
+  **fechar um item** de `docs/MIGRATION.md` ou `docs/BACKLOG.md` — o commit que
+  fecha o item leva o incremento, não cada commit. Commit de docs, teste ou
+  ajuste avulso não incrementa. É a fonte única: os dois crates herdam
+  (`version.workspace = true`) e o `--version` mostra
+  (`env!("CARGO_PKG_VERSION")`, compilado no build).
 - Comentário e mensagem explicam **por quê**, em português; nome de código em
   inglês. Nenhum comentário narra o óbvio.
 - Nada de `unsafe` no core. No app, só onde a API do `wgpu`/`winit` exige.

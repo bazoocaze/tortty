@@ -337,6 +337,9 @@ pub struct App {
     /// Erros do arquivo no arranque, que só podem virar toast quando a janela
     /// existir (no terminal, `stderr` some; numa sessão gráfica, idem).
     startup_errs: Vec<bzmux_core::config::Error>,
+    /// Erros da config que estão valendo agora (o `errors` do `state`): o
+    /// arquivo recusado mantém a config anterior, mas o erro é fato.
+    cfg_errors: Vec<String>,
     debug: Option<DebugServer>,
     /// Grid pedido pelo verbo `resize`; o WM pode arredondar em pixels, então
     /// `apply_size` corrige em passos até bater (como um terminal de verdade).
@@ -400,6 +403,7 @@ impl App {
             blink_text: false,
             toast: None,
             startup_errs: Vec::new(),
+            cfg_errors: Vec::new(),
             debug: None,
             want: None,
             adjust_left: 0,
@@ -467,6 +471,31 @@ impl App {
                 logln(&format!("dump: {}", path.display()));
             },
             Err(e) => eprintln!("dump falhou: {}: {e}", path.display()),
+        }
+    }
+
+    /// XID da janela no X11 (0 no Wayland): quem vai capturar pixel pergunta
+    /// ao app, não ao X (é o que o `benchrun.py` do Python faz).
+    fn xid(&self) -> u64 {
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let Some(w) = self.window.as_ref() else {
+            return 0;
+        };
+        match w.window_handle().map(|h| h.as_raw()) {
+            Ok(RawWindowHandle::Xlib(x)) => x.window,
+            Ok(RawWindowHandle::Xcb(x)) => u64::from(x.window.get()),
+            _ => 0,
+        }
+    }
+
+    /// Escrita no pty com contador (`prof`): bytes e repetições por `EAGAIN`.
+    fn pty_write(&mut self, bytes: &[u8]) {
+        let Some(pty) = self.tabs[self.active].pty.as_mut() else {
+            return;
+        };
+        prof::add_write(bytes.len());
+        if !pty.write(bytes) {
+            prof::add_eagain();
         }
     }
 
@@ -659,22 +688,15 @@ impl App {
                 utf8: self.tabs[self.active].term.mouse_utf8,
             },
         );
-        if let Some(pty) = self.tabs[self.active].pty.as_mut() {
-            pty.write(&bytes);
-        }
+        self.pty_write(&bytes);
     }
 
     /// Atalhos Ctrl+Shift e Super de workspace/edidor: extraído de `on_key`,
     /// que só manda o que sobrar para o encoder.
     #[allow(clippy::too_many_lines)] // um braço por atalho
-    fn shortcut_ws(
-        &mut self,
-        event: &winit::event::KeyEvent,
-        named: Option<NamedKey>,
-        ch: Option<char>,
-    ) -> bool {
-        let ctrl = self.mods.control_key();
-        let shift = self.mods.shift_key();
+    fn shortcut_ws(&mut self, k: &KeyIn<'_>, named: Option<NamedKey>, ch: Option<char>) -> bool {
+        let ctrl = k.mods.control_key();
+        let shift = k.mods.shift_key();
         if ctrl && shift {
             match ch.map(|c| c.to_ascii_lowercase()) {
                 Some('t') => {
@@ -704,7 +726,7 @@ impl App {
                 return true;
             }
             // Ctrl+Shift+1..9 escolhe o workspace (0 = o décimo)
-            if let Some(n) = digit_of(event) {
+            if let Some(n) = k.digit {
                 let i = if n == 0 { 9 } else { n - 1 };
                 self.select_workspace(i);
                 return true;
@@ -725,7 +747,7 @@ impl App {
                 },
                 _ => {},
             }
-            if let Some(n) = digit_of(event) {
+            if let Some(n) = k.digit {
                 let i = if n == 0 { 9 } else { n - 1 };
                 self.select_workspace(i);
                 return true;
@@ -739,7 +761,9 @@ impl App {
     fn on_key(&mut self, event: &winit::event::KeyEvent) {
         let press = event.state == ElementState::Pressed;
         if press {
-            if self.press_locais(event) {
+            let mut k = KeyIn::from_event(event);
+            k.mods = self.mods;
+            if self.press_locais(&k) {
                 // a tecla foi do app: a soltura dela também é (senão o release
                 // de Ctrl+Shift+1 virava `CSI 49;1:3u` no filho)
                 self.consumido = Some(event.physical_key);
@@ -762,9 +786,7 @@ impl App {
         ) else {
             return;
         };
-        if let Some(pty) = self.tabs[self.active].pty.as_mut() {
-            pty.write(&bytes);
-        }
+        self.pty_write(&bytes);
         if let Some(w) = self.window.as_ref() {
             w.request_redraw();
         }
@@ -772,30 +794,24 @@ impl App {
 
     /// Atalhos que comem a tecla antes do encoder. `true` = o filho não vê
     /// nem o aperto nem a soltura.
-    fn press_locais(&mut self, event: &winit::event::KeyEvent) -> bool {
+    fn press_locais(&mut self, k: &KeyIn<'_>) -> bool {
         self.blink_reset();
         // renomeando no cartão: o teclado é do nome, não do terminal (I8)
-        if self.rename_key(event) {
+        if self.rename_key(k) {
             return true;
         }
-        let ctrl = self.mods.control_key();
-        let shift = self.mods.shift_key();
-        let named = match &event.logical_key {
-            Key::Named(n) => Some(*n),
-            _ => None,
-        };
-        let ch = match &event.logical_key {
-            Key::Character(s) => s.chars().next(),
-            _ => None,
-        };
+        let ctrl = k.mods.control_key();
+        let shift = k.mods.shift_key();
+        let named = k.named;
+        let ch = k.character.and_then(|s| s.chars().next());
 
-        if self.shortcut_ws(event, named, ch) {
+        if self.shortcut_ws(k, named, ch) {
             return true;
         }
         // Alt+1..9 escolhe a aba; Alt+0 é a décima (I15). O dígito não vaza
         // para o filho — é o que o Python fazia.
-        if alt_digit_only(self.mods) {
-            if let Some(n) = digit_of(event) {
+        if alt_digit_only(k.mods) {
+            if let Some(n) = k.digit {
                 self.select_tab(if n == 0 { 9 } else { n - 1 });
                 return true;
             }
@@ -1193,9 +1209,7 @@ impl App {
     /// Escreve o texto no filho respeitando o bracketed paste (`?2004`).
     fn write_paste(&mut self, txt: &str) {
         let payload = self.tabs[self.active].term.paste_payload(txt);
-        if let Some(pty) = self.tabs[self.active].pty.as_mut() {
-            pty.write(&payload);
-        }
+        self.pty_write(&payload);
         self.redraw();
     }
 
@@ -1297,14 +1311,18 @@ impl App {
         }
         let out = self.tabs[i].term.take_child_out();
         if !out.is_empty() {
+            prof::add_write(out.len());
             if let Some(pty) = self.tabs[i].pty.as_mut() {
-                pty.write(&out);
+                if !pty.write(&out) {
+                    prof::add_eagain();
+                }
             }
         }
     }
 
     /// Erros do arquivo lidos no arranque: viram toast no primeiro tique.
     pub fn startup_errors(&mut self, errs: Vec<bzmux_core::config::Error>) {
+        self.cfg_errors = errs.iter().map(std::string::ToString::to_string).collect();
         self.startup_errs = errs;
     }
 
@@ -1430,6 +1448,7 @@ impl App {
             return;
         };
         let (novo, errs) = crate::cli::Options::build(self.over.clone());
+        self.cfg_errors = errs.iter().map(std::string::ToString::to_string).collect();
         if !errs.is_empty() {
             logln(&format!(
                 "config: {} mantida; {} erro(s), o primeiro em {}",
@@ -1654,7 +1673,13 @@ impl App {
                     "workspaces": self.ws_count(),
                     "ws": self.ws_idx,
                     "ws_names": self.wscards().into_iter().map(|c| c.nome).collect::<Vec<_>>(),
-                    "errors": [],
+                    "errors": self.cfg_errors,
+                    "xid": self.xid(),
+                    "config": self.opts.cfg_path.as_ref().map_or_else(String::new, |p| p.display().to_string()),
+                    "dpi": self.opts.dpi,
+                    "padding": self.opts.cfg.padding,
+                    "advance": cw,
+                    "pin": self.tabs[self.active].view_off,
                 }))
             },
             "text" => {
@@ -1686,9 +1711,7 @@ impl App {
             },
             "write" => match req.get("data").and_then(|v| v.as_str()) {
                 Some(data) => {
-                    if let Some(pty) = self.tabs[self.active].pty.as_mut() {
-                        pty.write(data.as_bytes());
-                    }
+                    self.pty_write(data.as_bytes());
                     debugsock::ok(serde_json::json!({}))
                 },
                 None => debugsock::err("write precisa de data (string)"),
@@ -1738,16 +1761,34 @@ impl App {
             },
             "keys" => match req.get("data").and_then(|v| v.as_str()) {
                 Some(spec) => {
-                    let bytes = encode_spec(
-                        spec,
+                    // mesmo caminho do teclado real: atalho local primeiro (que
+                    // pode comer a tecla), depois o encoder
+                    let Some(k) = key_from_spec(spec) else {
+                        return debugsock::err(format!("tecla desconhecida: {spec}"));
+                    };
+                    if self.press_locais(&k) {
+                        return debugsock::ok(serde_json::json!({
+                            "keys": [0],
+                            "hex": String::new(),
+                            "handled": true,
+                        }));
+                    }
+                    let bytes = crate::keys::encode_parts(
+                        k.named,
+                        k.character,
+                        k.text,
+                        k.mods,
                         self.tabs[self.active].term.app_cursor,
                         self.tabs[self.active].term.kbd_flags,
-                    );
-                    if let Some(pty) = self.tabs[self.active].pty.as_mut() {
-                        pty.write(&bytes);
-                    }
+                    )
+                    .unwrap_or_default();
+                    self.pty_write(&bytes);
                     let hex = hex(&bytes);
-                    debugsock::ok(serde_json::json!({ "keys": [bytes.len()], "hex": hex }))
+                    debugsock::ok(serde_json::json!({
+                        "keys": [bytes.len()],
+                        "hex": hex,
+                        "handled": false,
+                    }))
                 },
                 None => debugsock::err("keys precisa de data"),
             },
@@ -1761,8 +1802,14 @@ impl App {
                 debugsock::ok(prof::fields())
             },
             "log" => {
+                // liga/desliga/troca o caminho em execução; `off` desliga
                 let value = req.get("value").and_then(|v| v.as_str()).unwrap_or("off");
                 set_log(value);
+                self.opts.debug_log = if value.is_empty() || value == "off" {
+                    None
+                } else {
+                    Some(value.to_string())
+                };
                 debugsock::ok(serde_json::json!({ "path": value }))
             },
             "quit" => {
@@ -1954,14 +2001,14 @@ impl App {
 
     /// Teclado durante o rename: digitar edita, Enter confirma, Esc cancela.
     /// Devolve `true` quando a tecla foi consumida (o filho não a vê).
-    fn rename_key(&mut self, event: &winit::event::KeyEvent) -> bool {
+    fn rename_key(&mut self, k: &KeyIn<'_>) -> bool {
         if self.rename.is_none() {
             return false;
         }
-        match &event.logical_key {
-            Key::Named(NamedKey::Enter) => self.finish_rename(true),
-            Key::Named(NamedKey::Escape) => self.finish_rename(false),
-            Key::Named(NamedKey::Backspace) => {
+        match k.named {
+            Some(NamedKey::Enter) => self.finish_rename(true),
+            Some(NamedKey::Escape) => self.finish_rename(false),
+            Some(NamedKey::Backspace) => {
                 if let Some(r) = self.rename.as_mut() {
                     if r.substituir {
                         r.texto.clear();
@@ -1972,7 +2019,10 @@ impl App {
                 }
                 self.redraw();
             },
-            Key::Character(s) => {
+            None => {
+                let Some(s) = k.character else {
+                    return true;
+                };
                 if let Some(r) = self.rename.as_mut() {
                     if r.substituir {
                         r.texto.clear();
@@ -2114,6 +2164,34 @@ impl App {
     }
 }
 
+/// Uma tecla em pedaços, sem depender do `KeyEvent`: o teclado real e o verbo
+/// `keys` do socket passam pelo **mesmo** caminho de atalho e encoder.
+struct KeyIn<'a> {
+    named: Option<NamedKey>,
+    character: Option<&'a str>,
+    text: Option<&'a str>,
+    /// Dígito da tecla física (0..=9); no socket vem do próprio `spec`.
+    digit: Option<usize>,
+    mods: ModifiersState,
+}
+
+impl<'a> KeyIn<'a> {
+    fn from_event(ev: &'a winit::event::KeyEvent) -> KeyIn<'a> {
+        let (named, character) = match &ev.logical_key {
+            Key::Named(n) => (Some(*n), None),
+            Key::Character(s) => (None, Some(s.as_str())),
+            _ => (None, None),
+        };
+        KeyIn {
+            named,
+            character,
+            text: ev.text.as_deref(),
+            digit: digit_of(ev),
+            mods: ModifiersState::empty(), // quem chama põe o `self.mods`
+        }
+    }
+}
+
 /// `ctrl+shift+n` -> bytes (versão mínima do `parse_key` do Python: o caminho
 /// completo de teclado é o do winit, este verbo serve para teste/automação).
 /// `spec` do verbo `keys`: `ctrl+shift+t`, `alt+left`, `f5`, `a`.
@@ -2121,11 +2199,11 @@ impl App {
 /// Resolve modificadores e nome de tecla e entrega ao encoder real
 /// (`keys::encode_parts`) — não há tabela paralela aqui. Tecla que o encoder
 /// não conhece devolve vazio, e o socket responde `keys: [0]`.
-fn encode_spec(spec: &str, app_cursor: bool, kbd_flags: u32) -> Vec<u8> {
+/// `spec` do verbo `keys` -> `KeyIn`: modificadores, nome de tecla e dígito.
+fn key_from_spec(spec: &str) -> Option<KeyIn<'_>> {
     let parts: Vec<&str> = spec.split('+').filter(|p| !p.is_empty()).collect();
-    let Some((key, mods_spec)) = parts.split_last() else {
-        return Vec::new();
-    };
+    let (key, mods_spec) = parts.split_last()?;
+    let key: &str = key;
     let mut mods = ModifiersState::empty();
     for m in mods_spec {
         match m.to_ascii_lowercase().as_str() {
@@ -2136,7 +2214,6 @@ fn encode_spec(spec: &str, app_cursor: bool, kbd_flags: u32) -> Vec<u8> {
             _ => {},
         }
     }
-    // nome de tecla nomeada (setas, F1-F12, edição) ou texto de um caractere
     let named = match key.to_ascii_lowercase().as_str() {
         "enter" | "return" => Some(NamedKey::Enter),
         "esc" | "escape" => Some(NamedKey::Escape),
@@ -2167,16 +2244,27 @@ fn encode_spec(spec: &str, app_cursor: bool, kbd_flags: u32) -> Vec<u8> {
         "f12" => Some(NamedKey::F12),
         _ => None,
     };
-    if let Some(n) = named {
-        return crate::keys::encode_parts(Some(n), None, None, mods, app_cursor, kbd_flags)
-            .unwrap_or_default();
-    }
-    if key.chars().count() == 1 {
-        let ch = key.to_string();
-        return crate::keys::encode_parts(None, Some(&ch), Some(&ch), mods, app_cursor, kbd_flags)
-            .unwrap_or_default();
-    }
-    Vec::new()
+    let digit =
+        if key.chars().count() == 1 && key.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            key.chars()
+                .next()
+                .and_then(|c| c.to_digit(10))
+                .map(|d| d as usize)
+        } else {
+            None
+        };
+    let character = if named.is_none() && key.chars().count() == 1 {
+        Some(key)
+    } else {
+        None
+    };
+    Some(KeyIn {
+        named,
+        character,
+        text: character,
+        digit,
+        mods,
+    })
 }
 
 impl ApplicationHandler<UserEvent> for App {
@@ -2246,7 +2334,12 @@ impl ApplicationHandler<UserEvent> for App {
                     logln(&format!("debug socket: {}", s.path()));
                     self.debug = Some(s);
                 },
-                Err(e) => eprintln!("bzmux: debug socket: {e}"),
+                Err(e) => {
+                    // quem abriu a superfície de debug tem de saber que ela não
+                    // está de pé (o Python mostra no toast)
+                    eprintln!("bzmux: debug socket: {e}");
+                    self.toast(format!("debug socket: {e}"));
+                },
             }
         }
         if let Some(path) = self.opts.debug_log.clone() {
@@ -2320,9 +2413,7 @@ impl ApplicationHandler<UserEvent> for App {
             },
             WindowEvent::Focused(focused) if self.tabs[self.active].term.focus_report => {
                 let seq = if focused { "\x1b[I" } else { "\x1b[O" };
-                if let Some(pty) = self.tabs[self.active].pty.as_mut() {
-                    pty.write(seq.as_bytes());
-                }
+                self.pty_write(seq.as_bytes());
             },
             _ => {},
         }

@@ -77,14 +77,20 @@ pub fn resolve(value: &str) -> String {
 }
 
 fn clear_stale(path: &str) -> Result<(), String> {
+    use std::os::unix::fs::FileTypeExt as _;
     let p = Path::new(path);
-    if !p.exists() {
-        return Ok(());
+    let Ok(meta) = std::fs::metadata(p) else {
+        return Ok(()); // não existe: nada a limpar
+    };
+    // arquivo que **não** é socket não é nosso: só o dono apaga (L12)
+    if !meta.file_type().is_socket() {
+        return Err(format!("caminho existe e não é socket: {path}"));
     }
     if UnixStream::connect(p).is_ok() {
         return Err(format!("outro processo está escutando em {path}"));
     }
-    let _ = std::fs::remove_file(p); // socket órfão
+    // socket órfão: ninguém escuta, o arquivo é lixo
+    std::fs::remove_file(p).map_err(|e| format!("{path}: {e}"))?;
     Ok(())
 }
 
