@@ -715,3 +715,30 @@ imagens e histórico, `ED 2` não limpa.
 
 Também instrumentei o `state` do socket com `images` e `placements`: sem isso a
 única forma de conferir a colocação era olhar a tela.
+
+## 2026-11-02 — Windows e macOS saem do painel (viram fila)
+
+O painel vinha carregando `M6` (Windows), `M7` (macOS) e `M9` (assinatura) como
+`falta` desde o primeiro dia. Não são: **o Python nunca rodou fora do Linux**.
+Pela regra de dono único (paridade = o que o Python faz), alvo novo é fila, não
+migração. Saíram da seção 13 e foram para o [`BACKLOG`](BACKLOG.md) como:
+
+| antes (`MIGRATION` §13) | agora (`BACKLOG`) |
+|---|---|
+| `M6` Windows 10/11 (D3D12 + ConPTY) | `M-X` |
+| `M7` macOS arm64/x86_64 (Metal) | `M-Y` |
+| `M9` notarização/assinatura | `M-Z` (atrás de `M-X`/`M-Y`: sem alvo compilado não há o que assinar) |
+
+O que **fica** no painel é o que o Python de fato entrega: `M4` (Wayland) e `M5`
+(backend GL — o GTK roda sem Vulkan, então "roda no Linux" é paridade). De
+carona, o `M2` deixou de prometer ConPTY na mesma API (é promessa do `M-X`) e o
+`M8` (matriz de release) ficou dito como Linux x86_64/aarch64.
+
+Painel: 194 feito / 3 parcial / **5** falta / 3 não = **205** linhas,
+**95,4%**. Faltando só: `A17`/`G17` (dano por linha/região no desenho), `G8`
+(shaping/ligaduras) e `M4`/`M5`.
+
+Ponteiros acertados em `LIMITATIONS.md` (plataforma e assinatura), `INSTALL.md`
+(matriz de release) e `PORTABILITY.md` (que passa a dizer explicitamente que é
+análise, não fila). `PORTABILITY.md` continua sendo o lugar do **como** de cada
+alvo; o **quando** é o backlog.

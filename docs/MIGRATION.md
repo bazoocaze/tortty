@@ -27,11 +27,11 @@ não por estimativa.
 | 10. Janela: ciclo de vida, geometria, estado | 10 | 0 | 0 | 0 | 10 |
 | 11. Configuração e CLI | 18 | 0 | 0 | 0 | 18 |
 | 12. Debug socket e instrumentação | 14 | 0 | 0 | 0 | 14 |
-| 13. Plataforma e distribuição | 5 | 0 | 5 | 0 | 10 |
+| 13. Plataforma e distribuição | 5 | 0 | 2 | 0 | 7 |
 | 14. Testes e verificação | 7 | 2 | 0 | 0 | 9 |
-| **total** | **194** | **3** | **8** | **3** | **208** |
+| **total** | **194** | **3** | **5** | **3** | **205** |
 
-Equivalente pronto: **94.0%** (feito conta 1, parcial conta 0,5). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
+Equivalente pronto: **95.4%** (feito conta 1, parcial conta 0,5). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
 tendência; o que decide o que fazer agora é a linha e a seção 16.
 
 ## Regras deste documento
@@ -313,14 +313,11 @@ Rust (sem linha, para não envelhecer a cada commit).
 | # | funcionalidade | ref (Python → Rust) | estado |
 |---|---|---|---|
 | M1 | Um binário sem stack de sistema (sem GTK/Pango/fontconfig/Python) | impossível no Python | feito |
-| M2 | pty POSIX e ConPTY pela mesma API | `pty.fork` (POSIX só) → `pty.rs` | feito |
+| M2 | pty POSIX por uma API só (`PtySize`, `spawn`, `read`, `write`) | `pty.fork` (POSIX só) → `pty.rs` | feito |
 | M3 | Linux X11 + Vulkan | ambiente de dev | feito |
 | M4 | Linux Wayland | n/a | falta |
 | M5 | Linux backend GL (`WGPU_BACKEND=gl`) | n/a | falta |
-| M6 | Windows 10/11 (D3D12 + ConPTY) | não roda | falta |
-| M7 | macOS arm64 e x86_64 (Metal) | não roda | falta |
-| M8 | CI matriz de build + release por tag | não existe → `.github/workflows/release.yml` + `tools/release.sh` | feito para Linux x86_64/aarch64; macOS/Windows entram com M6/M7 |
-| M9 | Notarização macOS / assinatura Windows | não existe | falta (decisão adiada: ver `PORTABILITY.md`) |
+| M8 | CI matriz de build + release por tag | não existe → `.github/workflows/release.yml` + `tools/release.sh` | feito para Linux x86_64/aarch64 (os alvos macOS/Windows são `M-X`/`M-Y` do [`BACKLOG`](BACKLOG.md)) |
 | M10 | Instalador: comando `bzmux`, menu, ícone, `--uninstall`, `--check` | `install.sh` (pipx + deps de sistema) → `install.sh` (copia 1 binário) | feito |
 
 ## 14. Testes e verificação
@@ -397,9 +394,12 @@ cursor (feito). Scrollbar (`M-M`), busca (`M-D`), seleção por palavra (`M-E`),
 IME (`M-F`), OSC 7/133/52 (`M-R`) e notificação (`M-K`) são atividade nova e
 moram no [`BACKLOG`](BACKLOG.md) — não são fatia de migração.
 
-**F8 — Portas (M4-M9).**
-Wayland, GL, Windows, macOS, CI matriz, artefatos por tag. O named pipe do
-Windows (`M-N`) é atividade nova, no [`BACKLOG`](BACKLOG.md).
+**F8 — Portas Linux (M4-M5).**
+Wayland e o backend GL são o que resta de paridade: o Python roda nos dois (GTK
+não depende de Vulkan). Windows e macOS **saíram do painel** em 2026-11-02: o
+Python nunca rodou lá, então portar não é paridade — é `M-X` e `M-Y` no
+[`BACKLOG`](BACKLOG.md), com a assinatura em `M-Z` e o socket do Windows em
+`M-N`.
 
 **F9 — Splits.** Fora da migração: é `M-J` no [`BACKLOG`](BACKLOG.md).
 

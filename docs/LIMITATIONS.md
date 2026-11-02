@@ -20,17 +20,20 @@ existir, sai daqui e vira item concluído em [`HISTORY.md`](HISTORY.md).
 
 ## Plataforma
 
-- **Linux X11 é o alvo testado.** Wayland, Windows e macOS estão na rota
-  ([`PORTABILITY.md`](PORTABILITY.md)) mas **não foram exercitados**: até
-  passarem por CI, "funciona lá" é expectativa, não fato.
+- **Linux X11 é o alvo testado.** Wayland é paridade pendente (`M4` no painel);
+  Windows e macOS **não são paridade** (o Python nunca rodou lá) e estão na fila
+  como `M-X`/`M-Y` do [`BACKLOG`](BACKLOG.md), com o que cada um exige em
+  [`PORTABILITY.md`](PORTABILITY.md). Até passarem por CI, "funciona lá" é
+  expectativa, não fato.
 - **Posição da janela no Wayland**: o cliente não escolhe onde a janela fica.
   Quando a geometria for persistida (J2/J3), no Wayland só tamanho e maximizado
   são guardados. Não é falta de código, é o protocolo.
 - **Sem backend de software próprio.** Se não houver Vulkan/Metal/D3D12/GL
   utilizável, o app sai com mensagem. Rasterizar por CPU é um renderer inteiro.
 - **Sem assinatura/notarização por enquanto.** macOS 15+ exige "Abrir Mesmo
-  Assim" para binário baixado pela rede. A decisão sobre a conta de developer
-  (US$ 99/ano) está em aberto em [`PORTABILITY.md`](PORTABILITY.md).
+  Assim" para binário baixado pela rede. Está em `M-Z` do
+  [`BACKLOG`](BACKLOG.md) (o custo é a conta de developer, US$ 99/ano), atrás de
+  `M-X`/`M-Y`: sem alvo compilado não há o que assinar.
 
 ## Emulação
 

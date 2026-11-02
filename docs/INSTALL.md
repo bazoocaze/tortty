@@ -106,5 +106,6 @@ deixa o `.tar.gz` + `.sha256` em `dist/`.
 
 Publicar é criar a tag: `git tag -a v0.1.0 -m ... && git push origin v0.1.0`.
 O repositório do download sai de `BZMUX_REPO` (default `bazoocaze/rust_term`).
-macOS e Windows ainda não entram na matriz (M6/M7: ConPTY e assinatura, ver
-`docs/PORTABILITY.md`).
+macOS e Windows ainda não entram na matriz: são alvos novos (`M-X`/`M-Y` do
+`docs/BACKLOG.md`, com a assinatura em `M-Z`), não paridade — o Python nunca
+rodou lá.

@@ -6,6 +6,12 @@ foi tomada e o que resta é engenharia: a rota é **`winit` + `wgpu` + núcleo
 próprio em Rust**, sem toolkit de sistema, sem Pango/cairo/fontconfig e sem
 Python. Ver [`MIGRATION.md`](MIGRATION.md) para o que falta de funcionalidade.
 
+Este documento é a **análise** de cada alvo; ele não é fila. A fila é o
+[`BACKLOG.md`](BACKLOG.md): Windows é `M-X`, macOS é `M-Y` e a assinatura é
+`M-Z`. Os ids `M6`/`M7`/`M9` que aparecem lá embaixo na seção 13 do
+`MIGRATION.md` saíram do painel em 2026-11-02 (o Python nunca rodou fora do
+Linux, logo não era paridade).
+
 ## Por que esta rota responde à pergunta original
 
 O pedido que abriu o experimento: "distribuir entre win/lin/mac é difícil no
