@@ -16,12 +16,12 @@ não por estimativa.
 | área | feito | parcial | falta | não | total |
 |---|---|---|---|---|---|
 | 1. Núcleo: célula, cores, grade | 19 | 1 | 4 | 0 | 24 |
-| 2. Parser: controles, CSI, modos | 30 | 5 | 1 | 0 | 36 |
-| 3. Parser: SGR e OSC | 8 | 0 | 11 | 0 | 19 |
-| 4. Scrollback e visão do histórico | 4 | 1 | 6 | 0 | 11 |
-| 5. Entrada: teclado e protocolo do kitty | 3 | 2 | 15 | 0 | 20 |
-| 6. Entrada: mouse, seleção, clipboard, paste | 0 | 0 | 19 | 0 | 19 |
-| 7. Desenho: fonte, geometria, cores | 8 | 3 | 6 | 0 | 17 |
+| 2. Parser: controles, CSI, modos | 31 | 4 | 1 | 0 | 36 |
+| 3. Parser: SGR e OSC | 11 | 0 | 8 | 0 | 19 |
+| 4. Scrollback e visão do histórico | 8 | 1 | 2 | 0 | 11 |
+| 5. Entrada: teclado e protocolo do kitty | 8 | 0 | 12 | 0 | 20 |
+| 6. Entrada: mouse, seleção, clipboard, paste | 14 | 1 | 5 | 0 | 20 |
+| 7. Desenho: fonte, geometria, cores | 9 | 3 | 5 | 0 | 17 |
 | 8. Imagens do protocolo kitty | 0 | 0 | 16 | 3 | 19 |
 | 9. Janela: abas, workspaces, cromo | 0 | 3 | 17 | 0 | 20 |
 | 10. Janela: ciclo de vida, geometria, estado | 3 | 0 | 8 | 0 | 11 |
@@ -29,9 +29,9 @@ não por estimativa.
 | 12. Debug socket e instrumentação | 7 | 5 | 3 | 0 | 15 |
 | 13. Plataforma e distribuição | 3 | 0 | 6 | 0 | 9 |
 | 14. Testes e verificação | 2 | 2 | 5 | 0 | 9 |
-| **total** | **90** | **27** | **130** | **3** | **250** |
+| **total** | **118** | **25** | **105** | **3** | **251** |
 
-Equivalente pronto: **41.4%** (feito conta 1, parcial conta 0,5). O total serve para ver
+Equivalente pronto: **52.0%** (feito conta 1, parcial conta 0,5). O total serve para ver
 tendência; o que decide o que fazer agora é a linha e a seção 17.
 
 ## Regras deste documento
@@ -385,12 +385,12 @@ Rust (sem linha, para não envelhecer a cada commit).
 | área | feito | parcial | falta | não |
 |---|---|---|---|---|
 | Núcleo: célula, cores, grade | 19 | 1 | 4 | 0 |
-| Parser: controles, CSI, modos | 30 | 5 | 1 | 0 |
-| Parser: SGR e OSC | 8 | 0 | 11 | 0 |
-| Scrollback e visão do histórico | 4 | 1 | 6 | 0 |
-| Entrada: teclado e protocolo do kitty | 3 | 2 | 15 | 0 |
-| Entrada: mouse, seleção, clipboard, paste | 0 | 0 | 19 | 0 |
-| Desenho: fonte, geometria, cores | 8 | 3 | 6 | 0 |
+| Parser: controles, CSI, modos | 31 | 4 | 1 | 0 |
+| Parser: SGR e OSC | 11 | 0 | 8 | 0 |
+| Scrollback e visão do histórico | 8 | 1 | 2 | 0 |
+| Entrada: teclado e protocolo do kitty | 8 | 0 | 12 | 0 |
+| Entrada: mouse, seleção, clipboard, paste | 14 | 1 | 5 | 0 |
+| Desenho: fonte, geometria, cores | 9 | 3 | 5 | 0 |
 | Imagens do protocolo kitty | 0 | 0 | 16 | 3 |
 | Janela: abas, workspaces, cromo | 0 | 3 | 17 | 0 |
 | Janela: ciclo de vida, geometria, estado | 3 | 0 | 8 | 0 |
@@ -398,7 +398,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | Debug socket e instrumentação | 7 | 5 | 3 | 0 |
 | Plataforma e distribuição | 3 | 0 | 6 | 0 |
 | Testes e verificação | 2 | 2 | 5 | 0 |
-| **total** | **90** | **27** | **130** | **3** |
+| **total** | **118** | **25** | **105** | **3** |
 
 ## 16. Melhorias propostas
 
@@ -435,7 +435,9 @@ funcionando e uma linha em `HISTORY.md`.
 allow local, um comando único (`tools/check.sh`) no pre-commit e no CI.
 Pronto quando: `./tools/check.sh` verde do zero.
 
-**F1 — Terminal utilizável de verdade (antes de qualquer cromo).**
+**F1 — Terminal utilizável de verdade (antes de qualquer cromo). FEITA em
+2026-11-02** — critério conferido: `vim` e `mc` com mouse, cópia/cola entre
+duas instâncias, `bat` com itálico/negrito e `dmesg` navegável por teclado.
 F8-F9 (seleção), F12-F15 (clipboard/paste), E4-E6 (Ctrl/Alt/Shift+Tab),
 E9 (dead keys), F1-F6 (mouse reporting), D6-D8 (scroll por teclado + indicador),
 B27 (?2004 payload), C5-C7 (SGR completo), D4-D5 (roda com delta).

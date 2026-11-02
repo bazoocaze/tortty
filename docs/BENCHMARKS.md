@@ -76,14 +76,22 @@ principal, de propósito: um core faz os dois e o frame não espera lock).
 
 ### O número (doom-fire, ponta a ponta, 1200 frames)
 
+Medição de 2026-11-02, depois da F1 (mesma máquina, mesmo protocolo, mesma
+largura de célula). A coluna `draw` de hoje inclui a decoração nova
+(sub/sublinhado por estilo, riscado, overline) e não mudou.
+
 | grade | terminal | fps | MB/s | `draw` por chamada |
 |---|---|---|---|---|
-| 61x18 | **Rust** | **917–968** | **39,4–41,6** | 0,25–0,28 ms |
-| 61x18 | Python (pós-P20) | 113–121 | 4,9–5,2 | 7,8–8,1 ms |
-| 70x21 | **Rust** | **629–667** | **35,8–38,0** | 0,28–0,30 ms |
-| 70x21 | Python (pós-P20) | 62–70 | 3,6–4,0 | 13,6–13,7 ms |
+| 61x18 | **Rust** | **970–1005** | **41,7–43,2** | 0,29–0,33 ms |
+| 61x18 | Python (pós-P20) | 112–143 | 4,8–6,1 | 8,0–8,2 ms |
+| 70x21 | **Rust** | **658–732** | **37,5–41,7** | 0,32–0,34 ms |
+| 70x21 | Python (pós-P20) | 63–72 | 3,6–4,1 | 13,1–13,4 ms |
 
-Ganho: **8–9x (61x18) e 9,5x (70x21)** em fps e MB/s; **29–46x** no desenho.
+Ganho: **7–9x (61x18) e 9–11x (70x21)** em fps e MB/s; **25–46x** no desenho.
+
+Medição anterior (2026-11-01, antes da F1), para referência de deriva: Rust
+917–968 fps / 39,4–41,6 MB/s em 61x18 e 629–667 / 35,8–38,0 em 70x21. A
+diferença é ruído de máquina, não mudança de desenho.
 
 Célula medida nos dois: 13,9–14,1 x 27,3–28,0 px (fonte 13 pt, mesmo DPI
 efetivo). A conversão pt→px do `swash` bate com a do Pango dentro de 2,4% na
@@ -93,7 +101,7 @@ célula (2%) não explica 9x.
 ### O teto agora é o gerador
 
 O doom-fire isolado faz **~55 MB/s** (756 fps a 80x24, medido no repo Python).
-A 39–42 MB/s o Rust está a ~75% do teto da carga. É por isso que o fps cresce
+A 42–43 MB/s o Rust está a ~78% do teto da carga. É por isso que o fps cresce
 9x mas o MB/s não cresce 9x: a tela de 61x18 não tem mais células para consumir;
 quem ainda sobra é o Python do gerador. Medir mais rápido que isso exige gerador
 em C ou reusar buffer — e aí se mede o gerador, não o terminal.
