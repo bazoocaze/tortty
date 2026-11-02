@@ -135,9 +135,9 @@ Rust (sem linha, para não envelhecer a cada commit).
 | C2 | SGR 30-37, 39, 40-47, 49, 90-97, 100-107 | `term.py:528-539` → `term.rs` | feito |
 | C3 | SGR 38;5 / 48;5 (256) e 38;2 / 48;2 (truecolor) | `term.py:540-576` → `term.rs` | feito |
 | C4 | Subparâmetros `:` (`38:2::r:g:b`) | `term.py:500-512,579-591` → `term.rs` | feito |
-| C5 | SGR 3 itálico, 2 faint, 5/6 blink, 9/29 riscado | não existem (`LIMITATIONS.md:44-53`) | falta |
-| C6 | SGR 53/55 overline, 58/59 cor do sublinhado | não existem | falta |
-| C7 | SGR 4:2/4:3/4:4/4:5 (estilos de sublinhado) | `4:x` colapsa em simples (`term.py:518-519`) | falta |
+| C5 | SGR 3 itálico, 2 faint, 5/6 blink, 9/29 riscado | não existem (`LIMITATIONS.md:44-53`) → `cell.rs`, `render.rs` | feito (pisca vira atributo; animar é da G12) |
+| C6 | SGR 53/55 overline, 58/59 cor do sublinhado | não existem → `term.rs` | feito |
+| C7 | SGR 4:2/4:3/4:4/4:5 (estilos de sublinhado) | `4:x` colapsa em simples (`term.py:518-519`) → `render.rs` | feito (curvo é aproximação em 4 retângulos) |
 | C8 | Bold sem "bold as bright" | `view.py:992` → `render.rs` | feito (mesma semântica) |
 | C9 | OSC 0/2 título | `term.py:959-960` → `term.rs` | feito |
 | C10 | OSC 1 (título de ícone) | ignorado no Python | feito (ignorado, igual) |
@@ -224,7 +224,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | G2 | Métrica da célula pelo avanço de `M` (não pela caixa tipográfica) | `view.py:661-680` → `glyph.rs` | feito |
 | G3 | Baseline do layout, não ascent fixa | `view.py:1011-1021` → `glyph.rs` | feito |
 | G4 | Célula inteira (avanço fracionário não "escorrega" a grade) | `view.py:689-704` → `render.rs` | feito |
-| G5 | Negrito (face real ou sintetizado) | `view.py:689-704,992` → `glyph.rs` | feito |
+| G5 | Negrito e itálico (face real; negrito-itálico próprio) | `view.py:689-704,992` → `glyph.rs` | feito (sem síntese: sem face, cai na regular) |
 | G6 | Fallback de glifos por lista de preferência | Pango/fontconfig automático → `glyph.rs` | feito |
 | G7 | Fallback para emoji/CJK | `HISTORY.md` P10 | parcial: usa fallback do `fontdb`; sem emoji colorido |
 | G8 | Ligaduras/shaping | Pango (P9) | falta: `swash` sem shaping complexo |

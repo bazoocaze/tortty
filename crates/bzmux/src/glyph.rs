@@ -25,6 +25,7 @@ pub struct Fonts {
     pub primary: Face,
     pub styled: Option<Face>,
     pub italic: Option<Face>,
+    pub bold_italic: Option<Face>,
     pub fallback: Option<Face>,
     /// Tamanho em pixels (já convertido de pontos).
     pub px: f32,
@@ -52,6 +53,7 @@ pub const FACE_PRIMARY: usize = 0;
 pub const FACE_STYLED: usize = 1;
 pub const FACE_ITALIC: usize = 2;
 pub const FACE_FALLBACK: usize = 3;
+pub const FACE_BOLD_ITALIC: usize = 4;
 
 impl Fonts {
     pub fn new(family: &str, px: f32) -> Result<Fonts, String> {
@@ -82,6 +84,7 @@ impl Fonts {
 
         let styled = query(&db, family, 700, fontdb::Style::Normal).map(|(f, _)| f);
         let italic = query(&db, family, 400, fontdb::Style::Italic).map(|(f, _)| f);
+        let bold_italic = query(&db, family, 700, fontdb::Style::Italic).map(|(f, _)| f);
         let fallback = query(&db, "sans-serif", 400, fontdb::Style::Normal).map(|(f, _)| f);
 
         let font = primary
@@ -102,6 +105,7 @@ impl Fonts {
             primary,
             styled,
             italic,
+            bold_italic,
             fallback,
             px,
             cw,
@@ -115,6 +119,11 @@ impl Fonts {
         match idx {
             FACE_STYLED => self.styled.as_ref().unwrap_or(&self.primary),
             FACE_ITALIC => self.italic.as_ref().unwrap_or(&self.primary),
+            FACE_BOLD_ITALIC => self
+                .bold_italic
+                .as_ref()
+                .or(self.italic.as_ref())
+                .unwrap_or(&self.primary),
             FACE_FALLBACK => self.fallback.as_ref().unwrap_or(&self.primary),
             _ => &self.primary,
         }
@@ -122,17 +131,24 @@ impl Fonts {
 
     /// Face + glyph id para um caractere. `glyph == 0` = .notdef.
     pub fn pick(&self, ch: char, bold: bool, italic: bool) -> (usize, u16) {
-        let mut candidates: [usize; 4] =
-            [FACE_PRIMARY, FACE_FALLBACK, FACE_FALLBACK, FACE_FALLBACK];
-        let mut n = 1usize;
-        if bold && self.styled.is_some() {
-            candidates[n] = FACE_STYLED;
+        // Ordem: a face que casa os dois atributos, depois cada um sozinho.
+        // Antes o negrito vinha primeiro e "negrito itálico" saía em pé.
+        let mut candidates = [FACE_PRIMARY; 5];
+        let mut n = 0usize;
+        if bold && italic && self.bold_italic.is_some() {
+            candidates[n] = FACE_BOLD_ITALIC;
             n += 1;
         }
         if italic && self.italic.is_some() {
             candidates[n] = FACE_ITALIC;
             n += 1;
         }
+        if bold && self.styled.is_some() {
+            candidates[n] = FACE_STYLED;
+            n += 1;
+        }
+        candidates[n] = FACE_PRIMARY;
+        n += 1;
         if self.fallback.is_some() {
             candidates[n] = FACE_FALLBACK;
             n += 1;

@@ -49,3 +49,16 @@ abortar era "se não fizer ≥3× o MB/s do Python e não abrir vim/mc, não pag
   (F5 saía com 1 byte, `alt+left` perdia o modificador). Agora chama o encoder
   real (`keys::encode_parts`). Verificado: `tab`=1 B, `shift+tab`=3 B, `f5`=5 B,
   `alt+left`=6 B.
+
+## 2026-11-02 — SGR completo (C5, C6, C7)
+
+- `Cell` ganhou `ul` (estilo 1–5) e `ul_color`; `flags` passou a ter itálico,
+  faint, pisca, riscado e overline. `SGR 22` desliga negrito **e** faint, como
+  o xterm; `21` é sublinhado duplo (é o que `bat`/`delta` querem).
+- Desenho: itálico usa a face itálica do `fontdb`; negrito-itálico ganhou busca
+  própria (`bold_italic`), porque a ordem antiga de candidatos fazia
+  "negrito+itálico" sair em pé. Curvo/pontilhado/tracejado são feitos de
+  retângulos — não há geometria curva no pipeline.
+- Verificado na tela: 14 combinações de SGR numa sessão só (`negrito`,
+  `faint`, `itálico`, riscado, overline, os 5 sublinhados, `58` em 256 e em
+  truecolor, reverso) + 4 testes novos no núcleo (26 no total).

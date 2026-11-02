@@ -7,7 +7,10 @@
 use std::collections::VecDeque;
 use unicode_width::UnicodeWidthChar;
 
-use crate::cell::{Cell, BOLD, INV, UL, WIDE_CONT};
+use crate::cell::{
+    Cell, BLINK, BOLD, FAINT, INV, ITALIC, OVERLINE, STRIKE, UL_CURLY, UL_DASHED, UL_DOTTED,
+    UL_DOUBLE, UL_NONE, UL_SINGLE, WIDE_CONT,
+};
 use crate::charset::dec_graphics;
 use crate::color::Color;
 use crate::grid::Row;
@@ -34,7 +37,9 @@ struct SavedCursor {
     cy: usize,
     fg: Color,
     bg: Color,
+    ul_color: Color,
     flags: u8,
+    ul: u8,
     origin: bool,
     autowrap: bool,
 }
@@ -46,11 +51,21 @@ impl Default for SavedCursor {
             cy: 0,
             fg: Color::Default,
             bg: Color::Default,
+            ul_color: Color::Default,
             flags: 0,
+            ul: UL_NONE,
             origin: false,
             autowrap: true,
         }
     }
+}
+
+/// Onde a cor estendida vai: texto, fundo ou sublinhado.
+#[derive(Copy, Clone)]
+enum Slot {
+    Fg,
+    Bg,
+    Ul,
 }
 
 #[allow(clippy::struct_excessive_bools)] // estado do VT é booleano por natureza
@@ -67,7 +82,11 @@ pub struct Term {
     pub cy: usize,
     pub fg: Color,
     pub bg: Color,
+    /// `SGR 58`.
+    pub ul_color: Color,
     pub flags: u8,
+    /// Estilo do sublinhado (`UL_*`).
+    pub ul: u8,
     /// Região de scroll (DECSTBM), inclusiva.
     pub top: usize,
     pub bottom: usize,
@@ -128,7 +147,9 @@ impl Term {
             cy: 0,
             fg: Color::Default,
             bg: Color::Default,
+            ul_color: Color::Default,
             flags: 0,
+            ul: UL_NONE,
             top: 0,
             bottom: rows - 1,
             wrap_pending: false,
@@ -180,7 +201,9 @@ impl Term {
             ch: ' ',
             fg: Color::Default,
             bg: self.bg,
+            ul_color: Color::Default,
             flags: 0,
+            ul: UL_NONE,
         }
     }
 
@@ -219,7 +242,9 @@ impl Term {
     fn soft_reset(&mut self) {
         self.fg = Color::Default;
         self.bg = Color::Default;
+        self.ul_color = Color::Default;
         self.flags = 0;
+        self.ul = UL_NONE;
         self.cursor_visible = true;
         self.app_cursor = false;
         self.origin = false;
@@ -293,7 +318,9 @@ impl Term {
             let n = (run.len() - i).min(room);
             let fg = self.fg;
             let bg = self.bg;
+            let ul_color = self.ul_color;
             let flags = self.flags;
+            let ul = self.ul;
             let dec = self.dec_active();
             let cx = self.cx;
             let cy = self.cy;
@@ -301,12 +328,26 @@ impl Term {
             if dec {
                 for k in 0..n {
                     let ch = dec_graphics(run[i + k] as char);
-                    row.cells[cx + k] = Cell { ch, fg, bg, flags };
+                    row.cells[cx + k] = Cell {
+                        ch,
+                        fg,
+                        bg,
+                        ul_color,
+                        flags,
+                        ul,
+                    };
                 }
             } else {
                 for k in 0..n {
                     let ch = run[i + k] as char;
-                    row.cells[cx + k] = Cell { ch, fg, bg, flags };
+                    row.cells[cx + k] = Cell {
+                        ch,
+                        fg,
+                        bg,
+                        ul_color,
+                        flags,
+                        ul,
+                    };
                 }
             }
             self.last_char = run[i + n - 1] as char;
@@ -350,7 +391,9 @@ impl Term {
                 ch,
                 fg: self.fg,
                 bg: self.bg,
+                ul_color: self.ul_color,
                 flags: self.flags,
+                ul: self.ul,
             };
             self.grid[self.cy].cells[self.cx] = cell;
             self.dirty[self.cy] = true;
@@ -377,17 +420,23 @@ impl Term {
         } else {
             ch
         };
+        let pen = (self.fg, self.bg, self.ul_color, self.flags, self.ul);
+        let (fg, bg, ul_color, flags, ul) = pen;
         let first = Cell {
             ch,
-            fg: self.fg,
-            bg: self.bg,
-            flags: self.flags,
+            fg,
+            bg,
+            ul_color,
+            flags,
+            ul,
         };
         let cont = Cell {
             ch: WIDE_CONT,
-            fg: self.fg,
-            bg: self.bg,
-            flags: self.flags,
+            fg,
+            bg,
+            ul_color,
+            flags,
+            ul,
         };
         let cx = self.cx;
         let cy = self.cy;
@@ -518,7 +567,9 @@ impl Term {
             cy: self.cy,
             fg: self.fg,
             bg: self.bg,
+            ul_color: self.ul_color,
             flags: self.flags,
+            ul: self.ul,
             origin: self.origin,
             autowrap: self.autowrap,
         };
@@ -530,7 +581,9 @@ impl Term {
         self.cy = s.cy.min(self.rows - 1);
         self.fg = s.fg;
         self.bg = s.bg;
+        self.ul_color = s.ul_color;
         self.flags = s.flags;
+        self.ul = s.ul;
         self.origin = s.origin;
         self.autowrap = s.autowrap;
         self.wrap_pending = false;
@@ -669,6 +722,7 @@ impl Term {
 
     // ------------------------------------------------------------------ SGR
 
+    /// SGR completo (C1-C8 de `docs/MIGRATION.md`).
     fn sgr(&mut self, body: &[u8]) {
         let mut toks = Toks::new(body);
         while let Some(tok) = toks.next() {
@@ -676,40 +730,65 @@ impl Term {
                 self.sgr_sub(tok);
                 continue;
             }
-            let code = parse_u32(tok);
-            match code {
-                0 => {
-                    self.fg = Color::Default;
-                    self.bg = Color::Default;
-                    self.flags = 0;
-                },
+            match parse_u32(tok) {
+                0 => self.pen_reset(),
                 1 => self.flags |= BOLD,
-                4 => self.flags |= UL,
+                2 => self.flags |= FAINT,
+                3 => self.flags |= ITALIC,
+                4 => self.ul = UL_SINGLE,
+                5 | 6 => self.flags |= BLINK,
                 7 => self.flags |= INV,
-                22 => self.flags &= !BOLD,
-                24 => self.flags &= !UL,
+                9 => self.flags |= STRIKE,
+                // xterm usa 21 como "duplo"; ECMA-48 diria "sem negrito". O
+                // que aparece na prática (bat, delta) é duplo.
+                21 => self.ul = UL_DOUBLE,
+                22 => self.flags &= !(BOLD | FAINT),
+                23 => self.flags &= !ITALIC,
+                24 => self.ul = UL_NONE,
+                25 => self.flags &= !BLINK,
                 27 => self.flags &= !INV,
-                30..=37 => self.fg = Color::Idx((code - 30) as u8),
-                38 => self.extended(&mut toks, true),
+                29 => self.flags &= !STRIKE,
+                30..=37 => self.fg = Color::Idx((parse_u32(tok) - 30) as u8),
+                38 => self.extended(&mut toks, Slot::Fg),
                 39 => self.fg = Color::Default,
-                40..=47 => self.bg = Color::Idx((code - 40) as u8),
-                48 => self.extended(&mut toks, false),
+                40..=47 => self.bg = Color::Idx((parse_u32(tok) - 40) as u8),
+                48 => self.extended(&mut toks, Slot::Bg),
                 49 => self.bg = Color::Default,
-                90..=97 => self.fg = Color::Idx((code - 90 + 8) as u8),
-                100..=107 => self.bg = Color::Idx((code - 100 + 8) as u8),
+                53 => self.flags |= OVERLINE,
+                55 => self.flags &= !OVERLINE,
+                58 => self.extended(&mut toks, Slot::Ul),
+                59 => self.ul_color = Color::Default,
+                90..=97 => self.fg = Color::Idx((parse_u32(tok) - 90 + 8) as u8),
+                100..=107 => self.bg = Color::Idx((parse_u32(tok) - 100 + 8) as u8),
                 _ => {},
             }
         }
     }
 
-    fn extended(&mut self, toks: &mut Toks<'_>, is_fg: bool) {
-        let Some(mode) = toks.next_num() else { return };
-        let color = match mode {
-            5 => match toks.next_num() {
+    fn pen_reset(&mut self) {
+        self.fg = Color::Default;
+        self.bg = Color::Default;
+        self.ul_color = Color::Default;
+        self.flags = 0;
+        self.ul = UL_NONE;
+    }
+
+    fn slot_set(&mut self, slot: Slot, color: Color) {
+        match slot {
+            Slot::Fg => self.fg = color,
+            Slot::Bg => self.bg = color,
+            Slot::Ul => self.ul_color = color,
+        }
+    }
+
+    /// Cor estendida depois de 38/48/58: `;5;n` (256) ou `;2;r;g;b` (truecolor).
+    fn extended(&mut self, toks: &mut Toks<'_>, slot: Slot) {
+        let color = match toks.next_num() {
+            Some(5) => match toks.next_num() {
                 Some(i) if i <= 255 => Color::Idx(i as u8),
                 _ => return,
             },
-            2 => {
+            Some(2) => {
                 let (Some(r), Some(g), Some(b)) =
                     (toks.next_num(), toks.next_num(), toks.next_num())
                 else {
@@ -719,11 +798,7 @@ impl Term {
             },
             _ => return,
         };
-        if is_fg {
-            self.fg = color;
-        } else {
-            self.bg = color;
-        }
+        self.slot_set(slot, color);
     }
 
     /// SGR com subparâmetros (`38:2::r:g:b`, `48:5:196`, `4:3`).
@@ -741,8 +816,12 @@ impl Term {
             return;
         }
         match vals[0] {
-            38 | 48 => {
-                let is_fg = vals[0] == 38;
+            38 | 48 | 58 => {
+                let slot = match vals[0] {
+                    38 => Slot::Fg,
+                    48 => Slot::Bg,
+                    _ => Slot::Ul,
+                };
                 let color = if n >= 2 && vals[1] == 2 {
                     if n < 5 {
                         return;
@@ -754,18 +833,20 @@ impl Term {
                 } else {
                     return;
                 };
-                if is_fg {
-                    self.fg = color;
-                } else {
-                    self.bg = color;
-                }
+                self.slot_set(slot, color);
             },
-            4 => self.flags |= UL,
-            0 => {
-                self.fg = Color::Default;
-                self.bg = Color::Default;
-                self.flags = 0;
+            4 => {
+                // 4:0 tira o sublinhado; 4:1..4:5 escolhem o estilo
+                self.ul = match vals[1] {
+                    0 => UL_NONE,
+                    2 => UL_DOUBLE,
+                    3 => UL_CURLY,
+                    4 => UL_DOTTED,
+                    5 => UL_DASHED,
+                    _ => UL_SINGLE,
+                };
             },
+            0 => self.pen_reset(),
             _ => {},
         }
     }
@@ -1267,9 +1348,7 @@ impl Term {
                 // DECALN: tela cheia de 'E' (usado por teste de alinhamento)
                 let cell = Cell {
                     ch: 'E',
-                    fg: Color::Default,
-                    bg: Color::Default,
-                    flags: 0,
+                    ..Cell::BLANK
                 };
                 for y in 0..self.rows {
                     self.grid[y].cells.fill(cell);
@@ -1572,10 +1651,73 @@ mod tests {
         let c = t.grid[0].cells[0];
         assert_eq!(c.fg, Color::Idx(196));
         assert_eq!(c.flags & BOLD, BOLD);
-        assert_eq!(c.flags & UL, UL);
+        assert_eq!(c.ul, UL_SINGLE);
         t.feed(b"\x1b[0m");
         assert_eq!(t.fg, Color::Default);
         assert_eq!(t.flags, 0);
+    }
+
+    #[test]
+    fn sgr_atributos_de_texto() {
+        let mut t = term();
+        t.feed(b"\x1b[3;2;5;9;53mA");
+        let c = t.grid[0].cells[0];
+        for (bit, nome) in [
+            (ITALIC, "italico"),
+            (FAINT, "faint"),
+            (BLINK, "pisca"),
+            (STRIKE, "riscado"),
+            (OVERLINE, "overline"),
+        ] {
+            assert_eq!(c.flags & bit, bit, "{nome} não subiu");
+        }
+        // 23/22/25/29/55 desligam um a um, sem tocar nos outros
+        t.feed(b"\x1b[23mB");
+        let c = t.grid[0].cells[1];
+        assert_eq!(c.flags & ITALIC, 0);
+        assert_eq!(c.flags & FAINT, FAINT);
+        // 22 desliga negrito E faint (é o que o xterm faz)
+        t.feed(b"\x1b[1;22mC");
+        let c = t.grid[0].cells[2];
+        assert_eq!(c.flags & (BOLD | FAINT), 0);
+    }
+
+    #[test]
+    fn sgr_estilos_de_sublinhado() {
+        let mut t = term();
+        let casos: [(&[u8], usize, u8); 7] = [
+            (b"\x1b[4m", 0, UL_SINGLE),
+            (b"\x1b[4:2m", 1, UL_DOUBLE),
+            (b"\x1b[4:3m", 2, UL_CURLY),
+            (b"\x1b[4:4m", 3, UL_DOTTED),
+            (b"\x1b[4:5m", 4, UL_DASHED),
+            (b"\x1b[21m", 5, UL_DOUBLE),
+            (b"\x1b[4:0m", 6, UL_NONE),
+        ];
+        for (seq, col, esperado) in casos {
+            t.feed(seq);
+            t.feed(&[b'A' + col as u8]);
+            assert_eq!(t.grid[0].cells[col].ul, esperado, "seq {seq:?}");
+        }
+    }
+
+    #[test]
+    fn sgr_cor_do_sublinhado() {
+        let mut t = term();
+        t.feed(b"\x1b[4m\x1b[58;5;196mA");
+        assert_eq!(t.grid[0].cells[0].ul_color, Color::Idx(196));
+        let mut t = term();
+        t.feed(b"\x1b[58:2::1:2:3mB");
+        assert_eq!(t.grid[0].cells[0].ul_color, Color::Rgb(1, 2, 3));
+        t.feed(b"\x1b[59mC");
+        assert_eq!(t.grid[0].cells[1].ul_color, Color::Default);
+        // 0 zera tudo, inclusive o sublinhado e a cor dele
+        let mut t = term();
+        t.feed(b"\x1b[4;58;5;9;3;9m\x1b[0mD");
+        let c = t.grid[0].cells[0];
+        assert_eq!(c.ul, UL_NONE);
+        assert_eq!(c.ul_color, Color::Default);
+        assert_eq!(c.flags, 0);
     }
 
     #[test]

@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
+use bzmux_core::cell::Cell;
 use bzmux_core::{Color, Term};
 use swash::scale::ScaleContext;
 use winit::window::Window;
@@ -274,13 +275,101 @@ impl Renderer {
         });
     }
 
+    /// Glifo + decoração de uma célula. A ordem aqui é a ordem de blend:
+    /// tudo do texto sai antes do cursor.
+    fn draw_cell(&mut self, cell: &Cell, x: usize, py: f32) {
+        use bzmux_core::cell::{
+            BOLD, FAINT, INV, ITALIC, OVERLINE, STRIKE, UL_CURLY, UL_DASHED, UL_DOTTED, UL_DOUBLE,
+        };
+        let cw = self.fonts.cw;
+        let chh = self.fonts.ch;
+        let ascent = self.fonts.ascent;
+        let inv = cell.flags & INV != 0;
+        let fg = if inv { cell.bg } else { cell.fg };
+        let mut c = self.color(fg, FG);
+        // esmaecido: o mesmo tom com menos opacidade (Pango usava alpha 0.55)
+        let mut alpha = if cell.flags & FAINT != 0 { 0.55 } else { 1.0 };
+        if cell.flags & bzmux_core::cell::BLINK != 0 {
+            alpha *= 1.0; // pisca ainda não anima; o atributo é preservado
+        }
+
+        if cell.ch != ' ' {
+            let bold = cell.flags & BOLD != 0;
+            let italic = cell.flags & ITALIC != 0;
+            if let Some(q) = self.glyph_quad(cell.ch, bold, italic) {
+                let gx = x as f32 * cw + q.left as f32;
+                let gy = py + ascent - q.top as f32;
+                self.instances.push(Instance {
+                    rect: [gx, gy, q.w as f32, q.h as f32],
+                    color: [c[0], c[1], c[2], alpha],
+                    uv: q.uv,
+                });
+            }
+        }
+
+        // cor da decoração: a do texto, salvo SGR 58 (que não inverte)
+        if cell.ul_color != Color::Default {
+            c = self.color(cell.ul_color, FG);
+        }
+        if cell.ul != bzmux_core::cell::UL_NONE {
+            let base = py + ascent + 1.0;
+            let line = |r: &mut Self, x0: f32, w: f32, y: f32, h: f32| {
+                r.push_rect(x0, y, w, h, [c[0], c[1], c[2], 1.0]);
+            };
+            match cell.ul {
+                UL_DOUBLE => {
+                    line(self, x as f32 * cw, cw, base, 1.0);
+                    line(self, x as f32 * cw, cw, base + 2.0, 1.0);
+                },
+                UL_CURLY => {
+                    // aproximação senoidal em 4 pedaços; sem geometria curva
+                    // no pipeline de retângulos
+                    for k in 0..4 {
+                        let dy = if k % 2 == 0 { 0.0 } else { 1.5 };
+                        line(
+                            self,
+                            x as f32 * cw + k as f32 * cw / 4.0,
+                            cw / 4.0,
+                            base + dy,
+                            1.5,
+                        );
+                    }
+                },
+                UL_DOTTED => {
+                    let mut dx = 0.0;
+                    while dx + 1.0 <= cw {
+                        line(self, x as f32 * cw + dx, 1.0, base, 1.5);
+                        dx += 3.0;
+                    }
+                },
+                UL_DASHED => {
+                    let mut dx = 0.0;
+                    while dx + 2.0 <= cw {
+                        line(self, x as f32 * cw + dx, 2.0, base, 1.5);
+                        dx += 4.0;
+                    }
+                },
+                _ => line(self, x as f32 * cw, cw, base, 1.0), // UL_SINGLE
+            }
+        }
+
+        // riscado no meio da altura de x (não no meio da célula: o vazio do
+        // descendente deixaria o risco alto demais)
+        if cell.flags & STRIKE != 0 {
+            let y = py + ascent - chh * 0.18;
+            self.push_rect(x as f32 * cw, y, cw, 1.0, [c[0], c[1], c[2], 1.0]);
+        }
+        if cell.flags & OVERLINE != 0 {
+            self.push_rect(x as f32 * cw, py + 1.0, cw, 1.0, [c[0], c[1], c[2], 1.0]);
+        }
+    }
+
     /// Monta as instâncias do frame. Público para o teste de sanidade do formato.
     #[allow(clippy::too_many_lines)] // um laço por categoria, na ordem de blend
     pub fn build(&mut self, term: &Term, view_off: usize) {
         self.instances.clear();
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
-        let ascent = self.fonts.ascent;
         let cols = term.cols;
         let wide = term.in_alt_screen();
         let _ = wide;
@@ -332,41 +421,15 @@ impl Renderer {
                 x = end;
             }
 
-            // 2) glifos (segunda passada: nada de alternar fundo e texto)
+            // 2) glifos e decoração (segunda passada: nada de alternar fundo
+            // e texto). O sublinhado é por célula porque o estilo de 4:x é
+            // desenhado no pedaço, não na largura do run.
             for x in 0..cols.min(row.cells.len()) {
                 let cell = row.cells[x];
                 if cell.is_cont() {
                     continue;
                 }
-                let (bg, fg) = if cell.flags & bzmux_core::cell::INV != 0 {
-                    (cell.fg, cell.bg)
-                } else {
-                    (cell.bg, cell.fg)
-                };
-                let _ = bg;
-                let bold = cell.flags & bzmux_core::cell::BOLD != 0;
-                if cell.ch != ' ' {
-                    if let Some(q) = self.glyph_quad(cell.ch, bold, false) {
-                        let c = self.color(fg, FG);
-                        let gx = x as f32 * cw + q.left as f32;
-                        let gy = py + ascent - q.top as f32;
-                        self.instances.push(Instance {
-                            rect: [gx, gy, q.w as f32, q.h as f32],
-                            color: [c[0], c[1], c[2], 1.0],
-                            uv: q.uv,
-                        });
-                    }
-                }
-                if cell.flags & bzmux_core::cell::UL != 0 {
-                    let c = self.color(fg, FG);
-                    self.push_rect(
-                        x as f32 * cw,
-                        py + ascent + 1.0,
-                        cw,
-                        1.0,
-                        [c[0], c[1], c[2], 1.0],
-                    );
-                }
+                self.draw_cell(&cell, x, py);
             }
         }
 
