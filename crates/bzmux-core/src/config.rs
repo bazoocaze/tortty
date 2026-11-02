@@ -27,6 +27,11 @@ shell
 font_family Monospace
 font_size 12
 
+# ligaduras tipográficas: off (nenhuma), standard (liga/calt: fi, ->, !=) ou
+# all (standard + discricionárias). Só aparece em fonte que as tenha; o shaping
+# de script (árabe, devanagari) roda sempre, com qualquer valor.
+ligatures standard
+
 # cursor: block, beam ou underline; o pisca é on/off (CSI 6 q de um app vence)
 cursor_shape block
 cursor_blink off
@@ -78,6 +83,22 @@ pub enum Bell {
     None,
     Visual,
     Audible,
+}
+
+/// Ligaduras tipográficas. Só tem efeito em fonte que as tenha (Fira Code,
+/// JetBrains Mono…): o desenho não funde célula nenhuma, pede ao HarfBuzz o
+/// glifo de cada célula com o contexto do trecho.
+///
+/// `Off` desliga **as ligaduras**, não o shaping: árabe e devanágari dependem do
+/// shaping para serem legíveis e continuam sendo shapeados (é o que o Pango
+/// fazia no Python).
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum Ligatures {
+    Off,
+    #[default]
+    Standard,
+    /// `standard` + discricionárias (`dlig`, `clig`).
+    All,
 }
 
 /// Forma do cursor quando o app não pediu outra por `CSI 6 q`.
@@ -160,6 +181,7 @@ pub struct Config {
     pub shell: Option<String>,
     pub font_family: String,
     pub font_size: f32,
+    pub ligatures: Ligatures,
     pub cursor_shape: CursorShape,
     pub cursor_blink: bool,
     pub scrollback: usize,
@@ -184,6 +206,7 @@ const KNOWN: &[&str] = &[
     "shell",
     "font_family",
     "font_size",
+    "ligatures",
     "cursor_shape",
     "cursor_blink",
     "scrollback",
@@ -233,6 +256,7 @@ impl Config {
             shell: None,
             font_family: "monospace".to_string(),
             font_size: 12.0,
+            ligatures: Ligatures::Standard,
             cursor_shape: CursorShape::Block,
             cursor_blink: false,
             scrollback: 1000,
@@ -328,6 +352,14 @@ impl Config {
                         "{v} fora da faixa {FONT_MIN}..{FONT_MAX} pontos"
                     ))),
                     Err(_) => errors.push(bad(format!("\"{value}\" não é número"))),
+                },
+                "ligatures" => match value {
+                    "off" => cfg.ligatures = Ligatures::Off,
+                    "standard" => cfg.ligatures = Ligatures::Standard,
+                    "all" => cfg.ligatures = Ligatures::All,
+                    other => {
+                        errors.push(bad(format!("\"{other}\" não é off, standard nem all")));
+                    },
                 },
                 "cursor_shape" => match value {
                     "block" => cfg.cursor_shape = CursorShape::Block,
@@ -479,6 +511,34 @@ mod tests {
         assert_eq!(cfg.fg, Color::Rgb(0x11, 0x22, 0x33));
         // #abc expande como #aabbcc
         assert_eq!(cfg.bg, Color::Rgb(0xaa, 0xbb, 0xcc));
+    }
+
+    /// Os três valores de `ligatures` valem e o padrão é `standard` (ligadura
+    /// ligada, como no kitty); valor errado não derruba o arquivo, só a linha.
+    #[test]
+    fn ligaduras_por_nome() {
+        assert_eq!(Config::parse("").0.ligatures, Ligatures::Standard);
+        for (texto, esperado) in [
+            ("off", Ligatures::Off),
+            ("standard", Ligatures::Standard),
+            ("all", Ligatures::All),
+        ] {
+            let (cfg, errs) = Config::parse(&format!("ligatures {texto}\n"));
+            assert!(errs.is_empty(), "{texto}: {errs:?}");
+            assert_eq!(cfg.ligatures, esperado, "{texto}");
+        }
+        let (cfg, errs) = Config::parse("ligatures talvez\nfont_size 14\n");
+        assert_eq!(
+            cfg.ligatures,
+            Ligatures::Standard,
+            "linha ruim mantém o padrão"
+        );
+        assert!(
+            (cfg.font_size - 14.0).abs() < f32::EPSILON,
+            "o resto do arquivo vale"
+        );
+        assert_eq!(errs.len(), 1);
+        assert_eq!(errs[0].key, "ligatures");
     }
 
     #[test]

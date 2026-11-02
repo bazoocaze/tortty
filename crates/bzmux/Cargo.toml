@@ -22,6 +22,7 @@ portable-pty = "0.9"
 serde_json = "1"
 # só texto: `default-features = false` tira o suporte a imagem (tiff/png/jpeg)
 arboard = { version = "3.7", default-features = false }
+rustybuzz = "0.20.1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

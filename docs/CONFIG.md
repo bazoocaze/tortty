@@ -24,6 +24,7 @@ sobrescrevem o arquivo.
 | `shell` | vazio | programa inicial das abas; vazio = `$SHELL` (o `--cmd` vence) |
 | `font_family` | `Monospace` | família da fonte; só monoespaçada (a célula é o avanço do "M") |
 | `font_size` | `12` | tamanho em **pontos** (4..96); o DPI converte para pixel |
+| `ligatures` | `standard` | ligaduras da fonte: `off`, `standard` (`liga`/`calt`: `fi`, `->`, `!=`) ou `all` (`standard` + discricionárias). Só aparece em fonte que as tenha (Fira Code, JetBrains Mono); não funde célula — a célula continua sendo um caractere |
 | `cursor_shape` | `block` | `block`, `beam` ou `underline`; `CSI 6 q` de um app vence enquanto durar |
 | `cursor_blink` | `off` | cursor piscando (500 ms por fase); tecla ou colagem deixa o cursor aceso na hora. `CSI 6 q` com forma par (4/6) pede cursor fixo e vence enquanto o programa quiser |
 | `scrollback` | `10000` | linhas de histórico acima da tela (teto 100000) |
@@ -43,6 +44,11 @@ muda o significado das cores que o programa escolheu — o `mc` azul vira outra
 coisa.
 
 Booleano aceita `on/yes/true/1` e `off/no/false/0`.
+
+`ligatures off` desliga as **ligaduras**, não o shaping: árabe e devanágari
+continuam sendo shapeados (senão o texto deixa de ser legível). Cursor e
+seleção sempre quebram a ligadura da célula onde estão — sem isso o cursor
+pintaria no meio de um glifo que ocupa mais de uma célula.
 
 ## Erro é por linha
 
