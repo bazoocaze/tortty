@@ -4,6 +4,7 @@ mod app;
 mod atlas;
 mod cli;
 mod clip;
+mod dano;
 mod debugsock;
 mod frame;
 mod glyph;

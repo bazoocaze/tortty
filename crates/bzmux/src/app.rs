@@ -167,6 +167,11 @@ pub fn logln(msg: &str) {
 /// de cada uma continua lendo; só o que é "olhar" (rolagem, seleção) fica
 /// parado na aba que não está ativa.
 pub struct Tab {
+    /// Identidade da aba, monotônica e única na execução. O dano por linha
+    /// (A17/G17) guarda instâncias por linha do `Renderer`, então trocar de aba
+    /// com a mesma geometria não pode reaproveitar linha nenhuma — e índice não
+    /// serve: fechar e abrir aba volta o índice, a identidade não.
+    pub id: u64,
     pub term: Term,
     pub pty: Option<Pty>,
     pub rx: Option<Receiver<Vec<u8>>>,
@@ -189,7 +194,9 @@ pub struct Tab {
 
 impl Tab {
     fn new(cols: usize, rows: usize) -> Tab {
+        static PROXIMA: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Tab {
+            id: PROXIMA.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             term: Term::new(cols, rows),
             pty: None,
             rx: None,
@@ -1578,6 +1585,7 @@ impl App {
             None
         };
         let frame = crate::render::Frame {
+            aba: self.tabs[self.active].id,
             term: &self.tabs[self.active].term,
             view_off: self.tabs[self.active].view_off,
             sel: self.tabs[self.active].sel,
@@ -1586,16 +1594,29 @@ impl App {
             tabs: tabs.as_deref(),
             sidebar: sidebar.as_deref(),
         };
-        let Some(renderer) = self.renderer.as_mut() else {
-            return;
+        let desenhou = {
+            let Some(renderer) = self.renderer.as_mut() else {
+                return;
+            };
+            match renderer.render(&frame) {
+                crate::render::FrameOutcome::Drawn => true,
+                crate::render::FrameOutcome::Reconfigure => {
+                    let (w, h) = (renderer.config.width, renderer.config.height);
+                    renderer.resize(w, h);
+                    false
+                },
+                crate::render::FrameOutcome::Fatal => {
+                    self.exiting = true;
+                    false
+                },
+                crate::render::FrameOutcome::Skipped => false,
+            }
         };
-        match renderer.render(&frame) {
-            crate::render::FrameOutcome::Reconfigure => {
-                let (w, h) = (renderer.config.width, renderer.config.height);
-                renderer.resize(w, h);
-            },
-            crate::render::FrameOutcome::Fatal => self.exiting = true,
-            _ => {},
+        // dano consumido **só** quando o frame foi mesmo apresentado: um frame
+        // pulado (oclusão/timeout) não pode apagar a marca, senão a linha suja
+        // fica velha na tela para sempre (A17/G17)
+        if desenhou {
+            self.tabs[self.active].term.clear_damage();
         }
     }
 
@@ -1695,6 +1716,13 @@ impl App {
                     "font": match &self.renderer { Some(r) => r.fonts.family.clone(), None => String::new() },
                     "font_px": match &self.renderer { Some(r) => r.fonts.px, None => 0.0 },
                     "tabs": self.tabs.len(),
+                    // dano (A17/G17): quantas linhas/células foram remontadas
+                    // desde o início. É a prova de que o desenho parcial
+                    // funciona — sem depender de olhar a tela.
+                    "draws": self.renderer.as_ref().map_or(0, |r| r.draws),
+                    "last_frame": self.renderer.as_ref().map_or("", |r| r.ultimo),
+                    "rows_built": self.renderer.as_ref().map_or(0, |r| r.linhas_remontadas),
+                    "cells_built": self.renderer.as_ref().map_or(0, |r| r.celulas_remontadas),
                     // imagens do kitty: sem isto não há como conferir a
                     // colocação sem olhar a tela
                     "images": self.tabs[self.active].term.graphics.images().len(),

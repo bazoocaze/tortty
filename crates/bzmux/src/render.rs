@@ -98,6 +98,21 @@ pub struct Renderer {
     img_sampler: wgpu::Sampler,
     /// Textura por imagem (id → bind group). O bind group segura a textura viva.
     img_cache: HashMap<u32, ImgTex>,
+    /// Instâncias da grade, guardadas **por linha**: só a linha suja é
+    /// remontada (A17/G17). A lista final (`instances`) é a concatenação delas
+    /// mais as imagens, o cromo e o cursor, na ordem de blend.
+    por_linha: Vec<Vec<Instance>>,
+    /// Assinatura do último frame: o que mudou de tela inteira (ver `dano`).
+    assinatura: crate::dano::Assinatura,
+    /// Geração do tema: sobe a cada `apply_theme` e força rebuild completo.
+    tema_gen: u64,
+    /// Contadores de `state` (prof): prova do dano sem olhar a tela.
+    pub draws: u64,
+    /// Resultado do último frame ("drawn"/"skipped"/"occluded"...): a primeira
+    /// pergunta quando a janela não atualiza é se o frame saiu.
+    pub ultimo: &'static str,
+    pub linhas_remontadas: u64,
+    pub celulas_remontadas: u64,
 }
 
 struct ImgTex {
@@ -384,11 +399,21 @@ impl Renderer {
             img_layout,
             img_sampler,
             img_cache: HashMap::new(),
+            por_linha: Vec::new(),
+            assinatura: crate::dano::Assinatura::default(),
+            tema_gen: 0,
+            draws: 0,
+            ultimo: "nenhum",
+            linhas_remontadas: 0,
+            celulas_remontadas: 0,
         })
     }
 
     /// Tema novo sem recriar a GPU (auto-reload e `OSC 4/10/11/12`).
     pub fn apply_theme(&mut self, t: &Theme) {
+        // qualquer coisa que mude cor de célula invalida o dano: as linhas
+        // limpas ficariam com a paleta velha
+        self.tema_gen = self.tema_gen.wrapping_add(1);
         self.palette = t.palette256();
         self.fg = t.rgb(t.fg, FG);
         self.bg = t.rgb(t.bg, BG);
@@ -968,6 +993,7 @@ impl Renderer {
 
     pub fn build(&mut self, f: &Frame<'_>) {
         let Frame {
+            aba,
             term,
             view_off,
             sel,
@@ -976,71 +1002,60 @@ impl Renderer {
             tabs,
             sidebar,
         } = *f;
-        self.instances.clear();
-        let cw = self.fonts.cw;
-        let chh = self.fonts.ch;
         let cols = term.cols;
-        let wide = term.in_alt_screen();
-        let _ = wide;
         // retângulo da seleção na visão (preso à tela); fora dela nada muda
         let sel = sel.and_then(|s| s.visible(term, view_off));
-
         let rows = term.visible_rows(view_off);
-        for (y, row) in rows.iter().enumerate() {
-            let py = y as f32 * chh;
 
-            // 1) fundos, agrupados por cor (uma instância por trecho). O
-            // inverso (SGR 7) e a seleção usam a mesma regra: troca fg/bg e
-            // resolve o default pelo *outro* extremo (senão seleção em célula
-            // sem cor não apareceria).
-            let mut x = 0usize;
-            while x < cols {
-                let cell = match row.cells.get(x) {
-                    Some(c) => *c,
-                    None => break,
-                };
-                let swap = is_swap(&cell, sel, y, x);
-                let bg = if swap { cell.fg } else { cell.bg };
-                let mut end = x + 1;
-                while end < cols {
-                    let Some(c2) = row.cells.get(end) else { break };
-                    if is_swap(c2, sel, y, end) != swap {
-                        break;
-                    }
-                    let bg2 = if swap { c2.fg } else { c2.bg };
-                    if bg2 != bg {
-                        break;
-                    }
-                    end += 1;
-                }
-                if swap || bg != Color::Default {
-                    let c = self.color(bg, if swap { self.fg } else { self.bg });
-                    self.push_rect(
-                        x as f32 * cw,
-                        py,
-                        (end - x) as f32 * cw,
-                        chh,
-                        [c[0], c[1], c[2], 1.0],
-                    );
-                }
-                x = end;
+        // A17/G17: quais linhas remontar. `blink` só entra na assinatura se
+        // houver célula com SGR 5 à vista — o pisca do cursor não mora aqui.
+        let assinatura = crate::dano::Assinatura {
+            aba,
+            cols,
+            rows: rows.len(),
+            view_off,
+            sel,
+            blink: blink.fase && Self::tem_blink(&rows),
+            tema: self.tema_gen,
+            fg: self.fg,
+            bg: self.bg,
+        };
+        let dano = crate::dano::decide(
+            &assinatura,
+            &mut self.assinatura,
+            term.dirty_all,
+            &term.dirty,
+            rows.len(),
+        );
+        if self.por_linha.len().ne(&rows.len()) {
+            // grade mudou de tamanho: nada de reaproveitar faixa antiga
+            self.assinatura = assinatura;
+            self.por_linha = vec![Vec::new(); rows.len()];
+            for (y, row) in rows.iter().enumerate() {
+                self.por_linha[y] = self.linha(row, y, cols, sel, blink);
             }
+        } else {
+            match dano {
+                crate::dano::Dano::Tudo => {
+                    for (y, row) in rows.iter().enumerate() {
+                        self.por_linha[y] = self.linha(row, y, cols, sel, blink);
+                    }
+                },
+                crate::dano::Dano::Linhas(v) => {
+                    for y in v {
+                        if let Some(row) = rows.get(y) {
+                            self.por_linha[y] = self.linha(row, y, cols, sel, blink);
+                        }
+                    }
+                },
+            }
+        }
 
-            // 2) glifos e decoração (segunda passada: nada de alternar fundo
-            // e texto). O sublinhado é por célula porque o estilo de 4:x é
-            // desenhado no pedaço, não na largura do run.
-            for x in 0..cols.min(row.cells.len()) {
-                let cell = row.cells[x];
-                if cell.is_cont() {
-                    continue;
-                }
-                // SGR 5: na fase apagada a célula não é desenhada — o fundo da
-                // linha já foi pintado, então "apagar" é só não escrever
-                if cell.flags & bzmux_core::cell::BLINK != 0 && !blink.fase {
-                    continue;
-                }
-                self.draw_cell(&cell, x, py, is_swap(&cell, sel, y, x));
-            }
+        // lista final na ordem de blend: grade (por linha) → imagens → cromo
+        // → cursor → badge → toast
+        self.instances.clear();
+        for linha in &self.por_linha {
+            self.instances.extend_from_slice(linha);
         }
 
         // aqui acaba o texto da grade: as imagens (H1–H13) entram por cima
@@ -1075,20 +1090,121 @@ impl Renderer {
         }
     }
 
+    /// `true` se alguma célula visível tem SGR 5 (só aí a fase do pisca obriga
+    /// a remontar a grade).
+    fn tem_blink(rows: &[&bzmux_core::grid::Row]) -> bool {
+        rows.iter().any(|r| {
+            r.cells
+                .iter()
+                .any(|c| c.flags & bzmux_core::cell::BLINK != 0)
+        })
+    }
+
+    /// Monta as instâncias de uma linha sem tocar na lista do frame.
+    fn linha(
+        &mut self,
+        row: &bzmux_core::grid::Row,
+        y: usize,
+        cols: usize,
+        sel: Option<(usize, usize, usize, usize)>,
+        blink: Blink,
+    ) -> Vec<Instance> {
+        let guardado = std::mem::take(&mut self.instances);
+        self.instances.clear();
+        self.pinta_linha(row, y, cols, sel, blink);
+        std::mem::replace(&mut self.instances, guardado)
+    }
+
+    /// Desenha **uma** linha da grade (A17/G17: só roda para as linhas sujas).
+    fn pinta_linha(
+        &mut self,
+        row: &bzmux_core::grid::Row,
+        y: usize,
+        cols: usize,
+        sel: Option<(usize, usize, usize, usize)>,
+        blink: Blink,
+    ) {
+        let cw = self.fonts.cw;
+        let chh = self.fonts.ch;
+        let py = y as f32 * chh;
+
+        // 1) fundos, agrupados por cor (uma instância por trecho). O inverso
+        // (SGR 7) e a seleção usam a mesma regra: troca fg/bg e resolve o
+        // default pelo *outro* extremo (senão seleção em célula sem cor não
+        // apareceria).
+        let mut x = 0usize;
+        while x < cols {
+            let cell = match row.cells.get(x) {
+                Some(c) => *c,
+                None => break,
+            };
+            let swap = is_swap(&cell, sel, y, x);
+            let bg = if swap { cell.fg } else { cell.bg };
+            let mut end = x + 1;
+            while end < cols {
+                let Some(c2) = row.cells.get(end) else { break };
+                if is_swap(c2, sel, y, end) != swap {
+                    break;
+                }
+                let bg2 = if swap { c2.fg } else { c2.bg };
+                if bg2 != bg {
+                    break;
+                }
+                end += 1;
+            }
+            if swap || bg != Color::Default {
+                let c = self.color(bg, if swap { self.fg } else { self.bg });
+                self.push_rect(
+                    x as f32 * cw,
+                    py,
+                    (end - x) as f32 * cw,
+                    chh,
+                    [c[0], c[1], c[2], 1.0],
+                );
+            }
+            x = end;
+        }
+
+        // 2) glifos e decoração (segunda passada: nada de alternar fundo e
+        // texto). O sublinhado é por célula porque o estilo de 4:x é desenhado
+        // no pedaço, não na largura do run.
+        for x in 0..cols.min(row.cells.len()) {
+            let cell = row.cells[x];
+            if cell.is_cont() {
+                continue;
+            }
+            // SGR 5: na fase apagada a célula não é desenhada — o fundo da
+            // linha já foi pintado, então "apagar" é só não escrever
+            if cell.flags & bzmux_core::cell::BLINK != 0 && !blink.fase {
+                continue;
+            }
+            self.draw_cell(&cell, x, py, is_swap(&cell, sel, y, x));
+        }
+        self.linhas_remontadas = self.linhas_remontadas.saturating_add(1);
+        self.celulas_remontadas = self.celulas_remontadas.saturating_add(cols as u64);
+    }
+
     pub fn render(&mut self, f: &Frame<'_>) -> FrameOutcome {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                self.ultimo = "skipped (timeout/occluded)";
                 return FrameOutcome::Skipped;
             },
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                self.ultimo = "reconfigure";
                 return FrameOutcome::Reconfigure;
             },
-            wgpu::CurrentSurfaceTexture::Validation => return FrameOutcome::Fatal,
+            wgpu::CurrentSurfaceTexture::Validation => {
+                self.ultimo = "fatal";
+                return FrameOutcome::Fatal;
+            },
         };
 
         let t0 = std::time::Instant::now();
+        self.draws = self.draws.saturating_add(1);
+        self.ultimo = "drawn";
         self.build(f);
         self.atlas.flush(&self.queue);
 
@@ -1260,6 +1376,8 @@ pub struct TabInfo {
 /// Tudo que um frame precisa, num pacote só: a assinatura de `build`/`render`
 /// crescia um parâmetro por fatia (abas, sidebar, toast...).
 pub struct Frame<'a> {
+    /// Identidade da aba desenhada (ver `dano`).
+    pub aba: u64,
     pub term: &'a Term,
     pub view_off: usize,
     pub sel: Option<Span>,
