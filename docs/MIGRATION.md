@@ -44,7 +44,7 @@ tendência; o que decide o que fazer agora é a linha e a seção 17.
    "verificação" e registrar uma linha em `HISTORY.md` com a data. O item não
    sai daqui: o painel conta o que está feito, não o que sobrou.
 4. **Item novo** (descoberto no meio do caminho) entra como linha nova na área,
-   não como parágrafo. Se o Python não tem, é **melhoria** (seção 16), não
+   não como parágrafo. Se o Python não tem, é **melhoria** (`BACKLOG.md`), não
    migração.
 5. **Ordem de execução** não mora nas tabelas: mora na seção 17. Marcar `feito`
    fora de ordem é normal; mudar a ordem é decisão registrada.
@@ -403,27 +403,11 @@ Rust (sem linha, para não envelhecer a cada commit).
 
 ## 16. Melhorias propostas
 
-O que o Python **não** faz e que esta arquitetura torna barato. Cada uma tem
-id, o motivo e o custo estimado; nenhuma é requisito de paridade. As que já
-estão implementadas aparecem nas tabelas marcadas `(**melhoria**)`.
-
-| id | melhoria | por que | custo |
-|---|---|---|---|
-| M-A | Render usar o dano por linha (A17/G17) | hoje monta instância de todas as linhas; a 61×18 custa 0,28 ms, mas em 4K/250×70 o custo passa a ser proporcional à tela, não à atividade | baixo: o core já marca `dirty[]`; falta só filtrar no `build` e manter buffer persistente |
-| M-B | SGR completo: itálico, faint, riscado, blink, overline, cor do sublinhado, estilos de sublinhado (C5-C7) | `git diff`, `bat`, `delta`, `lsd` usam 9 e 4:x; no Python o risco simplesmente não aparece | baixo: 1 instância nova por estilo + face itálica no atlas |
-| M-C | OSC 8 hyperlink clicável com Ctrl+clique (C14/F17) | links em `dmesg`, compiladores e `ls --hyperlink`; o Python consome e joga fora | baixo: um `u32` por célula + hover |
-| M-D | Busca no scrollback com realce (D11) | hoje só se acha rolando; em log grande é a função que falta | médio: índice por linha ou varredura sob demanda |
-| M-E | Seleção por palavra/linha e retangular (F10/F11) | copiar um caminho de log hoje exige arrasto preciso | baixo |
-| M-F | IME e composição (E11) | o Python não tem `IMContext`; quem digita CJK ou usa compose não consegue | médio: `winit::Ime` + pré-edição na view |
-| M-G | Kitty keyboard completo, incluindo flag 4 (E12-E19) | paridade com o que o próprio bzmux promete (kitty/ghostty) e correção do `:2` (repeat) que o Gdk não entrega | médio |
-| M-H | Config v2 com paleta e remapeamento de atalhos (K20/K21) | o Python só tem 10 opções e cores fixas no código | baixo-médio: parser pronto, falta o merge de paleta |
-| M-I | Abas/workspaces persistentes (I18) | o Python perde o layout ao fechar; com `state.json` já existindo, é JSON a mais | baixo |
-| M-J | Splits (I19) | pedido registrado no P39 do Python; aqui cada split é uma view no mesmo `wgpu` | alto |
-| M-K | Notificação OSC 9/777 + urgency (C18) | "terminou o build" sem precisar olhar a janela | baixo |
-| M-L | Imagens: z-index, placement id, placeholder, recorte de origem (H14-H16) | o Python mostra imagem sempre por cima e sem controle fino | médio |
-| M-M | Scrollbar visível e arrastável (D9) | hoje só roda e Shift+Pg (que também falta) | baixo: retângulo + estado |
-| M-N | Transporte de socket no Windows (L14) | o `benchrun.py` e a automação precisam funcionar lá também | baixo |
-| M-O | `--selftest` no binário (N6) | dá um comando único de verificação sem build de teste, como no Python | feito |
+**Fora do escopo deste documento.** Melhoria que vai além da paridade mora em
+[`BACKLOG.md`](BACKLOG.md), com id `M-*`, gatilho e custo; aqui fica só o que a
+migração pede. O que dessas melhorias já foi implementado aparece nas tabelas
+acima marcado `(**melhoria**)`, porque virou capacidade do programa — a lista,
+porém, é uma só, e não é esta.
 
 ## 17. Ordem de execução
 
@@ -471,13 +455,14 @@ Kitty keyboard, mouse em pixels, hyperlink clicável.
 **F6 — Imagens do kitty (H1-H13).**
 Pronto quando `icat` e `kitten icat` desenham, rolam junto e são podadas.
 
-**F7 — Qualidade de vida (D9, D11, F10-F11, G12, E11, C16-C18, M-K).**
+**F7 — Qualidade de vida (D9, D11, F10-F11, G12, E11, C16-C18; `M-K` no
+[`BACKLOG`](BACKLOG.md)).**
 Scrollbar, busca, seleção por palavra, cursor piscando, IME, OSC 7/133.
 
 **F8 — Portas (M4-M9, L14).**
 Wayland, GL, Windows, macOS, CI matriz, artefatos por tag.
 
-**F9 — Splits (M-J).** Só depois de F4 e F7.
+**F9 — Splits (`M-J`, [`BACKLOG`](BACKLOG.md)).** Só depois de F4 e F7.
 
 ### 17.1 Regras de avanço
 

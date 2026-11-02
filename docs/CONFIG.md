@@ -65,4 +65,4 @@ cores do arquivo substituem o que o programa tinha pedido).
 
 Paleta como tema completo (16 cores + as 240 do cubo), remapeamento de atalhos
 e `include` de outro arquivo estão na fila (`docs/MIGRATION.md`, itens K20/K21 e
-a melhoria M-H).
+a melhoria M-H do `docs/BACKLOG.md`).

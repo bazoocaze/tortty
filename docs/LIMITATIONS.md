@@ -10,8 +10,8 @@ existir, sai daqui e vira item concluído em [`HISTORY.md`](HISTORY.md).
 - **Um usuário, uma máquina.** Sem multiplexação de sessão, sem servidor, sem
   reconexão, sem daemon. Fechar a janela termina tudo.
 - **Um terminal, não um ambiente de janelas.** Sem splits nesta fase
-  (`MIGRATION.md` M-J), sem abas persistentes até a F4, sem gerenciador de
-  layout.
+  (`BACKLOG.md` M-J), sem gerenciador de layout; abas e workspaces existem,
+  mas não sobrevivem ao fechar (I18/M-I).
 - **Só o protocolo de imagem do kitty.** Sem sixel, sem iTerm2 inline, sem
   `t=f`/`t=t`/`t=s` (arquivo, temp, memória compartilhada) e sem animação
   (`a=f`/`a=a`). A imagem tem que vir no escape base64.

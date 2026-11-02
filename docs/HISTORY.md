@@ -335,3 +335,22 @@ primeiro cartão começa em `y = -bar`, na linha 1, ao lado dela. `card_at` foi
 junto: o topo do cartão é `pad`, não `pad + bar`. A ordem das consultas importa
 — `card_at` antes de `tab_at`, senão o clique no cartão da linha 1 virava
 clique na aba.
+
+## 2026-11-02 — o backlog ganhou o que não é migração
+
+Os dois documentos faziam o mesmo trabalho pela metade: o `MIGRATION.md` tinha
+uma seção "melhorias propostas" e o `BACKLOG.md` dizia que a fila era o
+`MIGRATION.md`. Agora cada um tem um assunto só — `MIGRATION.md` responde
+"quanto falta para o Rust fazer o que o Python faz"; `BACKLOG.md` guarda o que a
+migração não pede, com um **gatilho** por item ("só entra o que tem um 'quando
+X aparecer'"), porque melhoria sem gatilho é desejo.
+
+Primeiro item da lista nova: **M-Q, overlay de cromo**. A barra de abas, os
+cartões da sidebar e o toast são desenhados com retângulo + glifo (herdam a
+fonte, a paleta e o alinhamento de célula de graça, e não puxam toolkit — é o
+motivo do projeto existir), mas cada um é escrito duas vezes: o desenho em
+`render.rs` e o teste de clique em `app.rs`, com as mesmas coordenadas em
+fórmulas separadas. Três bugs desta semana foram essa divergência. O item é
+transformar o cromo numa lista de elementos com hit-test declarado, no mesmo
+`wgpu`, quando aparecer o quarto elemento — antes de escrever o par
+desenho/clique pela quarta vez.

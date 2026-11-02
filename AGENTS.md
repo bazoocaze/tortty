@@ -24,9 +24,12 @@ só o README.md é para humano.
   corrente; o que continua valendo foi promovido para os docs abaixo.
 - `docs/MIGRATION.md` — **o painel de controle da migração**: inventário
   completo de funcionalidades do bzmux Python, o estado de cada uma aqui
-  (`feito`/`parcial`/`falta`/`não faremos`), a ordem de execução e as melhorias
-  propostas. Uma linha por funcionalidade; é por ele que se responde "quanto
-  falta".
+  (`feito`/`parcial`/`falta`/`não faremos`) e a ordem de execução. Uma linha por
+  funcionalidade; é por ele que se responde "quanto falta". **Só escopo de
+  migração**: ideia que o Python não tem não entra aqui.
+- `docs/BACKLOG.md` — o que fica fora do escopo da migração: melhoria além da
+  paridade (ids `M-*`, cada uma com gatilho) e as regras da fila. Se o Python
+  não faz, não é paridade: é backlog.
 - `docs/BENCHMARKS.md` — **o único lugar com número** de vazão, parse, desenho
   e pegada (com data, governor e condição). Os outros docs citam o fato em uma
   frase e linkam.
@@ -39,7 +42,6 @@ só o README.md é para humano.
   **Ler antes de rodar qualquer ferramenta gráfica.**
 - `docs/LIMITATIONS.md` — o que não é feito e por quê (decisão ou limite
   aceito, não fila).
-- `docs/BACKLOG.md` — fila de trabalho e as regras da fila.
 - `docs/HISTORY.md` — registro datado do que foi feito (narrativa). O histórico
   da fase Python fica no outro repo, em `docs/HISTORY.md` de lá.
 - `README.md` — visão para humano: rodar, medir, estrutura.
