@@ -102,6 +102,15 @@ pub fn run_all() -> (usize, Vec<String>) {
     (ok, falhas)
 }
 
+/// O `--selftest` também roda no `cargo test`: sem isto os checks só existiam
+/// no binário, e um `cargo test -p bzmux-core` verde não dizia nada sobre eles.
+#[cfg(test)]
+#[test]
+fn selftest_completo() {
+    let (ok, falhas) = run_all();
+    assert!(falhas.is_empty(), "{ok} ok, falhas:\n{}", falhas.join("\n"));
+}
+
 fn term() -> Term {
     Term::new(20, 5)
 }
