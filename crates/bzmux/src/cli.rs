@@ -24,6 +24,8 @@ pub struct Overrides {
     pub no_vsync: bool,
     pub prof: bool,
     pub selftest: bool,
+    pub quit_after: Option<u64>,
+    pub dump_to: Option<String>,
 }
 
 pub struct Options {
@@ -40,6 +42,10 @@ pub struct Options {
     pub debug_log: Option<String>,
     pub vsync: bool,
     pub prof: bool,
+    /// Segundos até fechar sozinho (`--quit-after`), usado pela automação.
+    pub quit_after: Option<u64>,
+    /// Onde o dump escreve (`--dump-to`); `None` = /tmp/bzmux-dump.txt.
+    pub dump_to: Option<PathBuf>,
     /// O tema que não é da grade: paleta, cores, bell, padding, cursor.
     pub cfg: Config,
     /// De onde veio o arquivo do usuário (para o auto-reload e para o log).
@@ -86,6 +92,8 @@ impl Options {
             debug_log,
             vsync: !over.no_vsync,
             prof: over.prof,
+            quit_after: over.quit_after,
+            dump_to: over.dump_to.map(PathBuf::from),
             cfg,
             cfg_path: path,
         };
@@ -121,6 +129,8 @@ OPÇÕES:
   --no-vsync            desliga a sincronia vertical (mede vazão, não o monitor)
   --prof                liga os contadores de custo (parse/draw/pty)
   --selftest            roda os checks do núcleo sem abrir janela e sai
+  --quit-after SEG      fecha sozinho depois de SEG segundos (automação)
+  --dump-to ARQ         no fim (e em SIGUSR1), escreve o texto de todas as abas
   -h, --help            esta ajuda
   -V, --version         versão
 
@@ -150,6 +160,8 @@ pub fn parse(args: Vec<String>) -> Result<Overrides, String> {
             "--no-vsync" => o.no_vsync = true,
             "--prof" => o.prof = true,
             "--selftest" => o.selftest = true,
+            "--quit-after" => o.quit_after = Some(num(&mut it, "--quit-after")? as u64),
+            "--dump-to" => o.dump_to = Some(need(&mut it, "--dump-to")?),
             other => return Err(format!("opção desconhecida: {other}\n\n{HELP}")),
         }
     }

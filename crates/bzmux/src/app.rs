@@ -346,6 +346,10 @@ pub struct App {
     /// Último título posto na janela (evita `set_title` por frame).
     last_title: String,
     exiting: bool,
+    /// `--quit-after`: instante em que fecha sozinho (automação).
+    prazo: Option<std::time::Instant>,
+    /// Um dump já foi escrito nesta execução (SIGUSR1 pode vir várias vezes).
+    dumpou: bool,
 }
 
 impl App {
@@ -364,6 +368,9 @@ impl App {
             .as_deref()
             .and_then(|p| std::fs::metadata(p).ok())
             .and_then(|m| m.modified().ok());
+        let prazo = opts
+            .quit_after
+            .map(|seg| std::time::Instant::now() + std::time::Duration::from_secs(seg));
         App {
             opts,
             over,
@@ -399,6 +406,67 @@ impl App {
             eof: false,
             last_title: String::new(),
             exiting: false,
+            prazo,
+            dumpou: false,
+        }
+    }
+
+    /// Texto de todas as abas de todos os workspaces (o `dump` do Python):
+    /// scrollback (as últimas 40) e o viewport de cada sessão, com cabeçalho
+    /// quando há mais de uma.
+    fn dump_text(&self) -> String {
+        let mut partes: Vec<String> = Vec::new();
+        let mut multi_ws = self.ws_count() > 1;
+        multi_ws = multi_ws || self.parked.len() > 1;
+        // a ordem lógica: os estacionados nas suas posições e o corrente no
+        // lugar dele (o `parked` guarda os outros inteiros, na ordem)
+        let mut i_ws = 0usize;
+        let mut empurra = |tabs: &[Tab], active: usize, nome: &str, partes: &mut Vec<String>| {
+            if multi_ws {
+                partes.push(format!("=== workspace {}: {nome} ===", i_ws + 1));
+            }
+            let multi_aba = tabs.len() > 1;
+            for (i, t) in tabs.iter().enumerate() {
+                if multi_aba {
+                    partes.push(format!("=== aba {}: {} ===", i + 1, t.title()));
+                }
+                partes.extend(dump_tab(t, i == active));
+            }
+            i_ws += 1;
+        };
+        // o corrente entra na posição dele: antes dele vêm os estacionados de
+        // índice menor
+        let mut feitos = 0usize;
+        for slot in 0..self.parked.len() {
+            if feitos == self.ws_idx {
+                empurra(&self.tabs, self.active, &self.ws_name, &mut partes);
+                feitos += 1;
+            }
+            let w = &self.parked[slot];
+            empurra(&w.tabs, w.active, &w.name, &mut partes);
+            feitos += 1;
+        }
+        if feitos == self.ws_idx {
+            empurra(&self.tabs, self.active, &self.ws_name, &mut partes);
+        }
+        let mut s = partes.join("\n");
+        s.push('\n');
+        s
+    }
+
+    /// Escreve o dump onde o `--dump-to` mandou (senão /tmp/bzmux-dump.txt).
+    fn dump(&mut self) {
+        let path = self
+            .opts
+            .dump_to
+            .clone()
+            .unwrap_or_else(|| std::path::PathBuf::from("/tmp/bzmux-dump.txt"));
+        match std::fs::write(&path, self.dump_text()) {
+            Ok(()) => {
+                self.dumpou = true;
+                logln(&format!("dump: {}", path.display()));
+            },
+            Err(e) => eprintln!("dump falhou: {}: {e}", path.display()),
         }
     }
 
@@ -2130,6 +2198,8 @@ impl ApplicationHandler<UserEvent> for App {
         // `ceil`: pedir `round` dá pixels a menos que o grid precisa e a
         // janela nasce com uma coluna/linha de menos (o WM não devolve)
         // a margem entra no pedido: a grade é `cols*cw` e o resto é padding
+        // sinais: `SIGUSR1` (dump) e `SIGTERM` (sair limpo), como no Python
+        instala_sinais();
         let pad = 2.0 * self.opts.cfg.padding as f32;
         let w = (self.opts.cols as f32 * fonts.cw + pad).ceil() as u32;
         let h = (self.opts.rows as f32 * fonts.ch + pad).ceil() as u32;
@@ -2273,6 +2343,26 @@ impl ApplicationHandler<UserEvent> for App {
         // o reload precisa de um tique mesmo sem evento nenhum
         let mut quando = agora + Duration::from_millis(250);
 
+        // sinais: o handler só levanta a bandeira, quem age é aqui
+        let (dump, terminar) = sinais();
+        if dump {
+            self.dump();
+        }
+        if terminar {
+            self.dump();
+            self.exiting = true;
+            event_loop.exit();
+            return;
+        }
+        // `--quit-after`: fecha sozinho (automação) e deixa o dump
+        if self.prazo.is_some_and(|p| agora >= p) {
+            self.prazo = None;
+            self.dump();
+            self.exiting = true;
+            event_loop.exit();
+            return;
+        }
+
         // toast vencido sai da tela (ninguém mais o tiraria)
         if self
             .toast
@@ -2358,4 +2448,70 @@ impl ApplicationHandler<UserEvent> for App {
         }
         self.debug = None;
     }
+}
+
+/// Linhas de uma aba para o dump: scrollback recente e o viewport vivo.
+fn dump_tab(t: &Tab, ativa: bool) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let hist = t.term.scrollback.len();
+    if hist > 0 {
+        let ini = hist.saturating_sub(40);
+        out.push(format!("=== scrollback ({hist}) ==="));
+        for row in t.term.scrollback.iter().skip(ini) {
+            out.push(row.text().trim_end().to_string());
+        }
+    }
+    // o off vai no cabeçalho: as linhas abaixo são a grade viva, não a visão
+    // rolada — sem isso o dump não conta se a visão estava no histórico
+    let off = if t.view_off > 0 {
+        format!(" (histórico +{})", t.view_off)
+    } else {
+        String::new()
+    };
+    let marca = if ativa { "" } else { " [fundo]" };
+    out.push(format!(
+        "=== viewport {}x{}{off}{marca} ===",
+        t.term.cols, t.term.rows
+    ));
+    for y in 0..t.term.rows {
+        out.push(t.term.row_text(y).trim_end().to_string());
+    }
+    out
+}
+
+// ------------------------------------------------------------ sinais
+
+/// `SIGUSR1` pediu um dump; `SIGTERM` pediu sair limpo (dump + fechar).
+static SINAL_DUMP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SINAL_TERM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+extern "C" fn ao_usr1(_: libc::c_int) {
+    SINAL_DUMP.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+extern "C" fn ao_term(_: libc::c_int) {
+    SINAL_TERM.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Instala `SIGUSR1`/`SIGTERM`. O handler só levanta um `AtomicBool`: `store`
+/// de `AtomicBool` é livre de lock e seguro em handler, e quem age é o laço de
+/// eventos (que acorda a cada 250 ms de qualquer forma).
+///
+/// `unsafe`: `libc::signal` troca o handler do processo — não há API segura
+/// para isso, como no `SO_PEERCRED` do `debugsock`.
+#[allow(unsafe_code)]
+pub fn instala_sinais() {
+    unsafe {
+        libc::signal(libc::SIGUSR1, ao_usr1 as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, ao_term as *const () as libc::sighandler_t);
+    }
+}
+
+/// Leitura dos sinais (uma vez cada): (dump, sair).
+fn sinais() -> (bool, bool) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (
+        SINAL_DUMP.swap(false, Relaxed),
+        SINAL_TERM.swap(false, Relaxed),
+    )
 }
