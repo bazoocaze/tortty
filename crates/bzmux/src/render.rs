@@ -82,6 +82,9 @@ pub struct Renderer {
     /// Altura da barra de abas em px (0 = uma aba só, sem barra). Ela empurra
     /// a grade para baixo: o `origin` do shader é `pad + bar`.
     bar: f32,
+    /// Largura da sidebar de workspaces em px (0 = um workspace só). Empurra
+    /// a grade para a direita: o `origin` vira `pad + side`.
+    side: f32,
     pub cursor_shape: CursorShape,
 }
 
@@ -247,6 +250,7 @@ impl Renderer {
             cursor: tema(cfg, cfg.cursor, FG),
             pad: cfg.padding as f32,
             bar: 0.0,
+            side: 0.0,
             cursor_shape: cfg.cursor_shape,
         })
     }
@@ -274,7 +278,7 @@ impl Renderer {
             bytemuck::cast_slice(&[
                 self.config.width as f32,
                 self.config.height as f32,
-                self.pad,
+                self.pad + self.side,
                 self.pad + self.bar,
             ]),
         );
@@ -290,6 +294,15 @@ impl Renderer {
         self.write_globals();
     }
 
+    /// Reserva a coluna da sidebar de workspaces (0 = um workspace só).
+    pub fn set_side(&mut self, w: f32) {
+        if (w - self.side).abs() < 0.01 {
+            return;
+        }
+        self.side = w;
+        self.write_globals();
+    }
+
     pub fn resize(&mut self, w: u32, h: u32) {
         if w == 0 || h == 0 || (w == self.config.width && h == self.config.height) {
             return;
@@ -300,7 +313,12 @@ impl Renderer {
         self.queue.write_buffer(
             &self.globals,
             0,
-            bytemuck::cast_slice(&[w as f32, h as f32, self.pad, self.pad + self.bar]),
+            bytemuck::cast_slice(&[
+                w as f32,
+                h as f32,
+                self.pad + self.side,
+                self.pad + self.bar,
+            ]),
         );
     }
 
@@ -411,6 +429,68 @@ impl Renderer {
                 }
             }
             x += largura;
+        }
+    }
+
+    /// Sidebar de workspaces (I6): uma coluna à esquerda com um cartão por
+    /// workspace. Fica na faixa que o `origin` reservou (x = -side), como a
+    /// barra de abas fica em y = -bar.
+    fn sidebar(&mut self, cards: &[WsCard]) {
+        if self.side <= 0.0 {
+            return;
+        }
+        let chh = self.fonts.ch;
+        let card_h = chh * 2.4;
+        let x0 = -self.side;
+        let largura = self.side - self.pad;
+        let fundo = self.color(Color::Idx(0), self.bg);
+        let sobre = self.color(Color::Default, self.bg);
+        for (i, c) in cards.iter().enumerate() {
+            let y0 = i as f32 * card_h;
+            let ativo = c.ativa;
+            let (bg, fg) = if ativo {
+                (self.color(Color::Default, self.fg), sobre)
+            } else {
+                (fundo, self.color(Color::Idx(8), self.fg))
+            };
+            self.push_rect(x0, y0, largura, card_h, [bg[0], bg[1], bg[2], 1.0]);
+            // linha 1: "n nome"
+            let n = cards.len();
+            let nome = format!("{} {}", i + 1, c.nome);
+            self.text_line(x0, y0 + 3.0, &nome, fg, largura);
+            // linha 2: "titulo (k abas)"
+            let info = format!(
+                "{} ({} aba{})",
+                c.titulo,
+                c.n_tabs,
+                if c.n_tabs == 1 { "" } else { "s" }
+            );
+            self.text_line(x0, y0 + chh + 3.0, &info, fg, largura);
+            let _ = n;
+        }
+    }
+
+    /// Uma linha de texto da sidebar, cortada na largura do cartão.
+    fn text_line(&mut self, x0: f32, y: f32, texto: &str, fg: [f32; 3], largura: f32) {
+        let cw = self.fonts.cw;
+        let ascent = self.fonts.ascent;
+        let cabe = (largura / cw).floor().max(1.0) as usize;
+        for (i, ch) in texto.chars().take(cabe).enumerate() {
+            if ch == ' ' {
+                continue;
+            }
+            if let Some(q) = self.glyph_quad(ch, false, false) {
+                self.instances.push(Instance {
+                    rect: [
+                        x0 + self.pad + i as f32 * cw + q.left as f32,
+                        y + ascent - q.top as f32,
+                        q.w as f32,
+                        q.h as f32,
+                    ],
+                    color: [fg[0], fg[1], fg[2], 1.0],
+                    uv: q.uv,
+                });
+            }
         }
     }
 
@@ -575,15 +655,17 @@ impl Renderer {
 
     /// Monta as instâncias do frame. Público para o teste de sanidade do formato.
     #[allow(clippy::too_many_lines)] // um laço por categoria, na ordem de blend
-    pub fn build(
-        &mut self,
-        term: &Term,
-        view_off: usize,
-        sel: Option<Span>,
-        blink: Blink,
-        toast: Option<&str>,
-        tabs: Option<&[TabInfo]>,
-    ) {
+    #[allow(clippy::many_single_char_names)] // x/y/cw/ch/k: geometria de célula
+    pub fn build(&mut self, f: &Frame<'_>) {
+        let Frame {
+            term,
+            view_off,
+            sel,
+            blink,
+            toast,
+            tabs,
+            sidebar,
+        } = *f;
         self.instances.clear();
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
@@ -656,6 +738,10 @@ impl Renderer {
         if let Some(tabs) = tabs {
             self.tabbar(tabs, cols);
         }
+        // 2c) sidebar de workspaces: coluna à esquerda, na faixa reservada
+        if let Some(cards) = sidebar {
+            self.sidebar(cards);
+        }
 
         // 3) cursor (por cima; a ordem das instâncias é a ordem de blend)
         if blink.cursor
@@ -703,15 +789,7 @@ impl Renderer {
         }
     }
 
-    pub fn render(
-        &mut self,
-        term: &Term,
-        view_off: usize,
-        sel: Option<Span>,
-        blink: Blink,
-        toast: Option<&str>,
-        tabs: Option<&[TabInfo]>,
-    ) -> FrameOutcome {
+    pub fn render(&mut self, f: &Frame<'_>) -> FrameOutcome {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
@@ -725,7 +803,7 @@ impl Renderer {
         };
 
         let t0 = std::time::Instant::now();
-        self.build(term, view_off, sel, blink, toast, tabs);
+        self.build(f);
         self.atlas.flush(&self.queue);
 
         let needed = self.instances.len() * std::mem::size_of::<Instance>();
@@ -808,6 +886,26 @@ pub struct TabInfo {
     pub ativa: bool,
     /// BELL recente: o rótulo ganha destaque por ~800 ms (I13).
     pub alerta: bool,
+}
+
+/// Tudo que um frame precisa, num pacote só: a assinatura de `build`/`render`
+/// crescia um parâmetro por fatia (abas, sidebar, toast...).
+pub struct Frame<'a> {
+    pub term: &'a Term,
+    pub view_off: usize,
+    pub sel: Option<Span>,
+    pub blink: Blink,
+    pub toast: Option<&'a str>,
+    pub tabs: Option<&'a [TabInfo]>,
+    pub sidebar: Option<&'a [WsCard]>,
+}
+
+/// O que a sidebar precisa de cada workspace (I6).
+pub struct WsCard {
+    pub nome: String,
+    pub titulo: String,
+    pub n_tabs: usize,
+    pub ativa: bool,
 }
 
 pub enum FrameOutcome {

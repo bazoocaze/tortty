@@ -23,6 +23,22 @@ use crate::prof;
 use crate::pty::Pty;
 use crate::render::Renderer;
 
+/// Argumento para o shell: `'…'` com `'` virando `'\''` (o mesmo que o
+/// `shlex.quote` do Python faz para o caso comum).
+fn shell_quote(s: &str) -> String {
+    if s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || "/._-+:%=@,".contains(c))
+    {
+        return s.to_string();
+    }
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Super puro (sem Ctrl nem Alt): o alias de workspace do Python.
+fn super_only(mods: ModifiersState) -> bool {
+    mods.super_key() && !mods.control_key() && !mods.alt_key()
+}
+
 /// Alt puro (sem Ctrl nem Shift). `Alt+Shift+1` é do shell, não da barra.
 fn alt_digit_only(mods: ModifiersState) -> bool {
     mods.alt_key() && !mods.control_key() && !mods.shift_key() && !mods.super_key()
@@ -220,6 +236,35 @@ impl Tab {
     }
 }
 
+/// Um conjunto de abas com nome próprio (I5).
+///
+/// O workspace da frente mora em [`App::tabs`]/[`App::active`]; os outros
+/// ficam inteiros aqui (pty vivo, grade própria), e trocar de workspace é
+/// `mem::swap` do conteúdo — nada de copiar termo nem matar processo.
+struct Workspace {
+    tabs: Vec<Tab>,
+    active: usize,
+    name: String,
+}
+
+impl Workspace {
+    /// Embrulha a sessão corrente para estacionar.
+    fn take(app: &mut App) -> Workspace {
+        Workspace {
+            tabs: std::mem::take(&mut app.tabs),
+            active: app.active,
+            name: std::mem::take(&mut app.ws_name),
+        }
+    }
+
+    /// Devolve o conteúdo para o lugar da sessão corrente.
+    fn into_current(self, app: &mut App) {
+        app.tabs = self.tabs;
+        app.active = self.active.min(app.tabs.len().saturating_sub(1));
+        app.ws_name = self.name;
+    }
+}
+
 #[allow(clippy::struct_excessive_bools)] // estado do app é booleano por natureza
 pub struct App {
     opts: Options,
@@ -229,6 +274,17 @@ pub struct App {
     /// Abas vivas (cada uma com o pty rodando), e qual está na frente.
     tabs: Vec<Tab>,
     active: usize,
+    /// Nome do workspace da frente (`workspace 1`, renomeável — I8).
+    ws_name: String,
+    /// Os workspaces que não estão na frente. O da frente não mora aqui: ele
+    /// **é** `tabs`/`active`. Invariante: `parked.len() + 1 == ws_count()`,
+    /// com os índices lógicos em ordem (o da frente cai no meio).
+    parked: Vec<Workspace>,
+    /// Índice lógico do workspace da frente em `0..ws_count()`.
+    ws_idx: usize,
+    /// Aba apertada na barra, para arrastar e reordenar (I10): índice e o x
+    /// do press, para só começar o arrasto depois de andar de verdade.
+    bar_press: Option<(usize, f64)>,
     mods: ModifiersState,
     /// Última posição do mouse em pixels físicos (base do `cell_at`).
     cursor_px: (f64, f64),
@@ -293,6 +349,10 @@ impl App {
             renderer: None,
             tabs: vec![tab],
             active: 0,
+            ws_name: "workspace 1".to_string(),
+            parked: Vec::new(),
+            ws_idx: 0,
+            bar_press: None,
             mods: ModifiersState::empty(),
             cursor_px: (0.0, 0.0),
             held: None,
@@ -329,6 +389,42 @@ impl App {
         }
     }
 
+    /// Os cartões da sidebar (I6), em ordem lógica: os estacionados antes do
+    /// da frente e os depois, na posição correta.
+    fn wscards(&self) -> Vec<crate::render::WsCard> {
+        let total = self.ws_count();
+        let mut cards = Vec::with_capacity(total);
+        for i in 0..total {
+            if i == self.ws_idx {
+                cards.push(crate::render::WsCard {
+                    nome: self.ws_name.clone(),
+                    titulo: self.tabs[self.active].title(),
+                    n_tabs: self.tabs.len(),
+                    ativa: true,
+                });
+            } else {
+                let slot = if i < self.ws_idx { i } else { i - 1 };
+                let w = &self.parked[slot];
+                cards.push(crate::render::WsCard {
+                    nome: w.name.clone(),
+                    titulo: w.tabs[w.active].title(),
+                    n_tabs: w.tabs.len(),
+                    ativa: false,
+                });
+            }
+        }
+        cards
+    }
+
+    /// Largura da sidebar em px (0 com um workspace só — I7).
+    fn side_w(&self, cw: f32) -> f32 {
+        if self.ws_count() > 1 {
+            cw * 18.0
+        } else {
+            0.0
+        }
+    }
+
     /// O que a barra mostra: número, título e alerta de BEL de cada aba.
     fn tabinfo(&self) -> Vec<crate::render::TabInfo> {
         let agora = std::time::Instant::now();
@@ -348,11 +444,11 @@ impl App {
     fn grid_from_px(&self, w: u32, h: u32) -> (usize, usize) {
         match &self.renderer {
             Some(r) => {
-                // nem a margem (`window_padding_width`) nem a barra de abas
-                // são grade
+                // margem, barra de abas e sidebar não são grade
                 let bar = self.bar_h(r.fonts.ch);
+                let side = self.side_w(r.fonts.cw);
                 let (iw, ih) = (
-                    (w as f32 - 2.0 * r.pad).max(r.fonts.cw),
+                    (w as f32 - 2.0 * r.pad - side).max(r.fonts.cw),
                     (h as f32 - 2.0 * r.pad - bar).max(r.fonts.ch),
                 );
                 (
@@ -370,10 +466,11 @@ impl App {
             .renderer
             .as_ref()
             .map_or((10.0, 19.0, 0.0), |r| (r.fonts.cw, r.fonts.ch, r.pad));
-        // descontar a origem: com margem (e barra de abas), o (0,0) da grade
-        // não é o (0,0) da janela
+        // descontar a origem: com margem, barra de abas e sidebar, o (0,0)
+        // da grade não é o (0,0) da janela
         let bar = f64::from(self.bar_h(ch));
-        let col = ((px - f64::from(pad)) / f64::from(cw)).max(0.0) as usize;
+        let side = f64::from(self.side_w(cw));
+        let col = ((px - f64::from(pad) - side) / f64::from(cw)).max(0.0) as usize;
         let row = ((py - f64::from(pad) - bar) / f64::from(ch)).max(0.0) as usize;
         (
             col.min(self.tabs[self.active].term.cols.saturating_sub(1)),
@@ -441,6 +538,76 @@ impl App {
         }
     }
 
+    /// Atalhos Ctrl+Shift e Super de workspace/edidor: extraído de `on_key`,
+    /// que só manda o que sobrar para o encoder.
+    #[allow(clippy::too_many_lines)] // um braço por atalho
+    fn shortcut_ws(
+        &mut self,
+        event: &winit::event::KeyEvent,
+        named: Option<NamedKey>,
+        ch: Option<char>,
+    ) -> bool {
+        let ctrl = self.mods.control_key();
+        let shift = self.mods.shift_key();
+        if ctrl && shift {
+            match ch.map(|c| c.to_ascii_lowercase()) {
+                Some('t') => {
+                    self.new_tab();
+                    return true;
+                },
+                Some('w') => {
+                    self.close_tab();
+                    return true;
+                },
+                Some('n') => {
+                    self.new_workspace();
+                    return true;
+                },
+                Some('q') => {
+                    let i = self.ws_idx;
+                    self.close_workspace(i);
+                    return true;
+                },
+                _ => {},
+            }
+            // Ctrl+Shift+F2: o arquivo de configuração no editor, em aba nova
+            // (P33 do Python). Fica **antes** do encoding: o vim nunca vê a
+            // tecla, senão ele a interpreta como atalho próprio.
+            if named == Some(NamedKey::F2) {
+                self.open_config();
+                return true;
+            }
+            // Ctrl+Shift+1..9 escolhe o workspace (0 = o décimo)
+            if let Some(n) = digit_of(event) {
+                let i = if n == 0 { 9 } else { n - 1 };
+                self.select_workspace(i);
+                return true;
+            }
+        }
+        // Super+N/Q e Super+1..9: alias de workspace (o WM pode engolir, mas
+        // quando chega é o mesmo efeito — é o que o Python fazia)
+        if super_only(self.mods) {
+            match ch.map(|c| c.to_ascii_lowercase()) {
+                Some('n') => {
+                    self.new_workspace();
+                    return true;
+                },
+                Some('q') => {
+                    let i = self.ws_idx;
+                    self.close_workspace(i);
+                    return true;
+                },
+                _ => {},
+            }
+            if let Some(n) = digit_of(event) {
+                let i = if n == 0 { 9 } else { n - 1 };
+                self.select_workspace(i);
+                return true;
+            }
+        }
+        false
+    }
+
     /// Tecla: atalhos da janela primeiro (o filho nunca vê Ctrl+Shift+C/V),
     /// depois o encoder. Qualquer tecla de verdade volta ao vivo.
     fn on_key(&mut self, event: &winit::event::KeyEvent) {
@@ -456,20 +623,8 @@ impl App {
             _ => None,
         };
 
-        // Ctrl+Shift+<letra>: primeiro o que é do app (abas), depois o que é do
-        // terminal (copiar/colar)
-        if ctrl && shift {
-            match ch.map(|c| c.to_ascii_lowercase()) {
-                Some('t') => {
-                    self.new_tab();
-                    return;
-                },
-                Some('w') => {
-                    self.close_tab();
-                    return;
-                },
-                _ => {},
-            }
+        if self.shortcut_ws(event, named, ch) {
+            return;
         }
         // Alt+1..9 escolhe a aba; Alt+0 é a décima (I15). O dígito não vaza
         // para o filho — é o que o Python fazia.
@@ -541,6 +696,11 @@ impl App {
     /// Movimento: só interessa ao app quando ele pediu `?1002`/`?1003`.
     fn on_cursor_moved(&mut self, x: f64, y: f64) {
         self.cursor_px = (x, y);
+        // arrasto sobre a barra reordena aba (I10); sobre a grade é seleção
+        if self.bar_press.is_some() {
+            self.bar_drag();
+            return;
+        }
         if self.tabs[self.active].term.mouse_mode == 0 {
             self.drag_select(x, y);
             return;
@@ -601,6 +761,21 @@ impl App {
     /// Roda: do app quando ele pediu mouse e estamos no vivo; senão é rolagem
     /// do histórico (o wheel lendo histórico continua sendo nosso).
     fn on_wheel(&mut self, delta: MouseScrollDelta) {
+        // roda na barra de abas circula entre elas (I11); na grade é rolagem
+        if self.tab_at(self.cursor_px.0, self.cursor_px.1).is_some() {
+            let dir: f32 = match delta {
+                MouseScrollDelta::LineDelta(_, y) => y,
+                MouseScrollDelta::PixelDelta(p) => (p.y as f32).signum() * 3.0,
+            };
+            let n = self.tabs.len();
+            let at = if dir > 0.0 {
+                (self.active + n - 1) % n
+            } else {
+                (self.active + 1) % n
+            };
+            self.select_tab(at);
+            return;
+        }
         // um entalhe vale 3 linhas (o mesmo do bzmux Python); trackpad manda
         // pixel (ou fração) e o resto é acumulado em `scroll_frac`
         let (hx, lines) = match delta {
@@ -642,14 +817,17 @@ impl App {
         use winit::event::MouseButton::{Left, Middle};
         match (state, button) {
             (ElementState::Pressed, Left) => {
-                // clique na barra de abas troca de aba (não seleciona texto)
+                // clique na barra de abas troca de aba (não seleciona texto);
+                // 'apertou' fica guardado para o arrasto (I10)
                 if let Some(i) = self.tab_at(self.cursor_px.0, self.cursor_px.1) {
+                    self.bar_press = Some((i, self.cursor_px.0));
                     self.select_tab(i);
                     self.tabs[self.active].dragging = false;
                     self.tabs[self.active].press = None;
                     self.redraw();
                     return;
                 }
+                self.bar_press = None;
                 // clicar no histórico NÃO volta ao vivo: o arrasto é para
                 // justamente copiar dali
                 self.tabs[self.active].sel = None;
@@ -666,6 +844,8 @@ impl App {
                 self.redraw();
             },
             (ElementState::Released, Left) => {
+                // soltar na barra encerra o arrasto de reordenação (I10)
+                self.bar_press = None;
                 self.tabs[self.active].dragging = false;
                 self.tabs[self.active].press = None;
                 if self.tabs[self.active].sel.is_some_and(|s| s.a != s.b) {
@@ -685,8 +865,13 @@ impl App {
                 self.redraw();
             },
             (ElementState::Pressed, Middle) => {
-                // botão do meio cola o PRIMARY; colar fala com o app, então a
-                // visão vai para o vivo
+                // botão do meio NA ABA fecha ela (I9); na grade cola o PRIMARY
+                if let Some(i) = self.tab_at(self.cursor_px.0, self.cursor_px.1) {
+                    self.bar_press = None;
+                    self.close_tab_at(i);
+                    return;
+                }
+                // colar fala com o app, então a visão vai para o vivo
                 self.tabs[self.active].view_off = 0;
                 if let Some(txt) = self.clip.primary_text() {
                     self.write_paste(&txt);
@@ -694,6 +879,66 @@ impl App {
             },
             _ => {},
         }
+    }
+
+    /// Arrasto de reordenação na barra (I10): andou uma aba de largura com o
+    /// botão apertado sobre a barra, a aba troca de lugar. Só anda de verdade
+    /// depois de passar da metade do próprio rótulo (senão balança).
+    fn bar_drag(&mut self) {
+        let Some((i, x0)) = self.bar_press else {
+            return;
+        };
+        let Some((cw, _, pad)) = self
+            .renderer
+            .as_ref()
+            .map(|r| (r.fonts.cw, r.fonts.ch, r.pad))
+        else {
+            return;
+        };
+        let info = self.tabinfo();
+        // onde o press começou e onde estamos: x pixel da aba i no arrasto
+        let mut x = f64::from(pad);
+        let mut hoje = None;
+        for (k, t) in info.iter().enumerate() {
+            let largura =
+                format!(" {} {} ", k + 1, t.titulo).chars().count() as f64 * f64::from(cw);
+            if k == i {
+                hoje = Some((x, largura));
+                break;
+            }
+            x += largura;
+        }
+        let Some((_, largura)) = hoje else {
+            return;
+        };
+        let dx = self.cursor_px.0 - x0;
+        let passo = largura.max(f64::from(cw));
+        let n = ((dx / passo).round() as i64).unsigned_abs() as usize;
+        if n == 0 || dx.abs() < passo / 2.0 {
+            return;
+        }
+        let destino = if dx > 0.0 { i + n } else { i.saturating_sub(n) };
+        self.move_tab(i, destino);
+        self.bar_press = Some((destino, x0));
+        self.redraw();
+    }
+
+    /// Reordena (I10): remove de `i` e insere em `d`; a ativa segue a aba.
+    fn move_tab(&mut self, i: usize, d: usize) {
+        let d = d.min(self.tabs.len() - 1);
+        if i == d || i >= self.tabs.len() {
+            return;
+        }
+        let t = self.tabs.remove(i);
+        self.tabs.insert(d, t);
+        if self.active == i {
+            self.active = d;
+        } else if i < self.active && d >= self.active {
+            self.active -= 1;
+        } else if i > self.active && d <= self.active {
+            self.active += 1;
+        }
+        self.redraw();
     }
 
     /// Arrasto: a seleção só nasce depois de 3 px (tremer o mouse com o botão
@@ -1089,17 +1334,25 @@ impl App {
         } else {
             None
         };
+        let cards = self.wscards();
+        let sidebar = if self.ws_count() > 1 {
+            Some(cards)
+        } else {
+            None
+        };
+        let frame = crate::render::Frame {
+            term: &self.tabs[self.active].term,
+            view_off: self.tabs[self.active].view_off,
+            sel: self.tabs[self.active].sel,
+            blink,
+            toast: toast.as_deref(),
+            tabs: tabs.as_deref(),
+            sidebar: sidebar.as_deref(),
+        };
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
-        match renderer.render(
-            &self.tabs[self.active].term,
-            self.tabs[self.active].view_off,
-            self.tabs[self.active].sel,
-            blink,
-            toast.as_deref(),
-            tabs.as_deref(),
-        ) {
+        match renderer.render(&frame) {
             crate::render::FrameOutcome::Reconfigure => {
                 let (w, h) = (renderer.config.width, renderer.config.height);
                 renderer.resize(w, h);
@@ -1112,9 +1365,13 @@ impl App {
     fn apply_size(&mut self, w: u32, h: u32) {
         // a barra entra na conta antes do grid: com N abas a grade é uma linha
         // mais baixa, e todas as abas acompanham (o pty de cada uma é resizado)
+        let (ch, _cw, side) = self.renderer.as_ref().map_or((0.0, 0.0, 0.0), |r| {
+            (r.fonts.ch, r.fonts.cw, self.side_w(r.fonts.cw))
+        });
+        let bar = ch * f32::from(u8::from(self.tabs.len() > 1));
         if let Some(r) = self.renderer.as_mut() {
-            let bar = r.fonts.ch * f32::from(u8::from(self.tabs.len() > 1));
             r.set_bar(bar);
+            r.set_side(side);
             r.resize(w, h);
         }
         let (cols, rows) = self.grid_from_px(w, h);
@@ -1196,7 +1453,9 @@ impl App {
                     "tabs": self.tabs.len(),
                     "active": self.active,
                     "tab_titles": self.tabs.iter().map(Tab::title).collect::<Vec<_>>(),
-                    "workspaces": 1,
+                    "workspaces": self.ws_count(),
+                    "ws": self.ws_idx,
+                    "ws_names": self.wscards().into_iter().map(|c| c.nome).collect::<Vec<_>>(),
                     "errors": [],
                 }))
             },
@@ -1312,75 +1571,13 @@ impl App {
         }
     }
 
+    /// A primeira aba: o `--cmd` quando dado, senão o shell da config.
     fn spawn_shell(&mut self, cols: usize, rows: usize, wake: Arc<dyn Fn() + Send + Sync>) {
-        self.spawn_in(self.active, cols, rows, wake, None);
+        let cmd = self.opts.cmd.clone();
+        self.spawn_tab(self.active, cols, rows, wake, None, cmd.as_deref());
     }
 
-    /// Sobe o pty de uma aba (a primeira, ou uma nova herdando o cwd).
-    fn spawn_in(
-        &mut self,
-        i: usize,
-        cols: usize,
-        rows: usize,
-        wake: Arc<dyn Fn() + Send + Sync>,
-        cwd: Option<&std::path::Path>,
-    ) {
-        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
-        match Pty::spawn(
-            self.opts.cmd.as_deref(),
-            self.opts.cfg.shell.as_deref(),
-            cwd,
-            cols as u16,
-            rows as u16,
-            tx,
-            wake,
-        ) {
-            Ok(p) => {
-                self.tabs[i].pty = Some(p);
-                self.tabs[i].rx = Some(rx);
-            },
-            Err(e) => {
-                eprintln!("bzmux: {e}");
-                self.exiting = true;
-            },
-        }
-    }
-
-    /// Nova aba (I1): herda o cwd da aba corrente (I2) e vira a ativa.
-    ///
-    /// O `--cmd` vale só para a primeira: abrir outra aba com o comando de
-    /// depuração repetiria o teste, não abriria um shell.
-    fn new_tab(&mut self) {
-        let Some(wake) = self.wake.clone() else {
-            return;
-        };
-        let (cols, rows) = (
-            self.tabs[self.active].term.cols,
-            self.tabs[self.active].term.rows,
-        );
-        let cwd = self.tabs[self.active].cwd();
-        let mut tab = Tab::new(cols, rows);
-        tab.term.scrollback_limit = self.opts.scrollback;
-        tab.term.theme = self.tabs[self.active].term.theme.clone();
-        self.tabs.push(tab);
-        self.active = self.tabs.len() - 1;
-        // a barra pode ter aparecido agora: a grade de todas encolhe uma linha
-        if let Some(w) = self.window.as_ref() {
-            let s = w.inner_size();
-            self.apply_size(s.width, s.height);
-        }
-        let (cols, rows) = (
-            self.tabs[self.active].term.cols,
-            self.tabs[self.active].term.rows,
-        );
-        // `--cmd` só vale para a primeira aba: repetir o comando de depuração
-        // na segunda não abriria shell nenhum
-        self.spawn_tab(self.active, cols, rows, wake, cwd.as_deref(), None);
-        self.sync_title();
-        self.redraw();
-    }
-
-    /// Sobe o pty de uma aba nova, com o `--cmd` só quando é permitido.
+    #[allow(clippy::too_many_arguments)]
     fn spawn_tab(
         &mut self,
         i: usize,
@@ -1411,6 +1608,45 @@ impl App {
         }
     }
 
+    /// Nova aba (I1): herda o cwd da aba corrente (I2) e vira a ativa.
+    ///
+    /// O `--cmd` vale só para a primeira: abrir outra aba com o comando de
+    /// depuração repetiria o teste, não abriria um shell.
+    fn new_tab(&mut self) {
+        self.new_tab_cmd(None);
+    }
+
+    /// Aba nova, opcionalmente rodando `cmd` (o editor de config usa isto).
+    fn new_tab_cmd(&mut self, cmd: Option<&str>) {
+        let Some(wake) = self.wake.clone() else {
+            return;
+        };
+        let (cols, rows) = (
+            self.tabs[self.active].term.cols,
+            self.tabs[self.active].term.rows,
+        );
+        let cwd = self.tabs[self.active].cwd();
+        let mut tab = Tab::new(cols, rows);
+        tab.term.scrollback_limit = self.opts.scrollback;
+        tab.term.theme = self.tabs[self.active].term.theme.clone();
+        self.tabs.push(tab);
+        self.active = self.tabs.len() - 1;
+        // a barra pode ter aparecido agora: a grade de todas encolhe uma linha
+        if let Some(w) = self.window.as_ref() {
+            let s = w.inner_size();
+            self.apply_size(s.width, s.height);
+        }
+        let (cols, rows) = (
+            self.tabs[self.active].term.cols,
+            self.tabs[self.active].term.rows,
+        );
+        // `--cmd` só vale para a primeira aba: repetir o comando de depuração
+        // na segunda não abriria shell nenhum
+        self.spawn_tab(self.active, cols, rows, wake, cwd.as_deref(), cmd);
+        self.sync_title();
+        self.redraw();
+    }
+
     /// Fecha a aba ativa (I3).
     fn close_tab(&mut self) {
         self.close_tab_at(self.active);
@@ -1424,7 +1660,9 @@ impl App {
         }
         self.tabs.remove(i);
         if self.tabs.is_empty() {
-            self.exiting = true;
+            // última aba do workspace: o workspace vai junto (I20), e só o
+            // último workspace fecha o app
+            self.drop_empty_workspace();
             return;
         }
         self.active = self.active.min(self.tabs.len() - 1);
@@ -1434,6 +1672,124 @@ impl App {
         }
         self.sync_title();
         self.redraw();
+    }
+
+    /// Quantos workspaces existem (o da frente + os estacionados).
+    fn ws_count(&self) -> usize {
+        self.parked.len() + 1
+    }
+
+    /// Workspace novo, herdando o cwd da aba corrente (I5). O novo já nasce
+    /// com uma aba, como no Python.
+    fn new_workspace(&mut self) {
+        let Some(wake) = self.wake.clone() else {
+            return;
+        };
+        let (cols, rows) = (
+            self.tabs[self.active].term.cols,
+            self.tabs[self.active].term.rows,
+        );
+        let cwd = self.tabs[self.active].cwd();
+        let cur = Workspace::take(self);
+        self.parked.push(cur);
+        self.ws_idx = self.parked.len(); // total = parked + 1, então é o último
+        let mut tab = Tab::new(cols, rows);
+        tab.term.scrollback_limit = self.opts.scrollback;
+        self.tabs = vec![tab];
+        self.active = 0;
+        self.ws_name = format!("workspace {}", self.ws_idx + 1);
+        self.after_ws_change();
+        let (cols, rows) = (
+            self.tabs[self.active].term.cols,
+            self.tabs[self.active].term.rows,
+        );
+        self.spawn_tab(self.active, cols, rows, wake, cwd.as_deref(), None);
+        self.sync_title();
+        self.redraw();
+    }
+
+    /// Troca o workspace da frente sem matar nada: swap do conteúdo.
+    fn select_workspace(&mut self, i: usize) {
+        if i >= self.ws_count() || i == self.ws_idx {
+            return;
+        }
+        // em `parked` o da frente não está, então o índice desloca de 1
+        let slot = if i < self.ws_idx { i } else { i - 1 };
+        let cur = Workspace::take(self);
+        let novo = std::mem::replace(&mut self.parked[slot], cur);
+        novo.into_current(self);
+        self.ws_idx = i;
+        self.after_ws_change();
+    }
+
+    /// Fecha um workspace com todas as abas dele.
+    fn close_workspace(&mut self, i: usize) {
+        if i >= self.ws_count() {
+            return;
+        }
+        if i == self.ws_idx {
+            for t in &mut self.tabs {
+                if let Some(p) = t.pty.as_mut() {
+                    p.kill();
+                }
+            }
+            self.tabs.clear();
+            self.drop_empty_workspace();
+            return;
+        }
+        let slot = if i < self.ws_idx { i } else { i - 1 };
+        let mut w = self.parked.remove(slot);
+        for t in &mut w.tabs {
+            if let Some(p) = t.pty.as_mut() {
+                p.kill();
+            }
+        }
+        if i < self.ws_idx {
+            self.ws_idx -= 1;
+        }
+        self.after_ws_change();
+    }
+
+    /// O workspace da frente ficou sem abas: promove o primeiro estacionado
+    /// (ou fecha o app, se não sobrou nenhum) — I20.
+    fn drop_empty_workspace(&mut self) {
+        if self.parked.is_empty() {
+            self.exiting = true;
+            return;
+        }
+        let novo = self.parked.remove(0);
+        novo.into_current(self);
+        self.ws_idx = 0;
+        self.after_ws_change();
+    }
+
+    /// Depois de mexer em workspaces: barra pode aparecer/sumir (a altura
+    /// depende do número de abas *deste* workspace), então a grade é refeita.
+    fn after_ws_change(&mut self) {
+        if let Some(w) = self.window.as_ref() {
+            let s = w.inner_size();
+            self.apply_size(s.width, s.height);
+        }
+        self.sync_title();
+        self.redraw();
+    }
+
+    /// Ctrl+Shift+F2: abre o arquivo de configuração no editor, em aba nova
+    /// (P33). `VISUAL`/`EDITOR` vencem o `vim`; o diretório é criado porque o
+    /// editor só cria o arquivo ao salvar.
+    fn open_config(&mut self) {
+        let Some(path) = self.opts.cfg_path.clone() else {
+            self.toast("config: sem caminho (sem HOME)".to_string());
+            return;
+        };
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let editor = std::env::var("VISUAL")
+            .or_else(|_| std::env::var("EDITOR"))
+            .unwrap_or_else(|_| "vim".to_string());
+        let cmd = format!("{} {}", editor, shell_quote(&path.to_string_lossy()));
+        self.new_tab_cmd(Some(&cmd));
     }
 
     /// Troca de aba (Alt+N). Fora da faixa, não faz nada.
