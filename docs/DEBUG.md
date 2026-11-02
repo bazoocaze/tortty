@@ -287,7 +287,22 @@ libEGL warning: egl: failed to create dri2 screen
 MESA: error: Failed to attach to x11 shm
 ```
 
+Nesse estado o `wgpu` responde `Occluded` em todo frame, e é isso que o `state`
+mostra (campo `last_frame`), sem `skipped` nenhum chegar na tela. A pergunta
+"por que a janela não atualiza?" começa por aí:
+
+```
+state -> {"draws": 3, "last_frame": "skipped (timeout/occluded)", ...}
+```
+
 Consequência prática: **verificação visual não é confiável nesse estado**. O que
 continua valendo é o que não depende de pixel: `state` do socket (grade, cursor,
-imagens, contadores), `--selftest`, `cargo test` e `parsebench`. Antes de
-concluir que o desenho quebrou, confira `/dev/dri` e a linha `bzmux: GPU:`.
+imagens, `draws`/`rows_built`/`cells_built`, `last_frame`), `--selftest`,
+`cargo test` e `parsebench`. Antes de concluir que o desenho quebrou, confira
+`/dev/dri` e a linha `bzmux: GPU:`.
+
+No mesmo sandbox, o **cache do `cargo` é somente leitura**
+(`/home/user/.cargo/registry`): qualquer dependência nova falha com
+`Read-only file system (os error 30)`. Isso bloqueia, por exemplo, `rustybuzz`
+(shaping) e `wl-clipboard-rs` (clipboard Wayland) — vale conferir antes de
+planejar trabalho que precise de crate novo.

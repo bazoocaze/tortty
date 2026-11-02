@@ -742,3 +742,52 @@ Ponteiros acertados em `LIMITATIONS.md` (plataforma e assinatura), `INSTALL.md`
 (matriz de release) e `PORTABILITY.md` (que passa a dizer explicitamente que é
 análise, não fila). `PORTABILITY.md` continua sendo o lugar do **como** de cada
 alvo; o **quando** é o backlog.
+
+## 2026-11-02 — Dano no desenho (A17/G17) e o backend GL (M5)
+
+Duas frentes, ambas com o mesmo problema: **este sandbox parou de desenhar**.
+Registro primeiro o que foi verificado, depois o que ficou sem verificação.
+
+**A17 — o desenho usa o dano do núcleo.** `crates/bzmux/src/dano.rs` (novo, 11
+testes sem display) decide, por frame, entre "tudo" e "estas linhas". A regra
+está num lugar só, e é o `Assinatura`: aba (identidade monotônica — índice não
+serve, fechar e abrir volta o índice), colunas, linhas visíveis, rolagem do
+histórico, seleção visível, fase do pisca **quando existe célula SGR 5 à vista**,
+geração do tema e fg/bg. Assinatura igual ⇒ vale o `dirty` linha a linha;
+diferente ⇒ frame inteiro. O `Renderer` guarda as instâncias **por linha**
+(`por_linha`) e só concatena; a lista final continua uma só, na ordem de blend de
+antes (grade → imagens → cromo → cursor → badge → toast).
+
+Duas coisas que a mudança exigiu e que são fáceis de esquecer: o dano é consumido
+**só quando o frame foi apresentado** (frame pulado não pode apagar a marca,
+senão a linha suja fica velha para sempre), e o pisca do cursor não entra na
+assinatura — senão a grade inteira seria remontada duas vezes por segundo por
+causa de um cursor que nem mora nela.
+
+**G17 — dano por região.** Fica em `parcial` de propósito: o dano já vale por
+linha na montagem, mas a *draw* continua tela inteira. A swapchain não garante
+preservar o conteúdo do frame anterior, então desenhar só a faixa exige alvo
+próprio (textura de cena + blit) — é outro desenho de arquitetura, não um
+`if`. Escrever isso como "feito" seria mentira.
+
+**M5 — backend GL.** Três defeitos reais, todos com o mesmo sintoma ("o GL não
+presta") e causas diferentes:
+
+| sintoma | causa | conserto |
+|---|---|---|
+| `gl not compatible with provided surface` | instância criada sem display handle; o EGL precisa dele para casar a superfície | `new_with_display_handle_from_env(window)` |
+| janela translúcida (via-se o terminal atrás) | `alpha_mode: caps.alpha_modes[0]` pegava `PreMultiplied` no GL | `CompositeAlphaMode::Opaque` explícito |
+| adaptador escolhido "por acidente" | `request_adapter` devolvia o primeiro | `escolhe_adaptador`: hardware ganha de CPU; empate segue a ordem do `wgpu` |
+
+Também entrou a linha `bzmux: GPU: <backend> <placa>` no stderr (a primeira
+pergunta quando a janela não desenha em outra máquina) e o campo `last_frame` no
+`state`.
+
+**O que não foi verificado, e por quê.** Neste sandbox (container sem `/dev/dri`,
+sem compositor e com o cache do `cargo` somente leitura) a janela chegou a
+responder `skipped (timeout/occluded)` em *todo* frame — nenhum pixel sai, em
+nenhum backend; e crate novo não compila. Logo: A17/G17 têm a lógica coberta por
+teste e os contadores expostos em `state`, mas **falta o roteiro de screenshot**;
+`M4` (Wayland) não tem compositor para exercitar; `G8` (shaping) precisaria de
+`rustybuzz`, que não dá para baixar aqui. Tudo isso está em `DEBUG.md`
+("sandbox degradado"), que é onde a próxima sessão vai olhar primeiro.

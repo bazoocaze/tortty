@@ -15,23 +15,23 @@ não por estimativa.
 ## Painel
 | área | feito | parcial | falta | não | total |
 |---|---|---|---|---|---|
-| 1. Núcleo: célula, cores, grade | 17 | 0 | 1 | 0 | 18 |
+| 1. Núcleo: célula, cores, grade | 17 | 1 | 0 | 0 | 18 |
 | 2. Parser: controles, CSI, modos | 28 | 0 | 0 | 0 | 28 |
 | 3. Parser: SGR e OSC | 13 | 0 | 0 | 0 | 13 |
 | 4. Scrollback e visão do histórico | 8 | 0 | 0 | 0 | 8 |
 | 5. Entrada: teclado e protocolo do kitty | 16 | 0 | 0 | 0 | 16 |
 | 6. Entrada: mouse, seleção, clipboard, paste | 14 | 0 | 0 | 0 | 14 |
-| 7. Desenho: fonte, geometria, cores | 13 | 1 | 2 | 0 | 16 |
+| 7. Desenho: fonte, geometria, cores | 13 | 2 | 1 | 0 | 16 |
 | 8. Imagens do protocolo kitty | 13 | 0 | 0 | 3 | 16 |
 | 9. Janela: abas, workspaces, cromo | 18 | 0 | 0 | 0 | 18 |
 | 10. Janela: ciclo de vida, geometria, estado | 10 | 0 | 0 | 0 | 10 |
 | 11. Configuração e CLI | 18 | 0 | 0 | 0 | 18 |
 | 12. Debug socket e instrumentação | 14 | 0 | 0 | 0 | 14 |
-| 13. Plataforma e distribuição | 5 | 0 | 2 | 0 | 7 |
+| 13. Plataforma e distribuição | 5 | 1 | 1 | 0 | 7 |
 | 14. Testes e verificação | 7 | 2 | 0 | 0 | 9 |
-| **total** | **194** | **3** | **5** | **3** | **205** |
+| **total** | **194** | **6** | **2** | **3** | **205** |
 
-Equivalente pronto: **95.4%** (feito conta 1, parcial conta 0,5). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
+Equivalente pronto: **96.1%** (feito conta 1, parcial conta 0,5). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
 tendência; o que decide o que fazer agora é a linha e a seção 16.
 
 ## Regras deste documento
@@ -73,7 +73,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | A8 | BCE: apagar herda o bg corrente | `term.py:155-157` → `term.rs` | feito |
 | A9 | Charset DEC Special Graphics (G0, `ESC ( 0`) | `palette.py:110-142` → `charset.rs` | feito |
 | A16 | Dano por linha (`dirty`/`dirty_all`) | `term.py:355-362` → `term.rs` | feito |
-| A17 | Render usa o dano (só remonta as linhas sujas) | `view.py:920-935` → — | falta |
+| A17 | Render usa o dano (só remonta as linhas sujas) | `view.py:920-935` → `dano.rs` + `render.rs` | parcial: o desenho remonta só as linhas sujas (instâncias guardadas por linha; `dano.rs` decide com 11 testes, e a assinatura cobre aba, rolagem, seleção, pisca e tema). Falta o roteiro manual: neste sandbox a janela não entrega frame (`state` responde `skipped (timeout/occluded)`), então nada de verificação visual |
 | A18 | Grade de alt-screen separada, com troca preservando cursor | `term.py:602-629` → `term.rs` | feito |
 | A19 | Alt-screen no resize: recorte/preenchimento sem reflow | `term.py:184-217` → `term.rs` | feito |
 | A20 | Linha que sai pelo topo vai para o scrollback (só `top==0`) | `term.py:384-400` → `term.rs` | feito |
@@ -205,7 +205,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | G14 | Seleção desenhada como inversão | `view.py:943,953-973` → `render.rs` | feito (o default resolve pelo outro extremo) |
 | G15 | `?2026` segura o frame (teto 200 ms) | `view.py:296-324` | feito: `frame::Gate` (`SYNC_MS = 200`), testado sem display (transação aberta, fecho imediato, app que nunca fecha não desenha a cada leitura) |
 | G16 | Frame coalescido (~16 ms), não um desenho por leitura | `view.py:286-320` | feito: `frame::Gate` (`FRAME_MS = 16`), alimentado no `Wake` **depois** do `drain` (o `?2026` só é visível após parsear). 900 frames: 1499–1585 desenhos → **63–74**, mesmo fps (`BENCHMARKS.md`) |
-| G17 | Dano por região (`queue_draw_area`) | `view.py:330-364` | falta |
+| G17 | Dano por região (`queue_draw_area`) | `view.py:330-364` | parcial: o dano já vale por linha na montagem das instâncias, mas a **draw** continua tela inteira — a swapchain não garante preservar o conteúdo do frame anterior, e desenhar só a faixa exigiria alvo próprio (textura de cena + blit). Custo disso anotado em `BACKLOG.md`? Não: é a mesma linha até fechar |
 
 ## 8. Imagens do protocolo kitty
 
@@ -316,7 +316,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | M2 | pty POSIX por uma API só (`PtySize`, `spawn`, `read`, `write`) | `pty.fork` (POSIX só) → `pty.rs` | feito |
 | M3 | Linux X11 + Vulkan | ambiente de dev | feito |
 | M4 | Linux Wayland | n/a | falta |
-| M5 | Linux backend GL (`WGPU_BACKEND=gl`) | n/a | falta |
+| M5 | Linux backend GL (`WGPU_BACKEND=gl`) | n/a | parcial: o caminho existe e inicializa (faltava o display handle na instância — sem ele o EGL respondia `gl not compatible with provided surface`; e o `alpha_mode` deram janela translúcida), e a escolha de adaptador prefere hardware. Falta exercitar o desenho num X com SHM sadio |
 | M8 | CI matriz de build + release por tag | não existe → `.github/workflows/release.yml` + `tools/release.sh` | feito para Linux x86_64/aarch64 (os alvos macOS/Windows são `M-X`/`M-Y` do [`BACKLOG`](BACKLOG.md)) |
 | M10 | Instalador: comando `bzmux`, menu, ícone, `--uninstall`, `--check` | `install.sh` (pipx + deps de sistema) → `install.sh` (copia 1 binário) | feito |
 
