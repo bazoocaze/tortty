@@ -140,6 +140,21 @@ WM, que é o que importa. `resize` devolve o pedido, não o resultado — quem c
   guardar os bytes e continuar na próxima chamada (o `dmesg` cortado no meio de
   um acento é o caso de teste).
 
+## Qualidade (linter e formatação)
+
+```sh
+./tools/check.sh          # a régua completa: fmt, clippy, teste, build, parsebench
+./tools/check.sh --fix    # conserta o que é mecânico (fmt + clippy --fix)
+```
+
+O `pre-commit` roda `--fast` sozinho (instalado com
+`git config core.hooksPath .githooks`); o CI roda o script inteiro. Se
+`clippy` reclamar de algo que o código **quer** fazer, o `#[allow]` vai na
+função com o motivo — não no topo do crate, e não em `#![allow]` global.
+
+Antes de rodar GUI, lembre do resto deste arquivo: matar processo é por PID
+file, e `pkill` por nome derruba sessão.
+
 ## Medição
 
 Ver [`BENCHMARKS.md`](BENCHMARKS.md) — é o único lugar com número. Resumo do

@@ -15,24 +15,24 @@ não por estimativa.
 ## Painel
 | área | feito | parcial | falta | não | total |
 |---|---|---|---|---|---|
-| 1. Núcleo: célula, cores, grade | 14 | 1 | 3 | 0 | 18 |
-| 2. Parser: controles, CSI, modos | 21 | 5 | 1 | 0 | 27 |
-| 3. Parser: SGR e OSC | 6 | 0 | 6 | 0 | 12 |
-| 4. Scrollback e visão do histórico | 4 | 1 | 3 | 0 | 8 |
-| 5. Entrada: teclado e protocolo do kitty | 3 | 2 | 9 | 0 | 14 |
-| 6. Entrada: mouse, seleção, clipboard, paste | 0 | 0 | 14 | 0 | 14 |
-| 7. Desenho: fonte, geometria, cores | 7 | 3 | 4 | 0 | 14 |
-| 8. Imagens do protocolo kitty | 0 | 0 | 13 | 2 | 15 |
-| 9. Janela: abas, workspaces, cromo | 0 | 3 | 15 | 0 | 18 |
-| 10. Janela: ciclo de vida, geometria, estado | 2 | 0 | 8 | 0 | 10 |
-| 11. Configuração e CLI | 2 | 5 | 11 | 0 | 18 |
-| 12. Debug socket e instrumentação | 6 | 5 | 2 | 0 | 13 |
-| 13. Plataforma e distribuição | 3 | 0 | 5 | 0 | 8 |
-| 14. Testes e verificação | 2 | 2 | 3 | 0 | 7 |
-| **total** | **70** | **27** | **97** | **2** | **196** |
+| 1. Núcleo: célula, cores, grade | 19 | 1 | 4 | 0 | 24 |
+| 2. Parser: controles, CSI, modos | 30 | 5 | 1 | 0 | 36 |
+| 3. Parser: SGR e OSC | 8 | 0 | 11 | 0 | 19 |
+| 4. Scrollback e visão do histórico | 4 | 1 | 6 | 0 | 11 |
+| 5. Entrada: teclado e protocolo do kitty | 3 | 2 | 15 | 0 | 20 |
+| 6. Entrada: mouse, seleção, clipboard, paste | 0 | 0 | 19 | 0 | 19 |
+| 7. Desenho: fonte, geometria, cores | 8 | 3 | 6 | 0 | 17 |
+| 8. Imagens do protocolo kitty | 0 | 0 | 16 | 3 | 19 |
+| 9. Janela: abas, workspaces, cromo | 0 | 3 | 17 | 0 | 20 |
+| 10. Janela: ciclo de vida, geometria, estado | 3 | 0 | 8 | 0 | 11 |
+| 11. Configuração e CLI | 3 | 5 | 13 | 0 | 21 |
+| 12. Debug socket e instrumentação | 7 | 5 | 3 | 0 | 15 |
+| 13. Plataforma e distribuição | 3 | 0 | 6 | 0 | 9 |
+| 14. Testes e verificação | 2 | 2 | 5 | 0 | 9 |
+| **total** | **90** | **27** | **130** | **3** | **250** |
 
-Equivalente pronto: **42.6%** (feito conta 1, parcial conta 0,5). O total serve para ver
-        tendência; o que decide o que fazer agora é a linha e a seção 17.
+Equivalente pronto: **41.4%** (feito conta 1, parcial conta 0,5). O total serve para ver
+tendência; o que decide o que fazer agora é a linha e a seção 17.
 
 ## Regras deste documento
 
@@ -337,13 +337,13 @@ Rust (sem linha, para não envelhecer a cada commit).
 | L2 | `state` com grade, cursor, título, histórico, célula, fonte, dpi | `window.py:531-546` → `app.rs` | parcial: falta `pid`, `xid`, `config`, `dpi`, `advance`, `pin` |
 | L3 | `text` (`view`/`history`/`screen`, `start`, `count`) | `debugsock.py:86-93` | parcial: `view`/`history`; falta `screen` |
 | L4 | `write` (bytes crus no pty) | `debugsock.py:106-111` | feito |
-| L5 | `keys` (spec → teclas, passando pelo encoder e atalhos) | `debugsock.py:94-99` | parcial: spec → bytes, sem atalhos |
+| L5 | `keys` (spec → teclas, passando pelo encoder e atalhos) | `debugsock.py:94-99` → `app.rs` | parcial: usa o encoder real; falta passar pelos atalhos locais (que ainda não existem) |
 | L6 | `resize` | `debugsock.py:100-103` | feito |
 | L7 | `prof` (contadores por etapa) | `debugsock.py:104-105` | parcial: `draw`/`parse`/`pty`; sem `bytes`/`eagain` |
 | L8 | `log` (ligar/desligar log em runtime) | `debugsock.py:112-113` | parcial: escreve; falta `off`/path |
 | L9 | `quit` (resposta sai antes de fechar) | `debugsock.py:114-115` | feito |
 | L10 | `--debug-socket auto` (`$XDG_RUNTIME_DIR/bzmux-<pid>.sock`) | `debugsock.py:33-43` → `debugsock.rs` | feito |
-| L11 | Socket `0600` + `SO_PEERCRED` (mesmo uid) | `debugsock.py:146-157,180` | falta |
+| L11 | Socket `0600` + `SO_PEERCRED` (mesmo uid) | `debugsock.py:146-157,180` → `debugsock.rs` | feito |
 | L12 | Não apagar arquivo alheio; socket órfão só sai com `ECONNREFUSED` | `debugsock.py:122-144` | falta |
 | L13 | Erro sempre `{"ok":false,"err":...}`, nunca derruba o app | `debugsock.py:70-119` → `debugsock.rs` | feito |
 | L14 | Named pipe no Windows (transporte alternativo) | n/a (Python é POSIX) | falta (**melhoria**) |
@@ -383,21 +383,21 @@ Rust (sem linha, para não envelhecer a cada commit).
 
 | área | feito | parcial | falta | não |
 |---|---|---|---|---|
-| Núcleo: célula, cores, grade | 14 | 1 | 3 | 0 |
-| Parser: controles, CSI, modos | 21 | 5 | 1 | 0 |
-| Parser: SGR e OSC | 6 | 0 | 6 | 0 |
-| Scrollback e visão do histórico | 4 | 1 | 3 | 0 |
-| Entrada: teclado e protocolo do kitty | 3 | 2 | 9 | 0 |
-| Entrada: mouse, seleção, clipboard, paste | 0 | 0 | 14 | 0 |
-| Desenho: fonte, geometria, cores | 7 | 3 | 4 | 0 |
-| Imagens do protocolo kitty | 0 | 0 | 13 | 2 |
-| Janela: abas, workspaces, cromo | 0 | 3 | 15 | 0 |
-| Janela: ciclo de vida, geometria, estado | 2 | 0 | 8 | 0 |
-| Configuração e CLI | 2 | 5 | 11 | 0 |
-| Debug socket e instrumentação | 6 | 5 | 2 | 0 |
-| Plataforma e distribuição | 3 | 0 | 5 | 0 |
-| Testes e verificação | 2 | 2 | 3 | 0 |
-| **total** | **70** | **27** | **97** | **2** |
+| Núcleo: célula, cores, grade | 19 | 1 | 4 | 0 |
+| Parser: controles, CSI, modos | 30 | 5 | 1 | 0 |
+| Parser: SGR e OSC | 8 | 0 | 11 | 0 |
+| Scrollback e visão do histórico | 4 | 1 | 6 | 0 |
+| Entrada: teclado e protocolo do kitty | 3 | 2 | 15 | 0 |
+| Entrada: mouse, seleção, clipboard, paste | 0 | 0 | 19 | 0 |
+| Desenho: fonte, geometria, cores | 8 | 3 | 6 | 0 |
+| Imagens do protocolo kitty | 0 | 0 | 16 | 3 |
+| Janela: abas, workspaces, cromo | 0 | 3 | 17 | 0 |
+| Janela: ciclo de vida, geometria, estado | 3 | 0 | 8 | 0 |
+| Configuração e CLI | 3 | 5 | 13 | 0 |
+| Debug socket e instrumentação | 7 | 5 | 3 | 0 |
+| Plataforma e distribuição | 3 | 0 | 6 | 0 |
+| Testes e verificação | 2 | 2 | 5 | 0 |
+| **total** | **90** | **27** | **130** | **3** |
 
 ## 16. Melhorias propostas
 
@@ -428,6 +428,11 @@ estão implementadas aparecem nas tabelas marcadas `(**melhoria**)`.
 A ordem não é a das tabelas: é por **o que destrava uso diário** e por
 dependência. Cada fatia termina com `cargo test` verde, `mc`/`vim`/`dmesg`
 funcionando e uma linha em `HISTORY.md`.
+
+**F0 — Higiene (feito, 2026-11-01).** `cargo fmt` + `clippy` (`all`,
+`correctness`, `suspicious`, `pedantic`) sem warning, `unsafe_code = deny` com
+allow local, um comando único (`tools/check.sh`) no pre-commit e no CI.
+Pronto quando: `./tools/check.sh` verde do zero.
 
 **F1 — Terminal utilizável de verdade (antes de qualquer cromo).**
 F8-F9 (seleção), F12-F15 (clipboard/paste), E4-E6 (Ctrl/Alt/Shift+Tab),

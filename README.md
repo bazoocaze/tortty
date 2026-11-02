@@ -42,6 +42,15 @@ cargo build --release
 é o equivalente ao `Xft.dpi` do GTK. `--debug-socket auto` abre
 `$XDG_RUNTIME_DIR/bzmux-<pid>.sock`.
 
+## Qualidade
+
+```sh
+./tools/check.sh          # fmt + clippy (-D warnings) + testes + build + parsebench
+./tools/check.sh --fix    # conserta formatação e o que o clippy corrige sozinho
+```
+
+Roda também no `pre-commit` (`git config core.hooksPath .githooks`) e no CI.
+
 ## Medir
 
 ```sh

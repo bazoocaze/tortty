@@ -72,6 +72,27 @@ por categoria, na ordem).
 - Toda sequência implementada no parser entra com teste em `bzmux-core`
   (tabela `#[test]` no fim do módulo, nome do teste = o que ele garante).
 
+## Qualidade: um comando só
+
+```sh
+./tools/check.sh          # fmt --check + clippy -D warnings + teste + build
+./tools/check.sh --fast   # sem o build (é o pre-commit)
+./tools/check.sh --fix    # aplica `cargo fmt` e `clippy --fix` antes de checar
+```
+
+O **mesmo** script roda no git hook (`.githooks/pre-commit`, ativado com
+`git config core.hooksPath .githooks`) e no CI (`.github/workflows/ci.yml`).
+Hook e CI que discordam não servem para nada.
+
+- **`cargo fmt`** é a formatação: `rustfmt.toml`, largura 100, só opções
+  estáveis. Não discuta estilo no review — `cargo fmt` decide.
+- **`cargo clippy`** roda com `-D warnings` e liga `all`, `correctness`,
+  `suspicious` e `pedantic`. Os lints desligados estão em `Cargo.toml` com o
+  motivo escrito (cast de célula/pixel, `unsafe_code = deny` com allow local).
+- **`allow` de lint é local e comentado**, nunca no topo do crate: se a regra
+  não vale para uma função, o `#[allow]` mora nela e diz por quê.
+- Commit só passa com a régua verde.
+
 ## Ferramentas
 
 - `./tools/devrun.sh --cmd 'mc' --debug-socket /tmp/bz.sock` — sobe em
