@@ -332,6 +332,8 @@ pub struct App {
     /// Há célula com SGR 5 na tela. Recalculado a cada `feed`: perguntar isso
     /// ao grid em cada tique custaria uma varredura por evento.
     blink_text: bool,
+    /// Portão do desenho (G16/B28/G15): ritmo de ~16 ms e `?2026` segurado.
+    gate: crate::frame::Gate,
     /// Aviso na tela (erro de config etc.). Um por vez, some sozinho.
     toast: Option<Toast>,
     /// Erros do arquivo no arranque, que só podem virar toast quando a janela
@@ -401,6 +403,7 @@ impl App {
             blink_epoch: std::time::Instant::now(),
             blink_fase: true,
             blink_text: false,
+            gate: crate::frame::Gate::default(),
             toast: None,
             startup_errs: Vec::new(),
             cfg_errors: Vec::new(),
@@ -2374,9 +2377,15 @@ impl ApplicationHandler<UserEvent> for App {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
             UserEvent::Wake => {
-                if let Some(w) = self.window.as_ref() {
-                    w.request_redraw();
-                }
+                // alimentar **antes** de perguntar pelo `?2026`: o estado que
+                // interessa é o dos bytes que acabaram de chegar, não o da
+                // leitura anterior (um desenho por leitura era o G16)
+                self.drain();
+                let sync = self
+                    .tabs
+                    .get(self.active)
+                    .is_some_and(|t| t.term.sync_output);
+                self.gate.pedir(std::time::Instant::now(), sync);
             },
             UserEvent::Debug(line, reply) => {
                 let out = self.debug_dispatch(&line);
@@ -2443,6 +2452,15 @@ impl ApplicationHandler<UserEvent> for App {
         let agora = std::time::Instant::now();
         // o reload precisa de um tique mesmo sem evento nenhum
         let mut quando = agora + Duration::from_millis(250);
+        // frame coalescido: venceu → um pedido de desenho; senão acorda nele
+        if self.gate.venceu(agora) {
+            if let Some(w) = self.window.as_ref() {
+                w.request_redraw();
+            }
+        }
+        if let Some(t) = self.gate.quando() {
+            quando = quando.min(t);
+        }
 
         // sinais: o handler só levanta a bandeira, quem age é aqui
         let (dump, terminar) = sinais();

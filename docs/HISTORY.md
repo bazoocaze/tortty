@@ -605,3 +605,33 @@ visível → o estacionado é promovido, a conexão do socket continua e o conte
 da workspace promovida aparece; **1 workspace × 1 aba**, `exit` → o app fecha
 (socket cai, processo sai). `I20` no `MIGRATION.md` saiu de `parcial` para
 `feito` e o `M-W` saiu da fila do `BACKLOG.md`.
+
+## 2026-11-02 — Onda 2: o portão do desenho (G16, B28, G15)
+
+O app desenhava uma vez por leitura de pty. Sob despejo contínuo isso era um
+desenho por pedaço de leitura — e como o desenho compete com a leitura, o custo
+total subia sem a tela ficar mais rápida.
+
+Agora existe `frame::Gate` (`crates/bzmux/src/frame.rs`), um tipo puro, sem
+`winit`, com quatro testes:
+
+- **ritmo**: quem já tem hora marcada não remarca → no máximo um frame a cada
+  16 ms;
+- **`?2026` aberto**: nada é desenhado até o fecho, porque desenhar agora
+  mostraria o **meio** de cada repaint (é o que faz a tela parecer pular várias
+  telas);
+- **fecho**: o estado final sai na hora, sem esperar o ritmo;
+- **teto de 200 ms**: app que abre a transação e esquece de fechar não congela a
+  tela — e depois do teto o portão abre **outra** janela de 200 ms, senão voltaria
+  a desenhar a cada leitura, que é exatamente o defeito que ele existe para
+  evitar.
+
+Uma ordem que importa: o `Wake` do pty agora faz `drain()` **antes** de perguntar
+pelo `?2026`. Perguntando antes, o estado lido era o da leitura anterior e o
+primeiro frame de cada transação saía no meio dela.
+
+Medição (900 frames de doom-fire, 61x18, 5 tomadas, números em `BENCHMARKS.md`):
+as chamadas de desenho caem de **1499–1585** para **63–74** com o mesmo fps
+(1012–1032), o que dá ~10x menos CPU desenhando na mesma carga. Ao vivo, com a
+transação vindo do pty (20 linhas com pausa): 4 desenhos em 0,4 s — uma por teto,
+como projetado — e o estado final inteiro na grade depois do fecho.

@@ -106,7 +106,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | B25 | `?1006` SGR mouse (estado) | `term.py:640-641` → `term.rs` | feito (estado; codificação falta) |
 | B26 | `?1004` focus report (estado + envio no app) | `term.py:642-643` → `term.rs`, `app.rs` | feito |
 | B27 | `?2004` bracketed paste + payload `200~`/`201~` | `term.py:648-651,1082-1091` → `select.rs` | feito |
-| B28 | `?2026` synchronized output | `term.py:652-655` | parcial: estado existe, o frame não é segurado |
+| B28 | `?2026` synchronized output | `term.py:652-655` | feito: estado no parser e o frame é segurado até o fecho (`frame::Gate`), com teto de 200 ms. Verificado no pty: 20 linhas dentro da transação → 4 desenhos em 0,4 s (uma por teto), e o estado final sai no fecho |
 | B29 | DSR/CPR `CSI 6 n`, status `CSI 5 n` | `term.py:772-773` → `term.rs` | feito |
 | B30 | DA1 `CSI c`, DA2 `CSI > c` | `term.py:743-749` → `term.rs` | feito |
 | B31 | DECRQM `CSI ? … $ p` | `term.py:750-754` → `term.rs` | feito |
@@ -203,8 +203,8 @@ Rust (sem linha, para não envelhecer a cada commit).
 | G12 | Cursor: block/beam/underline + pisca | `view.py:1058-1079`, `828-838` → `render.rs`, `app.rs` | feito: `cursor_blink on` pisca a 500 ms, tecla/colagem reacende, `CSI 6 q` par vence; SGR 5 usa a mesma fase |
 | G13 | Sublinhado na largura do run | `view.py:1022-1025` → `render.rs` | feito |
 | G14 | Seleção desenhada como inversão | `view.py:943,953-973` → `render.rs` | feito (o default resolve pelo outro extremo) |
-| G15 | `?2026` segura o frame (teto 200 ms) | `view.py:296-324` | falta |
-| G16 | Frame coalescido (~16 ms), não um desenho por leitura | `view.py:286-320` | parcial: desenha por leitura quando `--no-vsync` |
+| G15 | `?2026` segura o frame (teto 200 ms) | `view.py:296-324` | feito: `frame::Gate` (`SYNC_MS = 200`), testado sem display (transação aberta, fecho imediato, app que nunca fecha não desenha a cada leitura) |
+| G16 | Frame coalescido (~16 ms), não um desenho por leitura | `view.py:286-320` | feito: `frame::Gate` (`FRAME_MS = 16`), alimentado no `Wake` **depois** do `drain` (o `?2026` só é visível após parsear). 900 frames: 1499–1585 desenhos → **63–74**, mesmo fps (`BENCHMARKS.md`) |
 | G17 | Dano por região (`queue_draw_area`) | `view.py:330-364` | falta |
 
 ## 8. Imagens do protocolo kitty

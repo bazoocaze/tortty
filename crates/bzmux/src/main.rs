@@ -5,6 +5,7 @@ mod atlas;
 mod cli;
 mod clip;
 mod debugsock;
+mod frame;
 mod glyph;
 mod keys;
 mod mouse;

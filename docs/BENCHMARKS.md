@@ -98,6 +98,22 @@ efetivo). A conversão pt→px do `swash` bate com a do Pango dentro de 2,4% na
 altura — por isso a comparação em células é justa, e a diferença de pixels por
 célula (2%) não explica 9x.
 
+### Portão do desenho: draw calls (G16/B28/G15, 2026-11-02)
+
+Antes do portão o app desenhava uma vez por leitura de pty; agora no máximo uma
+a cada 16 ms (e nenhuma com `?2026` aberto, teto de 200 ms). Mesma carga (900
+frames de doom-fire, 61x18, `--no-vsync`), 5 tomadas:
+
+| | fps | MB/s | `draw` por chamada | chamadas de desenho |
+|---|---|---|---|---|
+| antes | 965–1014 | 41,4–43,5 | 0,28–0,29 ms | **1499–1585** |
+| depois | 1012–1032 | 43,4–44,3 | 0,63–0,70 ms | **63–74** |
+
+O fps não muda (o gargalo é o gerador/pty); o que muda é o **custo total** do
+desenho na mesma carga: antes `1580 x 0,28 = 442 ms`, depois `64 x 0,68 = 44 ms`
+— **10x menos CPU desenhando**, porque cada frame carrega mais dano. O fps mais
+baixo visto numa tomada (847) foi carga de máquina (`load 2,4`), não regressão.
+
 ### O teto agora é o gerador
 
 O doom-fire isolado faz **~55 MB/s** (756 fps a 80x24, medido no repo Python).
