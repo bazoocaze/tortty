@@ -24,14 +24,14 @@ não por estimativa.
 | 7. Desenho: fonte, geometria, cores | 11 | 2 | 3 | 0 | 16 |
 | 8. Imagens do protocolo kitty | 0 | 0 | 13 | 3 | 16 |
 | 9. Janela: abas, workspaces, cromo | 18 | 0 | 0 | 0 | 18 |
-| 10. Janela: ciclo de vida, geometria, estado | 2 | 0 | 8 | 0 | 10 |
-| 11. Configuração e CLI | 15 | 1 | 2 | 0 | 18 |
-| 12. Debug socket e instrumentação | 7 | 5 | 2 | 0 | 14 |
+| 10. Janela: ciclo de vida, geometria, estado | 5 | 0 | 5 | 0 | 10 |
+| 11. Configuração e CLI | 16 | 0 | 2 | 0 | 18 |
+| 12. Debug socket e instrumentação | 14 | 0 | 0 | 0 | 14 |
 | 13. Plataforma e distribuição | 5 | 0 | 5 | 0 | 10 |
 | 14. Testes e verificação | 3 | 2 | 4 | 0 | 9 |
-| **total** | **154** | **13** | **38** | **3** | **208** |
+| **total** | **165** | **7** | **33** | **3** | **208** |
 
-Equivalente pronto: **77.2%** (feito conta 1, parcial conta 0,5). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
+Equivalente pronto: **81.0%** (feito conta 1, parcial conta 0,5). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
 tendência; o que decide o que fazer agora é a linha e a seção 16.
 
 ## Regras deste documento
@@ -261,9 +261,9 @@ Rust (sem linha, para não envelhecer a cada commit).
 | J4 | Rejeitar geometria inválida (monitor desconectado, lixo) | `state.py:46-63` | falta |
 | J5 | Maximizado é estado separado do tamanho normal | `window.py:1009-1012` | falta |
 | J6 | Wayland: não salvar x/y | `window.py:975-978` | falta |
-| J7 | `SIGUSR1` = dump imediato; `SIGTERM` = sair limpo | `window.py:503-508` | falta |
-| J8 | `--quit-after SEG` (usado pela automação) | `cli.py:35` | falta |
-| J9 | Dump do texto de todas as abas para arquivo | `window.py:929-945` | falta |
+| J7 | `SIGUSR1` = dump imediato; `SIGTERM` = sair limpo | `window.py:503-508` | feito: `SIGUSR1` = dump na hora, `SIGTERM` = dump e saída limpa (handler só levanta `AtomicBool`; quem age é o laço) |
+| J8 | `--quit-after SEG` (usado pela automação) | `cli.py:35` | feito: `--quit-after SEG` fecha sozinho e deixa o dump (conferido: dump escrito e processo fora) |
+| J9 | Dump do texto de todas as abas para arquivo | `window.py:929-945` | feito: dump com cabeçalho por workspace e por aba, scrollback (últimas 40) e viewport, marcando a aba `[fundo]` |
 | J11 | Uma instância por PID file, sem matar processo alheio | `debug.sh` (Python) → `tools/devkill.sh` | feito |
 
 ## 11. Configuração e CLI
@@ -284,7 +284,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | K12 | Auto-reload com debounce de 250 ms | `config.py:307-329` → `App::check_config` | feito |
 | K13 | Erros de config viram toast (1º + contagem) | `config.py:331-345` | feito: arranque e reload mostram "config mantida — linha N: 'chave': motivo (+K)"; salvar certo mostra "config recarregada" |
 | K14 | `-c/--config`, `--cmd`, `--debug-socket`, `--debug-log` | `cli.py:31-41` → `cli.rs` | feito |
-| K15 | `--quit-after`, `--dump-to`, `--selftest`, `--install-shortcut` | `cli.py:35-96` | parcial: `--selftest` feito (atalho virou o `install.sh`); falta `--quit-after`/`--dump-to` |
+| K15 | `--quit-after`, `--dump-to`, `--selftest`, `--install-shortcut` | `cli.py:35-96` | feito: `--selftest`, `--quit-after`, `--dump-to` (o atalho de desktop é do `install.sh`) |
 | K16 | `--version`, `--help`, código 2 para uso inválido | `cli.py:85-101` → `cli.rs` | feito |
 | K18 | `.desktop` + ícone (`--install-shortcut`) | `shortcut.py:34-136` | falta |
 | K19 | WM_CLASS estável (`StartupWMClass`) | `cli.py:130-131` | falta |
@@ -294,19 +294,19 @@ Rust (sem linha, para não envelhecer a cada commit).
 | # | funcionalidade | ref (Python → Rust) | estado |
 |---|---|---|---|
 | L1 | Transporte Unix socket, JSON por linha, vários pedidos por conexão | `debugsock.py:217-240` → `debugsock.rs` | feito |
-| L2 | `state` com grade, cursor, título, histórico, célula, fonte, dpi | `window.py:531-546` → `app.rs` | parcial: falta `pid`, `xid`, `config`, `dpi`, `advance`, `pin` |
-| L3 | `text` (`view`/`history`/`screen`, `start`, `count`) | `debugsock.py:86-93` | parcial: `view`/`history`; falta `screen` |
+| L2 | `state` com grade, cursor, título, histórico, célula, fonte, dpi | `window.py:531-546` → `app.rs` | feito: `state` traz grade, cursor, título, histórico, célula, fonte, `pid`, `xid` (Xlib/Xcb; 0 no Wayland), `config`, `errors`, `dpi`, `advance`, `padding`, `pin`, seleção e métricas |
+| L3 | `text` (`view`/`history`/`screen`, `start`, `count`) | `debugsock.py:86-93` | feito: `view`/`history`/`screen` com `start`/`count` (`screen` é a grade viva, sem o offset da visão) |
 | L4 | `write` (bytes crus no pty) | `debugsock.py:106-111` | feito |
-| L5 | `keys` (spec → teclas, passando pelo encoder e atalhos) | `debugsock.py:94-99` → `app.rs` | parcial: usa o encoder real; falta passar pelos atalhos locais (que ainda não existem) |
+| L5 | `keys` (spec → teclas, passando pelo encoder e atalhos) | `debugsock.py:94-99` → `app.rs` | feito: `keys` passa pelo **mesmo** caminho do teclado (atalho local antes do encoder, `handled` na resposta); `ctrl+shift+n` volta `handled:true` sem byte |
 | L6 | `resize` | `debugsock.py:100-103` | feito |
-| L7 | `prof` (contadores por etapa) | `debugsock.py:104-105` | parcial: `draw`/`parse`/`pty`; sem `bytes`/`eagain` |
-| L8 | `log` (ligar/desligar log em runtime) | `debugsock.py:112-113` | parcial: escreve; falta `off`/path |
+| L7 | `prof` (contadores por etapa) | `debugsock.py:104-105` | feito: `draw`/`parse`/`pty` + `writes`/`write_kb`/`eagain` (contador na escrita do pty) |
+| L8 | `log` (ligar/desligar log em runtime) | `debugsock.py:112-113` | feito: `log` liga, desliga (`off`) e troca o caminho em execução, valendo também como config corrente |
 | L9 | `quit` (resposta sai antes de fechar) | `debugsock.py:114-115` | feito |
 | L10 | `--debug-socket auto` (`$XDG_RUNTIME_DIR/bzmux-<pid>.sock`) | `debugsock.py:33-43` → `debugsock.rs` | feito |
 | L11 | Socket `0600` + `SO_PEERCRED` (mesmo uid) | `debugsock.py:146-157,180` → `debugsock.rs` | feito |
-| L12 | Não apagar arquivo alheio; socket órfão só sai com `ECONNREFUSED` | `debugsock.py:122-144` | falta |
+| L12 | Não apagar arquivo alheio; socket órfão só sai com `ECONNREFUSED` | `debugsock.py:122-144` | feito: arquivo que não é socket nunca é apagado (erro `caminho existe e não é socket`) e o órfão só sai quando o `connect` recusa |
 | L13 | Erro sempre `{"ok":false,"err":...}`, nunca derruba o app | `debugsock.py:70-119` → `debugsock.rs` | feito |
-| L15 | `--dump-to`/`SIGUSR1` para inspeção sem socket | `window.py:947-949` | falta (ver J7/J9) |
+| L15 | `--dump-to`/`SIGUSR1` para inspeção sem socket | `window.py:947-949` | feito: `--dump-to` e `SIGUSR1` escrevem o dump sem socket |
 
 ## 13. Plataforma e distribuição
 

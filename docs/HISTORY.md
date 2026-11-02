@@ -449,3 +449,36 @@ Verificação: `state`/`text` por socket com um filho em modo raw que imprime o
 hex do que recebe — as respostas de consulta (`?0u`, `?3u`, `?11u`) e as teclas
 (`97u`, `97;5u`, `97;1:2u`, `97;1:3u`, `27u`, `1;5A`, `1;2R`) lidas da tela, e
 o atalho local sem deixar rastro no filho.
+
+## 2026-11-02 — automação sem `xdotool` (L2, L3, L5, L7, L8, L12, L15, J7-J9, K15)
+
+O que faltava para o `benchrun.py` e o CI não dependerem de mouse e de captura
+de tela. Nada de GPU aqui: é instrumentação.
+
+**`state` completo.** Ganhou `xid` (do `RawWindowHandle`, Xlib/Xcb; 0 no
+Wayland — quem vai capturar pixel pergunta ao app, não ao X), `config`,
+`errors` (o erro de config é fato mesmo quando a config anterior é mantida),
+`dpi`, `advance`, `padding` e `pin`. `text` já tinha `screen`; ficou conferido.
+
+**`keys` pelo caminho do teclado de verdade.** O verbo agora passa pelo atalho
+local **antes** do encoder, como a tecla física: `ctrl+shift+n` responde
+`handled:true` e não manda byte nenhum (`ctrl+a` continua `01`). Antes ele
+falava direto com o encoder, e a resposta era mentira sobre o que o app faria.
+
+**`prof` com escrita.** `writes`, `write_kb` e `eagain`, contados na única
+porta de escrita do pty — que virou um `pty_write` no app (antes eram seis
+`pty.write` espalhados). `log` liga, desliga (`off`) e troca de arquivo em
+execução.
+
+**Dump e ciclo de vida.** `--dump-to`, `--quit-after SEG`, `SIGUSR1` (dump na
+hora) e `SIGTERM` (dump e saída limpa). O handler de sinal só levanta um
+`AtomicBool`: quem age é o laço, que já acorda a cada 250 ms. O dump tem
+cabeçalho por workspace e por aba, scrollback (as últimas 40 linhas) e o
+viewport, marcando `[fundo]` em quem não é a aba ativa — conferido com dois
+workspaces e duas abas: 78 linhas, três cabeçalhos, processo fora depois do
+`SIGTERM`.
+
+**Socket órfão (L12).** Antes, qualquer caminho ocupado era apagado no
+arranque; agora arquivo que não é socket nunca é tocado (`caminho existe e não
+é socket`) e o órfão só sai quando o `connect` recusa. Verificado com um
+arquivo de texto no lugar do socket: sobreviveu com o conteúdo intacto.
