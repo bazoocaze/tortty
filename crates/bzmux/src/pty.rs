@@ -21,8 +21,41 @@ pub struct Pty {
     size: (u16, u16),
 }
 
+/// SHELL do filho, **sempre caminho**: config (vazio herda o ambiente) →
+/// `$SHELL` → `/bin/bash`. Valor que não existe no PATH cai em `/bin/bash`,
+/// como o `shutil.which(value or $SHELL or "/bin/bash") or "/bin/bash"` do
+/// Python. Antes pegávamos o `$SHELL` cru: um `$SHELL` velho apontando para
+/// caminho morto fazia o filho morrer na hora, e o padrão era `/bin/sh` (dash
+/// no Debian) onde o Python usa `/bin/bash`.
+#[must_use]
+pub fn effective_shell(configured: Option<&str>, env_shell: Option<&str>) -> String {
+    let cand = configured
+        .filter(|s| !s.is_empty())
+        .or_else(|| env_shell.filter(|s| !s.is_empty()));
+    cand.and_then(which).unwrap_or_else(|| {
+        if std::path::Path::new("/bin/bash").exists() {
+            "/bin/bash".to_string()
+        } else {
+            "/bin/sh".to_string()
+        }
+    })
+}
+
+/// Caminho de um executável: absoluto/relativo é conferido direto, nome solto
+/// é procurado no PATH (mesma ideia do `shutil::which`).
+fn which(name: &str) -> Option<String> {
+    if name.contains('/') {
+        return std::path::Path::new(name)
+            .is_file()
+            .then(|| name.to_string());
+    }
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|d| d.join(name))
+        .find(|c| c.is_file())
+        .map(|c| c.to_string_lossy().into_owned())
+}
+
 impl Pty {
-    #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         cmd: Option<&str>,
         configured_shell: Option<&str>,
@@ -42,11 +75,7 @@ impl Pty {
             })
             .map_err(|e| format!("openpty: {e}"))?;
 
-        // `shell` do arquivo de config vence o $SHELL do ambiente
-        let shell = configured_shell
-            .map(str::to_string)
-            .or_else(|| std::env::var("SHELL").ok())
-            .unwrap_or_else(|| "/bin/sh".to_string());
+        let shell = effective_shell(configured_shell, std::env::var("SHELL").ok().as_deref());
         let mut cb = match cmd {
             // o `--cmd` do Python passa por `sh -c`: mantém a mesma semântica
             Some(c) => {
@@ -160,5 +189,39 @@ impl Pty {
     pub fn kill(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+#[cfg(test)]
+mod checks_shell {
+    use super::effective_shell;
+
+    #[test]
+    fn shell_resolvido_e_um_caminho_que_existe() {
+        // config vence o ambiente
+        assert_eq!(
+            effective_shell(Some("/bin/sh"), Some("/bin/bash")),
+            "/bin/sh"
+        );
+        // vazio na config herda o $SHELL
+        assert_eq!(effective_shell(Some(""), Some("/bin/bash")), "/bin/bash");
+        // nome solto é procurado no PATH (vira caminho)
+        assert!(
+            effective_shell(Some("sh"), None).starts_with('/'),
+            "precisa sair em caminho, não no nome"
+        );
+        // caminho morto na config, e $SHELL também morto: cai no /bin/bash
+        let duro = effective_shell(Some("nao-existe-xyz"), Some("/x"));
+        assert!(duro == "/bin/bash" || duro == "/bin/sh", "{duro}");
+        // nada de nada: /bin/bash, não /bin/sh
+        let padrao = effective_shell(None, None);
+        assert_eq!(
+            padrao,
+            if std::path::Path::new("/bin/bash").exists() {
+                "/bin/bash"
+            } else {
+                "/bin/sh"
+            }
+        );
     }
 }
