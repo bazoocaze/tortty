@@ -2101,7 +2101,9 @@ impl App {
     /// (ou fecha o app, se não sobrou nenhum) — I20.
     fn drop_empty_workspace(&mut self) {
         if self.parked.is_empty() {
+            // último workspace: o app fecha no próximo `RedrawRequested`
             self.exiting = true;
+            self.redraw();
             return;
         }
         let novo = self.parked.remove(0);
@@ -2519,7 +2521,12 @@ impl ApplicationHandler<UserEvent> for App {
             ));
         }
 
-        // aba cujo shell morreu fecha sozinha; a última fecha o app (I20)
+        // aba cujo shell morreu fecha sozinha; a última fecha o workspace, e só
+        // o último workspace fecha o app (I20). Aqui estava o `M-W`: o atalho
+        // `tabs.len() == 1 → exit` pulava o `drop_empty_workspace`, então um
+        // `Ctrl+D`/`exit` na aba visível matava o app inteiro mesmo com outro
+        // workspace estacionado (o Python fecha só a aba). A morte do filho tem
+        // de entrar no **mesmo** caminho do `close_tab_at`.
         if let Some(morta) = (0..self.tabs.len()).find(|&i| {
             self.tabs[i]
                 .pty
@@ -2527,11 +2534,9 @@ impl ApplicationHandler<UserEvent> for App {
                 .is_some_and(super::pty::Pty::child_exited)
         }) {
             self.drain();
-            if self.tabs.len() == 1 {
-                self.redraw();
+            self.close_tab_at(morta);
+            if self.exiting {
                 event_loop.exit();
-            } else {
-                self.close_tab_at(morta);
             }
         }
     }

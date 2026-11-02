@@ -249,7 +249,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | I15 | Atalhos de aba/workspace (Ctrl+Shift+T/W/N/Q/F2, Alt+N, Super+N/Q) | `window.py:854-898` | feito: Ctrl+Shift+T/W/N/Q/F2, Ctrl+Shift+1..9, Alt+1..9, Super+N/Q/1..9 |
 | I16 | Dígito de atalho por keycode cru (sobrevive a ABNT2) | `window.py:70-84` → `digit_of` (tecla física) | feito |
 | I17 | Título da janela = título da aba ativa | `window.py:375,921-926` | feito: `<título> — bzmux`, só quando muda |
-| I20 | Fechar última aba fecha o workspace; último workspace fecha o app | `window.py:196-197,836-845` | parcial: o atalho funciona (`drop_empty_workspace` promove o estacionado ou fecha o app), mas a saída do **filho** não passa por ali — com 1 aba e outro workspace estacionado o app inteiro fecha (`M-W` no `BACKLOG.md`) |
+| I20 | Fechar última aba fecha o workspace; último workspace fecha o app | `window.py:196-197,836-845` | feito: o atalho e a **saída do filho** entram no mesmo caminho (`close_tab_at` → `drop_empty_workspace`). Verificado ao vivo: 2 workspaces × 1 aba, `exit` na visível → promoção do estacionado e app vivo; 1 workspace × 1 aba → app fecha |
 
 ## 10. Janela: ciclo de vida, geometria, estado
 

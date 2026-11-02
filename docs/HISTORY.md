@@ -584,3 +584,24 @@ próximo pedido.
 (caminho vazio é "não pedi socket", como o `debug_log` vazio), e o relatório do
 `--selftest` tinha `config_file` **duas vezes** (o antigo do `checks.rs` virou
 `config_defaults`).
+
+## 2026-11-02 — M-W: a morte do filho entra no caminho do `close_tab_at`
+
+O `Ctrl+D`/`exit` na aba visível matava o app inteiro mesmo com outro workspace
+estacionado. O culpado era um atalho em `about_to_wait`: quando a aba morta era
+a única do workspace, o código ia direto para `event_loop.exit()` e pulava o
+`drop_empty_workspace` — que é quem promove o estacionado. Ou seja, o atalho
+(`Ctrl+Shift+W`) tinha o comportamento certo e o **fim natural do shell** não.
+
+Agora a morte do filho chama `close_tab_at(morta)` como qualquer outro
+fechamento, e o app só sai quando `drop_empty_workspace` não tem mais nenhum
+workspace para promover (`exiting = true` + `redraw()`, e o
+`RedrawRequested` fecha o loop). Uma decisão de desenho junto: `exiting` não
+fecha o loop por si — quem fecha é o frame, para o app não sair no meio de um
+desenho.
+
+Verificado ao vivo, nos dois sentidos: **2 workspaces × 1 aba**, `exit` na
+visível → o estacionado é promovido, a conexão do socket continua e o conteúdo
+da workspace promovida aparece; **1 workspace × 1 aba**, `exit` → o app fecha
+(socket cai, processo sai). `I20` no `MIGRATION.md` saiu de `parcial` para
+`feito` e o `M-W` saiu da fila do `BACKLOG.md`.
