@@ -46,6 +46,14 @@ só o README.md é para humano.
   da fase Python fica no outro repo, em `docs/HISTORY.md` de lá.
 - `README.md` — visão para humano: rodar, medir, estrutura.
 
+### Regra não se cria sozinho
+
+Fato, medição e código podem ser registrados direto. **Norma não**: antes de
+acrescentar ou mudar uma regra em qualquer doc — critério de entrada de fila,
+definição de estado, "o que vai aonde", formato de registro, seção nova que
+alguém precisa alimentar — proponha o texto e espere o ok do dono do projeto.
+Vale para este arquivo também.
+
 ## Arquitetura
 
 Workspace de dois crates. A fronteira é rígida e é a razão de o núcleo ser
