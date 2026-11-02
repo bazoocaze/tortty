@@ -414,13 +414,13 @@ impl Renderer {
         }
     }
 
-    /// Toast (I12): uma faixa na primeira linha, com as cores invertidas.
+    /// Toast (I12): uma faixa na última linha, com as cores invertidas.
     ///
-    /// Fica em cima porque embaixo está o prompt (a linha em que a pessoa
-    /// está olhando) e o aviso é sobre o terminal, não sobre o programa. O
-    /// texto é cortado na largura da grade — quebra de linha num aviso
-    /// transitório só confunde.
-    fn toast(&mut self, text: &str, cols: usize) {
+    /// Fica embaixo porque em cima está a barra de abas (o cabeçalho é dela);
+    /// o aviso é do terminal, não do programa, então cobre a última linha da
+    /// grade em vez de disputar o topo. O texto é cortado na largura da
+    /// grade — quebra de linha num aviso transitório só confunde.
+    fn toast(&mut self, text: &str, cols: usize, rows: usize) {
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
         let ascent = self.fonts.ascent;
@@ -433,9 +433,10 @@ impl Renderer {
             return;
         }
         // margem de meia célula de cada lado para o texto não tocar a borda
+        let y0 = rows.saturating_sub(1) as f32 * chh;
         self.push_rect(
             0.0,
-            0.0,
+            y0,
             (w + 2) as f32 * cw,
             chh,
             [bg[0], bg[1], bg[2], 1.0],
@@ -445,7 +446,7 @@ impl Renderer {
                 self.instances.push(Instance {
                     rect: [
                         (i + 1) as f32 * cw + q.left as f32,
-                        ascent - q.top as f32,
+                        y0 + ascent - q.top as f32,
                         q.w as f32,
                         q.h as f32,
                     ],
@@ -698,7 +699,7 @@ impl Renderer {
         // 5) toast (I12/K13): aviso do próprio terminal, por cima de tudo. Some
         // sozinho; quem controla o tempo é o app.
         if let Some(t) = toast {
-            self.toast(t, cols);
+            self.toast(t, cols, rows.len());
         }
     }
 
