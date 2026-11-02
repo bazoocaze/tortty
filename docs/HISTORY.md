@@ -154,3 +154,27 @@ Dois bugs meus no caminho: a função do modo se chamava `install`, então o
 teste de escrita usava `-w` num diretório que ainda não existia, o que pedia
 `sudo` para instalar em `/tmp`. Funções renomeadas (`do_install`) e o teste
 sobe até o ancestral existente.
+
+## 2026-11-02 — F2: reflow no resize (A22, A23)
+
+Antes: `resize` só esticava/cortava cada linha. Estreitar a janela **comia** o
+texto da direita; alargar deixava o texto picado em colunas de 80. Agora o
+resize do buffer principal junta as linhas "moles" (`wrapped`) em parágrafos e
+re-quebra tudo na largura nova.
+
+Decisões que valem registro:
+
+- **corte** só de espaço em branco com fundo default (`Cell::is_blank`). Espaço
+  com fundo pintado é conteúdo — barra de status do `vim`, `git diff --color`,
+  `bat --style=full` são linhas de largura inteira pintada;
+- **cursor** não vem de `cy`: vem do *offset dentro do parágrafo*, então 15
+  células em 5 colunas terminam na 3ª linha, coluna 5, com quebra pendente
+  (é o `wrap_pending` do VT, não uma coluna ocupada);
+- **par largo** não é partido: se o corte cairia entre o caractere e sua
+  continuação, a linha quebra uma coluna antes;
+- `scrolled` continua monotônico e `abs_gen` sobe: a numeração absoluta muda,
+  então a seleção morre (igual ao Python) em vez de copiar texto errado.
+
+Provado com 6 testes novos (`reflow_*`, 38 no total) e no app: 30 parágrafos de
+152 colunas, `100x20 → 50x20` re-quebra sem perder nada, `→ 120x20` junta de
+volta na largura inteira.

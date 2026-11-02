@@ -267,17 +267,39 @@ impl Term {
         }
         self.dirty_all = true;
         self.abs_gen += 1;
-        let removed = resize_main(
-            &mut self.grid,
-            &mut self.scrollback,
-            self.scrollback_limit,
-            cols,
-            rows,
-        );
         if let Some(alt) = self.alt.as_mut() {
-            // Alt-screen não tem histórico: quem sai pela tela morre.
+            // Alt-screen não tem histórico: quem sai pela tela morre, e sem
+            // reflow (é tela de app, não de texto).
             crop_rows(alt, cols, rows);
         }
+        // Buffer principal: junta os parágrafos moles e re-quebra na largura
+        // nova. O cursor é recalculado a partir do offset dentro do parágrafo,
+        // não de `cy` — que deixa de significar a mesma coisa.
+        let (cur_row, cur_col) = (self.cy, self.cx);
+        let hist = self.scrollback.len();
+        let all: Vec<Row> = self
+            .scrollback
+            .drain(..)
+            .chain(std::mem::take(&mut self.grid))
+            .collect();
+        let mut re = reflow(all, cols, hist + cur_row, cur_col);
+        let first_live = re.rows.len().saturating_sub(rows);
+        let live = re.rows.split_off(first_live);
+        self.scrollback.extend(re.rows);
+        while self.scrollback.len() > self.scrollback_limit {
+            self.scrollback.pop_front();
+        }
+        self.grid = live;
+        // `rows` linhas vivas sempre: as que faltam nascem em branco embaixo
+        while self.grid.len() < rows {
+            self.grid.push(Row::blank(cols));
+        }
+        self.cy = re.cur_row.saturating_sub(first_live).min(rows - 1);
+        self.cx = re.cur_col.min(cols - 1);
+        let wrap = re.wrap;
+        // o índice absoluto continua válido, mas o conteúdo andou: âncora velha
+        // passa a apontar para outra linha, então morre (o `abs_gen` já subiu)
+        self.scrolled = self.scrolled.max(self.scrollback.len() as u64);
         self.cols = cols;
         self.rows = rows;
         self.tabstops.resize(cols, false);
@@ -288,9 +310,7 @@ impl Term {
         }
         self.top = 0;
         self.bottom = rows - 1;
-        self.cy = self.cy.saturating_sub(removed).min(rows - 1);
-        self.cx = self.cx.min(cols - 1);
-        self.wrap_pending = false;
+        self.wrap_pending = wrap;
         self.dirty = vec![true; rows];
     }
 
@@ -1568,34 +1588,105 @@ fn crop_rows(grid: &mut Vec<Row>, cols: usize, rows: usize) {
     }
 }
 
-/// Resize do buffer principal: o que sai pelo topo vai para o histórico.
-/// Devolve quantas linhas saíram do topo (para corrigir o cursor).
-fn resize_main(
-    grid: &mut Vec<Row>,
-    scrollback: &mut VecDeque<Row>,
-    limit: usize,
-    cols: usize,
-    rows: usize,
-) -> usize {
-    for r in grid.iter_mut() {
-        r.cells.resize(cols, Cell::BLANK);
+/// O que o reflow devolveu: linhas absolutas (histórico + grade) e o cursor.
+struct Reflowed {
+    rows: Vec<Row>,
+    cur_row: usize,
+    cur_col: usize,
+    /// O cursor caiu no fim de uma linha cheia: o próximo caractere quebra
+    /// (o `wrap_pending` do VT), não sobrescreve a última coluna.
+    wrap: bool,
+}
+
+/// Junta as linhas "moles" (`wrapped`) em parágrafos e re-quebra tudo na
+/// largura nova — o reflow do `resize`.
+///
+/// Duas regras que valem a pena saber:
+///
+/// - espaço em branco no fim do parágrafo só sai se o fundo for o default
+///   (A23). Espaço com fundo pintado é conteúdo: barra de status do `vim`,
+///   `git diff --color`, `bat --style=full` são linhas de largura inteira
+///   pintada, e apagá-las come o desenho;
+/// - par largo (`CJK`, emoji) não é partido ao meio: se o corte cairia entre
+///   a célula e sua continuação, a linha quebra uma coluna antes.
+fn reflow(all: Vec<Row>, cols: usize, cur_abs: usize, cur_col: usize) -> Reflowed {
+    let cols = cols.max(1);
+    // -- 1. parágrafos, na ordem de leitura
+    let mut paras: Vec<Vec<Cell>> = Vec::new();
+    let mut cur_para = 0usize;
+    let mut cur_off = 0usize;
+    let mut para: Vec<Cell> = Vec::new();
+    for (i, mut row) in all.into_iter().enumerate() {
+        if i == cur_abs {
+            cur_para = paras.len();
+            cur_off = para.len() + cur_col.min(row.cells.len().saturating_sub(1));
+        }
+        let soft = row.wrapped;
+        if !soft {
+            while row.cells.last().is_some_and(Cell::is_blank) {
+                row.cells.pop();
+            }
+        }
+        para.append(&mut row.cells);
+        if !soft {
+            paras.push(std::mem::take(&mut para));
+        }
     }
-    let mut removed = 0usize;
-    if grid.len() > rows {
-        removed = grid.len() - rows;
-        for _ in 0..removed {
-            let row = grid.remove(0);
-            scrollback.push_back(row);
+    if !para.is_empty() || paras.is_empty() {
+        paras.push(para);
+    }
+
+    // -- 2. re-quebra
+    let mut rows: Vec<Row> = Vec::new();
+    let mut cur_row = 0usize;
+    let mut cur_col_new = 0usize;
+    let mut wrap = false;
+    for (pi, cells) in paras.iter().enumerate() {
+        let first = rows.len();
+        let mut chunks: Vec<(usize, usize)> = Vec::new();
+        let mut s = 0usize;
+        loop {
+            let mut e = (s + cols).min(cells.len());
+            if e < cells.len() && e > s && cells[e].is_cont() {
+                e -= 1; // o par inteiro desce
+            }
+            chunks.push((s, e));
+            if e >= cells.len() {
+                break;
+            }
+            s = e;
         }
-        while scrollback.len() > limit {
-            scrollback.pop_front();
+        for (ci, (a, b)) in chunks.iter().enumerate() {
+            let mut chunk: Vec<Cell> = cells[*a..*b].to_vec();
+            chunk.resize(cols, Cell::BLANK);
+            let last = ci + 1 == chunks.len();
+            rows.push(Row {
+                cells: chunk,
+                wrapped: !last,
+            });
         }
-    } else {
-        while grid.len() < rows {
-            grid.push(Row::blank(cols));
+        if pi == cur_para {
+            let last_i = chunks.len() - 1;
+            let ci = chunks
+                .iter()
+                .position(|(_, b)| cur_off < *b)
+                .unwrap_or(last_i);
+            let (a, b) = chunks[ci];
+            cur_row = first + ci;
+            if cur_off >= cells.len() && b - a == cols && ci == chunks.len() - 1 {
+                cur_col_new = cols - 1;
+                wrap = true;
+            } else {
+                cur_col_new = cur_off.saturating_sub(a).min(cols - 1);
+            }
         }
     }
-    removed
+    Reflowed {
+        rows,
+        cur_row,
+        cur_col: cur_col_new,
+        wrap,
+    }
 }
 
 #[cfg(test)]
@@ -1840,6 +1931,115 @@ mod tests {
         assert!(!t.scrollback.is_empty());
         let hist = t.history_text(0, 10);
         assert_eq!(hist[0], "linha0");
+    }
+
+    /// Texto de todas as linhas (histórico + tela), na ordem de leitura.
+    fn tudo(t: &Term) -> String {
+        t.scrollback
+            .iter()
+            .chain(t.grid.iter())
+            .map(Row::text)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn reflow_estreita_e_alarga_preservando_o_texto() {
+        let mut t = term(); // 10x4
+        t.feed(b"abcdefghijklmnopqrstuvwxy"); // 25 células
+        assert_eq!(screen(&t)[..3], ["abcdefghij", "klmnopqrst", "uvwxy"]);
+        t.resize(5, 4);
+        // 6 linhas re-quebradas: as 2 primeiras vão para o histórico (a tela
+        // guarda o fim do parágrafo, como qualquer terminal)
+        assert_eq!(tudo(&t), "abcde\nfghij\nklmno\npqrst\nuvwxy\n");
+        assert_eq!(t.scrollback.len(), 2);
+        assert_eq!(t.row_text(2), "uvwxy");
+        // volta: re-quebra de novo na largura original
+        t.resize(10, 4);
+        assert_eq!(screen(&t)[..3], ["abcdefghij", "klmnopqrst", "uvwxy"]);
+    }
+
+    #[test]
+    fn reflow_poe_o_cursor_na_celula_certa() {
+        let mut t = term();
+        t.feed(b"abcdefghijklmno"); // 15 células → cy=1, cx=5
+        assert_eq!((t.cy, t.cx), (1, 5));
+        t.resize(5, 4);
+        // 15 células: 3 linhas de 5. A tela guarda as 4 últimas (2 de conteúdo
+        // + as 2 em branco de baixo), então o cursor fica na 2ª linha visível,
+        // na última coluna, com a quebra pendente.
+        assert_eq!((t.cy, t.cx), (1, 4));
+        assert!(t.wrap_pending);
+        t.feed(b"!");
+        assert_eq!(t.row_text(1), "klmno");
+        assert_eq!(t.row_text(2), "!", "a quebra pendente tem que valer");
+    }
+
+    #[test]
+    fn reflow_marca_quebra_mole_so_nas_linhas_do_meio() {
+        let mut t = term();
+        t.feed(b"abcdefghijklmnopqrstuvwxy\r\ncurta");
+        t.resize(5, 8);
+        // "abcdefghijklmnopqrstuvwxy" vira 5 linhas: 4 moles + 1 dura
+        assert!(t.grid[0].wrapped && t.grid[1].wrapped && t.grid[3].wrapped);
+        assert!(!t.grid[4].wrapped, "fim do parágrafo não é quebra mole");
+        assert!(!t.grid[5].wrapped, "linha seguinte é outro parágrafo");
+        assert_eq!(t.row_text(5), "curta");
+    }
+
+    #[test]
+    fn reflow_nao_come_espaco_com_fundo_pintado() {
+        // A23: espaço com fundo pintado é conteúdo (barra de status, git diff)
+        let mut t = term();
+        t.feed(b"\x1b[48;2;200;0;0mabc       "); // 3 letras + 7 espaços pintados
+        t.resize(20, 4);
+        assert_eq!(t.grid[0].cells[9].bg, Color::Rgb(200, 0, 0));
+        // o mesmo sem pintura: os espaços do fim somem, sobra "abc"
+        let mut u = term();
+        u.feed(b"abc       ");
+        u.resize(20, 4);
+        assert_eq!(u.row_text(0), "abc");
+        assert_eq!(u.grid[0].cells[5].bg, Color::Default);
+    }
+
+    #[test]
+    fn reflow_nao_parte_par_largo_ao_meio() {
+        let mut t = Term::new(10, 4);
+        // 5 ideogramas: 10 células (cada um ocupa 2)
+        for _ in 0..5 {
+            t.feed("漢".as_bytes());
+        }
+        t.resize(5, 6);
+        for y in 0..6 {
+            assert!(
+                !t.grid[y].cells[0].is_cont(),
+                "linha {y} começa com metade de um par largo"
+            );
+        }
+        let texto: String = (0..6).map(|y| t.row_text(y)).collect();
+        assert_eq!(texto, "漢漢漢漢漢", "nenhum ideograma pode sumir no reflow");
+    }
+
+    #[test]
+    fn reflow_mantem_o_historico_na_ordem() {
+        let mut t = Term::new(20, 4);
+        for i in 0..50 {
+            t.feed(format!("linha {i:02}\r\n").as_bytes());
+        }
+        t.resize(10, 4);
+        let depois = tudo(&t);
+        assert!(
+            depois.contains("linha 00") && depois.contains("linha 49"),
+            "o reflow não pode perder as pontas do histórico"
+        );
+        // as linhas continuam em ordem crescente
+        let pos: Vec<usize> = (0..50)
+            .map(|i| depois.find(&format!("linha {i:02}")).expect("linha sumiu"))
+            .collect();
+        assert!(
+            pos.windows(2).all(|w| w[0] < w[1]),
+            "histórico fora de ordem"
+        );
     }
 
     #[test]

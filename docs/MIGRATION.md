@@ -15,8 +15,8 @@ não por estimativa.
 ## Painel
 | área | feito | parcial | falta | não | total |
 |---|---|---|---|---|---|
-| 1. Núcleo: célula, cores, grade | 19 | 1 | 4 | 0 | 24 |
-| 2. Parser: controles, CSI, modos | 31 | 4 | 1 | 0 | 36 |
+| 1. Núcleo: célula, cores, grade | 22 | 0 | 2 | 0 | 24 |
+| 2. Parser: controles, CSI, modos | 32 | 3 | 1 | 0 | 36 |
 | 3. Parser: SGR e OSC | 11 | 0 | 8 | 0 | 19 |
 | 4. Scrollback e visão do histórico | 8 | 1 | 2 | 0 | 11 |
 | 5. Entrada: teclado e protocolo do kitty | 8 | 0 | 12 | 0 | 20 |
@@ -29,9 +29,9 @@ não por estimativa.
 | 12. Debug socket e instrumentação | 7 | 5 | 3 | 0 | 15 |
 | 13. Plataforma e distribuição | 4 | 0 | 6 | 0 | 10 |
 | 14. Testes e verificação | 2 | 2 | 5 | 0 | 9 |
-| **total** | **119** | **25** | **105** | **3** | **252** |
+| **total** | **123** | **23** | **103** | **3** | **252** |
 
-Equivalente pronto: **52.2%** (feito conta 1, parcial conta 0,5). O total serve para ver
+Equivalente pronto: **53.4%** (feito conta 1, parcial conta 0,5). O total serve para ver
 tendência; o que decide o que fazer agora é a linha e a seção 17.
 
 ## Regras deste documento
@@ -81,9 +81,9 @@ Rust (sem linha, para não envelhecer a cada commit).
 | A18 | Grade de alt-screen separada, com troca preservando cursor | `term.py:602-629` → `term.rs` | feito |
 | A19 | Alt-screen no resize: recorte/preenchimento sem reflow | `term.py:184-217` → `term.rs` | feito |
 | A20 | Linha que sai pelo topo vai para o scrollback (só `top==0`) | `term.py:384-400` → `term.rs` | feito |
-| A21 | Âncora absoluta (`scrolled` + geração de mapa/limpeza) | `term.py:99-108,1026-1078` → `term.rs` | parcial: falta `abs_gen`/`hist_gen` (só `scrolled`) |
-| A22 | Reflow no resize (buffer principal, junta/parte linha mole) | `term.py:219-332` | falta |
-| A23 | Reflow preserva bg colorido (corta só branco com bg default) | `term.py:270-280` | falta (depende de A22) |
+| A21 | Âncora absoluta (`scrolled` + geração de mapa/limpeza) | `term.py:99-108,1026-1078` → `select.rs` (`gen`) | feito: reflow/ED3/RIS sobem `abs_gen` e matam a âncora |
+| A22 | Reflow no resize (buffer principal, junta/parte linha mole) | `term.py:219-332` → `term.rs` `reflow()` | feito |
+| A23 | Reflow preserva bg colorido (corta só branco com bg default) | `term.py:270-280` → `Cell::is_blank` no corte | feito |
 | A24 | Núcleo sem I/O, sem GUI, sem relógio (testável headless) | decisão do Python (`AGENTS.md`) → `bzmux-core` | feito |
 
 ## 2. Parser: controles, CSI, modos
@@ -106,7 +106,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | B14 | IL/DL/ICH/DCH/ECH | `term.py:708-728` → `term.rs` | feito |
 | B15 | Clamp de `n` em IL/DL/ICH/DCH/ECH (o Python não clampa) | bug `term.py:483-497,712-728` → `term.rs` | feito (**melhoria**) |
 | B16 | EL 0/1/2 e ED 0/1/2 | `term.py:704-707` → `term.rs` | feito |
-| B17 | ED 3 limpa scrollback + invalida âncoras | `term.py:456-465` → `term.rs` | parcial: limpa, mas falta a invalidação de âncora (A21) |
+| B17 | ED 3 limpa scrollback + invalida âncoras | `term.py:456-465` → `term.rs` | feito |
 | B18 | SU/SD | não existem no Python | feito (**melhoria**) |
 | B19 | DECSTBM (região de scroll) | `term.py:729-733` → `term.rs` | feito |
 | B20 | REP (`CSI b`) | não existe (`LIMITATIONS.md:59`) → `term.rs` | feito (**melhoria**) |
@@ -385,8 +385,8 @@ Rust (sem linha, para não envelhecer a cada commit).
 
 | área | feito | parcial | falta | não |
 |---|---|---|---|---|
-| Núcleo: célula, cores, grade | 19 | 1 | 4 | 0 |
-| Parser: controles, CSI, modos | 31 | 4 | 1 | 0 |
+| Núcleo: célula, cores, grade | 22 | 0 | 2 | 0 |
+| Parser: controles, CSI, modos | 32 | 3 | 1 | 0 |
 | Parser: SGR e OSC | 11 | 0 | 8 | 0 |
 | Scrollback e visão do histórico | 8 | 1 | 2 | 0 |
 | Entrada: teclado e protocolo do kitty | 8 | 0 | 12 | 0 |
@@ -399,7 +399,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | Debug socket e instrumentação | 7 | 5 | 3 | 0 |
 | Plataforma e distribuição | 4 | 0 | 6 | 0 |
 | Testes e verificação | 2 | 2 | 5 | 0 |
-| **total** | **119** | **25** | **105** | **3** |
+| **total** | **123** | **23** | **103** | **3** |
 
 ## 16. Melhorias propostas
 
