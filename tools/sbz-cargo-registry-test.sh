@@ -29,6 +29,19 @@ motivo() {
         printf '%s\n' "$1" | grep -m1 'Read-only file system'
 }
 
+# o teste só vale com crate fora do cache local: se estiver lá, "sem grant"
+# passa de graça e a sonda mente
+crate_fora_do_cache() {
+    for c in tinyjson humansize textwrap difference heck arrayvec bit-set colored; do
+        if ! ls "$HOME"/.cargo/registry/cache/*/"$c"-*.crate >/dev/null 2>&1; then
+            printf '%s' "$c"
+            return 0
+        fi
+    done
+    printf 'rustybuzz' # tudo em cache: cai no comportamento antigo
+}
+CRATE=$(crate_fora_do_cache)
+
 echo "== A. montagem do \$HOME no host (a causa quando o --bind não pega)"
 mount | grep -E " on $HOME " || echo "  (nenhuma montagem em $HOME: não é esse o caso)"
 
@@ -46,11 +59,11 @@ rm -rf "$SCRATCH"
 mkdir -p "$SCRATCH" || { echo "sem escrita em $SCRATCH"; exit 1; }
 crate app
 out=$($SANDBOX $VERB -w "$SCRATCH" -- sh -c \
-    "cd $SCRATCH/app && cargo add -q rustybuzz && cargo build" 2>&1)
+    "cd $SCRATCH/app && cargo add -q $CRATE && cargo build" 2>&1)
 if [ $? -eq 0 ]; then
-    ok "cargo build passou SEM grant (já liberado de outra forma)"
+    printf '  aviso   %s\n' "build passou SEM grant: cache quente ou grant global (reprodução inconclusiva)"
 else
-    nao "cargo build falhou sem grant (esperado)" "$(motivo "$out")"
+    ok "sem grant falha, como esperado ($(motivo "$out" | cut -c1-60)...)"
 fi
 
 echo "== C. com -w ~/.cargo/registry: o mínimo que o fluxo Rust pede"
@@ -67,8 +80,7 @@ if $SANDBOX -w "$SCRATCH" -w ~/.cargo/registry -- \
     sh -c 'touch ~/.cargo/.package-cache.probe && rm -f ~/.cargo/.package-cache.probe' 2>/dev/null; then
     ok "~/.cargo/.package-cache gravável"
 else
-    nao "~/.cargo/.package-cache NÃO gravável" \
-        "cargo usa esse lock; se o build reclamar, libere também ~/.cargo/.package-cache"
+    printf '  aviso   %s\n' "~/.cargo/.package-cache não gravável (lock do cargo; só importa se o build reclamar)"
 fi
 
 echo "== E. o bind é emitido pelo sandbox? (política ok, montagem não)"
@@ -81,13 +93,23 @@ fi
 echo "== F. build de verdade com o grant (o teste que tem de passar)"
 crate app2
 out=$($SANDBOX $VERB -w "$SCRATCH" -w ~/.cargo/registry -- sh -c \
-    "cd $SCRATCH/app2 && cargo add -q rustybuzz && cargo build" 2>&1)
+    "cd $SCRATCH/app2 && cargo add -q $CRATE && cargo build" 2>&1)
 if [ $? -eq 0 ]; then
     ok "cargo build com dependência nova passou"
 else
     nao "cargo build com dependência nova falhou" "$(motivo "$out")"
     # o scratch fica para inspeção: Cargo.toml, alvo de build, etc.
     echo "          scratch preservado em $SCRATCH"
+fi
+
+echo "== G. perfil @dev (onde o fix do sandbox costuma morar)"
+crate app3
+out=$($SANDBOX $VERB @dev -w "$SCRATCH" -- sh -c \
+    "cd $SCRATCH/app3 && cargo add -q $CRATE && cargo build" 2>&1)
+if [ $? -eq 0 ]; then
+    ok "cargo build passou com @dev (perfil resolvido)"
+else
+    nao "cargo build falhou com @dev" "$(motivo "$out")"
 fi
 
 echo
