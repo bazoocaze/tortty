@@ -21,7 +21,7 @@ não por estimativa.
 | 4. Scrollback e visão do histórico | 8 | 0 | 0 | 0 | 0 | 8 |
 | 5. Entrada: teclado e protocolo do kitty | 16 | 0 | 0 | 0 | 0 | 16 |
 | 6. Entrada: mouse, seleção, clipboard, paste | 14 | 0 | 0 | 0 | 0 | 14 |
-| 7. Desenho: fonte, geometria, cores | 13 | 2 | 1 | 0 | 0 | 16 |
+| 7. Desenho: fonte, geometria, cores | 14 | 1 | 1 | 0 | 0 | 16 |
 | 8. Imagens do protocolo kitty | 13 | 0 | 0 | 3 | 0 | 16 |
 | 9. Janela: abas, workspaces, cromo | 18 | 0 | 0 | 0 | 0 | 18 |
 | 10. Janela: ciclo de vida, geometria, estado | 10 | 0 | 0 | 0 | 0 | 10 |
@@ -29,9 +29,9 @@ não por estimativa.
 | 12. Debug socket e instrumentação | 14 | 0 | 0 | 0 | 0 | 14 |
 | 13. Plataforma e distribuição | 5 | 1 | 0 | 0 | 1 | 7 |
 | 14. Testes e verificação | 7 | 2 | 0 | 0 | 0 | 9 |
-| **total** | **195** | **5** | **1** | **3** | **1** | **205** |
+| **total** | **196** | **4** | **1** | **3** | **1** | **205** |
 
-Equivalente pronto: **96.3%** (feito conta 1, parcial conta 0,5; `impedida` conta como `falta`). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
+Equivalente pronto: **96.6%** (feito conta 1, parcial conta 0,5; `impedida` conta como `falta`). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
 tendência; o que decide o que fazer agora é a linha e a seção 16.
 
 ## Regras deste documento
@@ -198,7 +198,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | G4 | Célula inteira (avanço fracionário não "escorrega" a grade) | `view.py:689-704` → `render.rs` | feito |
 | G5 | Negrito e itálico (face real; negrito-itálico próprio) | `view.py:689-704,992` → `glyph.rs` | feito (sem síntese: sem face, cai na regular) |
 | G6 | Fallback de glifos por lista de preferência | Pango/fontconfig automático → `glyph.rs` | feito |
-| G7 | Fallback para emoji/CJK | `HISTORY.md` P10 | parcial: usa fallback do `fontdb`; sem emoji colorido |
+| G7 | Fallback para emoji/CJK | `HISTORY.md` P10 → `glyph.rs`, `atlas.rs`, `render.rs` | feito: cadeia de socorro por nome (fonte ausente não vira outra) e duas passadas por glifo (cor antes de máscara); emoji CBDT vai para atlas RGBA próprio, desenhado pela pipeline de imagem. Na tela: 😀🔥🚀👍 e CJK, setas, grego; `emoji_sai_colorido` e `fonte_ausente_nao_vira_outra` no `cargo test` |
 | G8 | Ligaduras/shaping | Pango (P9) | falta: `swash` sem shaping complexo |
 | G9 | Padding da janela em px | `config.py` `window_padding_width` → shader (`origin`) | feito |
 | G10 | Fundo da sobra de célula até a borda (sem tarja preta) | `view.py:926-934` | feito (fundo pintado por instância de grade inteira) |

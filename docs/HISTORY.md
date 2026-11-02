@@ -852,3 +852,25 @@ precisão de `IL`/`DL`/`ED`; a suíte foi de 74 para 79.
 
 Fica em `parcial` só o `G17`: a *draw* continua tela inteira (swapchain não
 preserva o frame anterior; desenhar faixa exige textura de cena + blit).
+
+## 2026-11-02 — G7 fechado: emoji colorido e CJK (fonte que não existe e fonte que não desenha)
+
+O emoji e o CJK estavam em branco desde sempre: o texto chegava na grade (o
+`state` mostrava os caracteres certos) e o glifo não existia. Eram **duas** causas,
+e nenhuma era "falta de fonte":
+
+| sintoma | causa | conserto |
+|---|---|---|
+| CJK em branco | uma única face de socorro, que não cobria CJK | cadeia de socorro (`sans-serif`, `DejaVu Sans`, CJK, emoji) |
+| 🔥 saía como risco cinza | `query()` caía na família genérica quando o **nome** pedia fonte ausente: "Noto Sans Symbols 2" virava FreeMono, que mapeia o emoji e desenha contorno | fonte ausente devolve `None`; a cadeia pula |
+| 😀 em branco mesmo com `Noto Color Emoji` instalada | `DejaVu Sans` mapeia U+1F600 e não produz bitmap; o primeiro cmap com `gid != 0` ganhava e o glifo saía vazio | resolução em duas passadas: bitmap de **cor** em toda a cadeia, depois máscara |
+| emoji sem cor | não havia atlas RGBA nem pipeline para ele | `Atlas::new_rgba` + draw call na pipeline de imagem (bind group com o layout de imagem, não o do atlas de máscara) |
+| `write_texture` estourava o buffer | o bloco branco pendente do atlas de máscara (1 byte/pixel) ia junto para o RGBA | o construtor RGBA refaz o pendente em 4 bytes/pixel |
+
+Conferido na tela (Vulkan/RADV, grade 80x20): `emoji 😀 🔥 🚀 👍 🥰 🌈`
+coloridos, `CJK 日本語 汉字`, setas, grego, e emoji dentro de negrito. Dois testes
+novos fixam o contrato: emoji tem de sair **colorido** e fonte ausente não pode
+virar outra fonte.
+
+Desempenho sem regressão no doom-fire (nada de emoji na carga): 872–963 fps /
+37,5–41,4 MB/s a 61x18, `draw` 0,69–0,72 ms/call.

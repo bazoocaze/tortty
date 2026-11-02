@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use swash::scale::{Render, ScaleContext, Source};
+use swash::scale::{Render, ScaleContext, Source, StrikeWith};
 use swash::zeno::Format;
 use swash::FontRef;
 
@@ -26,7 +26,10 @@ pub struct Fonts {
     pub styled: Option<Face>,
     pub italic: Option<Face>,
     pub bold_italic: Option<Face>,
-    pub fallback: Option<Face>,
+    /// Fontes de socorro, na ordem em que são tentadas quando a primária não
+    /// tem o caractere: símbolos, emoji, CJK. O Python sempre teve isso pelo
+    /// fontconfig/Pango; sem a cadeia, emoji e CJK ficavam em branco.
+    pub fallbacks: Vec<Face>,
     /// Tamanho em pixels (já convertido de pontos).
     pub px: f32,
     /// Avanço da célula (largura).
@@ -52,6 +55,7 @@ const PREFER: [&str; 6] = [
 pub const FACE_PRIMARY: usize = 0;
 pub const FACE_STYLED: usize = 1;
 pub const FACE_ITALIC: usize = 2;
+/// A partir daqui os índices são `FACE_FALLBACK + i` na cadeia de fallback.
 pub const FACE_FALLBACK: usize = 3;
 pub const FACE_BOLD_ITALIC: usize = 4;
 
@@ -93,7 +97,7 @@ impl Fonts {
         let styled = query(&db, family, 700, fontdb::Style::Normal).map(|(f, _)| f);
         let italic = query(&db, family, 400, fontdb::Style::Italic).map(|(f, _)| f);
         let bold_italic = query(&db, family, 700, fontdb::Style::Italic).map(|(f, _)| f);
-        let fallback = query(&db, "sans-serif", 400, fontdb::Style::Normal).map(|(f, _)| f);
+        let fallbacks = fallback_chain(&db, &primary, real_family.as_str());
 
         let font = primary
             .font()
@@ -114,7 +118,7 @@ impl Fonts {
             styled,
             italic,
             bold_italic,
-            fallback,
+            fallbacks,
             px,
             cw,
             ch,
@@ -132,39 +136,40 @@ impl Fonts {
                 .as_ref()
                 .or(self.italic.as_ref())
                 .unwrap_or(&self.primary),
-            FACE_FALLBACK => self.fallback.as_ref().unwrap_or(&self.primary),
+            _ if idx >= FACE_FALLBACK => self
+                .fallbacks
+                .get(idx - FACE_FALLBACK)
+                .unwrap_or(&self.primary),
             _ => &self.primary,
         }
     }
 
-    /// Face + glyph id para um caractere. `glyph == 0` = .notdef.
-    pub fn pick(&self, ch: char, bold: bool, italic: bool) -> (usize, u16) {
-        // Ordem: a face que casa os dois atributos, depois cada um sozinho.
-        // Antes o negrito vinha primeiro e "negrito itálico" saía em pé.
-        let mut candidates = [FACE_PRIMARY; 5];
-        let mut n = 0usize;
+    /// Faces a tentar, na ordem: a que casa os dois atributos, cada um sozinho,
+    /// a primária e por fim a cadeia de socorro.
+    /// Antes o negrito vinha primeiro e "negrito itálico" saía em pé.
+    fn candidates(&self, bold: bool, italic: bool) -> Vec<usize> {
+        let mut out = Vec::with_capacity(5 + self.fallbacks.len());
         if bold && italic && self.bold_italic.is_some() {
-            candidates[n] = FACE_BOLD_ITALIC;
-            n += 1;
+            out.push(FACE_BOLD_ITALIC);
         }
         if italic && self.italic.is_some() {
-            candidates[n] = FACE_ITALIC;
-            n += 1;
+            out.push(FACE_ITALIC);
         }
         if bold && self.styled.is_some() {
-            candidates[n] = FACE_STYLED;
-            n += 1;
+            out.push(FACE_STYLED);
         }
-        candidates[n] = FACE_PRIMARY;
-        n += 1;
-        if self.fallback.is_some() {
-            candidates[n] = FACE_FALLBACK;
-            n += 1;
-        }
-        for &idx in &candidates[..n] {
-            let face = self.face(idx);
-            if let Some(font) = face.font() {
-                let g = font.charmap().map(ch);
+        out.push(FACE_PRIMARY);
+        out.extend((0..self.fallbacks.len()).map(|i| FACE_FALLBACK + i));
+        out
+    }
+
+    /// Primeira face da cadeia que tem o caractere no cmap: é o que os testes
+    /// querem saber ("de onde veio este glifo"). Só existe em teste — o desenho
+    /// usa `glyph_bitmap`, que decide pela bitmap, não pelo cmap.
+    #[cfg(test)]
+    pub fn origem(&self, ch: char) -> (usize, u16) {
+        for idx in self.candidates(false, false) {
+            if let Some(g) = self.face(idx).font().map(|ft| ft.charmap().map(ch)) {
                 if g != 0 {
                     return (idx, g);
                 }
@@ -172,6 +177,67 @@ impl Fonts {
         }
         (FACE_PRIMARY, 0)
     }
+
+    /// Bitmap do glifo, com a informação de se ele é colorido.
+    ///
+    /// Duas passadas: primeiro bitmap de cor (emoji) em toda a cadeia, depois
+    /// máscara. Uma passada só não basta porque ter o caractere no cmap não
+    /// garante que a face saiba desenhá-lo — DejaVu Sans mapeia U+1F600 e não
+    /// produz bitmap nenhum, e o emoji ficava em branco.
+    pub fn glyph_bitmap(
+        &self,
+        ctx: &mut ScaleContext,
+        ch: char,
+        bold: bool,
+        italic: bool,
+    ) -> Option<(GlyphBitmap, bool)> {
+        let faces = self.candidates(bold, italic);
+        let gids: Vec<(usize, u16)> = faces
+            .iter()
+            .filter_map(|&idx| {
+                let g = self.face(idx).font().map(|f| f.charmap().map(ch))?;
+                (g != 0).then_some((idx, g))
+            })
+            .collect();
+        for &(idx, gid) in &gids {
+            if let Some(b) = rasterize_color(ctx, self.face(idx), self.px, gid) {
+                return Some((b, true));
+            }
+        }
+        gids.iter().find_map(|&(idx, gid)| {
+            rasterize(ctx, self.face(idx), self.px, gid).map(|b| (b, false))
+        })
+    }
+}
+
+/// Fontes de socorro, na ordem de prioridade. Só entra quem existe na máquina;
+/// família repetida não entra duas vezes (cada face é uma cópia da fonte).
+fn fallback_chain(db: &fontdb::Database, primary: &Face, family: &str) -> Vec<Face> {
+    const QUERIES: &[&str] = &[
+        "sans-serif",  // símbolos, setas, caixas
+        "DejaVu Sans", // braille, formas geométricas
+        "Noto Sans Symbols 2",
+        "Symbola",
+        "Noto Color Emoji", // emoji colorido (CBDT/sbix)
+        "Noto Sans CJK SC", // CJK
+        "Noto Sans CJK JP",
+        "Noto Serif CJK SC",
+        "Source Han Sans SC",
+    ];
+    let mut out: Vec<Face> = Vec::new();
+    // a própria primária pode cobrir o que as outras não cobrem: não repetir
+    let mut vistos: Vec<(u32, String)> = vec![(primary.index, family.to_string())];
+    for nome in QUERIES {
+        let Some((face, real)) = query(db, nome, 400, fontdb::Style::Normal) else {
+            continue;
+        };
+        if vistos.iter().any(|(i, f)| *i == face.index && *f == real) {
+            continue;
+        }
+        vistos.push((face.index, real));
+        out.push(face);
+    }
+    out
 }
 
 fn query(
@@ -180,18 +246,22 @@ fn query(
     weight: u16,
     style: fontdb::Style,
 ) -> Option<(Face, String)> {
-    // nome explícito primeiro; depois a família genérica equivalente
-    if let Some(r) = query_one(db, &[fontdb::Family::Name(family)], weight, style) {
-        return Some(r);
-    }
-    let generic = match family.to_ascii_lowercase().as_str() {
-        "sans-serif" | "sans" | "system-ui" => fontdb::Family::SansSerif,
-        "serif" => fontdb::Family::Serif,
-        "cursive" => fontdb::Family::Cursive,
-        "fantasy" => fontdb::Family::Fantasy,
-        _ => fontdb::Family::Monospace,
+    // Nome pedido e ausente devolve `None`: cair na família genérica aqui fazia
+    // "Noto Sans Symbols 2" (não instalada) virar FreeMono, que mapeia emoji e
+    // desenha um risco cinza no lugar do emoji colorido.
+    let generica = match family.to_ascii_lowercase().as_str() {
+        "sans-serif" | "sans" | "system-ui" => Some(fontdb::Family::SansSerif),
+        "serif" => Some(fontdb::Family::Serif),
+        "monospace" | "mono" | "fixed" => Some(fontdb::Family::Monospace),
+        "cursive" => Some(fontdb::Family::Cursive),
+        "fantasy" => Some(fontdb::Family::Fantasy),
+        _ => None,
     };
-    query_one(db, &[generic], weight, style)
+    let alvo = match generica {
+        Some(g) => vec![g],
+        None => vec![fontdb::Family::Name(family)],
+    };
+    query_one(db, &alvo, weight, style)
 }
 
 fn query_one(
@@ -235,6 +305,34 @@ pub struct GlyphBitmap {
 }
 
 /// Rasteriza um glifo (cobertura alpha) no tamanho da célula.
+/// Glifo colorido (emoji CBDT/sbix): RGBA direto da fonte. `None` quando a
+/// fonte só tem contorno, e aí o chamador usa `rasterize` (máscara).
+pub fn rasterize_color(
+    ctx: &mut ScaleContext,
+    face: &Face,
+    px: f32,
+    glyph: u16,
+) -> Option<GlyphBitmap> {
+    let font = face.font()?;
+    let mut scaler = ctx.builder(font).size(px).hint(true).build();
+    // sem `format`: bitmap de cor já vem RGBA; `Format` só vale para máscara
+    let render = Render::new(&[
+        Source::ColorBitmap(StrikeWith::BestFit),
+        Source::ColorOutline(0),
+    ]);
+    let image = render.render(&mut scaler, glyph)?;
+    if image.placement.width == 0 || image.placement.height == 0 {
+        return None;
+    }
+    Some(GlyphBitmap {
+        w: image.placement.width,
+        h: image.placement.height,
+        left: image.placement.left,
+        top: image.placement.top,
+        data: image.data.clone(),
+    })
+}
+
 pub fn rasterize(ctx: &mut ScaleContext, face: &Face, px: f32, glyph: u16) -> Option<GlyphBitmap> {
     let font = face.font()?;
     let mut scaler = ctx.builder(font).size(px).hint(true).build();
@@ -251,4 +349,97 @@ pub fn rasterize(ctx: &mut ScaleContext, face: &Face, px: f32, glyph: u16) -> Op
         top: image.placement.top,
         data: image.data.clone(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fontes() -> Fonts {
+        Fonts::new("DejaVu Sans Mono", 17.0).expect("fonte")
+    }
+
+    /// Caixa (DEC/Unicode) tem de sair da primária: vindo de fallback
+    /// proporcional ela não fecha a moldura (achado em 2026-11-02).
+    #[test]
+    fn caixa_vem_da_primaria() {
+        let f = fontes();
+        for ch in ['┌', '─', '┐', '│', '└', '┘'] {
+            let (face, gid) = f.origem(ch);
+            assert_ne!(gid, 0, "{ch} sem glifo");
+            assert_eq!(face, FACE_PRIMARY, "{ch} veio da face {face}");
+        }
+    }
+
+    /// Emoji tem de sair **colorido**, mesmo quando uma face anterior da cadeia
+    /// mapeia o caractere: DejaVu Sans mapeia U+1F600 e não desenha nada, e o
+    /// emoji ficava em branco na tela.
+    #[test]
+    fn emoji_sai_colorido() {
+        let f = fontes();
+        let mut ctx = ScaleContext::new();
+        for ch in ['\u{1F600}', '\u{1F525}', '\u{1F680}', '\u{1F44D}'] {
+            let (b, cor) = f
+                .glyph_bitmap(&mut ctx, ch, false, false)
+                .unwrap_or_else(|| panic!("{ch} sem bitmap"));
+            assert!(cor, "{ch} saiu em máscara, devia ser cor");
+            assert!(b.w > 1 && b.h > 1, "{ch} bitmap vazio");
+        }
+    }
+
+    /// Fonte de socorro que não existe não pode virar outra fonte: era assim
+    /// que "Noto Sans Symbols 2" virava FreeMono e desenhava emoji como risco.
+    #[test]
+    fn fonte_ausente_nao_vira_outra() {
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        assert!(query(
+            &db,
+            "Bzmux Fonte Que Nao Existe",
+            400,
+            fontdb::Style::Normal
+        )
+        .is_none());
+        // genérica continua funcionando
+        assert!(query(&db, "monospace", 400, fontdb::Style::Normal).is_some());
+    }
+
+    /// CJK e emoji não estão na primária: a cadeia de socorro tem de achar.
+    #[test]
+    fn cjk_e_emoji_caem_na_cadeia() {
+        let f = fontes();
+        for ch in ['日', '😀'] {
+            let (face, gid) = f.origem(ch);
+            assert_ne!(gid, 0, "{ch} não achou face");
+            assert!(face >= FACE_FALLBACK, "{ch} devia vir de fallback");
+        }
+    }
+}
+
+#[cfg(test)]
+mod metrics_probe {
+    use super::*;
+
+    /// Só roda com `--nocapture`: mostra a métrica do glifo de caixa contra a
+    /// célula, que é o que decide se a moldura fecha.
+    #[test]
+    fn imprime_metrica_da_caixa() {
+        let f = Fonts::new("DejaVu Sans Mono", 17.0).expect("fonte");
+        let mut ctx = ScaleContext::new();
+        println!(
+            "celula: cw={} ch={} ascent={} px={}",
+            f.cw, f.ch, f.ascent, f.px
+        );
+        for ch in ['─', '│', '┌', '┼', 'M', '日'] {
+            let (face, gid) = f.origem(ch);
+            let b = rasterize(&mut ctx, f.face(face), f.px, gid);
+            match b {
+                Some(b) => println!(
+                    "{ch} face={face} gid={gid} w={} h={} left={} top={}",
+                    b.w, b.h, b.left, b.top
+                ),
+                None => println!("{ch} face={face} gid={gid} sem bitmap"),
+            }
+        }
+    }
 }

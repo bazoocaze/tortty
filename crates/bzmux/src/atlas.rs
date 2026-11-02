@@ -13,6 +13,8 @@ const WHITE: u32 = 4;
 pub struct Atlas {
     pub tex: wgpu::Texture,
     pub view: wgpu::TextureView,
+    /// Bytes por pixel: 1 = máscara (glifo), 4 = RGBA (emoji colorido).
+    bpp: u32,
     size: u32,
     data: Vec<u8>,
     x: u32,
@@ -23,6 +25,54 @@ pub struct Atlas {
 }
 
 impl Atlas {
+    /// Atlas RGBA para glifo colorido (emoji): o mesmo layout de prateleira,
+    /// com 4 bytes por pixel.
+    pub fn new_rgba(device: &wgpu::Device) -> Atlas {
+        let mut atlas = Atlas::new(device);
+        let size = atlas.size;
+        atlas.bpp = 4;
+        atlas.data = vec![0u8; (size * size * 4) as usize];
+        for y in 0..WHITE {
+            for x in 0..WHITE {
+                let i = ((y * size + x) * 4) as usize;
+                atlas.data[i..i + 4].copy_from_slice(&[255, 255, 255, 255]);
+            }
+        }
+        // `new` deixou o bloco branco pendente em 1 byte/pixel; aqui ele é
+        // RGBA, senão o `write_texture` do flush não fecha com o `bpp`.
+        atlas.pending = vec![(
+            0,
+            0,
+            WHITE,
+            WHITE,
+            vec![255u8; (WHITE * WHITE * 4) as usize],
+        )];
+        atlas.tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("atlas-rgba"),
+            size: wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        atlas.view = atlas
+            .tex
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        atlas.uv_white = [
+            0.0,
+            0.0,
+            WHITE as f32 / size as f32,
+            WHITE as f32 / size as f32,
+        ];
+        atlas
+    }
+
     pub fn new(device: &wgpu::Device) -> Atlas {
         let size = ATLAS_SIZE;
         let mut data = vec![0u8; (size * size) as usize];
@@ -50,6 +100,7 @@ impl Atlas {
         let mut atlas = Atlas {
             tex,
             view,
+            bpp: 1,
             size,
             data,
             x: WHITE,
@@ -85,10 +136,12 @@ impl Atlas {
             return None; // atlas cheio: o glifo cai fora deste frame
         }
         let (x, y) = (self.x, self.y);
+        let bpp = self.bpp as usize;
         for row in 0..h {
-            let src = (row * w) as usize;
-            let dst = ((y + row) * self.size + x) as usize;
-            self.data[dst..dst + w as usize].copy_from_slice(&data[src..src + w as usize]);
+            let src = (row * w) as usize * bpp;
+            let dst = ((y + row) * self.size + x) as usize * bpp;
+            self.data[dst..dst + w as usize * bpp]
+                .copy_from_slice(&data[src..src + w as usize * bpp]);
         }
         self.x += w + 1;
         self.row_h = self.row_h.max(h);
@@ -115,7 +168,7 @@ impl Atlas {
                 &data,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(w),
+                    bytes_per_row: Some(w * self.bpp),
                     rows_per_image: Some(h),
                 },
                 wgpu::Extent3d {

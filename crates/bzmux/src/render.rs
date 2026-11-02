@@ -16,7 +16,7 @@ use swash::scale::ScaleContext;
 use winit::window::Window;
 
 use crate::atlas::{bind_atlas, globals_buffer, globals_layout, Atlas};
-use crate::glyph::{self, Fonts};
+use crate::glyph::Fonts;
 use crate::prof;
 
 /// Fundo e frente usados quando a configuração não diz nada (os mesmos do
@@ -47,6 +47,14 @@ fn is_swap(cell: &Cell, sel: Option<(usize, usize, usize, usize)>, y: usize, x: 
     inv ^ dentro
 }
 
+/// Instâncias de uma linha: a máscara (texto, fundo, decoração) e o emoji
+/// colorido, que vai em draw call própria porque tem atlas RGBA.
+#[derive(Default, Clone)]
+struct RowQuads {
+    mask: Vec<Instance>,
+    emoji: Vec<Instance>,
+}
+
 #[derive(Copy, Clone)]
 struct GlyphQuad {
     left: i32,
@@ -54,6 +62,8 @@ struct GlyphQuad {
     w: u32,
     h: u32,
     uv: [f32; 4],
+    /// Veio do atlas RGBA (emoji colorido) em vez da máscara.
+    color: bool,
 }
 
 pub struct Renderer {
@@ -96,12 +106,21 @@ pub struct Renderer {
     img_ids: Vec<u32>,
     img_layout: wgpu::BindGroupLayout,
     img_sampler: wgpu::Sampler,
+    /// Atlas RGBA dos glifos coloridos (emoji). Prateleira igual à da máscara,
+    /// mas com cor: emoji não aceita tingimento.
+    emoji: Atlas,
+    emoji_bind: wgpu::BindGroup,
+    emoji_instances: Vec<Instance>,
+    emoji_buf: wgpu::Buffer,
+    emoji_cap: usize,
+    /// Quads de emoji da linha em montagem (y relativo, como a máscara).
+    emoji_row: Vec<Instance>,
     /// Textura por imagem (id → bind group). O bind group segura a textura viva.
     img_cache: HashMap<u32, ImgTex>,
     /// Instâncias da grade, guardadas **por linha**: só a linha suja é
     /// remontada (A17/G17). A lista final (`instances`) é a concatenação delas
     /// mais as imagens, o cromo e o cursor, na ordem de blend.
-    por_linha: Vec<Vec<Instance>>,
+    por_linha: Vec<RowQuads>,
     /// Signature do último frame: o que mudou de tela inteira (ver `dano`).
     assinatura: crate::damage::Signature,
     /// Geração do tema: sobe a cada `apply_theme` e força rebuild completo.
@@ -257,6 +276,13 @@ impl Renderer {
 
         let atlas = Atlas::new(&device);
         let (atlas_layout, atlas_bind) = bind_atlas(&device, &atlas);
+        let emoji = Atlas::new_rgba(&device);
+        let emoji_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("emoji-instances"),
+            size: (1 << 16) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let gl = globals_layout(&device);
         let pad = cfg.padding as f32;
         let globals = globals_buffer(&device, w as f32, h as f32, pad);
@@ -330,6 +356,22 @@ impl Renderer {
             source: wgpu::ShaderSource::Wgsl(include_str!("image.wgsl").into()),
         });
         let (img_layout, img_sampler) = crate::atlas::bind_image(&device);
+        // o emoji usa a pipeline de imagem (textura filtrável), então o bind
+        // group dele tem que seguir o mesmo layout, não o do atlas de máscara
+        let emoji_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("emoji-bind"),
+            layout: &img_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&emoji.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&img_sampler),
+                },
+            ],
+        });
         let img_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("bzmux-image-layout"),
             bind_group_layouts: &[Some(&gl), Some(&img_layout)],
@@ -387,6 +429,12 @@ impl Renderer {
             globals,
             globals_bind,
             atlas_bind,
+            emoji,
+            emoji_bind,
+            emoji_instances: Vec::new(),
+            emoji_buf,
+            emoji_cap: 1 << 16,
+            emoji_row: Vec::new(),
             inst_buf,
             inst_cap,
             atlas,
@@ -505,30 +553,32 @@ impl Renderer {
     }
 
     fn glyph_quad(&mut self, ch: char, bold: bool, italic: bool) -> Option<GlyphQuad> {
-        let (face, gid) = self.fonts.pick(ch, bold, italic);
-        let key = (face as u8, ch);
+        // a chave é o estilo pedido, não a face escolhida: quem decide a face é
+        // a cadeia de fontes, e o resultado já vem resolvido
+        let key = (u8::from(bold) | (u8::from(italic) << 1), ch);
         if let Some(v) = self.cache.get(&key) {
             return *v;
         }
-        let quad = if gid == 0 {
-            None
-        } else {
-            let bitmap = glyph::rasterize(
-                &mut self.scale_ctx,
-                self.fonts.face(face),
-                self.fonts.px,
-                gid,
-            );
-            bitmap.and_then(|b| {
-                self.atlas.add(b.w, b.h, &b.data).map(|uv| GlyphQuad {
-                    left: b.left,
-                    top: b.top,
-                    w: b.w,
-                    h: b.h,
-                    uv,
-                })
+        let bitmap = self
+            .fonts
+            .glyph_bitmap(&mut self.scale_ctx, ch, bold, italic);
+        let quad = bitmap.and_then(|(b, color)| {
+            // emoji vai para o atlas RGBA (desenhado pela pipeline de imagem);
+            // máscara vai para o atlas de cobertura
+            let uv = if color {
+                self.emoji.add(b.w, b.h, &b.data)
+            } else {
+                self.atlas.add(b.w, b.h, &b.data)
+            };
+            uv.map(|uv| GlyphQuad {
+                left: b.left,
+                top: b.top,
+                w: b.w,
+                h: b.h,
+                uv,
+                color,
             })
-        };
+        });
         self.cache.insert(key, quad);
         quad
     }
@@ -769,9 +819,15 @@ impl Renderer {
             if let Some(q) = self.glyph_quad(cell.ch, bold, italic) {
                 let gx = x as f32 * cw + q.left as f32;
                 let gy = py + ascent - q.top as f32;
-                self.instances.push(Instance {
+                // emoji colorido não recebe tingimento: só o alfa da célula
+                let (cor, alvo) = if q.color {
+                    ([1.0, 1.0, 1.0, alpha], &mut self.emoji_row)
+                } else {
+                    ([c[0], c[1], c[2], alpha], &mut self.instances)
+                };
+                alvo.push(Instance {
                     rect: [gx, gy, q.w as f32, q.h as f32],
-                    color: [c[0], c[1], c[2], alpha],
+                    color: cor,
                     uv: q.uv,
                 });
             }
@@ -1066,7 +1122,7 @@ impl Renderer {
         if self.por_linha.len().ne(&rows.len()) {
             // grade mudou de tamanho: nada de reaproveitar faixa antiga
             self.assinatura = assinatura;
-            self.por_linha = vec![Vec::new(); rows.len()];
+            self.por_linha = vec![RowQuads::default(); rows.len()];
             for (y, row) in rows.iter().enumerate() {
                 self.por_linha[y] = self.linha(row, cols, sel, blink);
             }
@@ -1082,14 +1138,20 @@ impl Renderer {
         // lista final na ordem de blend: grade (por linha) → imagens → cromo
         // → cursor → badge → toast
         self.instances.clear();
+        self.emoji_instances.clear();
         let chh = self.fonts.ch;
         for (y, linha) in self.por_linha.iter().enumerate() {
             #[allow(clippy::cast_precision_loss)]
             let dy = y as f32 * chh;
-            for inst in linha {
+            for inst in &linha.mask {
                 let mut copia = *inst;
                 copia.rect[1] += dy;
                 self.instances.push(copia);
+            }
+            for inst in &linha.emoji {
+                let mut copia = *inst;
+                copia.rect[1] += dy;
+                self.emoji_instances.push(copia);
             }
         }
 
@@ -1159,11 +1221,11 @@ impl Renderer {
             for _ in 0..n {
                 if shift > 0 {
                     self.por_linha.remove(0);
-                    self.por_linha.push(Vec::new());
+                    self.por_linha.push(RowQuads::default());
                     rebuild.push(self.por_linha.len() - 1);
                 } else {
                     self.por_linha.pop();
-                    self.por_linha.insert(0, Vec::new());
+                    self.por_linha.insert(0, RowQuads::default());
                 }
             }
             if shift < 0 {
@@ -1188,11 +1250,16 @@ impl Renderer {
         cols: usize,
         sel: Option<(usize, usize, usize, usize)>,
         blink: Blink,
-    ) -> Vec<Instance> {
+    ) -> RowQuads {
         let guardado = std::mem::take(&mut self.instances);
+        let guardado_cor = std::mem::take(&mut self.emoji_row);
         self.instances.clear();
+        self.emoji_row.clear();
         self.pinta_linha(row, 0, cols, sel, blink);
-        std::mem::replace(&mut self.instances, guardado)
+        RowQuads {
+            mask: std::mem::replace(&mut self.instances, guardado),
+            emoji: std::mem::replace(&mut self.emoji_row, guardado_cor),
+        }
     }
 
     /// Desenha **uma** linha da grade (A17/G17: só roda para as linhas sujas).
@@ -1264,6 +1331,37 @@ impl Renderer {
         self.celulas_remontadas = self.celulas_remontadas.saturating_add(cols as u64);
     }
 
+    /// Sobe os dois buffers de instância (máscara e emoji). Crescem dobrando:
+    /// redimensionar no meio do desenho não pode realocar a cada frame.
+    fn upload_instances(&mut self) {
+        let masks = bytemuck::cast_slice::<Instance, u8>(&self.instances);
+        if let Some(b) = grow_buffer(
+            &self.device,
+            &mut self.inst_cap,
+            masks.len(),
+            1 << 20,
+            "instances",
+        ) {
+            self.inst_buf = b;
+        }
+        if !masks.is_empty() {
+            self.queue.write_buffer(&self.inst_buf, 0, masks);
+        }
+        let colors = bytemuck::cast_slice::<Instance, u8>(&self.emoji_instances);
+        if let Some(b) = grow_buffer(
+            &self.device,
+            &mut self.emoji_cap,
+            colors.len(),
+            1 << 16,
+            "emoji-instances",
+        ) {
+            self.emoji_buf = b;
+        }
+        if !colors.is_empty() {
+            self.queue.write_buffer(&self.emoji_buf, 0, colors);
+        }
+    }
+
     pub fn render(&mut self, f: &Frame<'_>) -> FrameOutcome {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
@@ -1287,21 +1385,9 @@ impl Renderer {
         self.ultimo = "drawn";
         self.build(f);
         self.atlas.flush(&self.queue);
+        self.emoji.flush(&self.queue);
 
-        let needed = self.instances.len() * std::mem::size_of::<Instance>();
-        if needed > self.inst_cap {
-            self.inst_cap = (needed * 2).max(1 << 20);
-            self.inst_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("instances"),
-                size: self.inst_cap as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-        }
-        if needed > 0 {
-            self.queue
-                .write_buffer(&self.inst_buf, 0, bytemuck::cast_slice(&self.instances));
-        }
+        self.upload_instances();
 
         let view = frame
             .texture
@@ -1341,6 +1427,16 @@ impl Renderer {
             let split = self.img_split.min(self.instances.len()) as u32;
             if split > 0 {
                 rp.draw(0..6, 0..split);
+            }
+            // emoji colorido: mesma pipeline de imagem, textura é o atlas RGBA
+            if !self.emoji_instances.is_empty() {
+                rp.set_pipeline(&self.img_pipeline);
+                rp.set_bind_group(1, &self.emoji_bind, &[]);
+                rp.set_vertex_buffer(0, self.emoji_buf.slice(..));
+                rp.draw(0..6, 0..self.emoji_instances.len() as u32);
+                rp.set_pipeline(&self.pipeline);
+                rp.set_bind_group(1, &self.atlas_bind, &[]);
+                rp.set_vertex_buffer(0, self.inst_buf.slice(..));
             }
             if !self.img_instances.is_empty() {
                 rp.set_pipeline(&self.img_pipeline);
@@ -1489,4 +1585,25 @@ fn tema(cfg: &Config, c: Color, padrao: (u8, u8, u8)) -> (u8, u8, u8) {
         Color::Default => padrao,
         outro => bzmux_core::color::resolve(outro, &cfg.palette256(), padrao),
     }
+}
+
+/// Devolve um buffer novo só quando a capacidade não serve; `None` mantém o
+/// atual (evita realocar a cada frame).
+fn grow_buffer(
+    device: &wgpu::Device,
+    cap: &mut usize,
+    needed: usize,
+    min: usize,
+    label: &str,
+) -> Option<wgpu::Buffer> {
+    if needed <= *cap {
+        return None;
+    }
+    *cap = (needed * 2).max(min);
+    Some(device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: *cap as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    }))
 }
