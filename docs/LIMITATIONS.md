@@ -11,7 +11,7 @@ existir, sai daqui e vira item concluído em [`HISTORY.md`](HISTORY.md).
   reconexão, sem daemon. Fechar a janela termina tudo.
 - **Um terminal, não um ambiente de janelas.** Sem splits nesta fase
   (`BACKLOG.md` M-J), sem gerenciador de layout; abas e workspaces existem,
-  mas não sobrevivem ao fechar (I18/M-I).
+  mas não sobrevivem ao fechar (`BACKLOG.md` M-I).
 - **Só o protocolo de imagem do kitty.** Sem sixel, sem iTerm2 inline, sem
   `t=f`/`t=t`/`t=s` (arquivo, temp, memória compartilhada) e sem animação
   (`a=f`/`a=a`). A imagem tem que vir no escape base64.
@@ -39,7 +39,7 @@ existir, sai daqui e vira item concluído em [`HISTORY.md`](HISTORY.md).
   uma célula. Toda operação nova de grade precisa respeitar o par.
 - **Combinação de grafema**: cada célula carrega um `char`; marca combinante
   que não veio junto no mesmo commit do texto vira célula própria. Compor de
-  verdade é melhoria (`MIGRATION.md` A12), não limite aceito para sempre.
+  verdade é atividade nova (`BACKLOG.md` M-U), não limite aceito para sempre.
 - **Sem ligaduras/shaping complexo** (G8): `swash` rasteriza glifo, não faz
   shaping de HarfBuzz. Não há plano de trocar por `harfbuzz` nesta fase.
 - **Sem `IRM`/`LNM`** (insert mode, newline mode) e sem `CSI ? 3` (80/132):

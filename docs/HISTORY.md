@@ -354,3 +354,30 @@ fórmulas separadas. Três bugs desta semana foram essa divergência. O item é
 transformar o cromo numa lista de elementos com hit-test declarado, no mesmo
 `wgpu`, quando aparecer o quarto elemento — antes de escrever o par
 desenho/clique pela quarta vez.
+
+## 2026-11-02 — a fronteira: painel = paridade, backlog = atividade nova
+
+Regra de natureza, agora escrita nos dois arquivos: **se o Python faz, é
+paridade e mora no `MIGRATION.md`; se não faz, é atividade nova e mora no
+`BACKLOG.md`**. Um trabalho tem um dono só.
+
+O que a auditoria achou: **44 das 252 linhas do painel não eram paridade** — 25
+delas ainda na fila (`falta`, contando como trabalho a fazer) e 19 já feitas mas
+marcadas como melhoria. E 13 dos 15 itens de backlog já tinham linha no painel,
+com o mesmo trabalho em dois estados. Pior: duas duplicações dentro do próprio
+`MIGRATION.md` — a seção 15 era uma segunda cópia do painel, congelada 9 itens
+atrás, e a seção 16 era a fila de melhorias.
+
+| antes | depois |
+|---|---|
+| 252 linhas, 25 delas melhoria na fila + 19 melhoria feitas | **208 linhas, só paridade** (145 feito / 14 parcial / 46 falta / 3 não) |
+| 15 itens de backlog, 13 duplicando o painel | **19 atividades novas** + 17 fechadas, nenhuma com linha no painel |
+| 67,9% "equivalente pronto" contando extras | **73,1% de paridade** (o que é atividade nova não entra na conta) |
+
+Duas linhas do backlog eram paridade disfarçada e voltaram para o painel:
+`M-A` (dano por linha — o Python faz, `view.py:330-364`) e `M-G` (kitty keyboard
+— o Python faz em `kitty_kbd.py`; sobrou só a flag 4 como atividade nova).
+
+Seis linhas da fila ficaram órfãs ao sair do painel e ganharam item próprio:
+`M-R` (OSC 52/7/133), `M-S` (F13-F24 e `KP_*`), `M-T` (`?1016`), `M-U` (DECALN
+e combinantes) e `M-V` (menu de contexto, que é o gatilho declarado do `M-Q`).

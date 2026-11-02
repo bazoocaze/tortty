@@ -1,3 +1,4 @@
 target/
 *.log
 pi/
+docs/NAMING.md

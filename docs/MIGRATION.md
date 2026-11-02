@@ -15,38 +15,40 @@ não por estimativa.
 ## Painel
 | área | feito | parcial | falta | não | total |
 |---|---|---|---|---|---|
-| 1. Núcleo: célula, cores, grade | 22 | 0 | 2 | 0 | 24 |
-| 2. Parser: controles, CSI, modos | 32 | 3 | 1 | 0 | 36 |
-| 3. Parser: SGR e OSC | 14 | 0 | 5 | 0 | 19 |
-| 4. Scrollback e visão do histórico | 9 | 0 | 2 | 0 | 11 |
-| 5. Entrada: teclado e protocolo do kitty | 8 | 0 | 12 | 0 | 20 |
-| 6. Entrada: mouse, seleção, clipboard, paste | 14 | 1 | 5 | 0 | 20 |
-| 7. Desenho: fonte, geometria, cores | 12 | 2 | 3 | 0 | 17 |
-| 8. Imagens do protocolo kitty | 0 | 0 | 16 | 3 | 19 |
-| 9. Janela: abas, workspaces, cromo | 18 | 0 | 2 | 0 | 20 |
-| 10. Janela: ciclo de vida, geometria, estado | 3 | 0 | 8 | 0 | 11 |
-| 11. Configuração e CLI | 17 | 1 | 3 | 0 | 21 |
-| 12. Debug socket e instrumentação | 7 | 5 | 3 | 0 | 15 |
+| 1. Núcleo: célula, cores, grade | 17 | 0 | 1 | 0 | 18 |
+| 2. Parser: controles, CSI, modos | 25 | 3 | 0 | 0 | 28 |
+| 3. Parser: SGR e OSC | 13 | 0 | 0 | 0 | 13 |
+| 4. Scrollback e visão do histórico | 8 | 0 | 0 | 0 | 8 |
+| 5. Entrada: teclado e protocolo do kitty | 8 | 0 | 8 | 0 | 16 |
+| 6. Entrada: mouse, seleção, clipboard, paste | 13 | 1 | 0 | 0 | 14 |
+| 7. Desenho: fonte, geometria, cores | 11 | 2 | 3 | 0 | 16 |
+| 8. Imagens do protocolo kitty | 0 | 0 | 13 | 3 | 16 |
+| 9. Janela: abas, workspaces, cromo | 18 | 0 | 0 | 0 | 18 |
+| 10. Janela: ciclo de vida, geometria, estado | 2 | 0 | 8 | 0 | 10 |
+| 11. Configuração e CLI | 15 | 1 | 2 | 0 | 18 |
+| 12. Debug socket e instrumentação | 7 | 5 | 2 | 0 | 14 |
 | 13. Plataforma e distribuição | 5 | 0 | 5 | 0 | 10 |
 | 14. Testes e verificação | 3 | 2 | 4 | 0 | 9 |
-| **total** | **164** | **14** | **71** | **3** | **252** |
+| **total** | **145** | **14** | **46** | **3** | **208** |
 
-Equivalente pronto: **67.9%** (feito conta 1, parcial conta 0,5). O total serve para ver
-tendência; o que decide o que fazer agora é a linha e a seção 17.
+Equivalente pronto: **73.1%** (feito conta 1, parcial conta 0,5). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
+tendência; o que decide o que fazer agora é a linha e a seção 16.
 
 ## Regras deste documento
 
 1. **Uma linha, uma funcionalidade.** Se a linha precisa de "e" para descrever,
    são duas linhas.
 2. **Estado sempre preenchido** com um destes: `feito`, `parcial`, `falta`,
-   `não`. `parcial` exige dizer **o que falta** na própria linha.
+   `não`. `parcial` exige dizer **o que falta** na própria linha. **Melhoria
+   não tem estado aqui**: se o Python não faz, não é paridade — vira item do
+   [`BACKLOG.md`](BACKLOG.md) e não ganha linha neste arquivo.
 3. **Fechar item** = mudar o estado, rodar a verificação da coluna
    "verificação" e registrar uma linha em `HISTORY.md` com a data. O item não
    sai daqui: o painel conta o que está feito, não o que sobrou.
 4. **Item novo** (descoberto no meio do caminho) entra como linha nova na área,
    não como parágrafo. Se o Python não tem, é **melhoria** (`BACKLOG.md`), não
    migração.
-5. **Ordem de execução** não mora nas tabelas: mora na seção 17. Marcar `feito`
+5. **Ordem de execução** não mora nas tabelas: mora na seção 16. Marcar `feito`
    fora de ordem é normal; mudar a ordem é decisão registrada.
 6. **Verificação** é o que dá direito a `feito`: teste automatizado quando
    existe equivalente no `checks.py` do Python; senão, o roteiro manual escrito
@@ -70,12 +72,6 @@ Rust (sem linha, para não envelhecer a cada commit).
 | A7 | Reverse video por célula (inversão depois de resolver cor) | `view.py:963-973` → `render.rs` | feito |
 | A8 | BCE: apagar herda o bg corrente | `term.py:155-157` → `term.rs` | feito |
 | A9 | Charset DEC Special Graphics (G0, `ESC ( 0`) | `palette.py:110-142` → `charset.rs` | feito |
-| A10 | Charset G1 + SO/SI (lock shift) | não existe no Python → `term.rs` | feito (**melhoria**) |
-| A11 | Wide char (`wcwidth`) com célula de continuação | não existe (`LIMITATIONS.md:22-27`) → `cell.rs`, `term.rs` | feito (**melhoria**) |
-| A12 | Combinantes/grafema: compor na célula anterior em vez de ocupar coluna | não existe (`LIMITATIONS.md:29-33`) | falta |
-| A13 | Tab stops configuráveis (HTS/TBC/CHT/CBT) | tab fixo de 8 (`term.py:423-426`) → `term.rs` | feito (**melhoria**) |
-| A14 | Origin mode `?6` | não existe → `term.rs` | feito (**melhoria**) |
-| A15 | Autowrap desligável `?7` | ignorado (`LIMITATIONS.md:57`) → `term.rs` | feito (**melhoria**) |
 | A16 | Dano por linha (`dirty`/`dirty_all`) | `term.py:355-362` → `term.rs` | feito |
 | A17 | Render usa o dano (só remonta as linhas sujas) | `view.py:920-935` → — | falta |
 | A18 | Grade de alt-screen separada, com troca preservando cursor | `term.py:602-629` → `term.rs` | feito |
@@ -94,22 +90,15 @@ Rust (sem linha, para não envelhecer a cada commit).
 | B2 | C0: CAN/SUB cancelam sequência | `term.py:858-861` → `term.rs` | feito |
 | B3 | C1 (0x80-0x9F) | desenha como texto (`term.py:862-866`) | parcial: UTF-8 os transforma em U+0080..U+009F imprimíveis |
 | B4 | `ESC [ ` CSI, `ESC ]` OSC, `ESC P/_/^/X` DCS/APC/PM/SOS | `term.py:871-876` → `term.rs` | feito |
-| B5 | DCS/APC/PM/SOS consumidos até ST (sem vazar na tela) | **vaza** no Python (`term.py:895-896`) → `term.rs` | feito (**melhoria**) |
 | B6 | `ESC 7`/`ESC 8` DECSC/DECRC | `term.py:882-888` → `term.rs` | feito |
-| B7 | DECSC salva também SGR/origin/autowrap | Python salva só cursor → `term.rs` | feito (**melhoria**) |
-| B8 | `ESC D` IND / `ESC E` NEL | no-op no Python (`term.py:891-892`) → `term.rs` | feito (**melhoria**) |
 | B9 | `ESC M` RI (scroll reverso na margem) | só move cursor (`term.py:879-881`) → `term.rs` | feito |
 | B10 | `ESC H` HTS, `ESC c` RIS | RIS `term.py:889-890` → `term.rs` | feito |
-| B11 | `ESC # 8` DECALN | não existe | falta |
 | B12 | CSI cursor: CUU/CUD/CUF/CUB/CNL/CPL/CHA/VPA/CUP/HVP | `term.py:688-703` → `term.rs` | feito |
 | B13 | CSI `s`/`u` (SCOSC/SCORC) e `u` com prefixo = kitty kbd | `term.py:734-740` → `term.rs` | parcial: `s`/`u` feitos; kitty kbd falta (D-seção 5) |
 | B14 | IL/DL/ICH/DCH/ECH | `term.py:708-728` → `term.rs` | feito |
-| B15 | Clamp de `n` em IL/DL/ICH/DCH/ECH (o Python não clampa) | bug `term.py:483-497,712-728` → `term.rs` | feito (**melhoria**) |
 | B16 | EL 0/1/2 e ED 0/1/2 | `term.py:704-707` → `term.rs` | feito |
 | B17 | ED 3 limpa scrollback + invalida âncoras | `term.py:456-465` → `term.rs` | feito |
-| B18 | SU/SD | não existem no Python | feito (**melhoria**) |
 | B19 | DECSTBM (região de scroll) | `term.py:729-733` → `term.rs` | feito |
-| B20 | REP (`CSI b`) | não existe (`LIMITATIONS.md:59`) → `term.rs` | feito (**melhoria**) |
 | B21 | Modos privados `?1` DECCKM, `?25` DECTCEM | `term.py:594-601` → `term.rs` | feito |
 | B22 | `?47`/`?1047`/`?1049` alt screen (+ limpeza de histórico no 1049) | `term.py:602-629` → `term.rs` | feito |
 | B23 | `?1048` save/restore cursor | `term.py:630-634` → `term.rs` | feito |
@@ -125,7 +114,6 @@ Rust (sem linha, para não envelhecer a cada commit).
 | B33 | DECSCUSR `CSI Ps SP q` (+ volta à config no 0) | `term.py:764-771` → `term.rs`, `render.rs` | feito |
 | B34 | Buffer de resposta ao filho (`child_out`) | `term.py:140` → `term.rs` | feito |
 | B35 | UTF-8 incremental com parcial bufferizado e inválido → U+FFFD | `view.py:227,404-406` → `term.rs` | feito |
-| B36 | Estado `csi`/`osc` com teto de comprimento | Python concatena sem limite (`term.py:906,919,932`) → `term.rs` | feito (**melhoria**) |
 
 ## 3. Parser: SGR e OSC
 
@@ -143,12 +131,6 @@ Rust (sem linha, para não envelhecer a cada commit).
 | C10 | OSC 1 (título de ícone) | ignorado no Python | feito (ignorado, igual) |
 | C11 | OSC 10/11 query de cor default | `term.py:961-965` → `Term::osc_color` | feito |
 | C12 | OSC 4 query de paleta | `term.py:966-980` → `Term::osc_palette` | feito |
-| C13 | OSC 4/104/110/111/112 **set** (redefinir cor em runtime) | não existe (`LIMITATIONS.md:66-68`) → `Term::theme`/`theme_dirty` | feito (**melhoria**) |
-| C14 | OSC 8 hyperlink (guardar por célula + clique) | consumido e descartado (`LIMITATIONS.md:73-75`) | falta (**melhoria**) |
-| C15 | OSC 52 clipboard (com trava de config) | não existe | falta (**melhoria**) |
-| C16 | OSC 7 cwd do shell | não existe | falta (**melhoria**) |
-| C17 | OSC 133 marcas de prompt (A/B/C/D) | não existe | falta (**melhoria**) |
-| C18 | OSC 9/777 notificação | não existe | falta |
 | C19 | OSC com terminador BEL **e** ST, ESC solto volta a reprocessar | `term.py:914-926` → `term.rs` | feito |
 
 ## 4. Scrollback e visão do histórico
@@ -159,13 +141,10 @@ Rust (sem linha, para não envelhecer a cada commit).
 | D2 | Flag de quebra mole paralela ao histórico | `term.py:106-118` → `grid.rs` | feito |
 | D3 | `visible_rows(off)` sempre devolve `rows` linhas | `term.py:1006-1024` → `term.rs` | feito |
 | D4 | Roda do mouse rola 3 linhas | `view.py:1208-1226` → `app.rs` | feito |
-| D5 | Roda com delta fracionário (trackpad) acumula | não existe (GDK smooth é descartado) → `app.rs` | feito (**melhoria**) |
 | D6 | Shift+PgUp/PgDn/Home/End | `view.py:1285-1292` → `app.rs` | feito |
 | D7 | Qualquer tecla volta ao vivo (modificador não conta) | `view.py:1290-1292` → `app.rs` | feito |
 | D8 | Indicador `↑N` no canto quando no histórico | `view.py:1082-1091` → `render.rs` | feito |
-| D9 | Barra de rolagem (visual, arrastável) | não existe no Python | falta (**melhoria**) |
 | D10 | Visão fixada ao ler enquanto chega output | `view.py` + `term.py:1026-1078` → `Term::view_after_output` | feito |
-| D11 | Busca no scrollback | não existe | falta (**melhoria**) |
 
 ## 5. Entrada: teclado e protocolo do kitty
 
@@ -177,16 +156,12 @@ Rust (sem linha, para não envelhecer a cada commit).
 | E4 | Shift+Tab (`ISO_Left_Tab` → `CSI Z`) | `keys.py:180-181` → `keys.rs` | feito |
 | E5 | Ctrl+letra (`chr(kv&0x1f)`), Ctrl+Space, Ctrl+minus | `keys.py:192-199` → `keys.rs` | feito (Ctrl+Space = NUL, Ctrl+\ = 0x1c) |
 | E6 | Alt como prefixo ESC em tecla especial e em texto | `keys.py:121-138,215-216` → `keys.rs` | feito (tecla especial vira `CSI 1;3x`, texto vira `ESC` + letra) |
-| E7 | F13-F24 | ausentes no Python também | falta (**melhoria**) |
-| E8 | Teclado numérico com NumLock off (`KP_*`) | ausente no Python (`LIMITATIONS.md:87`) | falta (**melhoria**) |
 | E9 | Dead keys / composição (ABNT2 `~ ^ ´`) | `keys.py:13-44,219-227` → winit | feito (o winit entrega o texto composto; `Key::Dead` não gera byte) |
 | E10 | Texto imprimível vindo do evento (layout não-US) | `view.py:1295-1300` → `app.rs` | feito (usa `event.text` e cai em `acquired` quando vazio) |
-| E11 | IME / preedit (CJK, compose) | não existe no Python | falta (**melhoria**) |
 | E12 | Kitty kbd: `CSI > u` push, `CSI < n u` pop, `CSI = f;m u` set | `term.py:982-1001` | falta |
 | E13 | Kitty kbd: `CSI ? u` query | `term.py:986` | falta |
 | E14 | Kitty kbd flag 1 (disambiguate) | `kitty_kbd.py:25-52,115-119` | falta |
 | E15 | Kitty kbd flag 2 (event types, release `:3`) | `kitty_kbd.py:90-109` | falta |
-| E16 | Kitty kbd flag 4 (alternate keys) | ausente no Python (`LIMITATIONS.md:86`) | falta (**melhoria**) |
 | E17 | Kitty kbd flag 8 (all keys as CSI u) | `kitty_kbd.py:127-135` | falta |
 | E18 | Kitty kbd flag 16 (associated text) | `kitty_kbd.py:62-79` | falta |
 | E19 | Release sem forma kitty não manda texto (bug do `pi`) | `kitty_kbd.py:90-99` | falta (depende de E12-E18) |
@@ -202,19 +177,13 @@ Rust (sem linha, para não envelhecer a cada commit).
 | F4 | Roda como botões 64-67 (press e release no SGR) | `mouse.py:21-23,46-47` → `mouse.rs` | feito |
 | F5 | Botões 8/9 (back/forward) | `mouse.py:22,30` → `mouse.rs` | feito |
 | F6 | Motion com botão (`?1002`) e sem botão (`?1003`) | `view.py:1199-1205` → `app.rs` | feito |
-| F7 | Mouse reporting em pixels (`?1016`) | não existe | falta (**melhoria**) |
-| F20 | `?1005` coordenada em UTF-8 (sai do teto de 222) | Python ignora (`term.py:644`) | feito (**melhoria**) |
 | F8 | Seleção por arrasto com limiar de 3 px | `view.py:1145-1200` → `app.rs` | feito |
 | F9 | Seleção em âncora absoluta (sobrevive a rolagem e output) | `view.py:854-881`, `term.py:1056-1075` → `select.rs` | feito (o reflow da A21 ainda mata a âncora, igual ao Python) |
-| F10 | Seleção por palavra (duplo clique) e por linha (triplo) | não existe (`LIMITATIONS.md:71-72`) | falta (**melhoria**) |
-| F11 | Seleção retangular / bloco | não existe | falta (**melhoria**) |
 | F12 | Seleção: cópia no release para PRIMARY; `copy_on_select` copia CLIPBOARD | `view.py:1168-1176` → `app.rs` | parcial: copia para PRIMARY **e** CLIPBOARD; `copy_on_select` vira opção na F3 |
 | F13 | Ctrl+Shift+C copia (seleção ou viewport), Ctrl+Shift+V cola | `view.py:1271-1277,1239-1254` → `app.rs` | feito |
 | F14 | Botão 2 cola PRIMARY | `view.py:1152-1154` → `clip.rs` | feito |
 | F15 | Bracketed paste envolve payload em `200~`/`201~` | `term.py:1082-1091` → `select.rs` | feito |
 | F16 | Clipboard sobrevive ao exit / integração com o sistema | `Gtk.Clipboard` → `clip.rs` (`arboard`) | feito no CLIPBOARD; PRIMARY morre com o app (é o dono da seleção) |
-| F17 | Abrir link com Ctrl+clique | não existe | falta (depende de C14) |
-| F18 | Menu de contexto | não existe | falta |
 | F19 | Clique com mouse mode ativo volta ao vivo antes de reportar | `view.py:1136-1141` → `app.rs` | feito |
 
 ## 7. Desenho: fonte, geometria, cores
@@ -231,7 +200,6 @@ Rust (sem linha, para não envelhecer a cada commit).
 | G8 | Ligaduras/shaping | Pango (P9) | falta: `swash` sem shaping complexo |
 | G9 | Padding da janela em px | `config.py` `window_padding_width` → shader (`origin`) | feito |
 | G10 | Fundo da sobra de célula até a borda (sem tarja preta) | `view.py:926-934` | feito (fundo pintado por instância de grade inteira) |
-| G11 | Paleta/tema configurável | não existe (`LIMITATIONS.md:133-140`) → `Theme` | feito (**melhoria**) |
 | G12 | Cursor: block/beam/underline + pisca | `view.py:1058-1079`, `828-838` → `render.rs`, `app.rs` | feito: `cursor_blink on` pisca a 500 ms, tecla/colagem reacende, `CSI 6 q` par vence; SGR 5 usa a mesma fase |
 | G13 | Sublinhado na largura do run | `view.py:1022-1025` → `render.rs` | feito |
 | G14 | Seleção desenhada como inversão | `view.py:943,953-973` → `render.rs` | feito (o default resolve pelo outro extremo) |
@@ -256,9 +224,6 @@ Rust (sem linha, para não envelhecer a cada commit).
 | H11 | `q=` silencia resposta | `graphics.py:170` | falta |
 | H12 | Imagem acompanha a rolagem e é podada do histórico | `graphics.py:74-96` | falta |
 | H13 | `ED 3` limpa imagens | `term.py:481-485` | falta |
-| H14 | z-index (`z=`) e placement id (`p=`) | não existem no Python | falta (**melhoria**) |
-| H15 | Unicode placeholder (`U=1`) | não existe | falta (**melhoria**) |
-| H16 | Origem recortada (`x`,`y`,`w`,`h`) | não existe | falta (**melhoria**) |
 | H17 | `t=f`/`t=t`/`t=s` (arquivo, temp, shm) | não existem (`LIMITATIONS.md:99-108`) | não (decisão: só base64) |
 | H18 | Animação (`a=f`/`a=a`) | ignorado de propósito | não |
 | H19 | Sixel / iTerm2 inline | não existem | não |
@@ -284,8 +249,6 @@ Rust (sem linha, para não envelhecer a cada commit).
 | I15 | Atalhos de aba/workspace (Ctrl+Shift+T/W/N/Q/F2, Alt+N, Super+N/Q) | `window.py:854-898` | feito: Ctrl+Shift+T/W/N/Q/F2, Ctrl+Shift+1..9, Alt+1..9, Super+N/Q/1..9 |
 | I16 | Dígito de atalho por keycode cru (sobrevive a ABNT2) | `window.py:70-84` → `digit_of` (tecla física) | feito |
 | I17 | Título da janela = título da aba ativa | `window.py:375,921-926` | feito: `<título> — bzmux`, só quando muda |
-| I18 | Abas/workspaces persistentes entre execuções | não existem (`LIMITATIONS.md:141`) | falta (**melhoria**) |
-| I19 | Splits (mais de um terminal na mesma view) | não existe (P39) | falta (**melhoria**) |
 | I20 | Fechar última aba fecha o workspace; último workspace fecha o app | `window.py:196-197,836-845` | feito: `drop_empty_workspace` promove o primeiro estacionado, ou fecha o app |
 
 ## 10. Janela: ciclo de vida, geometria, estado
@@ -301,7 +264,6 @@ Rust (sem linha, para não envelhecer a cada commit).
 | J7 | `SIGUSR1` = dump imediato; `SIGTERM` = sair limpo | `window.py:503-508` | falta |
 | J8 | `--quit-after SEG` (usado pela automação) | `cli.py:35` | falta |
 | J9 | Dump do texto de todas as abas para arquivo | `window.py:929-945` | falta |
-| J10 | Grid travado pelo socket sobrevive a arredondamento do WM | não existe (`benchrun.py` depende de 6 tentativas) → `app.rs` | feito (**melhoria**) |
 | J11 | Uma instância por PID file, sem matar processo alheio | `debug.sh` (Python) → `tools/devkill.sh` | feito |
 
 ## 11. Configuração e CLI
@@ -324,11 +286,8 @@ Rust (sem linha, para não envelhecer a cada commit).
 | K14 | `-c/--config`, `--cmd`, `--debug-socket`, `--debug-log` | `cli.py:31-41` → `cli.rs` | feito |
 | K15 | `--quit-after`, `--dump-to`, `--selftest`, `--install-shortcut` | `cli.py:35-96` | parcial: `--selftest` feito (atalho virou o `install.sh`); falta `--quit-after`/`--dump-to` |
 | K16 | `--version`, `--help`, código 2 para uso inválido | `cli.py:85-101` → `cli.rs` | feito |
-| K17 | `--cols`/`--rows`/`--dpi`/`--no-vsync`/`--prof` | não existem no Python → `cli.rs` | feito (**melhoria**) |
 | K18 | `.desktop` + ícone (`--install-shortcut`) | `shortcut.py:34-136` | falta |
 | K19 | WM_CLASS estável (`StartupWMClass`) | `cli.py:130-131` | falta |
-| K20 | Remapeamento de atalhos | não existe | falta (**melhoria**, precisa de atalhos locais — F4) |
-| K21 | Paleta no arquivo de config (`color0..15`, fg/bg/cursor) | não existe (`LIMITATIONS.md:133-140`) → `config.rs` | feito (**melhoria**) |
 
 ## 12. Debug socket e instrumentação
 
@@ -347,7 +306,6 @@ Rust (sem linha, para não envelhecer a cada commit).
 | L11 | Socket `0600` + `SO_PEERCRED` (mesmo uid) | `debugsock.py:146-157,180` → `debugsock.rs` | feito |
 | L12 | Não apagar arquivo alheio; socket órfão só sai com `ECONNREFUSED` | `debugsock.py:122-144` | falta |
 | L13 | Erro sempre `{"ok":false,"err":...}`, nunca derruba o app | `debugsock.py:70-119` → `debugsock.rs` | feito |
-| L14 | Named pipe no Windows (transporte alternativo) | n/a (Python é POSIX) | falta (**melhoria**) |
 | L15 | `--dump-to`/`SIGUSR1` para inspeção sem socket | `window.py:947-949` | falta (ver J7/J9) |
 
 ## 13. Plataforma e distribuição
@@ -383,33 +341,10 @@ Rust (sem linha, para não envelhecer a cada commit).
 
 ## 15. Contagem por área
 
-| área | feito | parcial | falta | não |
-|---|---|---|---|---|
-| Núcleo: célula, cores, grade | 22 | 0 | 2 | 0 |
-| Parser: controles, CSI, modos | 32 | 3 | 1 | 0 |
-| Parser: SGR e OSC | 14 | 0 | 5 | 0 |
-| Scrollback e visão do histórico | 9 | 0 | 2 | 0 |
-| Entrada: teclado e protocolo do kitty | 8 | 0 | 12 | 0 |
-| Entrada: mouse, seleção, clipboard, paste | 14 | 1 | 5 | 0 |
-| Desenho: fonte, geometria, cores | 12 | 2 | 3 | 0 |
-| Imagens do protocolo kitty | 0 | 0 | 16 | 3 |
-| Janela: abas, workspaces, cromo | 9 | 2 | 9 | 0 |
-| Janela: ciclo de vida, geometria, estado | 3 | 0 | 8 | 0 |
-| Configuração e CLI | 17 | 1 | 3 | 0 |
-| Debug socket e instrumentação | 7 | 5 | 3 | 0 |
-| Plataforma e distribuição | 5 | 0 | 5 | 0 |
-| Testes e verificação | 3 | 2 | 4 | 0 |
-| **total** | **155** | **16** | **78** | **3** |
+Não existe tabela aqui: o painel no topo deste arquivo é a **única** contagem.
+Uma segunda cópia envelhece calada (esta existiu e ficou 9 itens atrás).
 
-## 16. Melhorias propostas
-
-**Fora do escopo deste documento.** Melhoria que vai além da paridade mora em
-[`BACKLOG.md`](BACKLOG.md), com id `M-*`, gatilho e custo; aqui fica só o que a
-migração pede. O que dessas melhorias já foi implementado aparece nas tabelas
-acima marcado `(**melhoria**)`, porque virou capacidade do programa — a lista,
-porém, é uma só, e não é esta.
-
-## 17. Ordem de execução
+## 16. Ordem de execução
 
 A ordem não é a das tabelas: é por **o que destrava uso diário** e por
 dependência. Cada fatia termina com `cargo test` verde, `mc`/`vim`/`dmesg`
@@ -446,35 +381,39 @@ toast da F4); o **pisca** do cursor da config não anima ainda (G12).
 conferido: Ctrl+Shift+T/W (aba) e N/Q (workspace), Ctrl+Shift+1..9 e Alt+1..9 e
 Super+N/Q/1..9, sidebar com cartões (some com um workspace só), duplo clique
 renomeia, clique esquerdo troca e meio fecha, arrastar reordena, roda na barra
-circula, flash de bell e título por OSC 0/2. Ficam fora, por serem melhoria:
-abas/workspaces persistentes (I18) e splits (I19).
+circula, flash de bell e título por OSC 0/2. Persistência de layout e splits
+não são paridade (o Python não tem): viraram `M-I` e `M-J` no
+[`BACKLOG`](BACKLOG.md).
 
-**F5 — Protocolos de entrada completos (E12-E19, F7, C14, F17).**
-Kitty keyboard, mouse em pixels, hyperlink clicável.
+**F5 — Protocolos de entrada completos (E12-E15, E17-E19).**
+Kitty keyboard (push/pop/query, flags 1/2/8/16). Mouse em pixels (`M-T`) e
+hyperlink clicável (`M-C`) são atividade nova: ficam no [`BACKLOG`](BACKLOG.md).
 
 **F6 — Imagens do kitty (H1-H13).**
 Pronto quando `icat` e `kitten icat` desenham, rolam junto e são podadas.
 
-**F7 — Qualidade de vida (D9, D11, F10-F11, G12, E11, C16-C18; `M-K` no
-[`BACKLOG`](BACKLOG.md)).**
-Scrollbar, busca, seleção por palavra, cursor piscando, IME, OSC 7/133.
+**F7 — Qualidade de vida (G12).** Sobrou só o que é paridade: o pisca do
+cursor (feito). Scrollbar (`M-M`), busca (`M-D`), seleção por palavra (`M-E`),
+IME (`M-F`), OSC 7/133/52 (`M-R`) e notificação (`M-K`) são atividade nova e
+moram no [`BACKLOG`](BACKLOG.md) — não são fatia de migração.
 
-**F8 — Portas (M4-M9, L14).**
-Wayland, GL, Windows, macOS, CI matriz, artefatos por tag.
+**F8 — Portas (M4-M9).**
+Wayland, GL, Windows, macOS, CI matriz, artefatos por tag. O named pipe do
+Windows (`M-N`) é atividade nova, no [`BACKLOG`](BACKLOG.md).
 
-**F9 — Splits (`M-J`, [`BACKLOG`](BACKLOG.md)).** Só depois de F4 e F7.
+**F9 — Splits.** Fora da migração: é `M-J` no [`BACKLOG`](BACKLOG.md).
 
-### 17.1 Regras de avanço
+### 16.1 Regras de avanço
 
 - Fatia só começa quando a anterior está com `cargo test` verde e os roteiros
   manuais dela passando. Exceção: item isolado que destrava outro (registrar na
   linha).
 - Nada de "aproveitar para refatorar" dentro da fatia: refatoração que não é
-  requisito entra como melhoria (seção 16) ou não entra.
+  requisito é melhoria: vai para o `BACKLOG.md` e não entra aqui.
 - Toda funcionalidade migrada traz o teste equivalente do `checks.py` quando
   existe; quando não existe, o roteiro manual vai escrito na linha.
 
-### 17.2 Checks do Python ainda sem equivalente aqui
+### 16.2 Checks do Python ainda sem equivalente aqui
 
 `parser_text_and_cursor` (parcial), `sgr_and_erasing` (parcial),
 `alt_screen_and_scroll` (parcial), `charset_and_replies` (parcial),
