@@ -27,11 +27,11 @@ não por estimativa.
 | 10. Janela: ciclo de vida, geometria, estado | 3 | 0 | 8 | 0 | 11 |
 | 11. Configuração e CLI | 15 | 3 | 3 | 0 | 21 |
 | 12. Debug socket e instrumentação | 7 | 5 | 3 | 0 | 15 |
-| 13. Plataforma e distribuição | 4 | 0 | 6 | 0 | 10 |
+| 13. Plataforma e distribuição | 5 | 0 | 5 | 0 | 10 |
 | 14. Testes e verificação | 3 | 2 | 4 | 0 | 9 |
-| **total** | **142** | **20** | **87** | **3** | **252** |
+| **total** | **143** | **20** | **86** | **3** | **252** |
 
-Equivalente pronto: **60.3%** (feito conta 1, parcial conta 0,5). O total serve para ver
+Equivalente pronto: **60.7%** (feito conta 1, parcial conta 0,5). O total serve para ver
 tendência; o que decide o que fazer agora é a linha e a seção 17.
 
 ## Regras deste documento
@@ -361,7 +361,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | M5 | Linux backend GL (`WGPU_BACKEND=gl`) | n/a | falta |
 | M6 | Windows 10/11 (D3D12 + ConPTY) | não roda | falta |
 | M7 | macOS arm64 e x86_64 (Metal) | não roda | falta |
-| M8 | CI matriz de build + release por tag | não existe | falta |
+| M8 | CI matriz de build + release por tag | não existe → `.github/workflows/release.yml` + `tools/release.sh` | feito para Linux x86_64/aarch64; macOS/Windows entram com M6/M7 |
 | M9 | Notarização macOS / assinatura Windows | não existe | falta (decisão adiada: ver `PORTABILITY.md`) |
 | M10 | Instalador: comando `bzmux`, menu, ícone, `--uninstall`, `--check` | `install.sh` (pipx + deps de sistema) → `install.sh` (copia 1 binário) | feito |
 
@@ -397,9 +397,9 @@ Rust (sem linha, para não envelhecer a cada commit).
 | Janela: ciclo de vida, geometria, estado | 3 | 0 | 8 | 0 |
 | Configuração e CLI | 15 | 3 | 3 | 0 |
 | Debug socket e instrumentação | 7 | 5 | 3 | 0 |
-| Plataforma e distribuição | 4 | 0 | 6 | 0 |
+| Plataforma e distribuição | 5 | 0 | 5 | 0 |
 | Testes e verificação | 3 | 2 | 4 | 0 |
-| **total** | **142** | **20** | **87** | **3** |
+| **total** | **143** | **20** | **86** | **3** |
 
 ## 16. Melhorias propostas
 

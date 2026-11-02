@@ -81,16 +81,30 @@ bzmux --cmd 'stty size' --cols 100 --rows 30   # tem que dizer 30 100
 WM entregar menos pixels, o bzmux ajusta a janela até bater (`docs/DEBUG.md`).
 O filho nasce depois desse ajuste, então `stty size` mostra o tamanho real.
 
-## Publicar (ainda não feito)
+## Publicar
 
 `--from-release` espera, no GitHub Releases da tag `v<versão>`:
 
 ```
-bzmux-<versão>-x86_64-unknown-linux-gnu.tar.gz    (contém o binário `bzmux`)
+bzmux-<versão>-x86_64-unknown-linux-gnu.tar.gz    (binário `bzmux` + LICENSE + README)
 bzmux-<versão>-aarch64-unknown-linux-gnu.tar.gz
+SHA256SUMS
 ```
 
-O repositório sai de `BZMUX_REPO` (default: o remote declarado neste projeto).
-Falta a matriz de CI que gera esses tarballs por tag — é o item **M8** de
-`docs/MIGRATION.md`; macOS/Windows dependem de assinatura e estão em
-`docs/PORTABILITY.md`.
+Quem gera isso é `.github/workflows/release.yml`, que só chama o
+`tools/release.sh` — o **mesmo** comando que se roda na máquina:
+
+```sh
+./tools/release.sh                      # empacota o host em dist/
+./tools/release.sh --target aarch64-unknown-linux-gnu
+./tools/release.sh --check-version v0.1.0   # o CI usa: tag tem que casar
+```
+
+O script confere a versão do `Cargo.toml` contra a tag, roda
+`bzmux --version` no binário empacotado (sob `qemu-user-static` quando é cross) e
+deixa o `.tar.gz` + `.sha256` em `dist/`.
+
+Publicar é criar a tag: `git tag -a v0.1.0 -m ... && git push origin v0.1.0`.
+O repositório do download sai de `BZMUX_REPO` (default `bazoocaze/rust_term`).
+macOS e Windows ainda não entram na matriz (M6/M7: ConPTY e assinatura, ver
+`docs/PORTABILITY.md`).

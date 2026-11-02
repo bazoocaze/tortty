@@ -1,0 +1,86 @@
+name: release
+
+# Por tag `v*`: empacota e publica o binário que o `install.sh --from-release`
+# sabe baixar (`bzmux-<versão>-<triple>.tar.gz`). O empacotamento é o
+# `tools/release.sh` — o mesmo que roda na máquina de quem desenvolve, então o
+# que sai daqui não é um caminho separado.
+#
+# Cobertura hoje: Linux x86_64 e aarch64. macOS (M7) e Windows (M6) ainda não
+# compilam de ponta a ponta (ConPTY/assinatura); quando compilarem, entram como
+# mais duas linhas da matriz e o resto é igual.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: linux (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            arch: amd64
+          - target: aarch64-unknown-linux-gnu
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: deps de build
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev \
+            libxi-dev libxcursor-dev libxinerama-dev
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            sudo apt-get install -y --no-install-recommends \
+              gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user-static
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: empacota
+        env:
+          # o linker cruzado que o cargo não adivinha
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+        run: ./tools/release.sh --target "${{ matrix.target }}" --check-version "$GITHUB_REF_NAME"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.target }}
+          path: dist/*
+
+  publish:
+    needs: linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      # um único arquivo de somas: é o que o usuário confere depois de baixar
+      - name: somas
+        run: |
+          cd dist
+          sha256sum *.tar.gz | tee SHA256SUMS
+          cat SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          generate_release_notes: true

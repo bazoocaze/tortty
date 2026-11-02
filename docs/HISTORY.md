@@ -217,3 +217,23 @@ intermediário (DECSCUSR e soft reset), config, OSC de cor e dano.
 Entrou no `tools/check.sh` (que roda no pre-commit) e no CI. Três expectativas
 minhas estavam erradas e o check pegou: o backspace depois de `z	w` sobrescreve
 o `w`, o `DECSCUSR 4` guarda `(forma 1, pisca false)` e `ECH 2` deixa `"  c"`.
+
+## 2026-11-02 — release por tag (M8)
+
+`.github/workflows/release.yml` (tag `v*`) builda `x86_64` e `aarch64`, e o
+empacotamento é o `tools/release.sh` — o mesmo comando do local, não um caminho
+paralelo de CI. Ele:
+
+- confere `--check-version vX.Y.Z` contra o `Cargo.toml` (tag apontando para
+  outro código é o erro mais fácil de cometer e o mais chato de descobrir);
+- roda `bzmux --version` **no binário empacotado** — no cross, via
+  `qemu-user-static`; sem qemu, avisa no log em vez de fingir que verificou;
+- monta `bzmux-<versão>-<triple>.tar.gz` com binário + LICENSE + README e
+  imprime o `sha256`, que é o formato que o `install.sh --from-release` espera.
+
+Testado local: pacote de 3,9 MB, extrai, roda e responde `bzmux 0.1.0`;
+tag errada (`v0.2.0` com `Cargo.toml` em `0.1.0`) sai com código 1.
+
+Falta para fechar M8 de verdade: `windows-latest` e `macos-14`/`macos-13` na
+matriz — dependem de M6 (ConPTY) e M7 (Metal), que estão em `PORTABILITY.md`.
+Licença MIT entrou junto (o pacote leva o arquivo).

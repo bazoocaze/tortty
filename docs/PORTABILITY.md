@@ -72,9 +72,15 @@ Ordenados por gravidade. Nenhum é arquitetural; todos são de fronteira.
 
 Caminho recomendado, nesta ordem:
 
-1. **GitHub Actions com matriz** (`ubuntu-latest`, `windows-latest`,
-   `macos-14` arm64, `macos-13` x86_64) gerando artefatos por tag. Em repo
-   público é grátis; em privado, minuto de macOS conta 10x.
+1. **GitHub Actions com matriz** — **já existe para Linux**
+   (`.github/workflows/release.yml`, tag `v*`): `x86_64` e `aarch64`, usando o
+   `tools/release.sh` (o mesmo comando do local) e publicando
+   `bzmux-<versão>-<triple>.tar.gz` + `SHA256SUMS`, que é exatamente o que
+   `./install.sh --from-release` baixa. O `aarch64` roda sob `qemu-user-static`
+   no CI para o `--version` valer como verificação. Quando M6/M7 fecharem,
+   `windows-latest` e `macos-14`/`macos-13` entram como mais duas linhas da
+   mesma matriz — em repo público é grátis; em privado, minuto de macOS conta
+   10x.
 2. **`lipo`** para universal binary no macOS (arm64 + x86_64) — um `.app`
    simples ou binário solto + `.dmg`/`.zip`.
 3. **Assinatura**: no Apple Silicon todo executável precisa de assinatura, mas o
