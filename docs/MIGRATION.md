@@ -23,15 +23,15 @@ não por estimativa.
 | 6. Entrada: mouse, seleção, clipboard, paste | 14 | 1 | 5 | 0 | 20 |
 | 7. Desenho: fonte, geometria, cores | 12 | 2 | 3 | 0 | 17 |
 | 8. Imagens do protocolo kitty | 0 | 0 | 16 | 3 | 19 |
-| 9. Janela: abas, workspaces, cromo | 1 | 3 | 16 | 0 | 20 |
+| 9. Janela: abas, workspaces, cromo | 9 | 2 | 9 | 0 | 20 |
 | 10. Janela: ciclo de vida, geometria, estado | 3 | 0 | 8 | 0 | 11 |
 | 11. Configuração e CLI | 17 | 1 | 3 | 0 | 21 |
 | 12. Debug socket e instrumentação | 7 | 5 | 3 | 0 | 15 |
 | 13. Plataforma e distribuição | 5 | 0 | 5 | 0 | 10 |
 | 14. Testes e verificação | 3 | 2 | 4 | 0 | 9 |
-| **total** | **147** | **17** | **85** | **3** | **252** |
+| **total** | **155** | **16** | **78** | **3** | **252** |
 
-Equivalente pronto: **61.7%** (feito conta 1, parcial conta 0,5). O total serve para ver
+Equivalente pronto: **64.7%** (feito conta 1, parcial conta 0,5). O total serve para ver
 tendência; o que decide o que fazer agora é a linha e a seção 17.
 
 ## Regras deste documento
@@ -267,10 +267,10 @@ Rust (sem linha, para não envelhecer a cada commit).
 
 | # | funcionalidade | ref (Python → Rust) | estado |
 |---|---|---|---|
-| I1 | Aba = termo + pty com ciclo de vida próprio | `window.py:140-211` | falta |
-| I2 | Nova aba herda cwd da aba corrente (último descendente do pty) | `window.py:140-153,904-919` | falta |
-| I3 | Fechar aba (fecha pty, remove página, escolhe a próxima) | `window.py:184-201` | falta |
-| I4 | Título da aba por OSC 0/2, senão `basename(cwd)`, senão `bzmux` | `window.py:277-286` | parcial: `state.title` existe; sem abas |
+| I1 | Aba = termo + pty com ciclo de vida próprio | `window.py:140-211` → `app.rs:Tab` | feito: `Tab` tem term/pty/rx/visão/seleção; `drain` lê todas |
+| I2 | Nova aba herda cwd da aba corrente (último descendente do pty) | `window.py:140-153,904-919` | feito: `/proc/<pid>/cwd` do descendente mais fundo; `cd /tmp` → aba nova em `/tmp` |
+| I3 | Fechar aba (fecha pty, remove página, escolhe a próxima) | `window.py:184-201` | feito: `Ctrl+Shift+W`; aba de shell morto fecha sozinha |
+| I4 | Título da aba por OSC 0/2, senão `basename(cwd)`, senão `bzmux` | `window.py:277-286` | feito: `Tab::title` (OSC → cwd → `bzmux`) |
 | I5 | Workspace = conjunto de abas, com nome e renumeração | `window.py:798-848` | falta |
 | I6 | Sidebar com cartões (`n`, nome, título, k abas) | `window.py:289-301` | falta |
 | I7 | Sidebar escondida com 1 workspace | `window.py:396-400` | falta |
@@ -279,14 +279,14 @@ Rust (sem linha, para não envelhecer a cada commit).
 | I10 | Arrastar aba para reordenar | `window.py:173` | falta |
 | I11 | Roda do mouse na barra de abas | `window.py:100` | falta |
 | I12 | Toast (erro/aviso) com fila e timeout | `window.py:411-465,677-740` → `render.rs:toast` | feito: faixa invertida na 1ª linha, 3,5 s, mensagem igual seguida vira `(×N)` |
-| I13 | Bell visual: flash do rótulo por 800 ms (800 ms, `BELL_BG`) | `window.py:255-275` | falta |
-| I14 | Bell audível (`beep`) | `window.py:666-669` | falta |
-| I15 | Atalhos de aba/workspace (Ctrl+Shift+T/W/N/Q/F2, Alt+N, Super+N/Q) | `window.py:854-898` | falta |
-| I16 | Dígito de atalho por keycode cru (sobrevive a ABNT2) | `window.py:70-84` | falta |
-| I17 | Título da janela = título da aba ativa | `window.py:375,921-926` | parcial: título vem do `Term` |
+| I13 | Bell visual: flash do rótulo por 800 ms (800 ms, `BELL_BG`) | `window.py:255-275` → `render.rs:tabbar` | feito: `color3` por 800 ms, inclusive em aba de segundo plano |
+| I14 | Bell audível (`beep`) | `window.py:666-669` | feito (`bell audible` escreve BEL no stdout; sem `beep` de toolkit) |
+| I15 | Atalhos de aba/workspace (Ctrl+Shift+T/W/N/Q/F2, Alt+N, Super+N/Q) | `window.py:854-898` | parcial: Ctrl+Shift+T/W e Alt+1..9 feitos; falta Ctrl+Shift+N/Q/F2 e Super (F4b) |
+| I16 | Dígito de atalho por keycode cru (sobrevive a ABNT2) | `window.py:70-84` → `digit_of` (tecla física) | feito |
+| I17 | Título da janela = título da aba ativa | `window.py:375,921-926` | feito: `<título> — bzmux`, só quando muda |
 | I18 | Abas/workspaces persistentes entre execuções | não existem (`LIMITATIONS.md:141`) | falta (**melhoria**) |
 | I19 | Splits (mais de um terminal na mesma view) | não existe (P39) | falta (**melhoria**) |
-| I20 | Fechar última aba fecha o workspace; último workspace fecha o app | `window.py:196-197,836-845` | parcial: fecha quando o shell morre |
+| I20 | Fechar última aba fecha o workspace; último workspace fecha o app | `window.py:196-197,836-845` | parcial: última aba fecha o app; falta o nível de workspace |
 
 ## 10. Janela: ciclo de vida, geometria, estado
 
@@ -393,13 +393,13 @@ Rust (sem linha, para não envelhecer a cada commit).
 | Entrada: mouse, seleção, clipboard, paste | 14 | 1 | 5 | 0 |
 | Desenho: fonte, geometria, cores | 12 | 2 | 3 | 0 |
 | Imagens do protocolo kitty | 0 | 0 | 16 | 3 |
-| Janela: abas, workspaces, cromo | 1 | 3 | 16 | 0 |
+| Janela: abas, workspaces, cromo | 9 | 2 | 9 | 0 |
 | Janela: ciclo de vida, geometria, estado | 3 | 0 | 8 | 0 |
 | Configuração e CLI | 17 | 1 | 3 | 0 |
 | Debug socket e instrumentação | 7 | 5 | 3 | 0 |
 | Plataforma e distribuição | 5 | 0 | 5 | 0 |
 | Testes e verificação | 3 | 2 | 4 | 0 |
-| **total** | **147** | **17** | **85** | **3** |
+| **total** | **155** | **16** | **78** | **3** |
 
 ## 16. Melhorias propostas
 
