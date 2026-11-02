@@ -516,9 +516,9 @@ impl App {
             return None;
         }
         let info = self.tabinfo();
-        // a barra começa na borda da janela (`x = -side` no renderer, que é
-        // `pad` em coordenada de janela), não depois da sidebar
-        let mut x = f64::from(pad);
+        // a barra começa onde a grade começa (à direita da sidebar): a linha 1
+        // é dividida entre o cartão do workspace e a barra de abas
+        let mut x = f64::from(pad) + f64::from(self.side_w(cw));
         for (i, t) in info.iter().enumerate() {
             let rotulo = format!(" {} {} ", i + 1, t.titulo);
             let largura = rotulo.chars().count() as f64 * f64::from(cw);
@@ -540,8 +540,8 @@ impl App {
         if side <= 0.0 || px >= f64::from(pad) + side || px < f64::from(pad) {
             return None;
         }
-        // a sidebar começa abaixo da barra de abas, junto com a grade
-        let topo = f64::from(pad) + f64::from(self.bar_h(ch));
+        // a sidebar começa na linha 1, ao lado da barra de abas (não abaixo)
+        let topo = f64::from(pad);
         if py < topo {
             return None;
         }

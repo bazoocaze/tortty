@@ -381,10 +381,11 @@ impl Renderer {
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
         let ascent = self.fonts.ascent;
-        // a barra é o cabeçalho da janela: vai de ponta a ponta, inclusive em
-        // cima da sidebar (que começa abaixo dela, junto com a grade)
-        let x0 = -self.side;
-        let largo = cols as f32 * cw + x0.abs();
+        // a barra começa à direita da sidebar: as duas dividem a linha 1, e a
+        // sidebar não fica com um buraco em cima (o cartão é a altura de 2,4
+        // linhas, então ela passa por baixo da barra de qualquer jeito)
+        let x0 = 0.0;
+        let largo = cols as f32 * cw;
         let fundo = self.color(Color::Idx(0), self.bg);
         // texto sobre a aba ativa usa a cor de fundo da grade (inversão)
         let sobre = self.color(Color::Default, self.bg);
@@ -436,8 +437,8 @@ impl Renderer {
     }
 
     /// Sidebar de workspaces (I6): uma coluna à esquerda com um cartão por
-    /// workspace. Fica na faixa que o `origin` reservou (x = -side), como a
-    /// barra de abas fica em y = -bar.
+    /// workspace. Ocupa a faixa que o `origin` reservou (x = -side) e começa na
+    /// linha 1, junto com a barra de abas (y = -bar).
     fn sidebar(&mut self, cards: &[WsCard]) {
         if self.side <= 0.0 {
             return;
@@ -448,8 +449,9 @@ impl Renderer {
         let largura = self.side - self.pad;
         let fundo = self.color(Color::Idx(0), self.bg);
         let sobre = self.color(Color::Default, self.bg);
+        let topo = -self.bar;
         for (i, c) in cards.iter().enumerate() {
-            let y0 = i as f32 * card_h;
+            let y0 = topo + i as f32 * card_h;
             let ativo = c.ativa;
             let (bg, fg) = if ativo {
                 (self.color(Color::Default, self.fg), sobre)

@@ -171,6 +171,26 @@ xdotool mousemove $((X+120)) $((Y+60)) click 1
 # ler a tela: {"cmd":"text","where":"view"} -> 1b5b3c303b31313b344d = ESC[<0;11;4M
 ```
 
+### Cromo: a linha 1 e a coluna da esquerda
+
+Duas faixas da janela não são grade, e as duas moram no mesmo espaço do
+`origin` do shader (`pad + bar`, `pad + side`), o que é a fonte de quase todo
+erro de coordenada:
+
+| faixa | desenho | teste de clique |
+|---|---|---|
+| barra de abas (linha 1, à direita da sidebar) | `y0 = -bar`, `x0 = 0` | `tab_at`: `py` em `[pad, pad+bar)`, `x` a partir de `pad+side` |
+| sidebar (coluna da esquerda, desde a linha 1) | `y0 = -bar` no 1º cartão | `card_at`: `px < pad+side`, `i = (py - pad) / (2,4*ch)` |
+
+A barra **some** com uma aba só (`bar_h = 0`), então tudo que depende dela tem
+que perguntar `bar_h(ch)` na hora — e a grade ganha a linha de volta quando ela
+some. O cartão tem 2,4 linhas de altura: para clicar no segundo, o `y` é ~1,5
+linha abaixo do primeiro, não meia linha.
+
+Correção de origem, quando o clique cai na faixa errada: mover o mouse e ler
+`cursor_px`/`cell_at` do `state` (é exato, sem offset de moldura) e derivar
+`side = px - col*cw`.
+
 ### Tamanho inicial da grade
 
 Duas armadilhas juntas, e as duas aparecem como "texto embaralhado no

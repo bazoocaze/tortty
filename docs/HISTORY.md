@@ -325,3 +325,13 @@ Três armadilhas só apareceram testando:
 Verificação: `state` com `tabs/ws/ws_names` conferido a cada passo (ordem dos
 workspaces estável ao trocar e ao fechar), captura da sidebar com e sem barra,
 e a roda/arrasto conferidos com o mouse de verdade.
+
+## 2026-11-02 — sidebar e barra de abas dividem a linha 1
+
+A sidebar começava na linha 2 quando a barra de abas aparecia: a barra ia de
+ponta a ponta e a coluna da esquerda ficava com um buraco na primeira linha.
+Agora a barra começa onde a grade começa (`x0 = 0`, à direita da sidebar) e o
+primeiro cartão começa em `y = -bar`, na linha 1, ao lado dela. `card_at` foi
+junto: o topo do cartão é `pad`, não `pad + bar`. A ordem das consultas importa
+— `card_at` antes de `tab_at`, senão o clique no cartão da linha 1 virava
+clique na aba.
