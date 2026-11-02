@@ -8,7 +8,7 @@ use std::time::Duration;
 use bzmux_core::config::Bell;
 use bzmux_core::{Anchor, Span, Term};
 use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalSize;
+use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
@@ -355,6 +355,20 @@ pub struct App {
     prazo: Option<std::time::Instant>,
     /// Um dump já foi escrito nesta execução (SIGUSR1 pode vir várias vezes).
     dumpou: bool,
+    /// Tamanho normal da janela (J5: maximizado **não** sobrescreve este).
+    geom_normal: (u32, u32),
+    /// Última posição externa vista (moldura, como o `get_position()` do Python).
+    geom_pos: Option<(i32, i32)>,
+    /// O estado lembrado só vale se ninguém pediu grade na linha de comando.
+    lembrar_geom: bool,
+}
+
+/// O WM aqui é X11? É ele que aceita posição de janela; no Wayland ela não
+/// existe (J6). O `winit` não expõe qual backend escolheu, então a leitura é do
+/// ambiente — a mesma escolha dele: Wayland quando `WAYLAND_DISPLAY` existe.
+fn backend_x11() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_none_or(|v| v.is_empty())
+        && std::env::var_os("DISPLAY").is_some_and(|v| !v.is_empty())
 }
 
 impl App {
@@ -415,6 +429,9 @@ impl App {
             exiting: false,
             prazo,
             dumpou: false,
+            geom_normal: crate::state::PADRAO,
+            geom_pos: None,
+            lembrar_geom: true,
         }
     }
 
@@ -1926,6 +1943,69 @@ impl App {
         self.redraw();
     }
 
+    /// Tamanho, posição e maximizado com que a janela nasce (J2–J6).
+    ///
+    /// Ordem: grade pedida na linha de comando (é medição) desliga o lembrar;
+    /// sem ela decide o estado lembrado, se passar pelo `state::fit`; e o
+    /// último recurso é o tamanho relativo à grade pedida.
+    fn geometria_inicial(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        fonts: &Fonts,
+    ) -> (u32, u32, Option<(i32, i32)>, bool) {
+        let pad = 2.0 * self.opts.cfg.padding as f32;
+        let padrao = (
+            ((self.opts.cols as f32 * fonts.cw + pad).ceil() as u32).max(1),
+            ((self.opts.rows as f32 * fonts.ch + pad).ceil() as u32).max(1),
+        );
+        self.geom_normal = padrao;
+        self.lembrar_geom = !self.opts.grid_explicito;
+        if !self.lembrar_geom {
+            return (padrao.0, padrao.1, None, false);
+        }
+        let monitores: Vec<crate::state::Monitor> = event_loop
+            .available_monitors()
+            .map(|m| {
+                let p = m.position();
+                let s = m.size();
+                (p.x, p.y, s.width, s.height)
+            })
+            .collect();
+        let lembrada = crate::state::load();
+        let maximizado = lembrada.is_some_and(|g| g.maximizado);
+        // J2/J4: sem estado (ou com estado inválido: monitor desconectado,
+        // lixo no arquivo) abre no padrão 980x640 do Python, não do tamanho da
+        // grade — quem quer grade exata pede `--cols/--rows`, que desliga o
+        // lembrar. Geometria lembrada inválida volta a este mesmo padrão.
+        let geom = lembrada
+            .and_then(|g| crate::state::fit(g.x, g.y, g.w, g.h, &monitores))
+            .unwrap_or_default();
+        self.geom_normal = (geom.w.max(1), geom.h.max(1));
+        // J6: só o X11 aceita posição de janela; no Wayland ela não existe
+        let pos = geom.x.zip(geom.y).filter(|_| backend_x11());
+        (geom.w.max(1), geom.h.max(1), pos, maximizado)
+    }
+
+    /// Grava posição, tamanho normal e maximizado (J2–J6). Falhar aqui não pode
+    /// atrapalhar o fechamento — o `state::save` já engole erro de I/O.
+    fn salva_geometria(&mut self) {
+        if !self.lembrar_geom {
+            return; // grade pedida na linha de comando: não lembra (é medição)
+        }
+        let maximizado = self.window.as_ref().is_some_and(|w| w.is_maximized());
+        let (x, y) = match self.geom_pos.filter(|_| backend_x11()) {
+            Some((x, y)) => (Some(x), Some(y)),
+            None => (None, None), // Wayland: sem posição para lembrar (J6)
+        };
+        crate::state::save(&crate::state::Geometry {
+            x,
+            y,
+            w: self.geom_normal.0,
+            h: self.geom_normal.1,
+            maximizado,
+        });
+    }
+
     /// Quantos workspaces existem (o da frente + os estacionados).
     fn ws_count(&self) -> usize {
         self.parked.len() + 1
@@ -2293,12 +2373,14 @@ impl ApplicationHandler<UserEvent> for App {
         // a margem entra no pedido: a grade é `cols*cw` e o resto é padding
         // sinais: `SIGUSR1` (dump) e `SIGTERM` (sair limpo), como no Python
         instala_sinais();
-        let pad = 2.0 * self.opts.cfg.padding as f32;
-        let w = (self.opts.cols as f32 * fonts.cw + pad).ceil() as u32;
-        let h = (self.opts.rows as f32 * fonts.ch + pad).ceil() as u32;
-        let attrs = Window::default_attributes()
+        let (w, h, pos, maximizado) = self.geometria_inicial(event_loop, &fonts);
+        let mut attrs = Window::default_attributes()
             .with_title("bzmux")
-            .with_inner_size(PhysicalSize::new(w.max(1), h.max(1)));
+            .with_inner_size(PhysicalSize::new(w, h))
+            .with_maximized(maximizado);
+        if let Some((x, y)) = pos {
+            attrs = attrs.with_position(PhysicalPosition::new(x, y));
+        }
         // K19: `WM_CLASS` explícito, não herdado do nome do executável — é o
         // que o `StartupWMClass` do `.desktop` procura para agrupar a janela
         // no dock. Binário renomeado (`bzmux-rs`) não pode mudar o WM_CLASS.
@@ -2401,7 +2483,18 @@ impl ApplicationHandler<UserEvent> for App {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::Moved(pos) => {
+                // posição externa (moldura): é a que `with_position` consome,
+                // e a que o `get_position()` do Python salvava — salvar a do
+                // cliente descia a janela a barra de título a cada execução
+                self.geom_pos = Some((pos.x, pos.y));
+            },
             WindowEvent::Resized(size) => {
+                // J5: maximizado é estado do WM, não tamanho; se salvasse aqui,
+                // o tamanho de antes de maximizar se perderia
+                if !self.window.as_ref().is_some_and(|w| w.is_maximized()) {
+                    self.geom_normal = (size.width, size.height);
+                }
                 self.apply_size(size.width, size.height);
                 if let Some(w) = self.window.as_ref() {
                     w.request_redraw();
@@ -2560,6 +2653,7 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        self.salva_geometria();
         if prof::enabled() || self.opts.prof {
             let summary = prof::summary();
             eprintln!("prof: {summary}");

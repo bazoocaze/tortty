@@ -50,6 +50,9 @@ pub struct Options {
     pub cfg: Config,
     /// De onde veio o arquivo do usuário (para o auto-reload e para o log).
     pub cfg_path: Option<PathBuf>,
+    /// `--cols`/`--rows` pedidos na linha de comando: a grade pedida vence a
+    /// geometria lembrada (é o que a automação e o bench precisam).
+    pub grid_explicito: bool,
 }
 
 impl Options {
@@ -83,7 +86,9 @@ impl Options {
         // caminho vazio é "não pedi socket": sem isto o `bind("")` falha com
         // uma mensagem que não diz nada (o Python trata vazio como desligado)
         let debug_socket = over.debug_socket.filter(|p| !p.is_empty());
+        let grid_explicito = over.cols.is_some() || over.rows.is_some();
         let opts = Options {
+            grid_explicito,
             cmd: over.cmd,
             cols: over.cols.unwrap_or(80).max(1),
             rows: over.rows.unwrap_or(24).max(1),

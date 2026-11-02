@@ -24,14 +24,14 @@ não por estimativa.
 | 7. Desenho: fonte, geometria, cores | 13 | 1 | 2 | 0 | 16 |
 | 8. Imagens do protocolo kitty | 0 | 0 | 13 | 3 | 16 |
 | 9. Janela: abas, workspaces, cromo | 18 | 0 | 0 | 0 | 18 |
-| 10. Janela: ciclo de vida, geometria, estado | 5 | 0 | 5 | 0 | 10 |
+| 10. Janela: ciclo de vida, geometria, estado | 10 | 0 | 0 | 0 | 10 |
 | 11. Configuração e CLI | 18 | 0 | 0 | 0 | 18 |
 | 12. Debug socket e instrumentação | 14 | 0 | 0 | 0 | 14 |
 | 13. Plataforma e distribuição | 5 | 0 | 5 | 0 | 10 |
 | 14. Testes e verificação | 7 | 2 | 0 | 0 | 9 |
-| **total** | **176** | **3** | **26** | **3** | **208** |
+| **total** | **181** | **3** | **21** | **3** | **208** |
 
-Equivalente pronto: **85.3%** (feito conta 1, parcial conta 0,5). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
+Equivalente pronto: **87.7%** (feito conta 1, parcial conta 0,5). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
 tendência; o que decide o que fazer agora é a linha e a seção 16.
 
 ## Regras deste documento
@@ -256,11 +256,11 @@ Rust (sem linha, para não envelhecer a cada commit).
 | # | funcionalidade | ref (Python → Rust) | estado |
 |---|---|---|---|
 | J1 | Fecha a janela quando o shell termina | `window.py:250-253` → `app.rs` | feito |
-| J2 | Geometria inicial 980×640 e restauração de tamanho | `window.py:24-31,467-478` | falta |
-| J3 | Persistência de geometria (`$XDG_STATE_HOME/bzmux/window.json`) | `state.py:16-63` | falta |
-| J4 | Rejeitar geometria inválida (monitor desconectado, lixo) | `state.py:46-63` | falta |
-| J5 | Maximizado é estado separado do tamanho normal | `window.py:1009-1012` | falta |
-| J6 | Wayland: não salvar x/y | `window.py:975-978` | falta |
+| J2 | Geometria inicial 980×640 e restauração de tamanho | `window.py:24-31,467-478` | feito: sem estado abre 980×640 (conferido com `xdotool`: `Geometry: 980x640`); com estado restaura o tamanho (900×600 pedido → 900×600). Quem pede grade (`--cols/--rows`) **não** restaura nem salva — é o papel do `PYTERM_GEOM` lá, e é o que a automação e o bench precisam |
+| J3 | Persistência de geometria (`$XDG_STATE_HOME/bzmux/window.json`) | `state.py:16-63` | feito: `state.rs` (puro), gravação atômica (tmp + rename, sem tmp sobrando — testado), `XDG_STATE_HOME` com `~/.local/state` de reserva e erro de I/O engolido no fechamento |
+| J4 | Rejeitar geometria inválida (monitor desconectado, lixo) | `state.py:46-63` | feito: `state::fit` exige `w/h` ≥ 320×200 e o canto **dentro de algum monitor**. Ao vivo: 100×80 → 980×640, canto em 9000,9000 → 980×640, JSON torto → 980×640, e o arquivo é reescrito são |
+| J5 | Maximizado é estado separado do tamanho normal | `window.py:1009-1012` | feito: `Resized` só atualiza o tamanho normal quando a janela **não** está maximizada; o arquivo guarda `max` ao lado de `w/h`. Ao vivo: maximizado 1920×985 → arquivo `{w:900,h:600,max:true}` → reabre maximizado → desmaximizar volta a 900×600 |
+| J6 | Wayland: não salvar x/y | `window.py:975-978` | feito: `backend_x11()` decide por `WAYLAND_DISPLAY`/`DISPLAY`; sem X11 a posição não é pedida nem gravada, e `state::save` simplesmente omite `x`/`y` (testado). Ressalva: não há sessão Wayland nesta máquina, então esta linha é código + teste, não verificação ao vivo |
 | J7 | `SIGUSR1` = dump imediato; `SIGTERM` = sair limpo | `window.py:503-508` | feito: `SIGUSR1` = dump na hora, `SIGTERM` = dump e saída limpa (handler só levanta `AtomicBool`; quem age é o laço) |
 | J8 | `--quit-after SEG` (usado pela automação) | `cli.py:35` | feito: `--quit-after SEG` fecha sozinho e deixa o dump (conferido: dump escrito e processo fora) |
 | J9 | Dump do texto de todas as abas para arquivo | `window.py:929-945` | feito: dump com cabeçalho por workspace e por aba, scrollback (últimas 40) e viewport, marcando a aba `[fundo]` |

@@ -635,3 +635,40 @@ as chamadas de desenho caem de **1499–1585** para **63–74** com o mesmo fps
 (1012–1032), o que dá ~10x menos CPU desenhando na mesma carga. Ao vivo, com a
 transação vindo do pty (20 linhas com pausa): 4 desenhos em 0,4 s — uma por teto,
 como projetado — e o estado final inteiro na grade depois do fecho.
+
+## 2026-11-02 — Onda 3: a janela lembra onde estava (J2–J6)
+
+`crates/bzmux/src/state.rs`, puro como o `state.py` de lá: arquivo JSON em
+`$XDG_STATE_HOME/bzmux/window.json` (com `~/.local/state` de reserva), gravação
+atômica por tmp + rename, e nenhuma falha de estado atrapalha o fechamento. Nove
+testes, sem display: `fit` aceita retângulo sadio, rejeita tamanho de lixo
+(`< 320×200`), rejeita canto fora de todos os monitores (monitor desconectado),
+aceita quando não há monitor conhecido, e trata a ausência de posição (Wayland);
+o arquivo volta igual, não deixa `.tmp` e uma dúzia de lixos (`""`, `{`, `[]`,
+`null`, `"texto"`, `{"x":1}`) cai em "abre no padrão" em vez de quebrar.
+
+**Ordem de precedência**, que é a decisão desta onda: grade pedida na linha de
+comando (`--cols`/`--rows`) **desliga** o lembrar — é medição, e é o que a
+automação e o bench precisam (o papel do `PYTERM_GEOM` no Python). Sem grade
+explícita decide o estado lembrado, se passar no `fit`; e o último recurso é o
+980×640 do Python, não o tamanho da grade — quem quer grade exata pede a grade.
+
+**A armadilha que o Python já tinha documentado** (`window.py:1009`): salvar a
+posição do **cliente** e restaurar na moldura desce a janela uma barra de título
+por execução. Aqui a posição gravada é a do evento `Moved`, que é a externa, a
+mesma que `with_position` consome. Verificado em três execuções seguidas:
+`120,90` pedido, `120,90` gravado, nenhum pixel de deriva.
+
+**Maximizado é estado separado** (J5): `Resized` só atualiza o tamanho normal
+quando a janela não está maximizada, e o `max` vive ao lado de `w/h` no arquivo.
+Ao vivo: maximizado em 1920×985, arquivo guarda `{w:900, h:600, max:true}`,
+reabre maximizado, e desmaximizar devolve os 900×600.
+
+**Wayland** (J6): `backend_x11()` decide por `WAYLAND_DISPLAY`/`DISPLAY`, porque
+o `winit` não conta qual backend escolheu; sem X11 a posição não é pedida nem
+gravada. Ressalva registrada na linha do painel: não há sessão Wayland nesta
+máquina, então é código + teste, não verificação ao vivo.
+
+Verificação ao vivo (X11 + `xdotool`): sem estado → `980x640`; estado `900×600`
+em `120,90` → restaura os dois; `100×80` → `980x640`; canto em `9000,9000` →
+`980x640`; JSON torto → `980x640` com arquivo reescrito são.

@@ -12,6 +12,7 @@ mod mouse;
 mod prof;
 mod pty;
 mod render;
+mod state;
 
 use winit::event_loop::{ControlFlow, EventLoop};
 
