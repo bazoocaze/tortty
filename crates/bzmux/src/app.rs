@@ -27,6 +27,17 @@ pub enum UserEvent {
     Debug(String, Sender<String>),
 }
 
+/// Bytes em hex (o `keys` do socket devolve isso para conferir o encoder).
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
+}
+
 static LOG: Mutex<Option<std::fs::File>> = Mutex::new(None);
 
 pub fn set_log(path: &str) {
@@ -618,7 +629,8 @@ impl App {
                     if let Some(pty) = self.pty.as_mut() {
                         pty.write(&bytes);
                     }
-                    debugsock::ok(serde_json::json!({ "keys": [bytes.len()] }))
+                    let hex = hex(&bytes);
+                    debugsock::ok(serde_json::json!({ "keys": [bytes.len()], "hex": hex }))
                 },
                 None => debugsock::err("keys precisa de data"),
             },

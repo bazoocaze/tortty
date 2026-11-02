@@ -162,7 +162,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | D5 | Roda com delta fracionário (trackpad) acumula | não existe (GDK smooth é descartado) → `app.rs` | feito (**melhoria**) |
 | D6 | Shift+PgUp/PgDn/Home/End | `view.py:1285-1292` → `app.rs` | feito |
 | D7 | Qualquer tecla volta ao vivo (modificador não conta) | `view.py:1290-1292` → `app.rs` | feito |
-| D8 | Indicador `↑N` no canto quando no histórico | `view.py:1082-1091` | falta |
+| D8 | Indicador `↑N` no canto quando no histórico | `view.py:1082-1091` → `render.rs` | feito |
 | D9 | Barra de rolagem (visual, arrastável) | não existe no Python | falta (**melhoria**) |
 | D10 | Visão fixada ao ler enquanto chega output | `view.py` + `term.py:1026-1078` | parcial: `view_off` existe; sem âncora por geração (A21) |
 | D11 | Busca no scrollback | não existe | falta (**melhoria**) |
@@ -174,13 +174,13 @@ Rust (sem linha, para não envelhecer a cada commit).
 | E1 | Tabela de teclas simples (setas, Home/End, Ins/Del, PgUp/PgDn, F1-F12) | `keys.py:46-74` → `keys.rs` | feito |
 | E2 | Modificador como parâmetro (`CSI 1;mA`) | `keys.py:116-138` → `keys.rs` | feito |
 | E3 | DECCKM: setas/Home/End em modo aplicação (`ESC O A`) | `keys.py:78-84` → `keys.rs` | feito |
-| E4 | Shift+Tab (`ISO_Left_Tab` → `CSI Z`) | `keys.py:180-181` | falta |
-| E5 | Ctrl+letra (`chr(kv&0x1f)`), Ctrl+Space, Ctrl+minus | `keys.py:192-199` | falta |
-| E6 | Alt como prefixo ESC em tecla especial e em texto | `keys.py:121-138,215-216` | parcial: verificar todos os caminhos |
+| E4 | Shift+Tab (`ISO_Left_Tab` → `CSI Z`) | `keys.py:180-181` → `keys.rs` | feito |
+| E5 | Ctrl+letra (`chr(kv&0x1f)`), Ctrl+Space, Ctrl+minus | `keys.py:192-199` → `keys.rs` | feito (Ctrl+Space = NUL, Ctrl+\ = 0x1c) |
+| E6 | Alt como prefixo ESC em tecla especial e em texto | `keys.py:121-138,215-216` → `keys.rs` | feito (tecla especial vira `CSI 1;3x`, texto vira `ESC` + letra) |
 | E7 | F13-F24 | ausentes no Python também | falta (**melhoria**) |
 | E8 | Teclado numérico com NumLock off (`KP_*`) | ausente no Python (`LIMITATIONS.md:87`) | falta (**melhoria**) |
-| E9 | Dead keys / composição (ABNT2 `~ ^ ´`) | `keys.py:13-44,219-227` | falta |
-| E10 | Texto imprimível vindo do evento (layout não-US) | `view.py:1295-1300` → `app.rs` | parcial: depende do que o `winit` entrega |
+| E9 | Dead keys / composição (ABNT2 `~ ^ ´`) | `keys.py:13-44,219-227` → winit | feito (o winit entrega o texto composto; `Key::Dead` não gera byte) |
+| E10 | Texto imprimível vindo do evento (layout não-US) | `view.py:1295-1300` → `app.rs` | feito (usa `event.text` e cai em `acquired` quando vazio) |
 | E11 | IME / preedit (CJK, compose) | não existe no Python | falta (**melhoria**) |
 | E12 | Kitty kbd: `CSI > u` push, `CSI < n u` pop, `CSI = f;m u` set | `term.py:982-1001` | falta |
 | E13 | Kitty kbd: `CSI ? u` query | `term.py:986` | falta |

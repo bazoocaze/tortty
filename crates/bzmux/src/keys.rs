@@ -149,6 +149,11 @@ pub fn encode_parts(
     }
 
     if let Some(n) = named {
+        // Ctrl+Space é NUL (é o que o readline/vim esperam para "marcar"),
+        // não o `CSI 1;5 ` que a tabela genérica produziria
+        if ctrl && n == NamedKey::Space {
+            return Some(if alt { vec![0x1b, 0x00] } else { vec![0x00] });
+        }
         let base = named_base(n, app_cursor)?;
         return Some(with_mods(base, ctrl, alt, shift));
     }

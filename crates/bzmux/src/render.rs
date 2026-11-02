@@ -289,6 +289,39 @@ impl Renderer {
         });
     }
 
+    /// Selo de uma linha no canto superior direito (indicador de histórico).
+    /// Desenhado por último: tem que ficar por cima do que estiver lá.
+    fn badge(&mut self, text: &str, cols: usize) {
+        let cw = self.fonts.cw;
+        let chh = self.fonts.ch;
+        let ascent = self.fonts.ascent;
+        let n = text.chars().count();
+        let x0 = cols.saturating_sub(n + 1);
+        let bg = self.color(Color::Default, FG);
+        let fg = self.color(Color::Default, BG);
+        self.push_rect(
+            x0 as f32 * cw,
+            0.0,
+            n as f32 * cw,
+            chh,
+            [bg[0], bg[1], bg[2], 1.0],
+        );
+        for (i, ch) in text.chars().enumerate() {
+            if let Some(q) = self.glyph_quad(ch, false, false) {
+                self.instances.push(Instance {
+                    rect: [
+                        (x0 + i) as f32 * cw + q.left as f32,
+                        ascent - q.top as f32,
+                        q.w as f32,
+                        q.h as f32,
+                    ],
+                    color: [fg[0], fg[1], fg[2], 1.0],
+                    uv: q.uv,
+                });
+            }
+        }
+    }
+
     /// Glifo + decoração de uma célula. A ordem aqui é a ordem de blend:
     /// tudo do texto sai antes do cursor.
     fn draw_cell(&mut self, cell: &Cell, x: usize, py: f32, swap: bool) {
@@ -460,6 +493,13 @@ impl Renderer {
                     self.push_rect(cx, cy, cw, chh, [c[0], c[1], c[2], 0.85]);
                 },
             }
+        }
+
+        // 4) indicador de histórico (D8): "↑N" — sem ele, rolar para trás é
+        // indistinguível de o app ter parado de escrever
+        if view_off > 0 {
+            let txt = format!("↑{view_off}");
+            self.badge(&txt, cols);
         }
     }
 

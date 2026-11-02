@@ -171,6 +171,25 @@ xdotool mousemove $((X+120)) $((Y+60)) click 1
 # ler a tela: {"cmd":"text","where":"view"} -> 1b5b3c303b31313b344d = ESC[<0;11;4M
 ```
 
+### Teclado
+
+O verbo `keys` do socket passa pelo **encoder real** e devolve os bytes em hex,
+que é como se confere `Ctrl+Space` (NUL), `Alt+←` (`CSI 1;3D`) e `F5`
+(`CSI 15~`) sem adivinhação:
+
+```sh
+python3 -c 'import socket,json; s=socket.socket(socket.AF_UNIX); s.connect("/tmp/bz.sock");
+s.sendall(b"{\"cmd\":\"keys\",\"data\":\"alt+left\"}\n"); print(s.recv(999))'
+```
+
+Cuidado ao testar: `ctrl+c`/`ctrl+\\` matam o filho (`SIGINT`/`SIGQUIT`), o app
+fecha junto e o cliente fica lendo de um socket morto. Use um filho que ignora
+os sinais (`sh -c 'trap "" INT QUIT; sleep 200'`).
+
+Dead keys não têm código nosso: o `winit` entrega `Key::Dead` (que não gera
+byte) e depois o texto composto em `event.text`. Teste com
+`xdotool key dead_tilde a` e leia a tela pelo `text`.
+
 ## Medição
 
 Ver [`BENCHMARKS.md`](BENCHMARKS.md) — é o único lugar com número. Resumo do

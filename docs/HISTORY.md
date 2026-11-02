@@ -96,3 +96,18 @@ abortar era "se não fizer ≥3× o MB/s do Python e não abrir vim/mc, não pag
 - Verificado de ponta a ponta: arrasto em "CCC DDD" → inversão na tela, `state`
   com âncoras `a=(1,0) b=(1,6)`, Ctrl+Shift+V e botão do meio entregaram
   "CCC DDD" ao `cat` (conferido no arquivo e na tela).
+
+## 2026-11-02 — F1 fechada nos itens de teclado, scroll e indicador
+
+- **D8**: indicador `↑N` no canto superior direito (selo invertido, com glifo
+  do atlas). Sem ele, rolar para trás é indistinguível de app parado.
+- **D6/D7**: Shift+PgUp/PgDn/Home/End navegam; tecla de verdade volta ao vivo
+  (modificador não, senão o Shift do Shift+PgUp já resetava antes de rolar).
+- **E5**: Ctrl+Space agora é NUL; a tabela genérica produzia `CSI 1;5 `.
+  Conferido byte a byte pelo verbo `keys`, que passou a devolver o hex.
+- **E9**: dead keys já funcionam sem código nosso (o winit compõe e entrega
+  texto); verificado com `xdotool key dead_tilde a` → `ãéù`.
+- **Ferramenta**: `tools/devkill.sh` agora varre as sobras deste checkout (o
+  PID file só guarda a última). O `cargo build` troca o arquivo, então o
+  processo antigo aparece como `bzmux (deleted)` — é preciso tirar o sufixo
+  antes de comparar, senão a sobra sobrevive e responde no lugar do build novo.
