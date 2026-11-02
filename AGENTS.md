@@ -83,8 +83,12 @@ por categoria, na ordem).
   ajuste avulso não incrementa. É a fonte única: os dois crates herdam
   (`version.workspace = true`) e o `--version` mostra
   (`env!("CARGO_PKG_VERSION")`, compilado no build).
-- Comentário e mensagem explicam **por quê**, em português; nome de código em
-  inglês. Nenhum comentário narra o óbvio.
+- Comentário e mensagem explicam **por quê**, em português; **nome de arquivo,
+  símbolo, variável e campo em inglês**. Nenhum comentário narra o óbvio.
+- O que já está em português (`dano.rs`, `linhas_remontadas`, `escolhe_adaptador`)
+  fica como está até alguém mexer nele: a correção é **sob demanda**, no commit
+  que já toca o arquivo. Renomear em massa não paga o diff e atrapalha o `git
+  blame`.
 - Nada de `unsafe` no core. No app, só onde a API do `wgpu`/`winit` exige.
 - Medição antes de otimizar: `parsebench` para o parser, `tools/benchrun.py`
   para o app. Mudança que mexe no caminho quente vem com o número antes e
