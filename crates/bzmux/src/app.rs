@@ -285,6 +285,10 @@ pub struct App {
     /// Aba apertada na barra, para arrastar e reordenar (I10): índice e o x
     /// do press, para só começar o arrasto depois de andar de verdade.
     bar_press: Option<(usize, f64)>,
+    /// Último giro tratado na barra (instante e sentido). O X11 manda
+    /// **dois** eventos por entalhe (press e release), e sem isto um entalhe
+    /// troca de aba e o segundo desfaz.
+    bar_wheel: Option<(std::time::Instant, i8)>,
     mods: ModifiersState,
     /// Última posição do mouse em pixels físicos (base do `cell_at`).
     cursor_px: (f64, f64),
@@ -353,6 +357,7 @@ impl App {
             parked: Vec::new(),
             ws_idx: 0,
             bar_press: None,
+            bar_wheel: None,
             mods: ModifiersState::empty(),
             cursor_px: (0.0, 0.0),
             held: None,
@@ -489,6 +494,8 @@ impl App {
             return None;
         }
         let info = self.tabinfo();
+        // a barra começa na borda da janela (`x = -side` no renderer, que é
+        // `pad` em coordenada de janela), não depois da sidebar
         let mut x = f64::from(pad);
         for (i, t) in info.iter().enumerate() {
             let rotulo = format!(" {} {} ", i + 1, t.titulo);
@@ -499,6 +506,30 @@ impl App {
             x += largura;
         }
         None
+    }
+
+    /// Workspace sob o cursor, se ele estiver na sidebar (I9).
+    fn card_at(&self, px: f64, py: f64) -> Option<usize> {
+        let (cw, ch, pad) = self
+            .renderer
+            .as_ref()
+            .map_or((10.0, 19.0, 0.0), |r| (r.fonts.cw, r.fonts.ch, r.pad));
+        let side = f64::from(self.side_w(cw));
+        if side <= 0.0 || px >= f64::from(pad) + side || px < f64::from(pad) {
+            return None;
+        }
+        // a sidebar começa abaixo da barra de abas, junto com a grade
+        let topo = f64::from(pad) + f64::from(self.bar_h(ch));
+        if py < topo {
+            return None;
+        }
+        let card_h = f64::from(ch) * 2.4;
+        let i = ((py - topo) / card_h) as usize;
+        if i < self.ws_count() {
+            Some(i)
+        } else {
+            None
+        }
     }
 
     fn mouse_mods(&self) -> u8 {
@@ -733,6 +764,15 @@ impl App {
         }
         match state {
             ElementState::Pressed => {
+                // clique em cartão de workspace também não é do app
+                if let Some(i) = self.card_at(self.cursor_px.0, self.cursor_px.1) {
+                    self.select_workspace(i);
+                    self.held = None;
+                    if let Some(w) = self.window.as_ref() {
+                        w.request_redraw();
+                    }
+                    return;
+                }
                 // clique na barra não é do app (troca a aba, como na seleção)
                 if let Some(i) = self.tab_at(self.cursor_px.0, self.cursor_px.1) {
                     self.select_tab(i);
@@ -767,6 +807,17 @@ impl App {
                 MouseScrollDelta::LineDelta(_, y) => y,
                 MouseScrollDelta::PixelDelta(p) => (p.y as f32).signum() * 3.0,
             };
+            // press e release do mesmo entalhe chegam quase juntos (1 ms) e
+            // têm o mesmo sentido; duas voltas de verdade ficam a >10 ms
+            let agora = std::time::Instant::now();
+            let sentido: i8 = if dir > 0.0 { 1 } else { -1 };
+            let repetido = self.bar_wheel.is_some_and(|(quando, anterior)| {
+                anterior == sentido && agora.duration_since(quando).as_millis() < 10
+            });
+            if repetido {
+                return;
+            }
+            self.bar_wheel = Some((agora, sentido));
             let n = self.tabs.len();
             let at = if dir > 0.0 {
                 (self.active + n - 1) % n
@@ -817,6 +868,12 @@ impl App {
         use winit::event::MouseButton::{Left, Middle};
         match (state, button) {
             (ElementState::Pressed, Left) => {
+                // clique no cartão da sidebar troca de workspace (I9)
+                if let Some(i) = self.card_at(self.cursor_px.0, self.cursor_px.1) {
+                    self.bar_press = None;
+                    self.select_workspace(i);
+                    return;
+                }
                 // clique na barra de abas troca de aba (não seleciona texto);
                 // 'apertou' fica guardado para o arrasto (I10)
                 if let Some(i) = self.tab_at(self.cursor_px.0, self.cursor_px.1) {
@@ -865,6 +922,11 @@ impl App {
                 self.redraw();
             },
             (ElementState::Pressed, Middle) => {
+                // botão do meio no CARTÃO fecha o workspace (I9)
+                if let Some(i) = self.card_at(self.cursor_px.0, self.cursor_px.1) {
+                    self.close_workspace(i);
+                    return;
+                }
                 // botão do meio NA ABA fecha ela (I9); na grade cola o PRIMARY
                 if let Some(i) = self.tab_at(self.cursor_px.0, self.cursor_px.1) {
                     self.bar_press = None;
@@ -1708,17 +1770,32 @@ impl App {
         self.redraw();
     }
 
-    /// Troca o workspace da frente sem matar nada: swap do conteúdo.
+    /// Troca o workspace da frente sem matar nada: só troca quem ocupa o
+    /// lugar. A ordem lógica é remontada de propósito — trocar `parked[slot]`
+    /// no lugar embaralhava os cartões quando o corrente ia para uma posição
+    /// mais alta (o buraco dele ficava onde não devia).
     fn select_workspace(&mut self, i: usize) {
-        if i >= self.ws_count() || i == self.ws_idx {
+        let total = self.ws_count();
+        if i >= total || i == self.ws_idx {
             return;
         }
-        // em `parked` o da frente não está, então o índice desloca de 1
-        let slot = if i < self.ws_idx { i } else { i - 1 };
+        let old = self.ws_idx;
         let cur = Workspace::take(self);
-        let novo = std::mem::replace(&mut self.parked[slot], cur);
-        novo.into_current(self);
+        // `all[j]` = workspace lógico j; o do meio é o que está na frente
+        let mut parked = std::mem::take(&mut self.parked).into_iter();
+        let mut all: Vec<Option<Workspace>> = (0..total)
+            .map(|j| if j == old { None } else { parked.next() })
+            .collect();
+        all[old] = Some(cur);
+        let novo = all[i].take().expect("workspace do índice lógico");
         self.ws_idx = i;
+        self.parked = all
+            .into_iter()
+            .enumerate()
+            .filter(|(j, _)| *j != i)
+            .map(|(_, w)| w.expect("só o slot alvo fica vazio"))
+            .collect();
+        novo.into_current(self);
         self.after_ws_change();
     }
 

@@ -381,15 +381,18 @@ impl Renderer {
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
         let ascent = self.fonts.ascent;
-        let largo = cols as f32 * cw;
+        // a barra é o cabeçalho da janela: vai de ponta a ponta, inclusive em
+        // cima da sidebar (que começa abaixo dela, junto com a grade)
+        let x0 = -self.side;
+        let largo = cols as f32 * cw + x0.abs();
         let fundo = self.color(Color::Idx(0), self.bg);
         // texto sobre a aba ativa usa a cor de fundo da grade (inversão)
         let sobre = self.color(Color::Default, self.bg);
         // `origin.y` é `pad + bar`: para a barra cair na faixa reservada (e não
         // sobre a primeira linha da grade) ela é desenhada em y = -bar
         let y0 = -self.bar;
-        self.push_rect(0.0, y0, largo, chh, [fundo[0], fundo[1], fundo[2], 1.0]);
-        let mut x = 0.0f32;
+        self.push_rect(x0, y0, largo, chh, [fundo[0], fundo[1], fundo[2], 1.0]);
+        let mut x = x0;
         for (i, t) in tabs.iter().enumerate() {
             let rotulo = format!(" {} {} ", i + 1, t.titulo);
             let n = rotulo.chars().count();
@@ -475,6 +478,15 @@ impl Renderer {
         let cw = self.fonts.cw;
         let ascent = self.fonts.ascent;
         let cabe = (largura / cw).floor().max(1.0) as usize;
+        // reticências em vez de corte seco: o cartão estreito não come o fim
+        // do título sem avisar (o Python faz o mesmo com `ellipsize`)
+        let texto: String = if texto.chars().count() > cabe {
+            let mut t: String = texto.chars().take(cabe.saturating_sub(1)).collect();
+            t.push('…');
+            t
+        } else {
+            texto.to_string()
+        };
         for (i, ch) in texto.chars().take(cabe).enumerate() {
             if ch == ' ' {
                 continue;
@@ -513,19 +525,14 @@ impl Renderer {
             return;
         }
         // margem de meia célula de cada lado para o texto não tocar a borda
+        let x0 = -self.side;
         let y0 = rows.saturating_sub(1) as f32 * chh;
-        self.push_rect(
-            0.0,
-            y0,
-            (w + 2) as f32 * cw,
-            chh,
-            [bg[0], bg[1], bg[2], 1.0],
-        );
+        self.push_rect(x0, y0, (w + 2) as f32 * cw, chh, [bg[0], bg[1], bg[2], 1.0]);
         for (i, ch) in curto.chars().enumerate() {
             if let Some(q) = self.glyph_quad(ch, false, false) {
                 self.instances.push(Instance {
                     rect: [
-                        (i + 1) as f32 * cw + q.left as f32,
+                        x0 + (i + 1) as f32 * cw + q.left as f32,
                         y0 + ascent - q.top as f32,
                         q.w as f32,
                         q.h as f32,
