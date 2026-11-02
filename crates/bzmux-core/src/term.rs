@@ -107,7 +107,11 @@ pub struct Term {
     pub sync_output: bool,
     pub autowrap: bool,
     pub origin: bool,
+    /// Flags do protocolo de teclado do kitty (`CSI > u`, `CSI = u`). O
+    /// encoder do app lê daqui: os bits mudam **o que** a tecla vira.
     pub kbd_flags: u32,
+    /// Pilha do `CSI > u` / `CSI < n u`. O kitty limita a 64 níveis.
+    kbd_stack: Vec<u32>,
     g0_dec: bool,
     g1_dec: bool,
     use_g1: bool,
@@ -174,6 +178,7 @@ impl Term {
             autowrap: true,
             origin: false,
             kbd_flags: 0,
+            kbd_stack: Vec::new(),
             g0_dec: false,
             g1_dec: false,
             use_g1: false,
@@ -1157,10 +1162,34 @@ impl Term {
                     self.save_cursor();
                 }
             },
-            b'u' => {
-                if prefix == 0 {
-                    self.restore_cursor();
-                }
+            // `u` tem quatro donos: SCORC (sem prefixo) e o protocolo de
+            // teclado do kitty (`?` consulta, `>` empilha, `<` desempilha,
+            // `=` ajusta com modo 1=substitui, 2=acrescenta, 3=remove).
+            b'u' => match prefix {
+                0 => self.restore_cursor(),
+                b'?' => self
+                    .child_out
+                    .extend_from_slice(format!("\x1b[?{}u", self.kbd_flags).as_bytes()),
+                b'>' => {
+                    if self.kbd_stack.len() < 64 {
+                        self.kbd_stack.push(self.kbd_flags);
+                    }
+                    self.kbd_flags = p(0, 0);
+                },
+                b'<' => {
+                    for _ in 0..p(0, 1).max(1) {
+                        self.kbd_flags = self.kbd_stack.pop().unwrap_or(0);
+                    }
+                },
+                b'=' => {
+                    let flags = p(0, 0);
+                    match p(1, 1) {
+                        2 => self.kbd_flags |= flags,
+                        3 => self.kbd_flags &= !flags,
+                        _ => self.kbd_flags = flags,
+                    }
+                },
+                _ => {},
             },
             b't' => match p(0, 0) {
                 16 => {
@@ -1856,6 +1885,57 @@ mod tests {
 
     fn screen(t: &Term) -> Vec<String> {
         (0..t.rows).map(|y| t.row_text(y)).collect()
+    }
+
+    #[test]
+    fn kbd_protocolo_do_kitty_empilha_desempilha_e_consulta() {
+        let mut t = term();
+        // consulta: o app pergunta e o terminal responde com o estado (0)
+        t.feed(b"\x1b[?u");
+        assert_eq!(t.take_child_out(), b"\x1b[?0u".to_vec());
+        // push guarda o atual e põe o novo
+        t.feed(b"\x1b[>5u");
+        assert_eq!(t.kbd_flags, 5);
+        t.feed(b"\x1b[?u");
+        assert_eq!(t.take_child_out(), b"\x1b[?5u".to_vec());
+        // pop devolve o que estava antes
+        t.feed(b"\x1b[<u");
+        assert_eq!(t.kbd_flags, 0);
+        // pop de pilha vazia vira 0 (não explode)
+        t.feed(b"\x1b[<1u");
+        assert_eq!(t.kbd_flags, 0);
+    }
+
+    #[test]
+    fn kbd_protocolo_do_kitty_modos_do_set() {
+        let mut t = term();
+        t.feed(b"\x1b[=3u"); // modo default = 1 (substitui)
+        assert_eq!(t.kbd_flags, 3);
+        t.feed(b"\x1b[=4;2u"); // acrescenta
+        assert_eq!(t.kbd_flags, 7);
+        t.feed(b"\x1b[=4;3u"); // remove
+        assert_eq!(t.kbd_flags, 3);
+        t.feed(b"\x1b[=0;1u"); // substitui por nada
+        assert_eq!(t.kbd_flags, 0);
+    }
+
+    #[test]
+    fn kbd_protocolo_do_kitty_pilha_com_dois_niveis() {
+        let mut t = term();
+        t.feed(b"\x1b[>1u\x1b[>11u");
+        assert_eq!(t.kbd_flags, 11);
+        t.feed(b"\x1b[<1u");
+        assert_eq!(t.kbd_flags, 1);
+        t.feed(b"\x1b[<u");
+        assert_eq!(t.kbd_flags, 0);
+    }
+
+    #[test]
+    fn scorc_sem_prefixo_continua_sendo_restore_cursor() {
+        let mut t = term();
+        t.feed(b"\x1b[2;3H\x1b[s\x1b[H\x1b[u");
+        assert_eq!((t.cy, t.cx), (1, 2));
+        assert!(t.take_child_out().is_empty(), "SCORC não fala com o filho");
     }
 
     #[test]
