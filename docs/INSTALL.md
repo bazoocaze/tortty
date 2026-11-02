@@ -34,6 +34,10 @@ O que ele faz, em ordem:
 
 `sudo` só entra quando o prefixo não é gravável (ex.: `--prefix /usr/local`).
 
+A entrada do menu leva `StartupWMClass=bzmux` — o winit põe `WM_CLASS` igual ao
+nome do binário (`"bzmux", "bzmux"`), então o agrupador de janelas do ambiente
+associa o atalho à janela certa.
+
 ## Conviver com o bzmux Python
 
 O bzmux Python instala pelo pipx com o nome `bzmux`. Com o Python passando a
@@ -48,6 +52,12 @@ tortty-python                       # o Python, com o nome novo
 Enquanto o Python ainda instalar como `bzmux`, o instalador avisa quando
 encontra o shim do pipx no caminho (o shim em `~/.local/bin` não tem "pipx" no
 nome; o alvo tem: `~/.local/share/pipx/venvs/bzmux/bin/bzmux`).
+
+**Cuidado com a limpeza do lado Python:** o `tortty-python/shortcut.py` apaga
+`bzmux.desktop` e `bzmux.svg` como "arquivos do nome antigo". Agora esses nomes
+são do Rust — depois de rodar o instalador Python, a entrada do menu do bzmux
+some e só volta rodando `./install.sh` de novo. O conserto é no lado do Python:
+tirar `bzmux` da lista `LEGACY` (o nome antigo deixou de ser lixo).
 
 ## Verificar
 

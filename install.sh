@@ -196,6 +196,7 @@ Comment=Terminal com workspaces e abas
 Exec=$BINDIR/$APP
 TryExec=$BINDIR/$APP
 Icon=$APP
+StartupWMClass=$APP
 Terminal=false
 Categories=System;TerminalEmulator;
 Keywords=terminal;shell;console;
