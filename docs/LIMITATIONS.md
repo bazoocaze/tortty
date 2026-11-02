@@ -47,6 +47,20 @@ existir, sai daqui e vira item concluído em [`HISTORY.md`](HISTORY.md).
   pendência conhecida.
 - **Sem sixel/DECDL/DECDHL** e sem double-height: nem o Python tem.
 
+### Teclado
+
+- **Shift+letra no protocolo do kitty sai com o código *pós*-Shift**:
+  Shift+A vira `CSI 65;2u`, não `CSI 97;2u`. O `winit` entrega a tecla já
+  aplicada ao layout e a tecla **base** exigiria uma tabela de layout própria
+  (`xkb`/`keymap`) só para desfazer o Shift. O Python, via Gdk, tem a mesma
+  limitação: é paridade, não regressão. Quem precisar da tecla base para
+  atalho (`ctrl+shift+a` distinto de `ctrl+a`) só tem o código shiftado.
+- **F3 sai `CSI 1;2R`, divergindo do Python, de propósito.** O
+  `kitty_kbd.py` mapeia `GDK_KEY_F3` para `(13, "~")` — `13` é o número do
+  **Enter** e `CSI 13~` é Shift+F3 do xterm, não a forma do kitty (`F1`..`F4`
+  são `1P`..`1S`). O certo é o que está no código; não "consertar" de volta por
+  paridade.
+
 ## Interface
 
 - **Atalhos fixos até a F3.** Não há remapeamento; a config em arquivo (que

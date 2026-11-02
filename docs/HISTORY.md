@@ -443,7 +443,8 @@ Desvio conhecido, e é do Python também: Shift+letra sai como `CSI 65;2u` (o
 caractere já vem depois do shift) e não `CSI 97;2u` como no kitty — a tecla base
 exigiria uma tabela de layout. F3 saiu como `CSI 1;2R` (forma do kitty) e **não**
 `CSI 13;2~`: o `kitty_kbd.py` do Python tem F3 como `13 ~`, que é Shift+F3 do
-xterm.
+xterm. Os dois desvios estão registrados em `LIMITATIONS.md` §Teclado, com o
+porquê — é lá que a informação fica, para não se perder no histórico.
 
 Verificação: `state`/`text` por socket com um filho em modo raw que imprime o
 hex do que recebe — as respostas de consulta (`?0u`, `?3u`, `?11u`) e as teclas
