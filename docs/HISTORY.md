@@ -141,10 +141,13 @@ alvo tem), instala com `install` em vez de symlink para o `target/` (senão
 `cargo clean` deixa o comando quebrado), grava `.desktop` + ícone SVG, e
 verifica `--version` + `ldd` sem "not found" antes de dizer que deu certo.
 
-Detalhe que só apareceu depois: o instalador do Python (`tortty-python/shortcut.py`)
-apaga `bzmux.desktop`/`bzmux.svg` como "nome antigo" — agora esses nomes são do
-Rust, então rodar o instalador Python apaga a entrada do menu daqui. Anotado em
-`docs/INSTALL.md`; o conserto é do lado Python (tirar `bzmux` do `LEGACY`).
+Detalhe que só apareceu depois: a primeira versão do instalador do Python
+(`tortty-python/shortcut.py`) apagava `bzmux.desktop`/`bzmux.svg` como "nome antigo" —
+e esses nomes passaram a ser do Rust, então rodar aquele instalador apagava a
+entrada do menu daqui. Provado num `XDG_DATA_HOME` temporário (o `install()`
+removia os dois arquivos), reportado e corrigido no `tortty-python`; revalidado aqui
+com `--install-shortcut`/`--remove-shortcut` sobre os arquivos reais (md5 igual),
+e o caso virou teste em `bzmux/checks.py`.
 
 Dois bugs meus no caminho: a função do modo se chamava `install`, então o
 `install -m 755` de dentro dela chamava a si mesma (recursão silenciosa); e o

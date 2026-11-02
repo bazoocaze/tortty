@@ -53,11 +53,15 @@ Enquanto o Python ainda instalar como `bzmux`, o instalador avisa quando
 encontra o shim do pipx no caminho (o shim em `~/.local/bin` não tem "pipx" no
 nome; o alvo tem: `~/.local/share/pipx/venvs/bzmux/bin/bzmux`).
 
-**Cuidado com a limpeza do lado Python:** o `tortty-python/shortcut.py` apaga
-`bzmux.desktop` e `bzmux.svg` como "arquivos do nome antigo". Agora esses nomes
-são do Rust — depois de rodar o instalador Python, a entrada do menu do bzmux
-some e só volta rodando `./install.sh` de novo. O conserto é no lado do Python:
-tirar `bzmux` da lista `LEGACY` (o nome antigo deixou de ser lixo).
+Quem manda em qual nome: o `tortty-python` instala e remove **só**
+`tortty-python.desktop`/`tortty-python.svg`; `bzmux.desktop`/`bzmux.svg` são desta
+instalação. Verificado com `tortty-python --install-shortcut` e `--remove-shortcut`
+sobre os arquivos reais (md5 igual antes e depois).
+
+Versões do `tortty-python` anteriores a 2026-11-02 tratavam `bzmux` como "nome antigo"
+e apagavam a entrada daqui no `install()`; se a entrada do menu sumir depois de
+rodar aquele instalador, atualize o `tortty-python` (o caso tem regressão em
+`bzmux/checks.py`).
 
 ## Verificar
 
