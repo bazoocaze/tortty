@@ -16,22 +16,22 @@ não por estimativa.
 | área | feito | parcial | falta | não | total |
 |---|---|---|---|---|---|
 | 1. Núcleo: célula, cores, grade | 17 | 0 | 1 | 0 | 18 |
-| 2. Parser: controles, CSI, modos | 27 | 1 | 0 | 0 | 28 |
+| 2. Parser: controles, CSI, modos | 28 | 0 | 0 | 0 | 28 |
 | 3. Parser: SGR e OSC | 13 | 0 | 0 | 0 | 13 |
 | 4. Scrollback e visão do histórico | 8 | 0 | 0 | 0 | 8 |
 | 5. Entrada: teclado e protocolo do kitty | 16 | 0 | 0 | 0 | 16 |
 | 6. Entrada: mouse, seleção, clipboard, paste | 14 | 0 | 0 | 0 | 14 |
-| 7. Desenho: fonte, geometria, cores | 11 | 2 | 3 | 0 | 16 |
+| 7. Desenho: fonte, geometria, cores | 13 | 1 | 2 | 0 | 16 |
 | 8. Imagens do protocolo kitty | 0 | 0 | 13 | 3 | 16 |
-| 9. Janela: abas, workspaces, cromo | 17 | 1 | 0 | 0 | 18 |
+| 9. Janela: abas, workspaces, cromo | 18 | 0 | 0 | 0 | 18 |
 | 10. Janela: ciclo de vida, geometria, estado | 5 | 0 | 5 | 0 | 10 |
 | 11. Configuração e CLI | 18 | 0 | 0 | 0 | 18 |
 | 12. Debug socket e instrumentação | 14 | 0 | 0 | 0 | 14 |
 | 13. Plataforma e distribuição | 5 | 0 | 5 | 0 | 10 |
 | 14. Testes e verificação | 7 | 2 | 0 | 0 | 9 |
-| **total** | **172** | **6** | **27** | **3** | **208** |
+| **total** | **176** | **3** | **26** | **3** | **208** |
 
-Equivalente pronto: **84.1%** (feito conta 1, parcial conta 0,5). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
+Equivalente pronto: **85.3%** (feito conta 1, parcial conta 0,5). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
 tendência; o que decide o que fazer agora é a linha e a seção 16.
 
 ## Regras deste documento
