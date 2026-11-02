@@ -231,3 +231,63 @@ byte) e depois o texto composto em `event.text`. Teste com
 Ver [`BENCHMARKS.md`](BENCHMARKS.md) — é o único lugar com número. Resumo do
 fluxo: `parsebench` para o parser, `tools/benchrun.py` para o app,
 `tools/bench.sh` para a escada.
+
+## Armadilha: erro X pendente mata o app no `set_title`
+
+Sintoma, no X11:
+
+```
+thread 'main' panicked at winit-0.30/src/platform_impl/linux/x11/window.rs:1028
+Failed to set window title: XError { description: "BadDrawable (invalid Pixmap or
+Window parameter)", error_code: 9, request_code: 149, minor_code: 4 }
+```
+
+O `winit` trata **qualquer** erro X recebido durante um `flush` como fatal e
+atribui o erro à chamada que estava sendo feita. Quando o WSI do Mesa (llvmpipe,
+sem `/dev/dri`) cria e destrói pixmaps na nossa conexão, sobra um erro pendente e
+a próxima `ChangeProperty` (título) leva a culpa — a janela morre mesmo estando
+sadia, e o erro não é dela.
+
+Como confirmar: `RUST_BACKTRACE=1` mostra `sync_title` na pilha, e o app **roda
+normalmente** com a sonda abaixo.
+
+Sonda: `BZMUX_NO_TITLE=1 bzmux` (não toca no título da janela). É sonda de
+depuração, não configuração — só existe para conseguir usar o terminal enquanto
+se investiga.
+
+## Armadilha: GL sem display handle, e o `alpha_mode`
+
+Duas coisas que só aparecem no backend GL:
+
+- `InstanceDescriptor::new_without_display_handle_from_env()` faz o EGL
+  responder `gl not compatible with provided surface`. O display handle não é
+  opcional para o EGL; a instância é criada com
+  `new_with_display_handle_from_env(Box::new(window))`.
+- `alpha_mode: caps.alpha_modes[0]` pegava `PreMultiplied` no GL e a janela
+  ficava translúcida. Terminal é opaco: `CompositeAlphaMode::Opaque` explícito.
+
+O backend e a placa escolhidos aparecem na primeira linha do log:
+
+```
+bzmux: GPU: Vulkan llvmpipe (LLVM 20.1.2, 256 bits) (driver llvmpipe)
+```
+
+## Sandbox degradado: janela que não pinta nada
+
+Nesta máquina de desenvolvimento (container sem `/dev/dri`), em 2026-11-02 o
+desenho parou de aparecer **nos dois backends**: o `wgpu` escolhe llvmpipe,
+inicializa, o socket responde `state`, mas nenhum pixel chega na janela —
+`import -window <id>` e a captura da raiz mostram o que está atrás.
+
+Sinais no log, nessa ordem:
+
+```
+_amdgpu_device_initialize: amdgpu_get_auth (1) failed (-1)
+libEGL warning: egl: failed to create dri2 screen
+MESA: error: Failed to attach to x11 shm
+```
+
+Consequência prática: **verificação visual não é confiável nesse estado**. O que
+continua valendo é o que não depende de pixel: `state` do socket (grade, cursor,
+imagens, contadores), `--selftest`, `cargo test` e `parsebench`. Antes de
+concluir que o desenho quebrou, confira `/dev/dri` e a linha `bzmux: GPU:`.

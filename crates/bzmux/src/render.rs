@@ -105,6 +105,51 @@ struct ImgTex {
     bind: wgpu::BindGroup,
 }
 
+/// Escolhe o adaptador com uma regra explícita, em vez de deixar o `wgpu`
+/// pegar o primeiro que aparecer.
+///
+/// Regra: adaptador de hardware (discrete/integrated/virtual) ganha de
+/// adaptador de CPU (llvmpipe/lavapipe: VM, X remoto, container sem
+/// `/dev/dri`); empatado, vale a ordem do `wgpu`. A lista existe para o caso de
+/// CPU parar de ser escolhido por acidente — e para registrar o que se aprendeu
+/// de cada backend em DEBUG.md.
+///
+/// `WGPU_BACKEND` continua mandando: quem pediu um backend explícito recebe
+/// aquele backend, ou o erro de sempre.
+fn escolhe_adaptador(
+    instance: &wgpu::Instance,
+    surface: &wgpu::Surface<'_>,
+) -> Result<wgpu::Adapter, String> {
+    let pedido = std::env::var("WGPU_BACKEND").unwrap_or_default();
+    let todos = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+    let candidatos: Vec<wgpu::Adapter> = todos
+        .into_iter()
+        .filter(|a| a.is_surface_supported(surface))
+        .collect();
+    let de_cpu = |a: &wgpu::Adapter| a.get_info().device_type == wgpu::DeviceType::Cpu;
+    let escolhido = if pedido.is_empty() {
+        // hardware primeiro; sem hardware, a ordem natural do `wgpu`
+        // (Vulkan antes de GL). Não se prefere GL para CPU: em VM sem
+        // `/dev/dri` o GL/llvmpipe depende de MIT-SHM para chegar na janela e,
+        // quando o SHM não vai, a janela fica vazia, enquanto o
+        // Vulkan/llvmpipe desenha pelo Present.
+        candidatos
+            .iter()
+            .find(|a| !de_cpu(a))
+            .or_else(|| candidatos.first())
+    } else {
+        candidatos.first()
+    };
+    let escolhido = escolhido.ok_or_else(|| {
+        if candidatos.is_empty() {
+            "adapter: nenhum adaptador serve para a superfície".to_string()
+        } else {
+            "adapter: nenhum adaptador utilizável".to_string()
+        }
+    })?;
+    Ok(escolhido.clone())
+}
+
 impl Renderer {
     #[allow(clippy::too_many_lines)] // setup de GPU é uma sequência única, partir não ajuda
     pub fn new(
@@ -116,18 +161,25 @@ impl Renderer {
         let size = window.inner_size();
         let (w, h) = (size.width.max(1), size.height.max(1));
 
-        let instance =
-            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        // o display handle não é opcional para todo backend: o EGL (backend
+        // GL) precisa dele para casar a superfície com o display, e sem isto
+        // `WGPU_BACKEND=gl` morre com "gl not compatible with provided
+        // surface". Vulkan não reclama, então o defeito só aparece na máquina
+        // que não tem Vulkan — justamente a que precisava do GL.
+        let instance = wgpu::Instance::new(
+            wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(window.clone())),
+        );
         let surface = instance
             .create_surface(window.clone())
             .map_err(|e| format!("surface: {e}"))?;
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-            apply_limit_buckets: false,
-        }))
-        .map_err(|e| format!("adapter: {e}"))?;
+        let adapter = escolhe_adaptador(&instance, &surface)?;
+        // qual backend/placa foi escolhido: é a primeira pergunta quando a
+        // janela não desenha em outra máquina (ver DEBUG.md)
+        let info = adapter.get_info();
+        eprintln!(
+            "bzmux: GPU: {:?} {} (driver {})",
+            info.backend, info.name, info.driver
+        );
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("bzmux"),
             required_features: wgpu::Features::empty(),
@@ -159,7 +211,14 @@ impl Renderer {
             width: w,
             height: h,
             present_mode,
-            alpha_mode: caps.alpha_modes[0],
+            // `Opaque` explícito: pegar o primeiro da lista deu janela
+            // translúcida no backend GL (visual ARGB com o fundo vazando o que
+            // está atrás). Terminal é opaco; transparência não é paridade.
+            alpha_mode: if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Opaque) {
+                wgpu::CompositeAlphaMode::Opaque
+            } else {
+                caps.alpha_modes[0]
+            },
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };

@@ -2279,6 +2279,14 @@ impl App {
             return;
         }
         self.last_title.clone_from(&titulo);
+        // `BZMUX_NO_TITLE=1`: sonda de depuração, não configuração. Existe por
+        // causa de um tropeço do winit no X11: qualquer erro X pendente na
+        // conexão vira `panic` na próxima chamada de propriedade, e o WSI do
+        // Mesa pode deixar um lá (ver DEBUG.md). Sem tocar no título, dá para
+        // usar o terminal e investigar.
+        if std::env::var_os("BZMUX_NO_TITLE").is_some() {
+            return;
+        }
         if let Some(w) = self.window.as_ref() {
             w.set_title(&format!("{titulo} — bzmux"));
         }
@@ -2433,6 +2441,13 @@ impl ApplicationHandler<UserEvent> for App {
                 return;
             },
         };
+        self.window = Some(window.clone());
+        // o título sai **antes** de tocar na GPU: criar a swapchain deixa
+        // erro X pendente na conexão (o WSI do Mesa cria e destrói pixmaps) e
+        // o winit trata qualquer erro X como fatal na próxima chamada de
+        // propriedade — o `set_title` seguinte morria com `BadDrawable` que não
+        // era dele. Ver DEBUG.md, "erro X pendente".
+        self.sync_title();
         let renderer = match Renderer::new(&window, fonts, self.opts.vsync, &self.opts.cfg) {
             Ok(r) => r,
             Err(e) => {
@@ -2444,8 +2459,6 @@ impl ApplicationHandler<UserEvent> for App {
         // o grid real vem do tamanho que a janela conseguiu, não do pedido
         let size = window.inner_size();
         self.renderer = Some(renderer);
-        self.window = Some(window.clone());
-        self.sync_title();
         let proxy = self.proxy.clone();
         self.wake = Some(Arc::new(move || {
             let _ = proxy.send_event(UserEvent::Wake);
