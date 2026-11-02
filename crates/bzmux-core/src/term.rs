@@ -77,6 +77,8 @@ pub struct Term {
     pub grid: Vec<Row>,
     /// Buffer principal guardado enquanto o app está em tela cheia.
     alt: Option<Vec<Row>>,
+    /// Imagens do kitty (H1–H13): protocolo, imagens e colocações.
+    pub graphics: crate::graphics::Graphics,
     pub scrollback: VecDeque<Row>,
     pub scrollback_limit: usize,
     pub cx: usize,
@@ -137,6 +139,10 @@ pub struct Term {
     state: State,
     csi: Vec<u8>,
     osc: Vec<u8>,
+    /// Corpo do APC (`ESC _`): é por aqui que chega a imagem do kitty.
+    apc: Vec<u8>,
+    /// O `Str` em curso é um APC (e não DCS/PM/SOS, que são descartados).
+    apc_ativo: bool,
     csi_prefix: u8,
     csi_inter: u8,
     esc_inter: u8,
@@ -198,8 +204,11 @@ impl Term {
             hist_gen: 0,
             last_char: ' ',
             state: State::Ground,
+            graphics: crate::graphics::Graphics::new(),
             csi: Vec::with_capacity(64),
             osc: Vec::with_capacity(128),
+            apc: Vec::new(),
+            apc_ativo: false,
             csi_prefix: 0,
             csi_inter: 0,
             esc_inter: 0,
@@ -332,6 +341,12 @@ impl Term {
         }
         self.cy = re.cur_row.saturating_sub(first_live).min(rows - 1);
         self.cx = re.cur_col.min(cols - 1);
+        // H12: o reflow mudou quantas linhas existem acima da grade. Quem caiu
+        // fora do histórico virou inalcançável (nem com o wheel), então é
+        // descartado; a imagem que continua na faixa fica onde está (imagem não
+        // acompanha reflow linha a linha, como no kitty).
+        self.graphics
+            .drop_above(-i32::try_from(self.scrollback.len()).unwrap_or(i32::MAX));
         let wrap = re.wrap;
         // o índice absoluto continua válido, mas o conteúdo andou: âncora velha
         // passa a apontar para outra linha, então morre (o `abs_gen` já subiu)
@@ -545,12 +560,28 @@ impl Term {
         self.dirty_all = true;
         let full = self.top == 0 && self.bottom + 1 == self.rows;
         let keep = full && self.alt.is_none();
+        // H12: a imagem sobe junto com o texto. Rolagem de tela cheia manda a
+        // colocação para o histórico (linha negativa) e ela volta ao subir no
+        // wheel; rolagem de região não tem histórico, então descarta.
+        let floor = if self.top == 0 {
+            Some(-i32::try_from(self.scrollback_limit + 1).unwrap_or(i32::MAX))
+        } else {
+            None
+        };
         for _ in 0..n {
+            self.graphics.scroll(
+                u16::try_from(self.top).unwrap_or(0),
+                u16::try_from(self.bottom).unwrap_or(0),
+                floor,
+            );
             let row = self.grid.remove(self.top);
             if keep {
                 self.scrollback.push_back(row);
                 while self.scrollback.len() > self.scrollback_limit {
                     self.scrollback.pop_front();
+                    // o que estava preso nessa linha morreu de vez (H12)
+                    self.graphics
+                        .drop_above(-i32::try_from(self.scrollback.len()).unwrap_or(i32::MAX));
                 }
             }
             let blank = Row::blank(self.cols);
@@ -663,6 +694,9 @@ impl Term {
                     self.grid[y] = row;
                 }
                 if n == 3 {
+                    // H13: `ED 3` limpa o histórico **e** as imagens — sem
+                    // isto sobrava imagem pendurada numa tela vazia
+                    self.graphics.clear();
                     self.scrollback.clear();
                     self.abs_gen += 1;
                     self.hist_gen += 1;
@@ -1202,6 +1236,18 @@ impl Term {
                     self.child_out
                         .extend_from_slice(format!("\x1b[6;{ch};{cw}t").as_bytes());
                 },
+                14 => {
+                    // área de texto em PIXELS: é o que o `kitten icat` pede
+                    // antes de mandar a imagem (sem ela ele desiste com
+                    // "terminal does not support reporting screen sizes").
+                    // O Python também não responde esta — aqui sai de graça,
+                    // porque o parser já carrega o tamanho da célula.
+                    let (cw, ch) = self.cell_size;
+                    let w = self.cols as u32 * cw;
+                    let h = self.rows as u32 * ch;
+                    self.child_out
+                        .extend_from_slice(format!("\x1b[4;{h};{w}t").as_bytes());
+                },
                 18 => {
                     self.child_out.extend_from_slice(
                         format!("\x1b[8;{};{}t", self.rows, self.cols).as_bytes(),
@@ -1404,21 +1450,54 @@ impl Term {
                 State::Str => {
                     let b = bytes[i];
                     i += 1;
-                    if b == 0x1b {
-                        self.state = State::StrEsc;
-                    }
+                    self.str_byte(b);
                 },
                 State::StrEsc => {
                     let b = bytes[i];
                     i += 1;
                     if b == b'\\' {
                         self.state = State::Ground;
+                        if std::mem::take(&mut self.apc_ativo) {
+                            self.apc_done();
+                        }
                     } else {
                         self.state = State::Str;
                     }
                 },
             }
         }
+    }
+
+    /// Um byte dentro de DCS/APC/PM/SOS: só o APC guarda conteúdo.
+    fn str_byte(&mut self, b: u8) {
+        if b == 0x1b {
+            self.state = State::StrEsc;
+        } else if self.apc_ativo && self.apc.len() < crate::graphics::MAX_APC {
+            // teto: transmissão que nunca fecha não pode crescer sem fim
+            self.apc.push(b);
+        }
+    }
+
+    /// Chegou um APC completo: as imagens do kitty passam por aqui (H1).
+    fn apc_done(&mut self) {
+        let body = std::mem::take(&mut self.apc);
+        let cursor = (
+            u16::try_from(self.cx).unwrap_or(0),
+            u16::try_from(self.cy).unwrap_or(0),
+        );
+        let out = self.graphics.handle(&body, cursor, self.cell_size);
+        for r in out.respostas {
+            self.child_out.extend_from_slice(b"\x1b_");
+            self.child_out.extend_from_slice(&r);
+            self.child_out.extend_from_slice(b"\x1b\\");
+        }
+        // H10: sem `C=1` o cursor desce as linhas que a imagem ocupou
+        if out.mover {
+            for _ in 0..out.linhas {
+                self.newline();
+            }
+        }
+        self.touch_all();
     }
 
     fn control(&mut self, b: u8) {
@@ -1466,7 +1545,15 @@ impl Term {
                 self.state = State::Osc;
                 self.osc.clear();
             },
-            b'P' | b'_' | b'^' | b'X' => {
+            b'_' => {
+                // APC: só este tipo é conteúdo (imagem do kitty); DCS/PM/SOS
+                // seguem descartados até o ST
+                self.apc.clear();
+                self.apc_ativo = true;
+                self.state = State::Str;
+            },
+            b'P' | b'^' | b'X' => {
+                self.apc_ativo = false;
                 self.state = State::Str;
             },
             0x20..=0x2f => {
@@ -1886,6 +1973,95 @@ mod tests {
 
     fn term() -> Term {
         Term::new(10, 4)
+    }
+
+    /// 2x2 RGBA de uma cor só, como nos checks do Python.
+    fn rgba2x2() -> String {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD.encode([9, 8, 7, 255].repeat(4))
+    }
+
+    fn apc(corpo: &str) -> Vec<u8> {
+        format!("\x1b_{corpo}\x1b\\").into_bytes()
+    }
+
+    #[test]
+    fn apc_do_kitty_vira_imagem_resposta_e_linha_do_cursor() {
+        let mut t = Term::new(20, 4);
+        t.feed(&apc(&format!("Ga=T,f=32,s=2,v=2,i=3;{}", rgba2x2())));
+        assert_eq!(t.graphics.images().len(), 1);
+        assert_eq!(t.graphics.placements().len(), 1);
+        // a resposta vai para o filho no mesmo formato que ele mandou
+        assert_eq!(t.take_child_out(), b"\x1b_Gi=3;OK\x1b\\".to_vec());
+        // H10: sem `C=1` o cursor desce as linhas que a imagem ocupou
+        assert_eq!(t.cy, 1);
+        assert_eq!(t.cx, 0);
+        // nada disso pode sujar a grade
+        assert!(screen(&t)[0].trim().is_empty(), "{:?}", screen(&t));
+    }
+
+    #[test]
+    fn c_1_mantem_o_cursor_onde_estava() {
+        let mut t = Term::new(20, 4);
+        t.feed(&apc(&format!("Ga=T,f=32,s=2,v=2,i=1,C=1;{}", rgba2x2())));
+        assert_eq!(t.cy, 0);
+        assert_eq!(t.graphics.placements().len(), 1);
+    }
+
+    #[test]
+    fn dcs_e_apc_que_nao_e_do_kitty_nao_guardam_nada() {
+        let mut t = Term::new(20, 4);
+        // DCS (`ESC P`): descartado até o ST, e não pode virar imagem
+        t.feed(b"\x1bP1;2;3+abc\x1b\\");
+        // APC que não começa com `G`: não é do protocolo
+        t.feed(&apc("x=1,f=32"));
+        assert_eq!(t.graphics.images().len(), 0);
+        assert_eq!(t.take_child_out(), Vec::<u8>::new());
+        // e o parser continua vivo depois disso
+        t.feed(b"ok");
+        assert!(screen(&t)[0].starts_with("ok"), "{:?}", screen(&t));
+    }
+
+    #[test]
+    fn csi_14_t_responde_a_area_em_pixels() {
+        // o `kitten icat` pergunta antes de mandar a imagem; sem resposta ele
+        // desiste com "terminal does not support reporting screen sizes"
+        let mut t = Term::new(20, 4);
+        t.cell_size = (10, 19);
+        t.feed(b"\x1b[14t");
+        assert_eq!(t.take_child_out(), b"\x1b[4;76;200t".to_vec());
+    }
+
+    #[test]
+    fn ed_3_limpa_as_imagens() {
+        let mut t = Term::new(20, 4);
+        t.feed(&apc(&format!("Ga=T,f=32,s=2,v=2,i=1;{}", rgba2x2())));
+        assert_eq!(t.graphics.images().len(), 1);
+        t.feed(b"\x1b[3J");
+        assert_eq!(t.graphics.images().len(), 0);
+        assert_eq!(t.graphics.placements(), []);
+    }
+
+    #[test]
+    fn imagem_acompanha_a_rolagem_e_o_reflow_poda_a_inalcancavel() {
+        // `graphics_follow_history` do Python
+        let mut t = Term::new(20, 4);
+        t.feed(&apc(&format!("Ga=T,f=32,s=2,v=2,i=7;{}", rgba2x2())));
+        for _ in 0..6 {
+            t.feed(b"\r\n");
+        }
+        let p = t.graphics.placements()[0];
+        assert!(p.linha < 0, "saiu pelo topo: {}", p.linha);
+        assert!(p.linha + i32::try_from(t.scrollback.len()).unwrap() >= 0);
+        t.resize(40, 4);
+        assert!(
+            t.graphics
+                .placements()
+                .iter()
+                .all(|p| p.linha >= -i32::try_from(t.scrollback.len()).unwrap()),
+            "{:?}",
+            t.graphics.placements()
+        );
     }
 
     fn screen(t: &Term) -> Vec<String> {

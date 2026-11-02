@@ -86,6 +86,23 @@ pub struct Renderer {
     /// a grade para a direita: o `origin` vira `pad + side`.
     side: f32,
     pub cursor_shape: CursorShape,
+    /// Onde o texto acaba e as imagens entram (as imagens ficam por cima do
+    /// texto e abaixo do cursor/cromo, como no kitty).
+    img_split: usize,
+    img_pipeline: wgpu::RenderPipeline,
+    img_buf: wgpu::Buffer,
+    img_instances: Vec<Instance>,
+    /// Id da imagem de cada instância (a textura é ligada por id).
+    img_ids: Vec<u32>,
+    img_layout: wgpu::BindGroupLayout,
+    img_sampler: wgpu::Sampler,
+    /// Textura por imagem (id → bind group). O bind group segura a textura viva.
+    img_cache: HashMap<u32, ImgTex>,
+}
+
+struct ImgTex {
+    versao: u64,
+    bind: wgpu::BindGroup,
 }
 
 impl Renderer {
@@ -220,6 +237,54 @@ impl Renderer {
             cache: None,
         });
 
+        // pipeline das imagens: mesmo layout de globals/atlas e o mesmo
+        // formato de instância, só troca o shader (amostra RGB em vez da
+        // máscara de cobertura)
+        let img_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("bzmux-image"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("image.wgsl").into()),
+        });
+        let (img_layout, img_sampler) = crate::atlas::bind_image(&device);
+        let img_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("bzmux-image-layout"),
+            bind_group_layouts: &[Some(&gl), Some(&img_layout)],
+            immediate_size: 0,
+        });
+        let img_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("bzmux-image-pipeline"),
+            layout: Some(&img_pl),
+            vertex: wgpu::VertexState {
+                module: &img_shader,
+                entry_point: Some("vs_img"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Instance>() as wgpu::BufferAddress,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &attrs,
+                })],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &img_shader,
+                entry_point: Some("fs_img"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let img_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("img-instances"),
+            size: 1 << 16,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let inst_cap = 1 << 20;
         let inst_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("instances"),
@@ -252,6 +317,14 @@ impl Renderer {
             bar: 0.0,
             side: 0.0,
             cursor_shape: cfg.cursor_shape,
+            img_split: 0,
+            img_pipeline,
+            img_buf,
+            img_instances: Vec::new(),
+            img_ids: Vec::new(),
+            img_layout,
+            img_sampler,
+            img_cache: HashMap::new(),
         })
     }
 
@@ -665,6 +738,175 @@ impl Renderer {
     /// Monta as instâncias do frame. Público para o teste de sanidade do formato.
     #[allow(clippy::too_many_lines)] // um laço por categoria, na ordem de blend
     #[allow(clippy::many_single_char_names)] // x/y/cw/ch/k: geometria de célula
+    /// Monta as instâncias das imagens visíveis e garante a textura de cada uma.
+    ///
+    /// H12: a colocação vive em coordenadas da **grade**, então a linha na tela
+    /// é `linha + view_off` — sem isso a imagem ficava parada enquanto o texto
+    /// rolava por baixo dela.
+    fn build_images(&mut self, f: &Frame<'_>) {
+        let term = f.term;
+        let (cw, chh) = (self.fonts.cw, self.fonts.ch);
+        let view = i32::try_from(f.view_off).unwrap_or(0);
+        let linhas = i32::try_from(term.rows).unwrap_or(0);
+        let colunas = term.cols;
+        let mut quads: Vec<(u32, Instance)> = Vec::new();
+        for pl in term.graphics.placements() {
+            let y = pl.linha + view;
+            // fora da tela (por cima ou por baixo) não vira instância
+            if y >= linhas || y + i32::from(pl.rows) <= 0 || usize::from(pl.col) >= colunas {
+                continue;
+            }
+            let Some(img) = term.graphics.images().get(&pl.image_id).cloned() else {
+                continue;
+            };
+            if !self.garante_textura(&img) {
+                continue; // imagem ilegível (PNG torto) não derruba o frame
+            }
+            quads.push((
+                pl.image_id,
+                Instance {
+                    rect: [
+                        f32::from(pl.col) * cw + pl.dx as f32,
+                        y as f32 * chh + pl.dy as f32,
+                        f32::from(pl.cols.max(1)) * cw,
+                        f32::from(pl.rows.max(1)) * chh,
+                    ],
+                    color: [1.0, 1.0, 1.0, 1.0],
+                    uv: [0.0, 0.0, 1.0, 1.0],
+                },
+            ));
+        }
+        // imagens que o app apagou não precisam de textura viva
+        self.img_cache
+            .retain(|id, _| term.graphics.images().contains_key(id));
+        self.img_ids = quads.iter().map(|(id, _)| *id).collect();
+        self.img_instances = quads.into_iter().map(|(_, i)| i).collect();
+        let need = self.img_instances.len() * std::mem::size_of::<Instance>();
+        if need > self.img_buf.size() as usize {
+            self.img_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("img-instances"),
+                size: (need * 2) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+        if need > 0 {
+            self.queue
+                .write_buffer(&self.img_buf, 0, bytemuck::cast_slice(&self.img_instances));
+        }
+    }
+
+    /// Sobe a textura da imagem se ela ainda não está no cache (ou se o app
+    /// reenviou com o mesmo id e a versão mudou).
+    fn garante_textura(&mut self, img: &bzmux_core::graphics::Image) -> bool {
+        if self
+            .img_cache
+            .get(&img.id)
+            .is_some_and(|t| t.versao == img.versao)
+        {
+            return true;
+        }
+        let Some((w, h, rgba)) = decodifica(img) else {
+            return false;
+        };
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("img"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * w),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("img-bind"),
+            layout: &self.img_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.img_sampler),
+                },
+            ],
+        });
+        self.img_cache.insert(
+            img.id,
+            ImgTex {
+                versao: img.versao,
+                bind,
+            },
+        );
+        true
+    }
+
+    /// Cursor (bloco, sublinhado ou barra) — por cima do texto e das imagens.
+    fn build_cursor(&mut self, f: &Frame<'_>) {
+        let term = f.term;
+        let cw = self.fonts.cw;
+        let chh = self.fonts.ch;
+        let view_off = f.view_off;
+        let cols = term.cols;
+        let blink = f.blink;
+        if blink.cursor
+            && view_off == 0
+            && term.cursor_visible
+            && term.cy < term.rows
+            && term.cx < cols
+        {
+            let cx = term.cx as f32 * cw;
+            let cy = term.cy as f32 * chh;
+            let style = term.app_cursor_style.map_or_else(
+                || match self.cursor_shape {
+                    CursorShape::Block => 0,
+                    CursorShape::Underline => 1,
+                    CursorShape::Beam => 2,
+                },
+                |(f, _)| f,
+            );
+            let cor = self.color(Color::Default, self.cursor);
+            match style {
+                1 | 2 => {
+                    // sublinhado / barra
+                    let h = if style == 1 { 2.0 } else { chh };
+                    let w = if style == 1 { cw } else { 2.0 };
+                    let y = if style == 1 { cy + chh - 3.0 } else { cy };
+                    self.push_rect(cx, y, w, h, [cor[0], cor[1], cor[2], 0.9]);
+                },
+                _ => {
+                    self.push_rect(cx, cy, cw, chh, [cor[0], cor[1], cor[2], 0.85]);
+                },
+            }
+        }
+    }
+
     pub fn build(&mut self, f: &Frame<'_>) {
         let Frame {
             term,
@@ -742,6 +984,11 @@ impl Renderer {
             }
         }
 
+        // aqui acaba o texto da grade: as imagens (H1–H13) entram por cima
+        // dele e abaixo do cromo/cursor, que é a ordem do kitty
+        self.img_split = self.instances.len();
+        self.build_images(f);
+
         // 2b) barra de abas: fica na faixa que o `origin` reservou acima da
         // grade, então não precisa de conta de recorte
         if let Some(tabs) = tabs {
@@ -753,36 +1000,7 @@ impl Renderer {
         }
 
         // 3) cursor (por cima; a ordem das instâncias é a ordem de blend)
-        if blink.cursor
-            && view_off == 0
-            && term.cursor_visible
-            && term.cy < term.rows
-            && term.cx < cols
-        {
-            let cx = term.cx as f32 * cw;
-            let cy = term.cy as f32 * chh;
-            let style = term.app_cursor_style.map_or_else(
-                || match self.cursor_shape {
-                    CursorShape::Block => 0,
-                    CursorShape::Underline => 1,
-                    CursorShape::Beam => 2,
-                },
-                |(f, _)| f,
-            );
-            let c = self.color(Color::Default, self.cursor);
-            match style {
-                1 | 2 => {
-                    // sublinhado / barra
-                    let h = if style == 1 { 2.0 } else { chh };
-                    let w = if style == 1 { cw } else { 2.0 };
-                    let y = if style == 1 { cy + chh - 3.0 } else { cy };
-                    self.push_rect(cx, y, w, h, [c[0], c[1], c[2], 0.9]);
-                },
-                _ => {
-                    self.push_rect(cx, cy, cw, chh, [c[0], c[1], c[2], 0.85]);
-                },
-            }
-        }
+        self.build_cursor(f);
 
         // 4) indicador de histórico (D8): "↑N" — sem ele, rolar para trás é
         // indistinguível de o app ter parado de escrever
@@ -863,8 +1081,32 @@ impl Renderer {
             rp.set_bind_group(0, &self.globals_bind, &[]);
             rp.set_bind_group(1, &self.atlas_bind, &[]);
             rp.set_vertex_buffer(0, self.inst_buf.slice(..));
-            if !self.instances.is_empty() {
-                rp.draw(0..6, 0..self.instances.len() as u32);
+            // texto da grade → imagens → cromo e cursor. Duas faixas do mesmo
+            // buffer porque a imagem tem pipeline próprio (amostra RGB).
+            let split = self.img_split.min(self.instances.len()) as u32;
+            if split > 0 {
+                rp.draw(0..6, 0..split);
+            }
+            if !self.img_instances.is_empty() {
+                rp.set_pipeline(&self.img_pipeline);
+                rp.set_vertex_buffer(0, self.img_buf.slice(..));
+                // uma draw call por imagem: cada uma tem a sua textura
+                for (i, _) in self.img_instances.iter().enumerate() {
+                    let Some(id) = self.img_ids.get(i).copied() else {
+                        break;
+                    };
+                    if let Some(t) = self.img_cache.get(&id) {
+                        rp.set_bind_group(1, &t.bind, &[]);
+                        rp.draw(0..6, i as u32..(i as u32 + 1));
+                    }
+                }
+                rp.set_pipeline(&self.pipeline);
+                rp.set_bind_group(1, &self.atlas_bind, &[]);
+                rp.set_vertex_buffer(0, self.inst_buf.slice(..));
+            }
+            let total = self.instances.len() as u32;
+            if total > split {
+                rp.draw(0..6, split..total);
             }
         }
         self.queue.submit(Some(enc.finish()));
@@ -874,6 +1116,65 @@ impl Renderer {
             prof::add_draw(t0.elapsed().as_nanos() as u64);
         }
         FrameOutcome::Drawn
+    }
+}
+
+/// Imagem do protocolo → (largura, altura, RGBA8) para a textura.
+///
+/// `f=24` vira RGBA com alfa 255; `f=32` passa direto; `f=100` é PNG, que o app
+/// decodifica aqui (o core não carrega decodificador de PNG).
+fn decodifica(img: &bzmux_core::graphics::Image) -> Option<(u32, u32, Vec<u8>)> {
+    use bzmux_core::graphics::Formato;
+    let (largura, altura) = (img.width, img.height);
+    if largura == 0 || altura == 0 {
+        return None;
+    }
+    match img.formato {
+        Formato::Rgba => {
+            let need = (largura as usize) * (altura as usize) * 4;
+            (img.data.len() >= need).then(|| (largura, altura, img.data[..need].to_vec()))
+        },
+        Formato::Rgb => {
+            let need = (largura as usize) * (altura as usize) * 3;
+            if img.data.len() < need {
+                return None;
+            }
+            let mut out = Vec::with_capacity((largura as usize) * (altura as usize) * 4);
+            for px in img.data[..need].as_chunks::<3>().0 {
+                out.extend_from_slice(&[px[0], px[1], px[2], 255]);
+            }
+            Some((largura, altura, out))
+        },
+        Formato::Png => {
+            let mut leitor = png::Decoder::new(std::io::Cursor::new(&img.data))
+                .read_info()
+                .ok()?;
+            let mut buf = vec![0; leitor.output_buffer_size()];
+            let info = leitor.next_frame(&mut buf).ok()?;
+            let (pw, ph) = (info.width, info.height);
+            let mut out = Vec::with_capacity((pw as usize) * (ph as usize) * 4);
+            match info.color_type {
+                png::ColorType::Rgba => out.extend_from_slice(&buf[..info.buffer_size()]),
+                png::ColorType::Rgb => {
+                    for px in buf[..info.buffer_size()].as_chunks::<3>().0 {
+                        out.extend_from_slice(&[px[0], px[1], px[2], 255]);
+                    }
+                },
+                png::ColorType::Grayscale | png::ColorType::GrayscaleAlpha => {
+                    let n = if info.color_type == png::ColorType::Grayscale {
+                        1
+                    } else {
+                        2
+                    };
+                    for px in buf[..info.buffer_size()].chunks_exact(n) {
+                        let a = if n == 2 { px[1] } else { 255 };
+                        out.extend_from_slice(&[px[0], px[0], px[0], a]);
+                    }
+                },
+                png::ColorType::Indexed => return None, // raro: o icat manda RGBA
+            }
+            Some((pw, ph, out))
+        },
     }
 }
 

@@ -45,6 +45,10 @@ pub fn all() -> Vec<Check> {
             name: "style_contrast",
             run: style_contrast,
         },
+        Check {
+            name: "graphics_kitty",
+            run: graphics_kitty,
+        },
     ]
 }
 
@@ -400,4 +404,43 @@ fn style_contrast() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Imagens do kitty de ponta a ponta no parser (H1–H13): APC, transmissão,
+/// colocação, resposta, rolagem junto com o texto e `ED 3`.
+fn graphics_kitty() -> Result<(), String> {
+    use base64::Engine as _;
+    let mut t = Term::new(20, 4);
+    t.cell_size = (10, 19);
+    let rgba = base64::engine::general_purpose::STANDARD.encode([9, 8, 7, 255].repeat(4));
+    t.feed(format!("\x1b_Ga=T,f=32,s=2,v=2,i=3;{rgba}\x1b\\").as_bytes());
+    esperado("imagem guardada", t.graphics.images().len(), 1)?;
+    esperado(
+        "resposta do APC",
+        t.take_child_out(),
+        b"\x1b_Gi=3;OK\x1b\\".to_vec(),
+    )?;
+    let p = t.graphics.placements()[0];
+    esperado(
+        "colocação",
+        (p.image_id, p.col, p.linha, p.cols, p.rows),
+        (3, 0, 0, 1, 1),
+    )?;
+    // H10: sem `C=1` o cursor desce as linhas da imagem
+    esperado("cursor desceu", t.cy, 1)?;
+    // H12: rolar leva a colocação para o histórico
+    for _ in 0..6 {
+        t.feed(b"\r\n");
+    }
+    let p = t.graphics.placements()[0];
+    if p.linha >= 0 {
+        return Err(format!(
+            "imagem devia estar no histórico: linha {}",
+            p.linha
+        ));
+    }
+    // H13: `ED 3` limpa imagem e histórico
+    t.feed(b"\x1b[3J");
+    esperado("ED 3 limpa", t.graphics.images().len(), 0)?;
+    esperado("ED 3 limpa colocação", t.graphics.placements().len(), 0)
 }

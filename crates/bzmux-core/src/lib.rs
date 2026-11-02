@@ -11,6 +11,7 @@ pub mod checks_n2;
 pub mod checks_n5;
 pub mod color;
 pub mod config;
+pub mod graphics;
 pub mod grid;
 pub mod select;
 pub mod term;

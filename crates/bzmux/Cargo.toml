@@ -11,6 +11,8 @@ workspace = true
 [dependencies]
 bzmux-core = { path = "../bzmux-core" }
 winit = "0.30"
+# PNG do protocolo de gráficos do kitty (f=100); puro em Rust
+png = "0.17"
 wgpu = "30"
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"

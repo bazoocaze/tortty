@@ -14,6 +14,19 @@ use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize}
 
 use crate::prof;
 
+/// `PtySize` com o tamanho em pixels derivado da célula (é o que o kernel
+/// reporta em `ws_xpixel`/`ws_ypixel`).
+fn pixels(cols: u16, rows: u16, cell: (f32, f32)) -> PtySize {
+    let w = (f32::from(cols) * cell.0).round();
+    let h = (f32::from(rows) * cell.1).round();
+    PtySize {
+        rows,
+        cols,
+        pixel_width: u16::try_from(w as u32).unwrap_or(0),
+        pixel_height: u16::try_from(h as u32).unwrap_or(0),
+    }
+}
+
 pub struct Pty {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
@@ -56,23 +69,23 @@ fn which(name: &str) -> Option<String> {
 }
 
 impl Pty {
+    #[allow(clippy::too_many_arguments)] // assinatura do spawn do pty: todos são dados, não estado
     pub fn spawn(
         cmd: Option<&str>,
         configured_shell: Option<&str>,
         cwd: Option<&std::path::Path>,
         cols: u16,
         rows: u16,
+        // tamanho da célula em px: vira `ws_xpixel`/`ws_ypixel`, de onde o
+        // `kitten icat` tira a resolução (`TIOCGWINSZ`); com zero ele desiste
+        // com "terminal does not support reporting screen sizes"
+        cell: (f32, f32),
         tx: Sender<Vec<u8>>,
         wake: Arc<dyn Fn() + Send + Sync>,
     ) -> Result<Pty, String> {
         let pty_system = native_pty_system();
         let pair = pty_system
-            .openpty(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
+            .openpty(pixels(cols, rows, cell))
             .map_err(|e| format!("openpty: {e}"))?;
 
         let shell = effective_shell(configured_shell, std::env::var("SHELL").ok().as_deref());
@@ -163,17 +176,12 @@ impl Pty {
         ok
     }
 
-    pub fn resize(&mut self, cols: u16, rows: u16) {
+    pub fn resize(&mut self, cols: u16, rows: u16, cell: (f32, f32)) {
         if (cols, rows) == self.size || cols == 0 || rows == 0 {
             return;
         }
         self.size = (cols, rows);
-        let _ = self.master.resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        });
+        let _ = self.master.resize(pixels(cols, rows, cell));
     }
 
     /// True quando o filho saiu (o shell fechou a aba).

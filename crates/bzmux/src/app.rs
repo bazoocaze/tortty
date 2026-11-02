@@ -1612,11 +1612,18 @@ impl App {
             r.resize(w, h);
         }
         let (cols, rows) = self.grid_from_px(w, h);
+        let cell = self.cell_px();
+        // o parser precisa do mesmo tamanho de célula para responder
+        // `CSI 14/16 t` e para o `c=`/`r=` default das imagens (H9). Era o
+        // padrão 10x19 do core: a imagem saía 5x3 células em vez de 4x2 numa
+        // célula de 15x29.
+        let cell_u = (cell.0.max(1.0) as u32, cell.1.max(1.0) as u32);
         for t in &mut self.tabs {
+            t.term.cell_size = cell_u;
             if cols != t.term.cols || rows != t.term.rows {
                 t.term.resize(cols, rows);
                 if let Some(pty) = t.pty.as_mut() {
-                    pty.resize(cols as u16, rows as u16);
+                    pty.resize(cols as u16, rows as u16, cell);
                 }
                 t.view_off = 0;
             }
@@ -1688,6 +1695,26 @@ impl App {
                     "font": match &self.renderer { Some(r) => r.fonts.family.clone(), None => String::new() },
                     "font_px": match &self.renderer { Some(r) => r.fonts.px, None => 0.0 },
                     "tabs": self.tabs.len(),
+                    // imagens do kitty: sem isto não há como conferir a
+                    // colocação sem olhar a tela
+                    "images": self.tabs[self.active].term.graphics.images().len(),
+                    "placements": self.tabs[self.active]
+                        .term
+                        .graphics
+                        .placements()
+                        .iter()
+                        .map(|p| {
+                            serde_json::json!({
+                                "id": p.image_id,
+                                "col": p.col,
+                                "row": p.linha,
+                                "cols": p.cols,
+                                "rows": p.rows,
+                                "dx": p.dx,
+                                "dy": p.dy,
+                            })
+                        })
+                        .collect::<Vec<_>>(),
                     "active": self.active,
                     "tab_titles": self.tabs.iter().map(Tab::title).collect::<Vec<_>>(),
                     "workspaces": self.ws_count(),
@@ -1863,6 +1890,7 @@ impl App {
             cwd,
             cols as u16,
             rows as u16,
+            self.cell_px(),
             tx,
             wake,
         ) {
@@ -1941,6 +1969,14 @@ impl App {
         }
         self.sync_title();
         self.redraw();
+    }
+
+    /// Tamanho da célula em px (largura, altura): vai para o `ws_xpixel` do pty
+    /// e para o `CSI 14 t`, é de onde os apps tiram a resolução.
+    fn cell_px(&self) -> (f32, f32) {
+        self.renderer
+            .as_ref()
+            .map_or((0.0, 0.0), |r| (r.fonts.cw, r.fonts.ch))
     }
 
     /// Tamanho, posição e maximizado com que a janela nasce (J2–J6).

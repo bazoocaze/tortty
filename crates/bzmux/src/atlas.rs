@@ -203,3 +203,41 @@ pub fn globals_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
         }],
     })
 }
+
+/// Layout de bind group das imagens do protocolo de gráficos: mesmo formato do
+/// atlas, mas com amostragem **filtrável** e textura filtrável — imagem é
+/// escalada (o `icat` manda 48x48 e a célula ocupa mais que isso), e com
+/// `Nearest` o resultado fica serrilhado. O atlas não pode usar o mesmo layout
+/// porque a máscara de cobertura de glifo é `filterable: false`.
+pub fn bind_image(device: &wgpu::Device) -> (wgpu::BindGroupLayout, wgpu::Sampler) {
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("img-layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("img-sampler"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        ..Default::default()
+    });
+    (layout, sampler)
+}

@@ -10,6 +10,9 @@ workspace = true
 
 [dependencies]
 unicode-width = "0.2"
+# gráficos do kitty: base64 do payload e `o=z` (zlib). Ambos puros em Rust.
+base64 = "0.22"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [[bin]]
 name = "parsebench"
