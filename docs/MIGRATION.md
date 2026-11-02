@@ -15,7 +15,7 @@ não por estimativa.
 ## Painel
 | área | feito | parcial | falta | não | impedida | total |
 |---|---|---|---|---|---|---|
-| 1. Núcleo: célula, cores, grade | 17 | 1 | 0 | 0 | 0 | 18 |
+| 1. Núcleo: célula, cores, grade | 18 | 0 | 0 | 0 | 0 | 18 |
 | 2. Parser: controles, CSI, modos | 28 | 0 | 0 | 0 | 0 | 28 |
 | 3. Parser: SGR e OSC | 13 | 0 | 0 | 0 | 0 | 13 |
 | 4. Scrollback e visão do histórico | 8 | 0 | 0 | 0 | 0 | 8 |
@@ -29,9 +29,9 @@ não por estimativa.
 | 12. Debug socket e instrumentação | 14 | 0 | 0 | 0 | 0 | 14 |
 | 13. Plataforma e distribuição | 5 | 1 | 0 | 0 | 1 | 7 |
 | 14. Testes e verificação | 7 | 2 | 0 | 0 | 0 | 9 |
-| **total** | **194** | **6** | **1** | **3** | **1** | **205** |
+| **total** | **195** | **5** | **1** | **3** | **1** | **205** |
 
-Equivalente pronto: **96.1%** (feito conta 1, parcial conta 0,5; `impedida` conta como `falta`). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
+Equivalente pronto: **96.3%** (feito conta 1, parcial conta 0,5; `impedida` conta como `falta`). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
 tendência; o que decide o que fazer agora é a linha e a seção 16.
 
 ## Regras deste documento
@@ -75,7 +75,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | A8 | BCE: apagar herda o bg corrente | `term.py:155-157` → `term.rs` | feito |
 | A9 | Charset DEC Special Graphics (G0, `ESC ( 0`) | `palette.py:110-142` → `charset.rs` | feito |
 | A16 | Dano por linha (`dirty`/`dirty_all`) | `term.py:355-362` → `term.rs` | feito |
-| A17 | Render usa o dano (só remonta as linhas sujas) | `view.py:920-935` → `dano.rs` + `render.rs` | parcial: o desenho remonta só as linhas sujas (instâncias guardadas por linha; `dano.rs` decide com 11 testes, e a assinatura cobre aba, rolagem, seleção, pisca e tema). Falta o roteiro manual: neste sandbox a janela não entrega frame (`state` responde `skipped (timeout/occluded)`), então nada de verificação visual |
+| A17 | Render usa o dano (só remonta as linhas sujas) | `view.py:920-935` → `damage.rs` + `render.rs` | feito: `damage.rs` decide por `Signature` (aba, geometria, rolagem, seleção, pisca, tema) e o renderer guarda instância por linha. Rolagem de tela cheia passou a **deslocar** as linhas prontas (o núcleo reporta `scroll_shift`), e `IL`/`DL`/`ED0`/`ED1` marcam só a faixa afetada. Medido em grade 60x12: `seq 1 100` remonta 12 linhas uma vez, `echo` remonta 1 (`state` → `rows_built`, `frames_all`, `global_why`); antes era a grade inteira a cada linha escrita. Conferido na tela (`seq`, `mc`) |
 | A18 | Grade de alt-screen separada, com troca preservando cursor | `term.py:602-629` → `term.rs` | feito |
 | A19 | Alt-screen no resize: recorte/preenchimento sem reflow | `term.py:184-217` → `term.rs` | feito |
 | A20 | Linha que sai pelo topo vai para o scrollback (só `top==0`) | `term.py:384-400` → `term.rs` | feito |

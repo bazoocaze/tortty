@@ -819,3 +819,36 @@ exatamente isso (`-w ~/.cargo/registry`, ou `write("~/.cargo/registry")` num
 perfil). Nesta sessão nem isso passou, porque a montagem `ro` do `$HOME` no host
 faz o bind herdar `ro`; é problema de montagem, não de política do sandbox. Até
 lá, `CARGO_HOME` num diretório gravável (`/tmp`) resolve sem conceder nada.
+
+## 2026-11-02 — A17 fechado: o dano virou desenho parcial de verdade
+
+O `A17` estava `parcial` porque a lógica existia e nada economizava: o `state`
+mostrava **20 linhas remontadas por linha escrita** numa grade de 20. Instrumentar
+respondeu na hora — `frames_all` e `global_why` (campos novos do `state`) disseram
+que o culpado era o núcleo, não o renderer:
+
+| sintoma | causa | conserto |
+|---|---|---|
+| todo output remontava a grade | `scroll_up` marcava `dirty_all` — e num terminal **toda linha nova rola** | rolagem de tela cheia virou `scroll_shift`: o desenho desloca as linhas prontas e remonta só a que entra em branco |
+| `zle` redesenha o prompt e remonta tudo | `IL`/`DL` marcavam a tela toda | marcam do cursor ao fim da região |
+| `ED 0`/`ED 1` remontavam tudo | idem | marcam só o lado que apagam (`ED 2`/`ED 3` continuam globais) |
+| rolagem para os dois lados | deslocamento líquido zero mentiria (a linha que sai vira branco) | `scroll_conflict` força remontagem |
+
+A instância passou a ser montada **relativa à linha** (y = 0) e o deslocamento
+entra na concatenação — é isso que permite rodar a linha pronta sem reescrever
+coordenada nem remontar glifo.
+
+Medido nesta máquina (grade 60x12, `state` do socket):
+
+| operação | antes | depois |
+|---|---|---|
+| `echo UMA` | 20 linhas (grade) + 1 frame global | **1 linha** + 0 global |
+| `seq 1 100` | 20 por rajada | 12 uma vez (tela toda mudou), depois 1 por linha |
+| `mc` (repinta tudo de propósito) | 20/frame | 64 linhas em 13 frames, 3 globais |
+
+Conferido na tela: `seq 1 30` alinhado, `mc` com painéis, cores, moldura DEC e
+barra de teclas. Dois testes novos no núcleo fixam o contrato da rolagem e da
+precisão de `IL`/`DL`/`ED`; a suíte foi de 74 para 79.
+
+Fica em `parcial` só o `G17`: a *draw* continua tela inteira (swapchain não
+preserva o frame anterior; desenhar faixa exige textura de cena + blit).
