@@ -27,11 +27,11 @@ não por estimativa.
 | 10. Janela: ciclo de vida, geometria, estado | 10 | 0 | 0 | 0 | 0 | 10 |
 | 11. Configuração e CLI | 18 | 0 | 0 | 0 | 0 | 18 |
 | 12. Debug socket e instrumentação | 14 | 0 | 0 | 0 | 0 | 14 |
-| 13. Plataforma e distribuição | 5 | 1 | 0 | 0 | 1 | 7 |
+| 13. Plataforma e distribuição | 6 | 0 | 0 | 0 | 1 | 7 |
 | 14. Testes e verificação | 7 | 2 | 0 | 0 | 0 | 9 |
-| **total** | **196** | **4** | **1** | **3** | **1** | **205** |
+| **total** | **197** | **3** | **1** | **3** | **1** | **205** |
 
-Equivalente pronto: **96.6%** (feito conta 1, parcial conta 0,5; `impedida` conta como `falta`). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
+Equivalente pronto: **96.8%** (feito conta 1, parcial conta 0,5; `impedida` conta como `falta`). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
 tendência; o que decide o que fazer agora é a linha e a seção 16.
 
 ## Regras deste documento
@@ -318,7 +318,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | M2 | pty POSIX por uma API só (`PtySize`, `spawn`, `read`, `write`) | `pty.fork` (POSIX só) → `pty.rs` | feito |
 | M3 | Linux X11 + Vulkan | ambiente de dev | feito |
 | M4 | Linux Wayland | n/a | impedida: as features já estão compiladas (`winit` wayland + CSD adwaita); falta um compositor para exercitar, e instalar pacote é vetado aqui |
-| M5 | Linux backend GL (`WGPU_BACKEND=gl`) | n/a | parcial: o caminho existe e inicializa (faltava o display handle na instância — sem ele o EGL respondia `gl not compatible with provided surface`; e o `alpha_mode` deram janela translúcida), e a escolha de adaptador prefere hardware. Falta exercitar o desenho num X com SHM sadio |
+| M5 | Linux backend GL (`WGPU_BACKEND=gl`) | n/a | feito: `WGPU_BACKEND=gl` desenha com GPU real (`Gl AMD Radeon Graphics (radeonsi …)`, `last_frame: drawn`, texto e cursor na captura). Três consertos que só aparecem no GL: display handle na instância (sem ele o EGL responde `gl not compatible with provided surface`), `CompositeAlphaMode::Opaque` (o default dava janela translúcida) e escolha de adaptador preferindo hardware |
 | M8 | CI matriz de build + release por tag | não existe → `.github/workflows/release.yml` + `tools/release.sh` | feito para Linux x86_64/aarch64 (os alvos macOS/Windows são `M-X`/`M-Y` do [`BACKLOG`](BACKLOG.md)) |
 | M10 | Instalador: comando `bzmux`, menu, ícone, `--uninstall`, `--check` | `install.sh` (pipx + deps de sistema) → `install.sh` (copia 1 binário) | feito |
 

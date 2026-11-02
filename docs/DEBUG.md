@@ -274,8 +274,14 @@ bzmux: GPU: Vulkan llvmpipe (LLVM 20.1.2, 256 bits) (driver llvmpipe)
 
 ## Sandbox degradado: janela que não pinta nada
 
-Nesta máquina de desenvolvimento (container sem `/dev/dri`), em 2026-11-02 o
-desenho parou de aparecer **nos dois backends**: o `wgpu` escolhe llvmpipe,
+**Antes de investigar desenho, confira `/dev/dri` com `ls -la /dev/dri`.** Sem
+os nós de device o `wgpu` só tem llvmpipe e, neste container, nem ele pinta —
+foi o que aconteceu em 2026-11-02. A cura é rodar sob o perfil de GPU do sandbox
+(`sandbox @gpu,dev -- …`): com `/dev/dri` visível o log mostra `GPU: Vulkan AMD
+Radeon Graphics (RADV RENOIR)` (ou `Gl … radeonsi`) e os frames saem.
+
+Neste máquina de desenvolvimento, em 2026-11-02, com o container **sem
+`/dev/dri`**, o desenho parou de aparecer **nos dois backends**: o `wgpu` escolhe llvmpipe,
 inicializa, o socket responde `state`, mas nenhum pixel chega na janela —
 `import -window <id>` e a captura da raiz mostram o que está atrás.
 
@@ -301,8 +307,8 @@ imagens, `draws`/`rows_built`/`cells_built`, `last_frame`), `--selftest`,
 `cargo test` e `parsebench`. Antes de concluir que o desenho quebrou, confira
 `/dev/dri` e a linha `bzmux: GPU:`.
 
-No mesmo sandbox, o **cache do `cargo` é somente leitura**
-(`/home/user/.cargo/registry`): qualquer dependência nova falha com
-`Read-only file system (os error 30)`. Isso bloqueia, por exemplo, `rustybuzz`
-(shaping) e `wl-clipboard-rs` (clipboard Wayland) — vale conferir antes de
-planejar trabalho que precise de crate novo.
+No mesmo sandbox, o **cache do `cargo` já foi somente leitura**
+(`/home/user/.cargo/registry`): dependência nova falhava com `Read-only file
+system (os error 30)`. Hoje o perfil `@dev` do sandbox libera a escrita nesse
+diretório (`sandbox @dev -- cargo build`), e sem ele o contorno é
+`CARGO_HOME=/tmp/cargohome` (cópia do `~/.cargo` em tmpfs).

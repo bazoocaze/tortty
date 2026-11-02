@@ -874,3 +874,16 @@ virar outra fonte.
 
 Desempenho sem regressão no doom-fire (nada de emoji na carga): 872–963 fps /
 37,5–41,4 MB/s a 61x18, `draw` 0,69–0,72 ms/call.
+
+## 2026-11-02 — M5 fechado: o backend GL desenha com GPU de verdade
+
+O `M5` estava `parcial` porque o GL só inicializava; a verificação visual tinha
+morrido junto com o `/dev/dri` do container. Rodando sob `sandbox @gpu,dev`, com os
+nós de device visíveis, `WGPU_BACKEND=gl` sobe em `Gl AMD Radeon Graphics
+(radeonsi, renoir, ACO)` e desenha: `last_frame: drawn`, texto, cores, cursor e
+`mc -V` na captura de tela. Sem a sonda `BZMUX_NO_TITLE` — o pânico de erro X
+pendente era do llvmpipe, não do GL.
+
+Fica registrado em [`DEBUG.md`](DEBUG.md) que a primeira pergunta diante de
+"janela não pinta" é `ls -la /dev/dri`: sem os nós, os dois backends ficam em
+llvmpipe e nada chega na tela.
