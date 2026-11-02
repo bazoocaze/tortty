@@ -71,7 +71,20 @@ writable() {
 need_sudo() {
     writable "$1" && { SUDO=""; return 0; }
     [ "$(id -u)" = 0 ] && { SUDO=""; return 0; }
-    if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; return 0; fi
+    # alvo dentro do $HOME e sem escrita: sudo não resolve (o dono é você), o
+    # caso é home somente leitura — diz o que fazer em vez de tentar escalar
+    case "$1" in
+        "$HOME"/*)
+            die "sem escrita em $1 (home somente leitura?); use --prefix <dir gravável>" ;;
+    esac
+    if command -v sudo >/dev/null 2>&1; then
+        SUDO="sudo"
+        # container com no-new-privileges derruba o sudo e despeja o erro dele;
+        # avisa antes, sem impedir o uso interativo (senha)
+        sudo -n true 2>/dev/null ||
+            say "== aviso: sudo não roda sem senha aqui; se falhar, use --prefix \$HOME/.local"
+        return 0
+    fi
     die "sem permissão de escrita em $1 e sem sudo (use --prefix \$HOME/.local)"
 }
 

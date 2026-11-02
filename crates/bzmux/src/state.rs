@@ -91,7 +91,13 @@ pub fn save(g: &Geometry) {
 /// `save` num caminho dado.
 pub fn save_to(path: &std::path::Path, g: &Geometry) {
     if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+        // diretório que não dá para criar não é erro fatal: o terminal tem de
+        // rodar confinado (sandbox, home somente leitura). Só não pode ser
+        // silencioso, senão ninguém entende por que a janela não é lembrada
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            eprintln!("bzmux: sem geometria lembrada ({}: {e})", dir.display());
+            return;
+        }
     }
     let mut v = serde_json::Map::new();
     if let (Some(x), Some(y)) = (g.x, g.y) {
@@ -103,6 +109,10 @@ pub fn save_to(path: &std::path::Path, g: &Geometry) {
     v.insert("max".into(), g.maximizado.into());
     let tmp = path.with_extension("json.tmp");
     let Ok(mut f) = std::fs::File::create(&tmp) else {
+        eprintln!(
+            "bzmux: sem geometria lembrada ({} não gravável)",
+            tmp.display()
+        );
         return;
     };
     let ok = writeln!(f, "{}", serde_json::Value::Object(v)).is_ok() && f.sync_all().is_ok();
@@ -267,6 +277,25 @@ mod checks_estado {
         save_to(&path, &s);
         assert_eq!(load_from(&path), Some(s));
         let _ = std::fs::remove_dir_all(Path::new(&path).ancestors().nth(2).expect("raiz"));
+    }
+
+    #[test]
+    fn gravar_em_lugar_impossivel_nao_estoura() {
+        // sandbox/home somente leitura: o app tem de seguir de pé (e dizer no
+        // stderr, não sumir calado)
+        let path = std::path::Path::new("/proc/bzmux-nao-existe/window.json");
+        save_to(
+            path,
+            &Geometry {
+                x: None,
+                y: None,
+                w: 800,
+                h: 600,
+                maximizado: false,
+            },
+        );
+        assert!(!path.exists());
+        assert!(!path.with_extension("json.tmp").exists());
     }
 
     #[test]

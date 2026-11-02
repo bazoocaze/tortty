@@ -791,3 +791,31 @@ teste e os contadores expostos em `state`, mas **falta o roteiro de screenshot**
 `M4` (Wayland) não tem compositor para exercitar; `G8` (shaping) precisaria de
 `rustybuzz`, que não dá para baixar aqui. Tudo isso está em `DEBUG.md`
 ("sandbox degradado"), que é onde a próxima sessão vai olhar primeiro.
+
+## 2026-11-02 — Confinamento: o que o bzmux tem de aguentar
+
+Rodamos uma sessão inteira dentro do `sandbox` (bubblewrap, `~/sandbox`).
+Três coisas apareceram, e a de maior peso virou fila (`M-AA`), não conserto de
+véspera:
+
+- **Desenho sem GPU**: com `$HOME` somente leitura e sem `/dev/dri`, o app sobe,
+  o pty funciona, o `state` responde — e **nenhum frame sai** (`skipped
+  (timeout/occluded)` em todo frame, llvmpipe). Terminal que fica com janela
+  morta em container não serve. Diagnóstico e queda para software entram em
+  `M-AA`; é lá que se mede, não aqui.
+- **Estado sem escrita**: `state::save_to` já falhava sem estourar (o terminal
+  tem de rodar confinado), mas falhava **calado** — ninguém entenderia por que a
+  janela não é lembrada. Agora sai uma linha no stderr, e há teste
+  (`gravar_em_lugar_impossivel_nao_estoura`).
+- **Instalação em alvo bloqueado**: `install.sh` já saía com código 1, mas a
+  mensagem era o despejo do `sudo` ("If sudo is running in a container..."). Duas
+  correções: alvo dentro do `$HOME` sem escrita não tenta escalar privilégio
+  (diz "home somente leitura? use `--prefix <dir gravável>`"), e alvo de sistema
+  avisa antes que o `sudo` não roda sem senha ali.
+
+Uma nota sobre privilégio mínimo: o pedido natural ("libere `~/.cargo`") é
+amplo demais. O que falta é `~/.cargo/registry` — e o `sandbox` já sabe conceder
+exatamente isso (`-w ~/.cargo/registry`, ou `write("~/.cargo/registry")` num
+perfil). Nesta sessão nem isso passou, porque a montagem `ro` do `$HOME` no host
+faz o bind herdar `ro`; é problema de montagem, não de política do sandbox. Até
+lá, `CARGO_HOME` num diretório gravável (`/tmp`) resolve sem conceder nada.
