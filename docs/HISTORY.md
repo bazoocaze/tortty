@@ -267,3 +267,33 @@ e o erro saía duas vezes (agora o `mtime` do arranque já vale) e a condição 
 
 Benchmark depois de tudo: 950–985 fps / 40,8–42,3 MB/s a 61x18 — dentro da
 faixa documentada, sem regressão.
+
+## 2026-11-02 — abas (F4a: I1-I4, I13, I15-I17, I20)
+
+O Rust deixou de ser "um terminal" e passou a ser o bzmux: `Tab` guarda
+`term` + `pty` + o que é de olhar (visão, seleção, arrasto), e o `App` tem
+`tabs: Vec<Tab>` com uma ativa.
+
+O que veio junto:
+
+| item | decisão |
+|---|---|
+| drenar **todas** as abas | canal não é ilimitado: um `yes` numa aba escondida encheria a memória. O que fica reservado à ativa é só o pisca e a visão |
+| cwd da aba nova | `/proc/<pid>/cwd` do **descendente mais fundo** (via `task/<pid>/children`), não do shell: quem manda é o `vim`/`mc` que está na frente. Verificado: `cd /tmp` → aba nova nasce em `/tmp` |
+| título | OSC 0/2 → `basename(cwd)` → `bzmux`; a janela segue a aba ativa (`rust_term — bzmux`), só quando muda |
+| barra de abas | uma linha acima da grade (o `origin` do shader é `pad + bar`), e a grade de **todas** as abas encolhe uma linha; com uma aba só não existe barra |
+| BEL | o rótulo da aba fica com `color3` por 800 ms — inclusive em aba de segundo plano, que é o ponto |
+| dígito do atalho | tecla **física** (`Digit1..0`): `Ctrl+Shift+1` chega como `!` e no ABNT2 cada dígito shiftado é outro símbolo |
+| `--cmd` | só vale para a primeira aba: repetir o comando de depuração na segunda não abriria shell |
+
+Atalhos: `Ctrl+Shift+T` (nova), `Ctrl+Shift+W` (fecha), `Alt+1..9` (`0` = 10ª).
+A aba cujo shell morre fecha sozinha; fechar a última fecha o app.
+
+Verificado por socket (`tab op=new/select/close`, drenagem independente por aba,
+`rows` de 10 → 9 com a barra) e por XTest (`ctrl+shift+t`, `alt+1`, `alt+3`,
+`ctrl+shift+w` conferidos por `state`), mais capturas para o flash de BEL e a
+inversão da aba ativa. Benchmark com uma aba: 993 fps / 42,7 MB/s — sem
+regressão.
+
+Falta para fechar F4: workspaces e sidebar (F4b: I5-I11), arrastar para
+reordenar (I10) e roda na barra (I11).

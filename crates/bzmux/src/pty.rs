@@ -22,9 +22,11 @@ pub struct Pty {
 }
 
 impl Pty {
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         cmd: Option<&str>,
         configured_shell: Option<&str>,
+        cwd: Option<&std::path::Path>,
         cols: u16,
         rows: u16,
         tx: Sender<Vec<u8>>,
@@ -56,9 +58,13 @@ impl Pty {
             None => CommandBuilder::new(&shell),
         };
         // o portable-pty cai em $HOME quando não há cwd; o Python herda o cwd
-        // do processo (pty.fork), e é isso que o usuário espera
-        if let Ok(cwd) = std::env::current_dir() {
-            cb.cwd(cwd);
+        // do processo (pty.fork), e é isso que o usuário espera. Aba nova passa
+        // o cwd da aba de onde nasceu (I2), não o do bzmux.
+        let dir = cwd
+            .map(std::path::Path::to_path_buf)
+            .or_else(|| std::env::current_dir().ok());
+        if let Some(dir) = dir {
+            cb.cwd(dir);
         }
         cb.env("TERM", "xterm-256color");
         cb.env("COLORTERM", "truecolor");
@@ -139,6 +145,11 @@ impl Pty {
     }
 
     /// True quando o filho saiu (o shell fechou a aba).
+    /// PID do processo que roda no pty (base do `/proc/<pid>/cwd`).
+    pub fn child_pid(&self) -> Option<u32> {
+        self.child.process_id()
+    }
+
     pub fn child_exited(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(Some(_)))
     }

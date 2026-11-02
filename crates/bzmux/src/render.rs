@@ -79,6 +79,9 @@ pub struct Renderer {
     pub cursor: (u8, u8, u8),
     /// Margem em px em volta da grade (`window_padding_width`).
     pub pad: f32,
+    /// Altura da barra de abas em px (0 = uma aba só, sem barra). Ela empurra
+    /// a grade para baixo: o `origin` do shader é `pad + bar`.
+    bar: f32,
     pub cursor_shape: CursorShape,
 }
 
@@ -243,6 +246,7 @@ impl Renderer {
             bg: tema(cfg, cfg.bg, BG),
             cursor: tema(cfg, cfg.cursor, FG),
             pad: cfg.padding as f32,
+            bar: 0.0,
             cursor_shape: cfg.cursor_shape,
         })
     }
@@ -271,9 +275,19 @@ impl Renderer {
                 self.config.width as f32,
                 self.config.height as f32,
                 self.pad,
-                self.pad,
+                self.pad + self.bar,
             ]),
         );
+    }
+
+    /// Reserva a faixa da barra de abas (0 = sem barra). Chamar sempre que o
+    /// número de abas muda; a grade já vem com a altura descontada.
+    pub fn set_bar(&mut self, h: f32) {
+        if (h - self.bar).abs() < 0.01 {
+            return;
+        }
+        self.bar = h;
+        self.write_globals();
     }
 
     pub fn resize(&mut self, w: u32, h: u32) {
@@ -286,7 +300,7 @@ impl Renderer {
         self.queue.write_buffer(
             &self.globals,
             0,
-            bytemuck::cast_slice(&[w as f32, h as f32, self.pad, self.pad]),
+            bytemuck::cast_slice(&[w as f32, h as f32, self.pad, self.pad + self.bar]),
         );
     }
 
@@ -340,6 +354,63 @@ impl Renderer {
 
     /// Selo de uma linha no canto superior direito (indicador de histórico).
     /// Desenhado por último: tem que ficar por cima do que estiver lá.
+    /// Barra de abas: ` 1 zsh │ 2 vim  ` na faixa acima da grade.
+    ///
+    /// A aba ativa fica invertida (fundo = cor do texto). Aba com BELL recente
+    /// troca a cor de destaque — é o que faz "aquele terminal apitou" ser
+    /// visível sem olhar para ele.
+    fn tabbar(&mut self, tabs: &[TabInfo], cols: usize) {
+        let cw = self.fonts.cw;
+        let chh = self.fonts.ch;
+        let ascent = self.fonts.ascent;
+        let largo = cols as f32 * cw;
+        let fundo = self.color(Color::Idx(0), self.bg);
+        // texto sobre a aba ativa usa a cor de fundo da grade (inversão)
+        let sobre = self.color(Color::Default, self.bg);
+        self.push_rect(0.0, 0.0, largo, chh, [fundo[0], fundo[1], fundo[2], 1.0]);
+        let mut x = 0.0f32;
+        for (i, t) in tabs.iter().enumerate() {
+            let rotulo = format!(" {} {} ", i + 1, t.titulo);
+            let n = rotulo.chars().count();
+            let largura = (n as f32 * cw).min(largo - x);
+            if largura <= 0.0 {
+                break;
+            }
+            let (bg, fg) = if t.ativa {
+                (self.color(Color::Default, self.fg), sobre)
+            } else if t.alerta {
+                (self.color(Color::Idx(3), self.fg), sobre)
+            } else {
+                (fundo, self.color(Color::Idx(8), self.fg))
+            };
+            // um retângulo por aba (não um por letra): o fundo do rótulo é uma
+            // peça só, e o texto é desenhado por cima
+            self.push_rect(x, 0.0, largura, chh, [bg[0], bg[1], bg[2], 1.0]);
+            for (k, ch) in rotulo.chars().enumerate() {
+                if ch == ' ' {
+                    continue;
+                }
+                let px = x + k as f32 * cw;
+                if px + cw > x + largura {
+                    break;
+                }
+                if let Some(q) = self.glyph_quad(ch, false, false) {
+                    self.instances.push(Instance {
+                        rect: [
+                            px + q.left as f32,
+                            ascent - q.top as f32,
+                            q.w as f32,
+                            q.h as f32,
+                        ],
+                        color: [fg[0], fg[1], fg[2], 1.0],
+                        uv: q.uv,
+                    });
+                }
+            }
+            x += largura;
+        }
+    }
+
     /// Toast (I12): uma faixa na primeira linha, com as cores invertidas.
     ///
     /// Fica em cima porque embaixo está o prompt (a linha em que a pessoa
@@ -507,6 +578,7 @@ impl Renderer {
         sel: Option<Span>,
         blink: Blink,
         toast: Option<&str>,
+        tabs: Option<&[TabInfo]>,
     ) {
         self.instances.clear();
         let cw = self.fonts.cw;
@@ -575,6 +647,12 @@ impl Renderer {
             }
         }
 
+        // 2b) barra de abas: fica na faixa que o `origin` reservou acima da
+        // grade, então não precisa de conta de recorte
+        if let Some(tabs) = tabs {
+            self.tabbar(tabs, cols);
+        }
+
         // 3) cursor (por cima; a ordem das instâncias é a ordem de blend)
         if blink.cursor
             && view_off == 0
@@ -628,6 +706,7 @@ impl Renderer {
         sel: Option<Span>,
         blink: Blink,
         toast: Option<&str>,
+        tabs: Option<&[TabInfo]>,
     ) -> FrameOutcome {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
@@ -642,7 +721,7 @@ impl Renderer {
         };
 
         let t0 = std::time::Instant::now();
-        self.build(term, view_off, sel, blink, toast);
+        self.build(term, view_off, sel, blink, toast, tabs);
         self.atlas.flush(&self.queue);
 
         let needed = self.instances.len() * std::mem::size_of::<Instance>();
@@ -717,6 +796,14 @@ impl Renderer {
 pub struct Blink {
     pub fase: bool,
     pub cursor: bool,
+}
+
+/// O que a barra precisa saber de cada aba (o renderer não conhece `Tab`).
+pub struct TabInfo {
+    pub titulo: String,
+    pub ativa: bool,
+    /// BELL recente: o rótulo ganha destaque por ~800 ms (I13).
+    pub alerta: bool,
 }
 
 pub enum FrameOutcome {

@@ -11,7 +11,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
-use winit::keyboard::{Key, ModifiersState, NamedKey};
+use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{UserAttentionType, Window, WindowId};
 
 use crate::cli::Options;
@@ -22,6 +22,54 @@ use crate::keys;
 use crate::prof;
 use crate::pty::Pty;
 use crate::render::Renderer;
+
+/// Alt puro (sem Ctrl nem Shift). `Alt+Shift+1` é do shell, não da barra.
+fn alt_digit_only(mods: ModifiersState) -> bool {
+    mods.alt_key() && !mods.control_key() && !mods.shift_key() && !mods.super_key()
+}
+
+/// Dígito da tecla **física** (0..=9), ignorando layout e Shift.
+///
+/// `Ctrl+Shift+1` chega como `!` e no ABNT2 o shiftado de cada dígito é outro
+/// (`2` → `@`, `6` → `¨`); traduzir o código físico dá o dígito em qualquer
+/// layout — mesma razão do `_digit_of` do Python (I16).
+fn digit_of(event: &winit::event::KeyEvent) -> Option<usize> {
+    let PhysicalKey::Code(code) = event.physical_key else {
+        return None;
+    };
+    Some(match code {
+        KeyCode::Digit0 => 0,
+        KeyCode::Digit1 => 1,
+        KeyCode::Digit2 => 2,
+        KeyCode::Digit3 => 3,
+        KeyCode::Digit4 => 4,
+        KeyCode::Digit5 => 5,
+        KeyCode::Digit6 => 6,
+        KeyCode::Digit7 => 7,
+        KeyCode::Digit8 => 8,
+        KeyCode::Digit9 => 9,
+        _ => return None,
+    })
+}
+
+/// PID do descendente mais fundo de `pid` (o programa que está no primeiro
+/// plano: o shell, ou o `vim`/`mc` que ele lançou). `/proc/<pid>/task/<pid>/
+/// children` lista os filhos diretos; descer até o fim é o que dá o processo
+/// que a pessoa está usando.
+fn descendente(pid: u32) -> u32 {
+    let mut cur = pid;
+    for _ in 0..8 {
+        let path = format!("/proc/{cur}/task/{cur}/children");
+        let Ok(txt) = std::fs::read_to_string(path) else {
+            break;
+        };
+        let Some(filho) = txt.split_whitespace().next().and_then(|s| s.parse().ok()) else {
+            break;
+        };
+        cur = filho;
+    }
+    cur
+}
 
 pub enum UserEvent {
     /// Acorda o loop (dado novo no canal do pty).
@@ -58,6 +106,9 @@ fn aviso_config(errs: &[bzmux_core::config::Error]) -> String {
 /// Período do pisca (cursor e SGR 5). Metade "aceso", metade "apagado".
 const BLINK_MS: u64 = 500;
 
+/// Quanto tempo o rótulo da aba fica destacado depois de um BEL (I13).
+const FLASH_DUR: Duration = Duration::from_millis(800);
+
 /// Bytes em hex (o `keys` do socket devolve isso para conferir o encoder).
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
@@ -93,41 +144,107 @@ pub fn logln(msg: &str) {
     }
 }
 
+/// Uma aba: um terminal e o pty que o alimenta, mais o estado que só faz
+/// sentido enquanto ela está na frente (visão, seleção, arrasto do mouse).
+///
+/// A separação importa por causa de F4: com N abas vivas ao mesmo tempo, o pty
+/// de cada uma continua lendo; só o que é "olhar" (rolagem, seleção) fica
+/// parado na aba que não está ativa.
+pub struct Tab {
+    pub term: Term,
+    pub pty: Option<Pty>,
+    pub rx: Option<Receiver<Vec<u8>>>,
+    /// Linhas roladas para o histórico (0 = acompanhando o output).
+    pub view_off: usize,
+    /// Seleção de texto, em âncoras absolutas.
+    pub sel: Option<Span>,
+    /// Âncora e pixel do press: o arrasto só nasce depois de 3 px.
+    pub press: Option<(Anchor, (f64, f64))>,
+    pub dragging: bool,
+    /// Fração de linha acumulada da roda (trackpad manda fração).
+    pub scroll_frac: f32,
+    /// BELLs já tratados (o `Term` conta; o app decide o que tocar).
+    pub bells_seen: u32,
+    /// Título pedido por OSC 0/2 (vazio = derivar do cwd).
+    pub osc_title: String,
+    /// Último BEL, para o flash do rótulo (I13).
+    pub bell_at: Option<std::time::Instant>,
+}
+
+impl Tab {
+    fn new(cols: usize, rows: usize) -> Tab {
+        Tab {
+            term: Term::new(cols, rows),
+            pty: None,
+            rx: None,
+            view_off: 0,
+            sel: None,
+            press: None,
+            dragging: false,
+            scroll_frac: 0.0,
+            bells_seen: 0,
+            osc_title: String::new(),
+            bell_at: None,
+        }
+    }
+
+    /// Nome da aba: OSC 0/2 vence, senão o cwd do shell, senão o padrão.
+    fn title(&self) -> String {
+        if !self.osc_title.is_empty() {
+            return self.osc_title.clone();
+        }
+        match self.cwd_name() {
+            Some(cwd) => cwd,
+            None => "bzmux".to_string(),
+        }
+    }
+
+    /// `basename` do cwd do processo filho (`/proc/<pid>/cwd`); sem isso, nada.
+    fn cwd_name(&self) -> Option<String> {
+        let cwd = self.cwd()?;
+        let nome = cwd.file_name()?.to_string_lossy().to_string();
+        if nome.is_empty() {
+            None
+        } else {
+            Some(nome)
+        }
+    }
+
+    /// cwd do que está rodando **na frente** do pty: o shell pode ter lançado
+    /// `vim`/`mc`, e é o cwd deles que a próxima aba deve herdar (é o que o
+    /// `fork` do Python fazia ao olhar o último descendente).
+    fn cwd(&self) -> Option<std::path::PathBuf> {
+        let pid = self.pty.as_ref()?.child_pid()?;
+        let alvo = descendente(pid);
+        std::fs::read_link(format!("/proc/{alvo}/cwd")).ok()
+    }
+}
+
 #[allow(clippy::struct_excessive_bools)] // estado do app é booleano por natureza
 pub struct App {
     opts: Options,
     proxy: EventLoopProxy<UserEvent>,
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
-    term: Term,
-    pty: Option<Pty>,
-    rx: Option<Receiver<Vec<u8>>>,
+    /// Abas vivas (cada uma com o pty rodando), e qual está na frente.
+    tabs: Vec<Tab>,
+    active: usize,
     mods: ModifiersState,
-    view_off: usize,
     /// Última posição do mouse em pixels físicos (base do `cell_at`).
     cursor_px: (f64, f64),
     /// Botão que está apertado, para reportar release/movimento com ele.
     held: Option<u8>,
-    /// Seleção de texto (âncoras absolutas: sobrevive a rolagem e output).
-    sel: Option<Span>,
-    /// Âncora e pixel do press: o arrasto só nasce depois de 3 px.
-    press: Option<(Anchor, (f64, f64))>,
-    dragging: bool,
     clip: Clip,
     /// Acorda o loop quando chega dado do pty (o filho nasce depois da
     /// janela, quando o grid já é o definitivo).
     wake: Option<Arc<dyn Fn() + Send + Sync>>,
     spawned: bool,
-    /// Fração de linha acumulada da roda (trackpad manda fração).
-    scroll_frac: f32,
     /// O que veio da linha de comando: o reload reconstrói as Options com ele
     /// para o CLI continuar vencendo o arquivo.
     over: crate::cli::Overrides,
     /// `mtime` da última leitura do arquivo de configuração (auto-reload).
     cfg_mtime: Option<std::time::SystemTime>,
     cfg_checked: std::time::Instant,
-    /// BELLs já tratados (o `Term` conta; o app decide o que tocar).
-    bells_seen: u32,
     /// Instante em que o pisca foi zerado (última tecla/colagem). A fase sai
     /// daí por aritmética: sem acumular estado, sem `sleep`.
     blink_epoch: std::time::Instant,
@@ -147,6 +264,8 @@ pub struct App {
     want: Option<(usize, usize)>,
     adjust_left: u8,
     eof: bool,
+    /// Último título posto na janela (evita `set_title` por frame).
+    last_title: String,
     exiting: bool,
 }
 
@@ -156,9 +275,9 @@ impl App {
         over: crate::cli::Overrides,
         proxy: EventLoopProxy<UserEvent>,
     ) -> App {
-        let mut term = Term::new(opts.cols, opts.rows);
-        term.scrollback_limit = opts.scrollback;
-        term.theme = opts.cfg.theme();
+        let mut tab = Tab::new(opts.cols, opts.rows);
+        tab.term.scrollback_limit = opts.scrollback;
+        tab.term.theme = opts.cfg.theme();
         // o `mtime` do arranque já vale: sem isso o primeiro tique reparseia o
         // mesmo arquivo e um erro de config sairia duas vezes em tela
         let cfg_mtime = opts
@@ -172,23 +291,16 @@ impl App {
             proxy,
             window: None,
             renderer: None,
-            term,
-            pty: None,
-            rx: None,
+            tabs: vec![tab],
+            active: 0,
             mods: ModifiersState::empty(),
-            view_off: 0,
             cursor_px: (0.0, 0.0),
             held: None,
-            sel: None,
-            press: None,
-            dragging: false,
             clip: Clip::new(),
             wake: None,
             spawned: false,
-            scroll_frac: 0.0,
             cfg_mtime,
             cfg_checked: std::time::Instant::now(),
-            bells_seen: 0,
             blink_epoch: std::time::Instant::now(),
             blink_fase: true,
             blink_text: false,
@@ -198,6 +310,7 @@ impl App {
             want: None,
             adjust_left: 0,
             eof: false,
+            last_title: String::new(),
             exiting: false,
         }
     }
@@ -206,13 +319,41 @@ impl App {
         self.opts.font_size_pt * self.opts.dpi / 72.0 * scale as f32
     }
 
+    /// Altura da barra de abas em px (0 com uma aba só). A barra só aparece
+    /// quando há escolha a fazer; com uma aba, ocupa espaço à toa.
+    fn bar_h(&self, ch: f32) -> f32 {
+        if self.tabs.len() > 1 {
+            ch
+        } else {
+            0.0
+        }
+    }
+
+    /// O que a barra mostra: número, título e alerta de BEL de cada aba.
+    fn tabinfo(&self) -> Vec<crate::render::TabInfo> {
+        let agora = std::time::Instant::now();
+        self.tabs
+            .iter()
+            .enumerate()
+            .map(|(i, t)| crate::render::TabInfo {
+                titulo: t.title(),
+                ativa: i == self.active,
+                alerta: t
+                    .bell_at
+                    .is_some_and(|quando| agora.duration_since(quando) < FLASH_DUR),
+            })
+            .collect()
+    }
+
     fn grid_from_px(&self, w: u32, h: u32) -> (usize, usize) {
         match &self.renderer {
             Some(r) => {
-                // a margem (`window_padding_width`) não é grade
+                // nem a margem (`window_padding_width`) nem a barra de abas
+                // são grade
+                let bar = self.bar_h(r.fonts.ch);
                 let (iw, ih) = (
                     (w as f32 - 2.0 * r.pad).max(r.fonts.cw),
-                    (h as f32 - 2.0 * r.pad).max(r.fonts.ch),
+                    (h as f32 - 2.0 * r.pad - bar).max(r.fonts.ch),
                 );
                 (
                     ((iw / r.fonts.cw + 1e-3).floor() as usize).max(1),
@@ -229,12 +370,14 @@ impl App {
             .renderer
             .as_ref()
             .map_or((10.0, 19.0, 0.0), |r| (r.fonts.cw, r.fonts.ch, r.pad));
-        // descontar a origem: com margem, o (0,0) da grade não é o (0,0) da janela
+        // descontar a origem: com margem (e barra de abas), o (0,0) da grade
+        // não é o (0,0) da janela
+        let bar = f64::from(self.bar_h(ch));
         let col = ((px - f64::from(pad)) / f64::from(cw)).max(0.0) as usize;
-        let row = ((py - f64::from(pad)) / f64::from(ch)).max(0.0) as usize;
+        let row = ((py - f64::from(pad) - bar) / f64::from(ch)).max(0.0) as usize;
         (
-            col.min(self.term.cols.saturating_sub(1)),
-            row.min(self.term.rows.saturating_sub(1)),
+            col.min(self.tabs[self.active].term.cols.saturating_sub(1)),
+            row.min(self.tabs[self.active].term.rows.saturating_sub(1)),
         )
     }
 
@@ -266,11 +409,11 @@ impl App {
                 mods: self.mouse_mods(),
             },
             crate::mouse::Proto {
-                sgr: self.term.mouse_sgr,
-                utf8: self.term.mouse_utf8,
+                sgr: self.tabs[self.active].term.mouse_sgr,
+                utf8: self.tabs[self.active].term.mouse_utf8,
             },
         );
-        if let Some(pty) = self.pty.as_mut() {
+        if let Some(pty) = self.tabs[self.active].pty.as_mut() {
             pty.write(&bytes);
         }
     }
@@ -290,6 +433,29 @@ impl App {
             _ => None,
         };
 
+        // Ctrl+Shift+<letra>: primeiro o que é do app (abas), depois o que é do
+        // terminal (copiar/colar)
+        if ctrl && shift {
+            match ch.map(|c| c.to_ascii_lowercase()) {
+                Some('t') => {
+                    self.new_tab();
+                    return;
+                },
+                Some('w') => {
+                    self.close_tab();
+                    return;
+                },
+                _ => {},
+            }
+        }
+        // Alt+1..9 escolhe a aba; Alt+0 é a décima (I15). O dígito não vaza
+        // para o filho — é o que o Python fazia.
+        if alt_digit_only(self.mods) {
+            if let Some(n) = digit_of(event) {
+                self.select_tab(if n == 0 { 9 } else { n - 1 });
+                return;
+            }
+        }
         // Ctrl+Shift+C/V são do terminal, não do app: sem isso o Ctrl+Shift+C
         // vira o mesmo ^C de Ctrl+C e mata o processo (bug do P-bzmux)
         if ctrl && shift {
@@ -309,19 +475,19 @@ impl App {
         if shift && !ctrl {
             match named {
                 Some(NamedKey::PageUp) => {
-                    self.scroll_view(self.term.rows as i64 - 1);
+                    self.scroll_view(self.tabs[self.active].term.rows as i64 - 1);
                     return;
                 },
                 Some(NamedKey::PageDown) => {
-                    self.scroll_view(-(self.term.rows as i64 - 1));
+                    self.scroll_view(-(self.tabs[self.active].term.rows as i64 - 1));
                     return;
                 },
-                Some(NamedKey::Home) if !self.term.scrollback.is_empty() => {
-                    self.scroll_view(self.term.scrollback.len() as i64);
+                Some(NamedKey::Home) if !self.tabs[self.active].term.scrollback.is_empty() => {
+                    self.scroll_view(self.tabs[self.active].term.scrollback.len() as i64);
                     return;
                 },
                 Some(NamedKey::End) => {
-                    self.scroll_view(-(self.term.scrollback.len() as i64));
+                    self.scroll_view(-(self.tabs[self.active].term.scrollback.len() as i64));
                     return;
                 },
                 _ => {},
@@ -329,18 +495,19 @@ impl App {
         }
         // tecla de verdade volta ao vivo; só modificador não (senão o Shift
         // do Shift+PgUp já resetava a visão antes de rolar)
-        if self.view_off > 0
+        if self.tabs[self.active].view_off > 0
             && !matches!(
                 named,
                 Some(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super)
             )
         {
-            self.view_off = 0;
+            self.tabs[self.active].view_off = 0;
         }
-        let Some(bytes) = keys::encode(event, self.mods, self.term.app_cursor) else {
+        let Some(bytes) = keys::encode(event, self.mods, self.tabs[self.active].term.app_cursor)
+        else {
             return;
         };
-        if let Some(pty) = self.pty.as_mut() {
+        if let Some(pty) = self.tabs[self.active].pty.as_mut() {
             pty.write(&bytes);
         }
         if let Some(w) = self.window.as_ref() {
@@ -351,11 +518,11 @@ impl App {
     /// Movimento: só interessa ao app quando ele pediu `?1002`/`?1003`.
     fn on_cursor_moved(&mut self, x: f64, y: f64) {
         self.cursor_px = (x, y);
-        if self.term.mouse_mode == 0 {
+        if self.tabs[self.active].term.mouse_mode == 0 {
             self.drag_select(x, y);
             return;
         }
-        match self.term.mouse_mode {
+        match self.tabs[self.active].term.mouse_mode {
             // 1002: movimento só com botão apertado
             2 if self.held.is_some() => {
                 if let Some(b) = self.held {
@@ -377,7 +544,7 @@ impl App {
         if state == ElementState::Pressed {
             self.blink_reset();
         }
-        if self.term.mouse_mode == 0 {
+        if self.tabs[self.active].term.mouse_mode == 0 {
             self.select_input(state, button);
             return;
         }
@@ -385,7 +552,7 @@ impl App {
             ElementState::Pressed => {
                 // F19: o app desenha o vivo; clique no histórico só faz
                 // sentido depois de voltar para ele
-                self.view_off = 0;
+                self.tabs[self.active].view_off = 0;
                 self.held = Some(btn);
                 self.report_mouse(btn, true, false);
             },
@@ -411,7 +578,10 @@ impl App {
                 (0.0, p.y as f32 / ch)
             },
         };
-        if self.term.mouse_mode != 0 && self.view_off == 0 && (lines != 0.0 || hx != 0.0) {
+        if self.tabs[self.active].term.mouse_mode != 0
+            && self.tabs[self.active].view_off == 0
+            && (lines != 0.0 || hx != 0.0)
+        {
             for (v, up, down) in [
                 (lines, crate::mouse::WHEEL_UP, crate::mouse::WHEEL_DOWN),
                 (hx, crate::mouse::WHEEL_RIGHT, crate::mouse::WHEEL_LEFT),
@@ -425,9 +595,9 @@ impl App {
             }
             return;
         }
-        self.scroll_frac += lines;
-        let n = self.scroll_frac.trunc();
-        self.scroll_frac -= n;
+        self.tabs[self.active].scroll_frac += lines;
+        let n = self.tabs[self.active].scroll_frac.trunc();
+        self.tabs[self.active].scroll_frac -= n;
         if n != 0.0 {
             // roda para cima (delta positivo) entra no histórico
             self.scroll_view(n as i64);
@@ -442,16 +612,23 @@ impl App {
             (ElementState::Pressed, Left) => {
                 // clicar no histórico NÃO volta ao vivo: o arrasto é para
                 // justamente copiar dali
-                self.sel = None;
+                self.tabs[self.active].sel = None;
                 let (col, row) = self.cell_at(self.cursor_px.0, self.cursor_px.1);
-                self.press = Some((self.term.anchor_at(self.view_off, row, col), self.cursor_px));
-                self.dragging = true;
+                self.tabs[self.active].press = Some((
+                    self.tabs[self.active].term.anchor_at(
+                        self.tabs[self.active].view_off,
+                        row,
+                        col,
+                    ),
+                    self.cursor_px,
+                ));
+                self.tabs[self.active].dragging = true;
                 self.redraw();
             },
             (ElementState::Released, Left) => {
-                self.dragging = false;
-                self.press = None;
-                if self.sel.is_some_and(|s| s.a != s.b) {
+                self.tabs[self.active].dragging = false;
+                self.tabs[self.active].press = None;
+                if self.tabs[self.active].sel.is_some_and(|s| s.a != s.b) {
                     // PRIMARY é a convenção do X11 (botão do meio cola dali).
                     // O CLIPBOARD só entra se `copy_on_select` mandar: em app
                     // que só olha o CLIPBOARD é conveniência, mas pisar nele a
@@ -463,14 +640,14 @@ impl App {
                         }
                     }
                 } else {
-                    self.sel = None;
+                    self.tabs[self.active].sel = None;
                 }
                 self.redraw();
             },
             (ElementState::Pressed, Middle) => {
                 // botão do meio cola o PRIMARY; colar fala com o app, então a
                 // visão vai para o vivo
-                self.view_off = 0;
+                self.tabs[self.active].view_off = 0;
                 if let Some(txt) = self.clip.primary_text() {
                     self.write_paste(&txt);
                 }
@@ -482,29 +659,38 @@ impl App {
     /// Arrasto: a seleção só nasce depois de 3 px (tremer o mouse com o botão
     /// apertado não pode pintar uma célula em reverso).
     fn drag_select(&mut self, x: f64, y: f64) {
-        let Some((anchor, (px, py))) = self.press else {
+        let Some((anchor, (px, py))) = self.tabs[self.active].press else {
             return;
         };
-        if !self.dragging || ((x - px).abs() <= 3.0 && (y - py).abs() <= 3.0) {
+        if !self.tabs[self.active].dragging || ((x - px).abs() <= 3.0 && (y - py).abs() <= 3.0) {
             return;
         }
         let (col, row) = self.cell_at(x, y);
-        let novo = Span::new(anchor, self.term.anchor_at(self.view_off, row, col));
-        if self.sel != Some(novo) {
-            self.sel = Some(novo);
+        let novo = Span::new(
+            anchor,
+            self.tabs[self.active]
+                .term
+                .anchor_at(self.tabs[self.active].view_off, row, col),
+        );
+        if self.tabs[self.active].sel != Some(novo) {
+            self.tabs[self.active].sel = Some(novo);
             self.redraw();
         }
     }
 
     fn selection_text(&self) -> Option<String> {
-        self.sel.and_then(|s| self.term.span_text(&s))
+        self.tabs[self.active]
+            .sel
+            .and_then(|s| self.tabs[self.active].term.span_text(&s))
     }
 
     /// Ctrl+Shift+C: a seleção ou, sem seleção, a viewport inteira.
     fn copy(&mut self) {
-        let txt = self
-            .selection_text()
-            .unwrap_or_else(|| self.term.view_text(self.view_off));
+        let txt = self.selection_text().unwrap_or_else(|| {
+            self.tabs[self.active]
+                .term
+                .view_text(self.tabs[self.active].view_off)
+        });
         if txt.is_empty() {
             return;
         }
@@ -516,15 +702,15 @@ impl App {
     fn paste(&mut self) {
         if let Some(txt) = self.clip.text() {
             self.blink_reset();
-            self.view_off = 0;
+            self.tabs[self.active].view_off = 0;
             self.write_paste(&txt);
         }
     }
 
     /// Escreve o texto no filho respeitando o bracketed paste (`?2004`).
     fn write_paste(&mut self, txt: &str) {
-        let payload = self.term.paste_payload(txt);
-        if let Some(pty) = self.pty.as_mut() {
+        let payload = self.tabs[self.active].term.paste_payload(txt);
+        if let Some(pty) = self.tabs[self.active].pty.as_mut() {
             pty.write(&payload);
         }
         self.redraw();
@@ -532,14 +718,26 @@ impl App {
 
     /// Rola a visão em `n` linhas (positivo = para o histórico).
     fn scroll_view(&mut self, n: i64) {
-        let sb = self.term.scrollback.len() as i64;
-        self.view_off = (self.view_off as i64 + n).clamp(0, sb) as usize;
+        let sb = self.tabs[self.active].term.scrollback.len() as i64;
+        self.tabs[self.active].view_off =
+            (self.tabs[self.active].view_off as i64 + n).clamp(0, sb) as usize;
         self.redraw();
     }
 
+    /// Lê o que o pty de **todas** as abas produziu.
+    ///
+    /// Aba em segundo plano também precisa ser drenada: o canal não é
+    /// ilimitado, e um `yes` numa aba escondida encheria a memória. O que fica
+    /// reservado à aba ativa é só o que é "olhar" (pisca e visão).
     fn drain(&mut self) {
+        for i in 0..self.tabs.len() {
+            self.drain_tab(i);
+        }
+    }
+
+    fn drain_tab(&mut self, i: usize) {
         let mut bytes: Vec<u8> = Vec::new();
-        if let Some(rx) = &self.rx {
+        if let Some(rx) = &self.tabs[i].rx {
             loop {
                 match rx.try_recv() {
                     Ok(v) if v.is_empty() => {
@@ -558,41 +756,65 @@ impl App {
         if !bytes.is_empty() {
             // D10: quem está lendo o histórico não pode ser arrastado pelo
             // output que chega — a visão anda junto com as linhas que saíram.
-            let (sc, hist) = (self.term.scrolled, self.term.scrollback.len());
+            let (sc, hist) = (
+                self.tabs[i].term.scrolled,
+                self.tabs[i].term.scrollback.len(),
+            );
             let t0 = std::time::Instant::now();
-            self.term.feed(&bytes);
+            self.tabs[i].term.feed(&bytes);
             if prof::enabled() {
                 prof::add_parse(t0.elapsed().as_nanos() as u64, bytes.len());
             }
-            // `OSC 4/10/11/12` mexeu nas cores: o renderer tem que saber
-            if self.term.theme_dirty {
-                self.term.theme_dirty = false;
-                let tema = self.term.theme.clone();
+            // `OSC 4/10/11/12` mexeu nas cores: o renderer tem que saber. Vale
+            // para qualquer aba: o tema é do emulador, não da aba.
+            if self.tabs[i].term.theme_dirty {
+                self.tabs[i].term.theme_dirty = false;
+                let tema = self.tabs[i].term.theme.clone();
                 if let Some(r) = self.renderer.as_mut() {
                     r.apply_theme(&tema);
                 }
             }
-            let bells = self.term.bells;
-            while self.bells_seen != bells {
-                self.bells_seen = self.bells_seen.wrapping_add(1);
+            // I4: título por OSC 0/2 (o shell põe "~/projeto" e o `vim` o nome
+            // do arquivo); o `bzmux` é o padrão e não conta como pedido
+            let titulo = self.tabs[i].term.title.clone();
+            if titulo != self.tabs[i].osc_title {
+                let era = i == self.active;
+                self.tabs[i].osc_title = if titulo == "bzmux" {
+                    String::new()
+                } else {
+                    titulo
+                };
+                if era {
+                    self.sync_title();
+                }
+            }
+            let bells = self.tabs[i].term.bells;
+            while self.tabs[i].bells_seen != bells {
+                self.tabs[i].bells_seen = self.tabs[i].bells_seen.wrapping_add(1);
+                // I13: o rótulo da aba pisca por 800 ms, mesmo que ela não
+                // esteja na frente (é o aviso de "aconteceu algo aqui")
+                self.tabs[i].bell_at = Some(std::time::Instant::now());
                 self.ring();
             }
-            self.blink_text = self.term.grid.iter().any(|r| {
-                r.cells
-                    .iter()
-                    .any(|c| c.flags & bzmux_core::cell::BLINK != 0)
-            });
-            if self.view_off > 0 {
-                self.view_off = self.term.view_after_output(self.view_off, sc, hist);
+            if i == self.active {
+                self.blink_text = self.tabs[i].term.grid.iter().any(|r| {
+                    r.cells
+                        .iter()
+                        .any(|c| c.flags & bzmux_core::cell::BLINK != 0)
+                });
+            }
+            if self.tabs[i].view_off > 0 {
+                let off = self.tabs[i].view_off;
+                let off = self.tabs[i].term.view_after_output(off, sc, hist);
                 // `CSI 3J` (ou um reflow) pode ter esvaziado o histórico: sem
                 // isto a visão aponta para linhas que não existem mais e a tela
                 // mostra lixo (ou o "pulo" que o F2 tinha que evitar)
-                self.view_off = self.view_off.min(self.term.scrollback.len());
+                self.tabs[i].view_off = off.min(self.tabs[i].term.scrollback.len());
             }
         }
-        let out = self.term.take_child_out();
+        let out = self.tabs[i].term.take_child_out();
         if !out.is_empty() {
-            if let Some(pty) = self.pty.as_mut() {
+            if let Some(pty) = self.tabs[i].pty.as_mut() {
                 pty.write(&out);
             }
         }
@@ -631,13 +853,18 @@ impl App {
     /// O cursor deve piscar? A config manda, mas `CSI 6 q` com forma par (4/6)
     /// pede cursor fixo e vence enquanto o programa quiser.
     fn cursor_pisca(&self) -> bool {
-        self.opts.cfg.cursor_blink && self.term.app_cursor_style.is_none_or(|(_, pisca)| pisca)
+        self.opts.cfg.cursor_blink
+            && self.tabs[self.active]
+                .term
+                .app_cursor_style
+                .is_none_or(|(_, pisca)| pisca)
     }
 
     /// Tem alguma coisa piscando na tela (cursor ou texto com SGR 5)? Só nesse
     /// caso o loop precisa acordar no meio do período.
     fn pisca_ativo(&self) -> bool {
-        (self.cursor_pisca() && self.term.cursor_visible) || self.tem_texto_piscando()
+        (self.cursor_pisca() && self.tabs[self.active].term.cursor_visible)
+            || self.tem_texto_piscando()
     }
 
     /// Há célula com SGR 5 na tela? Sem isto o loop não teria por que acordar
@@ -751,15 +978,17 @@ impl App {
             || (novo.font_size_pt - self.opts.font_size_pt).abs() > f32::EPSILON
             || (novo.dpi - self.opts.dpi).abs() > f32::EPSILON;
         let log_mudou = novo.debug_log != self.opts.debug_log;
-        self.term.scrollback_limit = novo.scrollback;
-        while self.term.scrollback.len() > self.term.scrollback_limit {
-            self.term.scrollback.pop_front();
+        self.tabs[self.active].term.scrollback_limit = novo.scrollback;
+        while self.tabs[self.active].term.scrollback.len()
+            > self.tabs[self.active].term.scrollback_limit
+        {
+            self.tabs[self.active].term.scrollback.pop_front();
         }
         self.opts.cfg = novo.cfg.clone();
         self.opts.scrollback = novo.scrollback;
-        self.term.theme = novo.cfg.theme();
+        self.tabs[self.active].term.theme = novo.cfg.theme();
         if let Some(r) = self.renderer.as_mut() {
-            r.apply_theme(&self.term.theme);
+            r.apply_theme(&self.tabs[self.active].term.theme);
             r.apply_layout(&novo.cfg);
         }
         if let Some(path) = novo.debug_log.as_deref() {
@@ -778,7 +1007,8 @@ impl App {
         // a margem mudou: o grid é outro, então pede o tamanho de novo
         if let (Some(win), Some(r)) = (self.window.as_ref(), self.renderer.as_ref()) {
             let (cols, rows) = self.grid_from_px(r.config.width, r.config.height);
-            if cols != self.term.cols || rows != self.term.rows {
+            if cols != self.tabs[self.active].term.cols || rows != self.tabs[self.active].term.rows
+            {
                 let size = win.inner_size();
                 self.apply_size(size.width, size.height);
             }
@@ -814,10 +1044,22 @@ impl App {
         self.drain();
         let blink = self.blink();
         let toast = self.toast_texto();
+        let tabs = if self.tabs.len() > 1 {
+            Some(self.tabinfo())
+        } else {
+            None
+        };
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
-        match renderer.render(&self.term, self.view_off, self.sel, blink, toast.as_deref()) {
+        match renderer.render(
+            &self.tabs[self.active].term,
+            self.tabs[self.active].view_off,
+            self.tabs[self.active].sel,
+            blink,
+            toast.as_deref(),
+            tabs.as_deref(),
+        ) {
             crate::render::FrameOutcome::Reconfigure => {
                 let (w, h) = (renderer.config.width, renderer.config.height);
                 renderer.resize(w, h);
@@ -828,16 +1070,22 @@ impl App {
     }
 
     fn apply_size(&mut self, w: u32, h: u32) {
-        let (cols, rows) = self.grid_from_px(w, h);
+        // a barra entra na conta antes do grid: com N abas a grade é uma linha
+        // mais baixa, e todas as abas acompanham (o pty de cada uma é resizado)
         if let Some(r) = self.renderer.as_mut() {
+            let bar = r.fonts.ch * f32::from(u8::from(self.tabs.len() > 1));
+            r.set_bar(bar);
             r.resize(w, h);
         }
-        if cols != self.term.cols || rows != self.term.rows {
-            self.term.resize(cols, rows);
-            if let Some(pty) = self.pty.as_mut() {
-                pty.resize(cols as u16, rows as u16);
+        let (cols, rows) = self.grid_from_px(w, h);
+        for t in &mut self.tabs {
+            if cols != t.term.cols || rows != t.term.rows {
+                t.term.resize(cols, rows);
+                if let Some(pty) = t.pty.as_mut() {
+                    pty.resize(cols as u16, rows as u16);
+                }
+                t.view_off = 0;
             }
-            self.view_off = 0;
         }
         if !self.spawned {
             if let Some(wake) = self.wake.clone() {
@@ -877,35 +1125,37 @@ impl App {
                     None => (0.0, 0.0),
                 };
                 let at = self.cell_at(self.cursor_px.0, self.cursor_px.1);
-                let sel_json = match self.sel {
+                let sel_json = match self.tabs[self.active].sel {
                     Some(s) => serde_json::json!({
                         "a": [s.a.line, s.a.col],
                         "b": [s.b.line, s.b.col],
-                        "scrolled": self.term.scrolled,
+                        "scrolled": self.tabs[self.active].term.scrolled,
                     }),
                     None => serde_json::Value::Null,
                 };
                 debugsock::ok(serde_json::json!({
                     "pid": std::process::id(),
-                    "cols": self.term.cols,
-                    "rows": self.term.rows,
-                    "cursor": [self.term.cy, self.term.cx],
-                    "title": self.term.title,
-                    "view_off": self.view_off,
-                    "scrolled": self.term.scrolled,
-                    "scrollback": self.term.scrollback.len(),
-                    "alt": self.term.in_alt_screen(),
-                    "sync": self.term.sync_output,
-                    "mouse_mode": self.term.mouse_mode,
-                    "mouse_sgr": self.term.mouse_sgr,
-                    "mouse_utf8": self.term.mouse_utf8,
+                    "cols": self.tabs[self.active].term.cols,
+                    "rows": self.tabs[self.active].term.rows,
+                    "cursor": [self.tabs[self.active].term.cy, self.tabs[self.active].term.cx],
+                    "title": self.tabs[self.active].term.title,
+                    "view_off": self.tabs[self.active].view_off,
+                    "scrolled": self.tabs[self.active].term.scrolled,
+                    "scrollback": self.tabs[self.active].term.scrollback.len(),
+                    "alt": self.tabs[self.active].term.in_alt_screen(),
+                    "sync": self.tabs[self.active].term.sync_output,
+                    "mouse_mode": self.tabs[self.active].term.mouse_mode,
+                    "mouse_sgr": self.tabs[self.active].term.mouse_sgr,
+                    "mouse_utf8": self.tabs[self.active].term.mouse_utf8,
                     "cursor_px": [self.cursor_px.0, self.cursor_px.1],
                     "cell_at": [at.0, at.1],
                     "sel": sel_json,
                     "cell": [cw, ch],
                     "font": match &self.renderer { Some(r) => r.fonts.family.clone(), None => String::new() },
                     "font_px": match &self.renderer { Some(r) => r.fonts.px, None => 0.0 },
-                    "tabs": 1,
+                    "tabs": self.tabs.len(),
+                    "active": self.active,
+                    "tab_titles": self.tabs.iter().map(Tab::title).collect::<Vec<_>>(),
                     "workspaces": 1,
                     "errors": [],
                 }))
@@ -922,13 +1172,13 @@ impl App {
                     .unwrap_or(40)
                     .clamp(1, 2000) as usize;
                 let lines: Vec<String> = match where_ {
-                    "history" => self.term.history_text(start, count),
-                    "screen" => (start..(start + count).min(self.term.rows))
-                        .map(|y| self.term.row_text(y))
+                    "history" => self.tabs[self.active].term.history_text(start, count),
+                    "screen" => (start..(start + count).min(self.tabs[self.active].term.rows))
+                        .map(|y| self.tabs[self.active].term.row_text(y))
                         .collect(),
-                    _ => self
+                    _ => self.tabs[self.active]
                         .term
-                        .visible_rows(self.view_off)
+                        .visible_rows(self.tabs[self.active].view_off)
                         .iter()
                         .skip(start)
                         .take(count)
@@ -939,7 +1189,7 @@ impl App {
             },
             "write" => match req.get("data").and_then(|v| v.as_str()) {
                 Some(data) => {
-                    if let Some(pty) = self.pty.as_mut() {
+                    if let Some(pty) = self.tabs[self.active].pty.as_mut() {
                         pty.write(data.as_bytes());
                     }
                     debugsock::ok(serde_json::json!({}))
@@ -967,10 +1217,32 @@ impl App {
                 }
                 debugsock::ok(serde_json::json!({ "requested": [cols, rows] }))
             },
+            // abas por socket: o que o teclado faz, testável sem XTest
+            "tab" => {
+                let op = req.get("op").and_then(|v| v.as_str()).unwrap_or("state");
+                match op {
+                    "new" => self.new_tab(),
+                    "close" => self.close_tab(),
+                    "select" => {
+                        let n = req
+                            .get("n")
+                            .and_then(serde_json::Value::as_u64)
+                            .unwrap_or(0) as usize;
+                        self.select_tab(n);
+                    },
+                    "state" => {},
+                    outro => return debugsock::err(format!("op de tab: {outro:?}")),
+                }
+                debugsock::ok(serde_json::json!({
+                    "tabs": self.tabs.len(),
+                    "active": self.active,
+                    "titles": self.tabs.iter().map(Tab::title).collect::<Vec<_>>(),
+                }))
+            },
             "keys" => match req.get("data").and_then(|v| v.as_str()) {
                 Some(spec) => {
-                    let bytes = encode_spec(spec, self.term.app_cursor);
-                    if let Some(pty) = self.pty.as_mut() {
+                    let bytes = encode_spec(spec, self.tabs[self.active].term.app_cursor);
+                    if let Some(pty) = self.tabs[self.active].pty.as_mut() {
                         pty.write(&bytes);
                     }
                     let hex = hex(&bytes);
@@ -1001,23 +1273,150 @@ impl App {
     }
 
     fn spawn_shell(&mut self, cols: usize, rows: usize, wake: Arc<dyn Fn() + Send + Sync>) {
+        self.spawn_in(self.active, cols, rows, wake, None);
+    }
+
+    /// Sobe o pty de uma aba (a primeira, ou uma nova herdando o cwd).
+    fn spawn_in(
+        &mut self,
+        i: usize,
+        cols: usize,
+        rows: usize,
+        wake: Arc<dyn Fn() + Send + Sync>,
+        cwd: Option<&std::path::Path>,
+    ) {
         let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
         match Pty::spawn(
             self.opts.cmd.as_deref(),
             self.opts.cfg.shell.as_deref(),
+            cwd,
             cols as u16,
             rows as u16,
             tx,
             wake,
         ) {
             Ok(p) => {
-                self.pty = Some(p);
-                self.rx = Some(rx);
+                self.tabs[i].pty = Some(p);
+                self.tabs[i].rx = Some(rx);
             },
             Err(e) => {
                 eprintln!("bzmux: {e}");
                 self.exiting = true;
             },
+        }
+    }
+
+    /// Nova aba (I1): herda o cwd da aba corrente (I2) e vira a ativa.
+    ///
+    /// O `--cmd` vale só para a primeira: abrir outra aba com o comando de
+    /// depuração repetiria o teste, não abriria um shell.
+    fn new_tab(&mut self) {
+        let Some(wake) = self.wake.clone() else {
+            return;
+        };
+        let (cols, rows) = (
+            self.tabs[self.active].term.cols,
+            self.tabs[self.active].term.rows,
+        );
+        let cwd = self.tabs[self.active].cwd();
+        let mut tab = Tab::new(cols, rows);
+        tab.term.scrollback_limit = self.opts.scrollback;
+        tab.term.theme = self.tabs[self.active].term.theme.clone();
+        self.tabs.push(tab);
+        self.active = self.tabs.len() - 1;
+        // a barra pode ter aparecido agora: a grade de todas encolhe uma linha
+        if let Some(w) = self.window.as_ref() {
+            let s = w.inner_size();
+            self.apply_size(s.width, s.height);
+        }
+        let (cols, rows) = (
+            self.tabs[self.active].term.cols,
+            self.tabs[self.active].term.rows,
+        );
+        // `--cmd` só vale para a primeira aba: repetir o comando de depuração
+        // na segunda não abriria shell nenhum
+        self.spawn_tab(self.active, cols, rows, wake, cwd.as_deref(), None);
+        self.sync_title();
+        self.redraw();
+    }
+
+    /// Sobe o pty de uma aba nova, com o `--cmd` só quando é permitido.
+    fn spawn_tab(
+        &mut self,
+        i: usize,
+        cols: usize,
+        rows: usize,
+        wake: Arc<dyn Fn() + Send + Sync>,
+        cwd: Option<&std::path::Path>,
+        cmd: Option<&str>,
+    ) {
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        match Pty::spawn(
+            cmd,
+            self.opts.cfg.shell.as_deref(),
+            cwd,
+            cols as u16,
+            rows as u16,
+            tx,
+            wake,
+        ) {
+            Ok(p) => {
+                self.tabs[i].pty = Some(p);
+                self.tabs[i].rx = Some(rx);
+            },
+            Err(e) => {
+                eprintln!("bzmux: {e}");
+                self.exiting = true;
+            },
+        }
+    }
+
+    /// Fecha a aba ativa (I3).
+    fn close_tab(&mut self) {
+        self.close_tab_at(self.active);
+    }
+
+    /// Fecha uma aba (I3): mata o pty e escolhe a próxima. Fechar a última
+    /// fecha o app (I20) — é o que o `Ctrl+Shift+W` no último terminal faz.
+    fn close_tab_at(&mut self, i: usize) {
+        if let Some(pty) = self.tabs[i].pty.as_mut() {
+            pty.kill();
+        }
+        self.tabs.remove(i);
+        if self.tabs.is_empty() {
+            self.exiting = true;
+            return;
+        }
+        self.active = self.active.min(self.tabs.len() - 1);
+        if let Some(w) = self.window.as_ref() {
+            let s = w.inner_size();
+            self.apply_size(s.width, s.height);
+        }
+        self.sync_title();
+        self.redraw();
+    }
+
+    /// Troca de aba (Alt+N). Fora da faixa, não faz nada.
+    fn select_tab(&mut self, i: usize) {
+        if i >= self.tabs.len() || i == self.active {
+            return;
+        }
+        self.active = i;
+        self.sync_title();
+        if let Some(w) = self.window.as_ref() {
+            w.request_redraw();
+        }
+    }
+
+    /// Título da janela = título da aba ativa (I17), para o WM e a taskbar.
+    fn sync_title(&mut self) {
+        let titulo = self.tabs[self.active].title();
+        if titulo == self.last_title {
+            return;
+        }
+        self.last_title.clone_from(&titulo);
+        if let Some(w) = self.window.as_ref() {
+            w.set_title(&format!("{titulo} — bzmux"));
         }
     }
 }
@@ -1132,6 +1531,7 @@ impl ApplicationHandler<UserEvent> for App {
         let size = window.inner_size();
         self.renderer = Some(renderer);
         self.window = Some(window.clone());
+        self.sync_title();
         let proxy = self.proxy.clone();
         self.wake = Some(Arc::new(move || {
             let _ = proxy.send_event(UserEvent::Wake);
@@ -1140,7 +1540,10 @@ impl ApplicationHandler<UserEvent> for App {
         // nascendo antes, os primeiros KB saem na largura do pedido e o
         // primeiro resize do WM embaralha o que já estava na tela
         self.apply_size(size.width, size.height);
-        let (cols, rows) = (self.term.cols, self.term.rows);
+        let (cols, rows) = (
+            self.tabs[self.active].term.cols,
+            self.tabs[self.active].term.rows,
+        );
 
         if let Some(path) = self.opts.debug_socket.clone() {
             match DebugServer::start(&path, self.proxy.clone()) {
@@ -1220,9 +1623,9 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::MouseWheel { delta, .. } => {
                 self.on_wheel(delta);
             },
-            WindowEvent::Focused(focused) if self.term.focus_report => {
+            WindowEvent::Focused(focused) if self.tabs[self.active].term.focus_report => {
                 let seq = if focused { "\x1b[I" } else { "\x1b[O" };
-                if let Some(pty) = self.pty.as_mut() {
+                if let Some(pty) = self.tabs[self.active].pty.as_mut() {
                     pty.write(seq.as_bytes());
                 }
             },
@@ -1273,12 +1676,49 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         event_loop.set_control_flow(ControlFlow::WaitUntil(quando));
-        // filho saiu: fecha a janela (fase 1 = uma sessão por janela)
-        let exited = self.pty.as_mut().is_some_and(super::pty::Pty::child_exited);
-        if exited {
+        // flash do BEL (I13): acorda quando o primeiro rótulo apaga e
+        // redesenha uma vez para tirar o destaque
+        let agora = std::time::Instant::now();
+        let mut apagou = false;
+        for t in &mut self.tabs {
+            if t.bell_at
+                .is_some_and(|b| agora.duration_since(b) >= FLASH_DUR)
+            {
+                t.bell_at = None;
+                apagou = true;
+            }
+        }
+        if apagou {
+            if let Some(w) = self.window.as_ref() {
+                w.request_redraw();
+            }
+        }
+        let proximo_flash = self
+            .tabs
+            .iter()
+            .filter_map(|t| t.bell_at)
+            .map(|b| b + FLASH_DUR)
+            .min();
+        if let Some(q) = proximo_flash {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                q.min(std::time::Instant::now() + Duration::from_millis(250)),
+            ));
+        }
+
+        // aba cujo shell morreu fecha sozinha; a última fecha o app (I20)
+        if let Some(morta) = (0..self.tabs.len()).find(|&i| {
+            self.tabs[i]
+                .pty
+                .as_mut()
+                .is_some_and(super::pty::Pty::child_exited)
+        }) {
             self.drain();
-            self.redraw();
-            event_loop.exit();
+            if self.tabs.len() == 1 {
+                self.redraw();
+                event_loop.exit();
+            } else {
+                self.close_tab_at(morta);
+            }
         }
     }
 
@@ -1288,7 +1728,7 @@ impl ApplicationHandler<UserEvent> for App {
             eprintln!("prof: {summary}");
             logln(&format!("prof: {summary}"));
         }
-        if let Some(pty) = self.pty.as_mut() {
+        if let Some(pty) = self.tabs[self.active].pty.as_mut() {
             pty.kill();
         }
         self.debug = None;
