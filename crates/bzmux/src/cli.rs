@@ -189,3 +189,219 @@ fn float(it: &mut impl Iterator<Item = String>, flag: &str) -> Result<f32, Strin
     v.parse()
         .map_err(|_| format!("{flag} espera um número: {v}"))
 }
+
+/// Equivalente ao `argv_parsing` do `checks.py`: o parsing de argv e o merge
+/// CLI > arquivo > padrões não abrem janela, então cabem num teste comum (o
+/// `--selftest` só roda o núcleo, que não conhece `cli.rs`).
+#[cfg(test)]
+mod checks_cli {
+    use bzmux_core::config::Bell;
+
+    use super::*;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    /// `parse` devolve `Err` também para `--help`/`--version`; `Overrides`
+    /// (de propósito) não tem `Debug`, então nada de `unwrap`/`expect` aqui.
+    fn ok(v: &[&str]) -> Overrides {
+        match parse(args(v)) {
+            Ok(o) => o,
+            Err(e) => panic!("{v:?} devia ser válido: {e}"),
+        }
+    }
+
+    fn erro(v: &[&str]) -> String {
+        match parse(args(v)) {
+            Ok(_) => panic!("{v:?} devia ser erro de uso"),
+            Err(e) => e,
+        }
+    }
+
+    fn perto(a: f32, b: f32) -> bool {
+        (a - b).abs() < f32::EPSILON
+    }
+
+    fn conf_temporario(nome: &str, texto: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("bzmux-{}-{nome}.conf", std::process::id()));
+        std::fs::write(&p, texto).expect("escrever o config de teste");
+        p
+    }
+
+    #[test]
+    fn argv_vazio_nao_pede_nada() {
+        // sem argumento nada é sobrescrito: os padrões entram no `build`
+        let o = ok(&[]);
+        assert!(o.cmd.is_none(), "cmd");
+        assert!(o.cols.is_none() && o.rows.is_none(), "grade");
+        assert!(o.config.is_none(), "config");
+        assert!(o.font_family.is_none() && o.font_size_pt.is_none() && o.dpi.is_none());
+        assert!(o.scrollback.is_none(), "scrollback");
+        assert!(o.debug_socket.is_none() && o.debug_log.is_none());
+        assert!(o.quit_after.is_none() && o.dump_to.is_none());
+        assert!(!o.no_vsync && !o.prof && !o.selftest);
+    }
+
+    #[test]
+    fn argv_comando_e_grade() {
+        let o = ok(&["--cmd", "mc", "--quit-after", "2"]);
+        assert_eq!(o.cmd.as_deref(), Some("mc"));
+        assert_eq!(o.quit_after, Some(2));
+        let o = ok(&["--cols", "100", "--rows", "40"]);
+        assert_eq!((o.cols, o.rows), (Some(100), Some(40)));
+        // grade vazia não existe: 0 vira 1
+        let o = ok(&["--cols", "0", "--rows", "0"]);
+        assert_eq!((o.cols, o.rows), (Some(1), Some(1)));
+    }
+
+    #[test]
+    fn argv_config_tem_dois_nomes() {
+        for nome in ["-c", "--config"] {
+            let o = ok(&[nome, "/tmp/x.conf"]);
+            assert_eq!(o.config.as_deref(), Some("/tmp/x.conf"), "{nome}");
+        }
+    }
+
+    #[test]
+    fn argv_debug_socket_e_log() {
+        // socket de introspecção: valor obrigatório, `auto` resolvido depois
+        for v in ["auto", "/tmp/b.sock"] {
+            let o = ok(&["--debug-socket", v]);
+            assert_eq!(o.debug_socket.as_deref(), Some(v));
+        }
+        // `--debug-log` troca o caminho; `off` passa cru ao `Options::build`
+        let o = ok(&["--debug-log", "/tmp/x.log"]);
+        assert_eq!(o.debug_log.as_deref(), Some("/tmp/x.log"));
+        let o = ok(&["--debug-log", "off"]);
+        assert_eq!(o.debug_log.as_deref(), Some("off"));
+    }
+
+    #[test]
+    fn argv_resto_das_opcoes() {
+        let o = ok(&[
+            "--font-family",
+            "Hack",
+            "--font-size",
+            "13.5",
+            "--dpi",
+            "120",
+            "--scrollback",
+            "500",
+            "--no-vsync",
+            "--prof",
+            "--selftest",
+            "--dump-to",
+            "/tmp/d.txt",
+        ]);
+        assert_eq!(o.font_family.as_deref(), Some("Hack"));
+        assert!(o.font_size_pt.is_some_and(|v| perto(v, 13.5)));
+        assert!(o.dpi.is_some_and(|v| perto(v, 120.0)));
+        assert_eq!(o.scrollback, Some(500));
+        assert!(o.no_vsync && o.prof && o.selftest);
+        assert_eq!(o.dump_to.as_deref(), Some("/tmp/d.txt"));
+        assert!(o.quit_after.is_none() && o.cmd.is_none());
+    }
+
+    #[test]
+    fn argv_erro_de_uso() {
+        // valor faltando: a mensagem nomeia a opção
+        let e = erro(&["--cmd"]);
+        assert!(e.contains("--cmd") && e.starts_with("falta"), "{e}");
+        let e = erro(&["--debug-socket"]);
+        assert!(e.contains("--debug-socket"), "{e}");
+        // opção desconhecida: erro de uso com a ajuda junto
+        let e = erro(&["--nada"]);
+        assert!(e.starts_with("opção desconhecida"), "{e}");
+        assert!(e.contains("--nada") && e.contains("--cmd"), "{e}");
+        // valor que não é número
+        let e = erro(&["--quit-after", "abc"]);
+        assert!(e.contains("--quit-after") && e.contains("abc"), "{e}");
+        let e = erro(&["--font-size", "grande"]);
+        assert!(e.contains("--font-size") && e.contains("grande"), "{e}");
+        let e = erro(&["--rows", "-1"]);
+        assert!(e.contains("--rows"), "{e}");
+    }
+
+    #[test]
+    fn argv_help_e_version() {
+        // --help e --version saem pelo mesmo caminho (Err), sem abrir janela
+        let h = erro(&["--help"]);
+        assert!(h.starts_with("bzmux"), "{h}");
+        assert!(h.contains("USO:") && h.contains("--selftest"), "{h}");
+        assert_eq!(erro(&["-h"]), h);
+        let v = erro(&["--version"]);
+        assert_eq!(v, format!("bzmux {}", env!("CARGO_PKG_VERSION")));
+        assert_eq!(erro(&["-V"]), v);
+    }
+
+    #[test]
+    fn merge_do_arquivo_e_cli_vence() {
+        // o usuário só sobrescreve o que escreveu; a CLI vence chave a chave
+        let p = conf_temporario(
+            "merge",
+            "shell /bin/sh\nfont_family DejaVu Sans Mono\nfont_size 14\n\
+             scrollback 200\nbell visual\n",
+        );
+        let base = Overrides {
+            config: Some(p.to_string_lossy().into_owned()),
+            ..Overrides::default()
+        };
+        let (opts, errs) = Options::build(base.clone());
+        assert!(errs.is_empty(), "{errs:?}");
+        assert_eq!(opts.font_family, "DejaVu Sans Mono");
+        assert!(perto(opts.font_size_pt, 14.0));
+        assert_eq!(opts.scrollback, 200);
+        assert_eq!(opts.cfg.bell, Bell::Visual);
+        // `shell` é dado, não resolução: quem decide é o `pty::spawn`
+        assert_eq!(opts.cfg.shell.as_deref(), Some("/bin/sh"));
+        assert_eq!(opts.cfg_path.as_deref(), Some(p.as_path()));
+        // o que nem arquivo nem CLI trazem cai no padrão do código
+        assert_eq!((opts.cols, opts.rows), (80, 24));
+        assert!(perto(opts.dpi, 96.0) && opts.vsync);
+        assert_eq!(opts.cmd, None);
+
+        let cli = Overrides {
+            font_family: Some("Hack".to_string()),
+            font_size_pt: Some(20.0),
+            scrollback: Some(50),
+            ..base
+        };
+        let (opts, errs) = Options::build(cli);
+        assert!(errs.is_empty(), "{errs:?}");
+        assert_eq!(opts.font_family, "Hack");
+        assert!(perto(opts.font_size_pt, 20.0));
+        assert_eq!(opts.scrollback, 50);
+        // a chave que a CLI não tocou continua vindo do arquivo
+        assert_eq!(opts.cfg.bell, Bell::Visual);
+
+        // arquivo inexistente: valem os padrões, sem erro
+        let sumido = p.with_extension("nao-existe");
+        let (opts, errs) = Options::build(Overrides {
+            config: Some(sumido.to_string_lossy().into_owned()),
+            ..Overrides::default()
+        });
+        assert!(errs.is_empty(), "{errs:?}");
+        assert_eq!(opts.font_family, "Monospace");
+        assert_eq!(opts.scrollback, 10_000);
+        assert_eq!(opts.debug_log, None);
+        assert_eq!(opts.cfg.shell, None);
+        assert_eq!(opts.cfg_path.as_deref(), Some(sumido.as_path()));
+
+        // erro é por linha: o válido antes do erro aplica, o inválido fica no
+        // padrão; quem loga/mostra é o `main` (aqui a lista vem com a linha)
+        let ruim = conf_temporario("ruim", "font_size 20\nbell beep\n");
+        let (opts, errs) = Options::build(Overrides {
+            config: Some(ruim.to_string_lossy().into_owned()),
+            ..Overrides::default()
+        });
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert_eq!(errs[0].line, 2);
+        assert!(perto(opts.font_size_pt, 20.0));
+        assert_eq!(opts.cfg.bell, Bell::None);
+
+        for f in [&p, &ruim] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+}
