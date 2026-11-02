@@ -236,6 +236,16 @@ impl Tab {
     }
 }
 
+/// Nome em edição no cartão (I8).
+struct Rename {
+    /// Índice lógico do workspace.
+    ws: usize,
+    texto: String,
+    /// O nome antigo está inteiro no campo e ainda não foi tocado: a primeira
+    /// tecla o substitui, como o "selecionado" do `Gtk.Entry` do Python.
+    substituir: bool,
+}
+
 /// Um conjunto de abas com nome próprio (I5).
 ///
 /// O workspace da frente mora em [`App::tabs`]/[`App::active`]; os outros
@@ -285,6 +295,11 @@ pub struct App {
     /// Aba apertada na barra, para arrastar e reordenar (I10): índice e o x
     /// do press, para só começar o arrasto depois de andar de verdade.
     bar_press: Option<(usize, f64)>,
+    /// Renomeando um workspace no cartão (I8). Enquanto é `Some`, o teclado é
+    /// do nome — o filho não vê as teclas.
+    rename: Option<Rename>,
+    /// Instante do último clique no cartão, para o duplo clique (I8).
+    card_click: Option<(usize, std::time::Instant)>,
     /// Último giro tratado na barra (instante e sentido). O X11 manda
     /// **dois** eventos por entalhe (press e release), e sem isto um entalhe
     /// troca de aba e o segundo desfaz.
@@ -357,6 +372,8 @@ impl App {
             parked: Vec::new(),
             ws_idx: 0,
             bar_press: None,
+            rename: None,
+            card_click: None,
             bar_wheel: None,
             mods: ModifiersState::empty(),
             cursor_px: (0.0, 0.0),
@@ -400,9 +417,14 @@ impl App {
         let total = self.ws_count();
         let mut cards = Vec::with_capacity(total);
         for i in 0..total {
+            let em_edicao = self
+                .rename
+                .as_ref()
+                .filter(|r| r.ws == i)
+                .map(|r| format!("{}|", r.texto));
             if i == self.ws_idx {
                 cards.push(crate::render::WsCard {
-                    nome: self.ws_name.clone(),
+                    nome: em_edicao.unwrap_or_else(|| self.ws_name.clone()),
                     titulo: self.tabs[self.active].title(),
                     n_tabs: self.tabs.len(),
                     ativa: true,
@@ -411,7 +433,7 @@ impl App {
                 let slot = if i < self.ws_idx { i } else { i - 1 };
                 let w = &self.parked[slot];
                 cards.push(crate::render::WsCard {
-                    nome: w.name.clone(),
+                    nome: em_edicao.unwrap_or_else(|| w.name.clone()),
                     titulo: w.tabs[w.active].title(),
                     n_tabs: w.tabs.len(),
                     ativa: false,
@@ -643,6 +665,10 @@ impl App {
     /// depois o encoder. Qualquer tecla de verdade volta ao vivo.
     fn on_key(&mut self, event: &winit::event::KeyEvent) {
         self.blink_reset();
+        // renomeando no cartão: o teclado é do nome, não do terminal (I8)
+        if self.rename_key(event) {
+            return;
+        }
         let ctrl = self.mods.control_key();
         let shift = self.mods.shift_key();
         let named = match &event.logical_key {
@@ -868,10 +894,20 @@ impl App {
         use winit::event::MouseButton::{Left, Middle};
         match (state, button) {
             (ElementState::Pressed, Left) => {
-                // clique no cartão da sidebar troca de workspace (I9)
+                // clique no cartão da sidebar troca de workspace (I9) e o
+                // duplo clique edita o nome no lugar (I8)
                 if let Some(i) = self.card_at(self.cursor_px.0, self.cursor_px.1) {
                     self.bar_press = None;
-                    self.select_workspace(i);
+                    let duplo = self
+                        .card_click
+                        .is_some_and(|(j, quando)| j == i && quando.elapsed().as_millis() < 400);
+                    self.card_click = Some((i, std::time::Instant::now()));
+                    if duplo {
+                        self.card_click = None;
+                        self.start_rename(i);
+                    } else {
+                        self.select_workspace(i);
+                    }
                     return;
                 }
                 // clique na barra de abas troca de aba (não seleciona texto);
@@ -1768,6 +1804,86 @@ impl App {
         self.spawn_tab(self.active, cols, rows, wake, cwd.as_deref(), None);
         self.sync_title();
         self.redraw();
+    }
+
+    /// Começa a renomear o workspace `i` no cartão (I8).
+    fn start_rename(&mut self, i: usize) {
+        if i >= self.ws_count() {
+            return;
+        }
+        let atual = if i == self.ws_idx {
+            self.ws_name.clone()
+        } else {
+            let slot = if i < self.ws_idx { i } else { i - 1 };
+            self.parked[slot].name.clone()
+        };
+        self.rename = Some(Rename {
+            ws: i,
+            texto: atual,
+            substituir: true,
+        });
+        self.redraw();
+    }
+
+    /// Aplica (ou descarta) o nome em edição. `keep=false` é o Esc.
+    fn finish_rename(&mut self, keep: bool) {
+        let Some(Rename { ws: i, texto, .. }) = self.rename.take() else {
+            return;
+        };
+        if !keep {
+            self.redraw();
+            return;
+        }
+        let novo = texto.trim().to_string();
+        if novo.is_empty() {
+            self.redraw();
+            return;
+        }
+        if i == self.ws_idx {
+            self.ws_name = novo;
+        } else {
+            let slot = if i < self.ws_idx { i } else { i - 1 };
+            self.parked[slot].name = novo;
+        }
+        self.redraw();
+    }
+
+    /// Teclado durante o rename: digitar edita, Enter confirma, Esc cancela.
+    /// Devolve `true` quando a tecla foi consumida (o filho não a vê).
+    fn rename_key(&mut self, event: &winit::event::KeyEvent) -> bool {
+        if self.rename.is_none() {
+            return false;
+        }
+        match &event.logical_key {
+            Key::Named(NamedKey::Enter) => self.finish_rename(true),
+            Key::Named(NamedKey::Escape) => self.finish_rename(false),
+            Key::Named(NamedKey::Backspace) => {
+                if let Some(r) = self.rename.as_mut() {
+                    if r.substituir {
+                        r.texto.clear();
+                        r.substituir = false;
+                    } else {
+                        r.texto.pop();
+                    }
+                }
+                self.redraw();
+            },
+            Key::Character(s) => {
+                if let Some(r) = self.rename.as_mut() {
+                    if r.substituir {
+                        r.texto.clear();
+                        r.substituir = false;
+                    }
+                    // só o que cabe no cartão; o resto seria invisível
+                    if r.texto.chars().count() < 40 {
+                        r.texto.push_str(s);
+                    }
+                }
+                self.redraw();
+            },
+            _ => {},
+        }
+        true
     }
 
     /// Troca o workspace da frente sem matar nada: só troca quem ocupa o
