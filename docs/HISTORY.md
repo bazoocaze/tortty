@@ -178,3 +178,18 @@ Decisões que valem registro:
 Provado com 6 testes novos (`reflow_*`, 38 no total) e no app: 30 parágrafos de
 152 colunas, `100x20 → 50x20` re-quebra sem perder nada, `→ 120x20` junta de
 volta na largura inteira.
+
+## 2026-11-02 — F2: a visão não é arrastada pelo output (D10)
+
+Quem rolava para o histórico e ficava lendo era empurrado: chegava uma linha e
+a visão descia junto com o conteúdo. Agora `drain` guarda `scrolled` e o
+tamanho do histórico antes do `feed` e pede a `Term::view_after_output` a
+correção — `off + linhas_que_saíram - linhas_que_caíram_do_teto`.
+
+A segunda parcela importa: com o histórico cheio (teto de 1000), cada linha
+nova empurra `d` e descarta `d` das velhas — se o descarte não entrasse na
+conta, a visão andaria para o vazio.
+
+Verificado no app: `view_off` 27 → 29 → 31 com dois `echo` chegando, e a
+primeira linha visível continuou "echo linha-12". Dois testes no núcleo
+(inclusive com `scrollback_limit = 3`).

@@ -259,6 +259,26 @@ impl Term {
         self.wrap_pending = false;
     }
 
+    /// Quanto a visão precisa andar para o leitor não perder a linha em que
+    /// estava, depois de `prev_scrolled`/`prev_hist` (D10).
+    ///
+    /// Saíram `d` linhas por cima desde a leitura anterior: o conteúdo subiu
+    /// `d`, então a visão desce `d`. Mas se o histórico bateu no teto, as
+    /// `dropped` mais antigas morreram — e aí elas não contam.
+    #[must_use]
+    pub fn view_after_output(&self, off: usize, prev_scrolled: u64, prev_hist: usize) -> usize {
+        if off == 0 {
+            return 0;
+        }
+        let d = self.scrolled.saturating_sub(prev_scrolled) as usize;
+        if d == 0 {
+            return off;
+        }
+        let sb = self.scrollback.len();
+        let dropped = (prev_hist + d).saturating_sub(sb);
+        (off + d - dropped).min(sb)
+    }
+
     pub fn resize(&mut self, cols: usize, rows: usize) {
         let cols = cols.max(1);
         let rows = rows.max(1);
@@ -1941,6 +1961,43 @@ mod tests {
             .map(Row::text)
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn visao_fica_no_lugar_enquanto_chega_output() {
+        let mut t = Term::new(20, 4);
+        for i in 0..10 {
+            t.feed(format!("l{i}\r\n").as_bytes());
+        }
+        // leitor foi para 3 linhas atrás
+        let (sc, hist, off) = (t.scrolled, t.scrollback.len(), 3usize);
+        let antes = t.abs_row(t.scrolled as i64 - off as i64).map(Row::text);
+        // chegam mais 2 linhas: ele continua na mesma linha absoluta
+        t.feed(b"nova1\r\nnova2\r\n");
+        let off2 = t.view_after_output(off, sc, hist);
+        let depois = t.abs_row(t.scrolled as i64 - off2 as i64).map(Row::text);
+        assert_eq!(antes, depois, "a visão andou junto com o output");
+        // no fundo (off=0) fica no fundo
+        assert_eq!(t.view_after_output(0, sc, hist), 0);
+    }
+
+    #[test]
+    fn visao_desconta_o_que_caiu_do_historico_cheio() {
+        let mut t = Term::new(20, 2);
+        t.scrollback_limit = 3;
+        for i in 0..5 {
+            t.feed(format!("l{i}\r\n").as_bytes());
+        }
+        let (sc, hist, off) = (t.scrolled, t.scrollback.len(), 2usize);
+        // 5 linhas de uma vez: o histórico (teto 3) descarta as mais velhas
+        for i in 5..10 {
+            t.feed(format!("l{i}\r\n").as_bytes());
+        }
+        let off2 = t.view_after_output(off, sc, hist);
+        assert!(
+            off2 <= t.scrollback.len(),
+            "não pode apontar além do histórico"
+        );
     }
 
     #[test]

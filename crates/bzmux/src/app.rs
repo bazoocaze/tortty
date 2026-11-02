@@ -467,10 +467,16 @@ impl App {
             }
         }
         if !bytes.is_empty() {
+            // D10: quem está lendo o histórico não pode ser arrastado pelo
+            // output que chega — a visão anda junto com as linhas que saíram.
+            let (sc, hist) = (self.term.scrolled, self.term.scrollback.len());
             let t0 = std::time::Instant::now();
             self.term.feed(&bytes);
             if prof::enabled() {
                 prof::add_parse(t0.elapsed().as_nanos() as u64, bytes.len());
+            }
+            if self.view_off > 0 {
+                self.view_off = self.term.view_after_output(self.view_off, sc, hist);
             }
         }
         let out = self.term.take_child_out();

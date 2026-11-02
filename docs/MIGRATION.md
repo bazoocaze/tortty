@@ -164,7 +164,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | D7 | Qualquer tecla volta ao vivo (modificador não conta) | `view.py:1290-1292` → `app.rs` | feito |
 | D8 | Indicador `↑N` no canto quando no histórico | `view.py:1082-1091` → `render.rs` | feito |
 | D9 | Barra de rolagem (visual, arrastável) | não existe no Python | falta (**melhoria**) |
-| D10 | Visão fixada ao ler enquanto chega output | `view.py` + `term.py:1026-1078` | parcial: `view_off` existe; sem âncora por geração (A21) |
+| D10 | Visão fixada ao ler enquanto chega output | `view.py` + `term.py:1026-1078` → `Term::view_after_output` | feito |
 | D11 | Busca no scrollback | não existe | falta (**melhoria**) |
 
 ## 5. Entrada: teclado e protocolo do kitty
