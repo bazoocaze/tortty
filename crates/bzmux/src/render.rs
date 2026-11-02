@@ -102,8 +102,8 @@ pub struct Renderer {
     /// remontada (A17/G17). A lista final (`instances`) é a concatenação delas
     /// mais as imagens, o cromo e o cursor, na ordem de blend.
     por_linha: Vec<Vec<Instance>>,
-    /// Assinatura do último frame: o que mudou de tela inteira (ver `dano`).
-    assinatura: crate::dano::Assinatura,
+    /// Signature do último frame: o que mudou de tela inteira (ver `dano`).
+    assinatura: crate::damage::Signature,
     /// Geração do tema: sobe a cada `apply_theme` e força rebuild completo.
     tema_gen: u64,
     /// Contadores de `state` (prof): prova do dano sem olhar a tela.
@@ -400,7 +400,7 @@ impl Renderer {
             img_sampler,
             img_cache: HashMap::new(),
             por_linha: Vec::new(),
-            assinatura: crate::dano::Assinatura::default(),
+            assinatura: crate::damage::Signature::default(),
             tema_gen: 0,
             draws: 0,
             ultimo: "nenhum",
@@ -411,7 +411,7 @@ impl Renderer {
 
     /// Tema novo sem recriar a GPU (auto-reload e `OSC 4/10/11/12`).
     pub fn apply_theme(&mut self, t: &Theme) {
-        // qualquer coisa que mude cor de célula invalida o dano: as linhas
+        // qualquer coisa que mude cor de célula invalida o damage: as linhas
         // limpas ficariam com a paleta velha
         self.tema_gen = self.tema_gen.wrapping_add(1);
         self.palette = t.palette256();
@@ -1009,7 +1009,7 @@ impl Renderer {
 
         // A17/G17: quais linhas remontar. `blink` só entra na assinatura se
         // houver célula com SGR 5 à vista — o pisca do cursor não mora aqui.
-        let assinatura = crate::dano::Assinatura {
+        let assinatura = crate::damage::Signature {
             aba,
             cols,
             rows: rows.len(),
@@ -1020,7 +1020,7 @@ impl Renderer {
             fg: self.fg,
             bg: self.bg,
         };
-        let dano = crate::dano::decide(
+        let dano = crate::damage::decide(
             &assinatura,
             &mut self.assinatura,
             term.dirty_all,
@@ -1036,12 +1036,12 @@ impl Renderer {
             }
         } else {
             match dano {
-                crate::dano::Dano::Tudo => {
+                crate::damage::Damage::All => {
                     for (y, row) in rows.iter().enumerate() {
                         self.por_linha[y] = self.linha(row, y, cols, sel, blink);
                     }
                 },
-                crate::dano::Dano::Linhas(v) => {
+                crate::damage::Damage::Rows(v) => {
                     for y in v {
                         if let Some(row) = rows.get(y) {
                             self.por_linha[y] = self.linha(row, y, cols, sel, blink);
