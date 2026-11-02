@@ -23,15 +23,15 @@ não por estimativa.
 | 6. Entrada: mouse, seleção, clipboard, paste | 14 | 1 | 5 | 0 | 20 |
 | 7. Desenho: fonte, geometria, cores | 12 | 2 | 3 | 0 | 17 |
 | 8. Imagens do protocolo kitty | 0 | 0 | 16 | 3 | 19 |
-| 9. Janela: abas, workspaces, cromo | 9 | 2 | 9 | 0 | 20 |
+| 9. Janela: abas, workspaces, cromo | 18 | 0 | 2 | 0 | 20 |
 | 10. Janela: ciclo de vida, geometria, estado | 3 | 0 | 8 | 0 | 11 |
 | 11. Configuração e CLI | 17 | 1 | 3 | 0 | 21 |
 | 12. Debug socket e instrumentação | 7 | 5 | 3 | 0 | 15 |
 | 13. Plataforma e distribuição | 5 | 0 | 5 | 0 | 10 |
 | 14. Testes e verificação | 3 | 2 | 4 | 0 | 9 |
-| **total** | **155** | **16** | **78** | **3** | **252** |
+| **total** | **164** | **14** | **71** | **3** | **252** |
 
-Equivalente pronto: **64.7%** (feito conta 1, parcial conta 0,5). O total serve para ver
+Equivalente pronto: **67.9%** (feito conta 1, parcial conta 0,5). O total serve para ver
 tendência; o que decide o que fazer agora é a linha e a seção 17.
 
 ## Regras deste documento
@@ -271,22 +271,22 @@ Rust (sem linha, para não envelhecer a cada commit).
 | I2 | Nova aba herda cwd da aba corrente (último descendente do pty) | `window.py:140-153,904-919` | feito: `/proc/<pid>/cwd` do descendente mais fundo; `cd /tmp` → aba nova em `/tmp` |
 | I3 | Fechar aba (fecha pty, remove página, escolhe a próxima) | `window.py:184-201` | feito: `Ctrl+Shift+W`; aba de shell morto fecha sozinha |
 | I4 | Título da aba por OSC 0/2, senão `basename(cwd)`, senão `bzmux` | `window.py:277-286` | feito: `Tab::title` (OSC → cwd → `bzmux`) |
-| I5 | Workspace = conjunto de abas, com nome e renumeração | `window.py:798-848` | falta |
-| I6 | Sidebar com cartões (`n`, nome, título, k abas) | `window.py:289-301` | falta |
-| I7 | Sidebar escondida com 1 workspace | `window.py:396-400` | falta |
-| I8 | Renomear workspace inline (duplo clique, Enter/Esc/focus-out) | `window.py:315-356` | falta |
-| I9 | Clique do meio fecha aba (no rótulo) e workspace (no cartão) | `window.py:208-212,307-309` | falta |
-| I10 | Arrastar aba para reordenar | `window.py:173` | falta |
-| I11 | Roda do mouse na barra de abas | `window.py:100` | falta |
-| I12 | Toast (erro/aviso) com fila e timeout | `window.py:411-465,677-740` → `render.rs:toast` | feito: faixa invertida na 1ª linha, 3,5 s, mensagem igual seguida vira `(×N)` |
+| I5 | Workspace = conjunto de abas, com nome e renumeração | `window.py:798-848` → `app.rs:Workspace` | feito: `parked` guarda os outros inteiros (pty vivo); trocar é swap; ordem lógica estável |
+| I6 | Sidebar com cartões (`n`, nome, título, k abas) | `window.py:289-301` → `render.rs:sidebar` | feito: coluna de 18 células; cartão ativo invertido; título trunca com `…` |
+| I7 | Sidebar escondida com 1 workspace | `window.py:396-400` | feito: `side_w` = 0 com um workspace; a grade ganha as colunas de volta |
+| I8 | Renomear workspace inline (duplo clique, Enter/Esc) | `window.py:315-356` | feito: duplo clique no cartão; 1ª tecla substitui (como o `Gtk.Entry` selecionado), Enter grava, Esc descarta, `\|` é o cursor |
+| I9 | Clique do meio fecha aba (no rótulo) e workspace (no cartão) | `window.py:208-212,307-309` | feito no Rust (o Python **não** tinha: só o cartão); o clique esquerdo troca |
+| I10 | Arrastar aba para reordenar | `window.py:173` → `app.rs:bar_drag` | feito: anda uma aba de largura com o botão apertado na barra e a aba troca de lugar |
+| I11 | Roda do mouse na barra de abas | `window.py:100` | feito: circula entre as abas; o X11 manda press+release por entalhe, e o par é deduplicado (10 ms) |
+| I12 | Toast (erro/aviso) com fila e timeout | `window.py:411-465,677-740` → `render.rs:toast` | feito: faixa invertida na **última** linha (o topo é da barra), 3,5 s, repetida vira `(×N)` |
 | I13 | Bell visual: flash do rótulo por 800 ms (800 ms, `BELL_BG`) | `window.py:255-275` → `render.rs:tabbar` | feito: `color3` por 800 ms, inclusive em aba de segundo plano |
 | I14 | Bell audível (`beep`) | `window.py:666-669` | feito (`bell audible` escreve BEL no stdout; sem `beep` de toolkit) |
-| I15 | Atalhos de aba/workspace (Ctrl+Shift+T/W/N/Q/F2, Alt+N, Super+N/Q) | `window.py:854-898` | parcial: Ctrl+Shift+T/W e Alt+1..9 feitos; falta Ctrl+Shift+N/Q/F2 e Super (F4b) |
+| I15 | Atalhos de aba/workspace (Ctrl+Shift+T/W/N/Q/F2, Alt+N, Super+N/Q) | `window.py:854-898` | feito: Ctrl+Shift+T/W/N/Q/F2, Ctrl+Shift+1..9, Alt+1..9, Super+N/Q/1..9 |
 | I16 | Dígito de atalho por keycode cru (sobrevive a ABNT2) | `window.py:70-84` → `digit_of` (tecla física) | feito |
 | I17 | Título da janela = título da aba ativa | `window.py:375,921-926` | feito: `<título> — bzmux`, só quando muda |
 | I18 | Abas/workspaces persistentes entre execuções | não existem (`LIMITATIONS.md:141`) | falta (**melhoria**) |
 | I19 | Splits (mais de um terminal na mesma view) | não existe (P39) | falta (**melhoria**) |
-| I20 | Fechar última aba fecha o workspace; último workspace fecha o app | `window.py:196-197,836-845` | parcial: última aba fecha o app; falta o nível de workspace |
+| I20 | Fechar última aba fecha o workspace; último workspace fecha o app | `window.py:196-197,836-845` | feito: `drop_empty_workspace` promove o primeiro estacionado, ou fecha o app |
 
 ## 10. Janela: ciclo de vida, geometria, estado
 
@@ -458,9 +458,12 @@ configuração anterior (`linha 3: 'afffont_size': chave desconhecida` no log).
 Desvios: erro de config ainda vai para o log, não para toast (K13 depende do
 toast da F4); o **pisca** do cursor da config não anima ainda (G12).
 
-**F4 — Abas e workspaces (I1-I17).** O motivo do projeto existir.
-Pronto quando: Ctrl+Shift+T/W/N/Q, Alt+N, Super+N/Q, sidebar com cartões,
-renomear, flash de bell, título por OSC.
+**F4 — Abas e workspaces (I1-I17). FEITA em 2026-11-02** — critério
+conferido: Ctrl+Shift+T/W (aba) e N/Q (workspace), Ctrl+Shift+1..9 e Alt+1..9 e
+Super+N/Q/1..9, sidebar com cartões (some com um workspace só), duplo clique
+renomeia, clique esquerdo troca e meio fecha, arrastar reordena, roda na barra
+circula, flash de bell e título por OSC 0/2. Ficam fora, por serem melhoria:
+abas/workspaces persistentes (I18) e splits (I19).
 
 **F5 — Protocolos de entrada completos (E12-E19, F7, C14, F17).**
 Kitty keyboard, mouse em pixels, hyperlink clicável.
