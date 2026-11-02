@@ -672,3 +672,9 @@ máquina, então é código + teste, não verificação ao vivo.
 Verificação ao vivo (X11 + `xdotool`): sem estado → `980x640`; estado `900×600`
 em `120,90` → restaura os dois; `100×80` → `980x640`; canto em `9000,9000` →
 `980x640`; JSON torto → `980x640` com arquivo reescrito são.
+
+O esquema do arquivo é **o mesmo** do Python (`x`, `y`, `w`, `h`, `max`), no
+mesmo caminho, de propósito: os dois terminais leem o estado um do outro — o que
+muda é só a formatação de quem gravou por último (o Python escreve com espaços,
+o Rust em JSON compacto). O `~/.local/state/bzmux/window.json` desta máquina, por
+exemplo, foi escrito pelo tortty-python e é lido pelo Rust sem conversão.
