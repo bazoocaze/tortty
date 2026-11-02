@@ -738,8 +738,12 @@ impl App {
         {
             self.tabs[self.active].view_off = 0;
         }
-        let Some(bytes) = keys::encode(event, self.mods, self.tabs[self.active].term.app_cursor)
-        else {
+        let Some(bytes) = keys::encode(
+            event,
+            self.mods,
+            self.tabs[self.active].term.app_cursor,
+            self.tabs[self.active].term.kbd_flags,
+        ) else {
             return;
         };
         if let Some(pty) = self.tabs[self.active].pty.as_mut() {
@@ -1638,7 +1642,11 @@ impl App {
             },
             "keys" => match req.get("data").and_then(|v| v.as_str()) {
                 Some(spec) => {
-                    let bytes = encode_spec(spec, self.tabs[self.active].term.app_cursor);
+                    let bytes = encode_spec(
+                        spec,
+                        self.tabs[self.active].term.app_cursor,
+                        self.tabs[self.active].term.kbd_flags,
+                    );
                     if let Some(pty) = self.tabs[self.active].pty.as_mut() {
                         pty.write(&bytes);
                     }
@@ -2017,7 +2025,7 @@ impl App {
 /// Resolve modificadores e nome de tecla e entrega ao encoder real
 /// (`keys::encode_parts`) — não há tabela paralela aqui. Tecla que o encoder
 /// não conhece devolve vazio, e o socket responde `keys: [0]`.
-fn encode_spec(spec: &str, app_cursor: bool) -> Vec<u8> {
+fn encode_spec(spec: &str, app_cursor: bool, kbd_flags: u32) -> Vec<u8> {
     let parts: Vec<&str> = spec.split('+').filter(|p| !p.is_empty()).collect();
     let Some((key, mods_spec)) = parts.split_last() else {
         return Vec::new();
@@ -2064,12 +2072,12 @@ fn encode_spec(spec: &str, app_cursor: bool) -> Vec<u8> {
         _ => None,
     };
     if let Some(n) = named {
-        return crate::keys::encode_parts(Some(n), None, None, mods, app_cursor)
+        return crate::keys::encode_parts(Some(n), None, None, mods, app_cursor, kbd_flags)
             .unwrap_or_default();
     }
     if key.chars().count() == 1 {
         let ch = key.to_string();
-        return crate::keys::encode_parts(None, Some(&ch), Some(&ch), mods, app_cursor)
+        return crate::keys::encode_parts(None, Some(&ch), Some(&ch), mods, app_cursor, kbd_flags)
             .unwrap_or_default();
     }
     Vec::new()
