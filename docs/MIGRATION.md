@@ -16,22 +16,22 @@ não por estimativa.
 | área | feito | parcial | falta | não | total |
 |---|---|---|---|---|---|
 | 1. Núcleo: célula, cores, grade | 17 | 0 | 1 | 0 | 18 |
-| 2. Parser: controles, CSI, modos | 26 | 2 | 0 | 0 | 28 |
+| 2. Parser: controles, CSI, modos | 27 | 1 | 0 | 0 | 28 |
 | 3. Parser: SGR e OSC | 13 | 0 | 0 | 0 | 13 |
 | 4. Scrollback e visão do histórico | 8 | 0 | 0 | 0 | 8 |
 | 5. Entrada: teclado e protocolo do kitty | 16 | 0 | 0 | 0 | 16 |
-| 6. Entrada: mouse, seleção, clipboard, paste | 13 | 1 | 0 | 0 | 14 |
+| 6. Entrada: mouse, seleção, clipboard, paste | 14 | 0 | 0 | 0 | 14 |
 | 7. Desenho: fonte, geometria, cores | 11 | 2 | 3 | 0 | 16 |
 | 8. Imagens do protocolo kitty | 0 | 0 | 13 | 3 | 16 |
 | 9. Janela: abas, workspaces, cromo | 18 | 0 | 0 | 0 | 18 |
 | 10. Janela: ciclo de vida, geometria, estado | 5 | 0 | 5 | 0 | 10 |
-| 11. Configuração e CLI | 16 | 0 | 2 | 0 | 18 |
+| 11. Configuração e CLI | 18 | 0 | 0 | 0 | 18 |
 | 12. Debug socket e instrumentação | 14 | 0 | 0 | 0 | 14 |
 | 13. Plataforma e distribuição | 5 | 0 | 5 | 0 | 10 |
 | 14. Testes e verificação | 3 | 2 | 4 | 0 | 9 |
-| **total** | **165** | **7** | **33** | **3** | **208** |
+| **total** | **169** | **5** | **31** | **3** | **208** |
 
-Equivalente pronto: **81.0%** (feito conta 1, parcial conta 0,5). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
+Equivalente pronto: **82.5%** (feito conta 1, parcial conta 0,5). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
 tendência; o que decide o que fazer agora é a linha e a seção 16.
 
 ## Regras deste documento
@@ -88,7 +88,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 |---|---|---|---|
 | B1 | C0: BEL (contador), BS, HT, LF, CR | `term.py:408-441` → `term.rs` | feito |
 | B2 | C0: CAN/SUB cancelam sequência | `term.py:858-861` → `term.rs` | feito |
-| B3 | C1 (0x80-0x9F) | desenha como texto (`term.py:862-866`) | parcial: UTF-8 os transforma em U+0080..U+009F imprimíveis |
+| B3 | C1 (0x80-0x9F) | desenha como texto (`term.py:862-866`) | feito: C1 (0x80-0x9F) desenha como texto, igual ao Python — conferido `0xC2 0x80`/`0xC2 0x9B` no meio de "abc": 5 células, `a\u{80}b\u{9b}c`. `CSI` de 8 bits não é interpretado em nenhum dos dois |
 | B4 | `ESC [ ` CSI, `ESC ]` OSC, `ESC P/_/^/X` DCS/APC/PM/SOS | `term.py:871-876` → `term.rs` | feito |
 | B6 | `ESC 7`/`ESC 8` DECSC/DECRC | `term.py:882-888` → `term.rs` | feito |
 | B9 | `ESC M` RI (scroll reverso na margem) | só move cursor (`term.py:879-881`) → `term.rs` | feito |
@@ -179,7 +179,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | F6 | Motion com botão (`?1002`) e sem botão (`?1003`) | `view.py:1199-1205` → `app.rs` | feito |
 | F8 | Seleção por arrasto com limiar de 3 px | `view.py:1145-1200` → `app.rs` | feito |
 | F9 | Seleção em âncora absoluta (sobrevive a rolagem e output) | `view.py:854-881`, `term.py:1056-1075` → `select.rs` | feito (o reflow da A21 ainda mata a âncora, igual ao Python) |
-| F12 | Seleção: cópia no release para PRIMARY; `copy_on_select` copia CLIPBOARD | `view.py:1168-1176` → `app.rs` | parcial: copia para PRIMARY **e** CLIPBOARD; `copy_on_select` vira opção na F3 |
+| F12 | Seleção: cópia no release para PRIMARY; `copy_on_select` copia CLIPBOARD | `view.py:1168-1176` → `app.rs` | feito: no release copia PRIMARY sempre e CLIPBOARD só com `copy_on_select`; sem arrasto real (`a == b`) não copia e o PRIMARY do usuário fica intacto — mesma condição do `view.py:1168-1176` |
 | F13 | Ctrl+Shift+C copia (seleção ou viewport), Ctrl+Shift+V cola | `view.py:1271-1277,1239-1254` → `app.rs` | feito |
 | F14 | Botão 2 cola PRIMARY | `view.py:1152-1154` → `clip.rs` | feito |
 | F15 | Bracketed paste envolve payload em `200~`/`201~` | `term.py:1082-1091` → `select.rs` | feito |
@@ -286,8 +286,8 @@ Rust (sem linha, para não envelhecer a cada commit).
 | K14 | `-c/--config`, `--cmd`, `--debug-socket`, `--debug-log` | `cli.py:31-41` → `cli.rs` | feito |
 | K15 | `--quit-after`, `--dump-to`, `--selftest`, `--install-shortcut` | `cli.py:35-96` | feito: `--selftest`, `--quit-after`, `--dump-to` (o atalho de desktop é do `install.sh`) |
 | K16 | `--version`, `--help`, código 2 para uso inválido | `cli.py:85-101` → `cli.rs` | feito |
-| K18 | `.desktop` + ícone (`--install-shortcut`) | `shortcut.py:34-136` | falta |
-| K19 | WM_CLASS estável (`StartupWMClass`) | `cli.py:130-131` | falta |
+| K18 | `.desktop` + ícone (`--install-shortcut`) | `shortcut.py:34-136` | feito: `.desktop` + SVG saem do `install.sh` (com `StartupWMClass`); não existe `--install-shortcut` como flag do binário — o instalador é o dono, ter os dois seria segunda fonte |
+| K19 | WM_CLASS estável (`StartupWMClass`) | `cli.py:130-131` | feito: `WM_CLASS` explícito (`with_name("bzmux","bzmux")`), não herdado do executável — conferido rodando o binário renomeado (`/tmp/fz…`): `WM_CLASS(STRING) = "bzmux", "bzmux"` |
 
 ## 12. Debug socket e instrumentação
 

@@ -2294,6 +2294,14 @@ impl ApplicationHandler<UserEvent> for App {
         let attrs = Window::default_attributes()
             .with_title("bzmux")
             .with_inner_size(PhysicalSize::new(w.max(1), h.max(1)));
+        // K19: `WM_CLASS` explícito, não herdado do nome do executável — é o
+        // que o `StartupWMClass` do `.desktop` procura para agrupar a janela
+        // no dock. Binário renomeado (`bzmux-rs`) não pode mudar o WM_CLASS.
+        #[cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))]
+        let attrs = {
+            use winit::platform::x11::WindowAttributesExtX11 as _;
+            attrs.with_name("bzmux", "bzmux")
+        };
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
             Err(e) => {
