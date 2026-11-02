@@ -295,6 +295,10 @@ pub struct App {
     /// Aba apertada na barra, para arrastar e reordenar (I10): índice e o x
     /// do press, para só começar o arrasto depois de andar de verdade.
     bar_press: Option<(usize, f64)>,
+    /// Última tecla comida por um atalho local: a soltura dela não vai ao
+    /// filho (o protocolo do kitty relata soltura, e um atalho comido não pode
+    /// virar `CSI ...:3u`).
+    consumido: Option<winit::keyboard::PhysicalKey>,
     /// Renomeando um workspace no cartão (I8). Enquanto é `Some`, o teclado é
     /// do nome — o filho não vê as teclas.
     rename: Option<Rename>,
@@ -372,6 +376,7 @@ impl App {
             parked: Vec::new(),
             ws_idx: 0,
             bar_press: None,
+            consumido: None,
             rename: None,
             card_click: None,
             bar_wheel: None,
@@ -664,79 +669,22 @@ impl App {
     /// Tecla: atalhos da janela primeiro (o filho nunca vê Ctrl+Shift+C/V),
     /// depois o encoder. Qualquer tecla de verdade volta ao vivo.
     fn on_key(&mut self, event: &winit::event::KeyEvent) {
-        self.blink_reset();
-        // renomeando no cartão: o teclado é do nome, não do terminal (I8)
-        if self.rename_key(event) {
-            return;
-        }
-        let ctrl = self.mods.control_key();
-        let shift = self.mods.shift_key();
-        let named = match &event.logical_key {
-            Key::Named(n) => Some(*n),
-            _ => None,
-        };
-        let ch = match &event.logical_key {
-            Key::Character(s) => s.chars().next(),
-            _ => None,
-        };
-
-        if self.shortcut_ws(event, named, ch) {
-            return;
-        }
-        // Alt+1..9 escolhe a aba; Alt+0 é a décima (I15). O dígito não vaza
-        // para o filho — é o que o Python fazia.
-        if alt_digit_only(self.mods) {
-            if let Some(n) = digit_of(event) {
-                self.select_tab(if n == 0 { 9 } else { n - 1 });
+        let press = event.state == ElementState::Pressed;
+        if press {
+            if self.press_locais(event) {
+                // a tecla foi do app: a soltura dela também é (senão o release
+                // de Ctrl+Shift+1 virava `CSI 49;1:3u` no filho)
+                self.consumido = Some(event.physical_key);
                 return;
             }
-        }
-        // Ctrl+Shift+C/V são do terminal, não do app: sem isso o Ctrl+Shift+C
-        // vira o mesmo ^C de Ctrl+C e mata o processo (bug do P-bzmux)
-        if ctrl && shift {
-            match ch.map(|c| c.to_ascii_lowercase()) {
-                Some('c') => {
-                    self.copy();
-                    return;
-                },
-                Some('v') => {
-                    self.paste();
-                    return;
-                },
-                _ => {},
-            }
-        }
-        // Shift+PgUp/PgDn/Home/End olham o histórico sem falar com o app
-        if shift && !ctrl {
-            match named {
-                Some(NamedKey::PageUp) => {
-                    self.scroll_view(self.tabs[self.active].term.rows as i64 - 1);
-                    return;
-                },
-                Some(NamedKey::PageDown) => {
-                    self.scroll_view(-(self.tabs[self.active].term.rows as i64 - 1));
-                    return;
-                },
-                Some(NamedKey::Home) if !self.tabs[self.active].term.scrollback.is_empty() => {
-                    self.scroll_view(self.tabs[self.active].term.scrollback.len() as i64);
-                    return;
-                },
-                Some(NamedKey::End) => {
-                    self.scroll_view(-(self.tabs[self.active].term.scrollback.len() as i64));
-                    return;
-                },
-                _ => {},
-            }
-        }
-        // tecla de verdade volta ao vivo; só modificador não (senão o Shift
-        // do Shift+PgUp já resetava a visão antes de rolar)
-        if self.tabs[self.active].view_off > 0
-            && !matches!(
-                named,
-                Some(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super)
-            )
-        {
-            self.tabs[self.active].view_off = 0;
+            self.consumido = None;
+        } else if self.consumido == Some(event.physical_key) {
+            // o X11 solta Shift/Ctrl **antes** da tecla: o marcador não pode
+            // ser consumido por elas (era o vazamento do `CSI 49;1:3u`)
+            self.consumido = None;
+            return;
+        } else if self.tabs[self.active].term.kbd_flags & keys::F_EVENT_TYPES == 0 {
+            return;
         }
         let Some(bytes) = keys::encode(
             event,
@@ -752,6 +700,86 @@ impl App {
         if let Some(w) = self.window.as_ref() {
             w.request_redraw();
         }
+    }
+
+    /// Atalhos que comem a tecla antes do encoder. `true` = o filho não vê
+    /// nem o aperto nem a soltura.
+    fn press_locais(&mut self, event: &winit::event::KeyEvent) -> bool {
+        self.blink_reset();
+        // renomeando no cartão: o teclado é do nome, não do terminal (I8)
+        if self.rename_key(event) {
+            return true;
+        }
+        let ctrl = self.mods.control_key();
+        let shift = self.mods.shift_key();
+        let named = match &event.logical_key {
+            Key::Named(n) => Some(*n),
+            _ => None,
+        };
+        let ch = match &event.logical_key {
+            Key::Character(s) => s.chars().next(),
+            _ => None,
+        };
+
+        if self.shortcut_ws(event, named, ch) {
+            return true;
+        }
+        // Alt+1..9 escolhe a aba; Alt+0 é a décima (I15). O dígito não vaza
+        // para o filho — é o que o Python fazia.
+        if alt_digit_only(self.mods) {
+            if let Some(n) = digit_of(event) {
+                self.select_tab(if n == 0 { 9 } else { n - 1 });
+                return true;
+            }
+        }
+        // Ctrl+Shift+C/V são do terminal, não do app: sem isso o Ctrl+Shift+C
+        // vira o mesmo ^C de Ctrl+C e mata o processo (bug do P-bzmux)
+        if ctrl && shift {
+            match ch.map(|c| c.to_ascii_lowercase()) {
+                Some('c') => {
+                    self.copy();
+                    return true;
+                },
+                Some('v') => {
+                    self.paste();
+                    return true;
+                },
+                _ => {},
+            }
+        }
+        // Shift+PgUp/PgDn/Home/End olham o histórico sem falar com o app
+        if shift && !ctrl {
+            match named {
+                Some(NamedKey::PageUp) => {
+                    self.scroll_view(self.tabs[self.active].term.rows as i64 - 1);
+                    return true;
+                },
+                Some(NamedKey::PageDown) => {
+                    self.scroll_view(-(self.tabs[self.active].term.rows as i64 - 1));
+                    return true;
+                },
+                Some(NamedKey::Home) if !self.tabs[self.active].term.scrollback.is_empty() => {
+                    self.scroll_view(self.tabs[self.active].term.scrollback.len() as i64);
+                    return true;
+                },
+                Some(NamedKey::End) => {
+                    self.scroll_view(-(self.tabs[self.active].term.scrollback.len() as i64));
+                    return true;
+                },
+                _ => {},
+            }
+        }
+        // tecla de verdade volta ao vivo; só modificador não (senão o Shift
+        // do Shift+PgUp já resetava a visão antes de rolar)
+        if self.tabs[self.active].view_off > 0
+            && !matches!(
+                named,
+                Some(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super)
+            )
+        {
+            self.tabs[self.active].view_off = 0;
+        }
+        false
     }
 
     /// Movimento: só interessa ao app quando ele pediu `?1002`/`?1003`.
@@ -2207,9 +2235,9 @@ impl ApplicationHandler<UserEvent> for App {
                 self.mods = m.state();
             },
             WindowEvent::KeyboardInput { event, .. } => {
-                if event.state == ElementState::Pressed {
-                    self.on_key(&event);
-                }
+                // o release só tem valor no protocolo do kitty (flag 2); o
+                // caminho legado não relata soltura, e o `encode` devolve nada
+                self.on_key(&event);
             },
             WindowEvent::CursorMoved { position, .. } => {
                 self.on_cursor_moved(position.x, position.y);

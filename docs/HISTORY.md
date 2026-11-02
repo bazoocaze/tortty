@@ -412,3 +412,40 @@ coordenada em UTF-8 acima do teto de 222 (testes de unidade em `mouse.rs`).
 
 **Ferramenta:** `--selftest` no binário (14 checagens sem display nem GPU), no
 `check.sh` e no CI.
+
+## 2026-11-02 — teclado do kitty (E12-E15, E17-E20, B13)
+
+O filho liga flags por `CSI > u` e as teclas mudam de forma. As flags moram no
+`Term` (uma por aba, empilháveis) e o encoder só consulta: **estado no core,
+codificação em `keys.rs`** — a mesma divisão do `kitty_kbd.py`.
+
+| flag | o que muda |
+|---|---|
+| 1 (disambiguate) | ESC vira `CSI 27u`, Ctrl+a vira `CSI 97;5u`, seta com modificador vira `CSI 1;5A`; seta sem modificador continua no legado (e respeita DECCKM) |
+| 2 (event types) | `:1`/`:2`/`:3` — tecla segurada deu `CSI 97;1:2u` cinco vezes e `CSI 97;1;3u` na soltura |
+| 8 (all keys) | `a` vira `CSI 97u`; Shift+letra deixa de ser texto puro |
+| 16 (text) | `CSI 97;97u`, com o texto depois do código |
+
+Duas coisas que só apareceram com o teclado de verdade:
+
+1. **A soltura precisa chegar ao encoder.** O winit entrega `Released` e o app
+   descartava em `if event.state == Pressed`. Com a flag 2, o release é
+   informação. Mas atalho local não pode rodar duas vezes (Ctrl+Shift+N abriria
+   duas abas) — daí o atalho ficar só no aperto, e o release seguir sozinho
+   para o encoder.
+2. **Atalho comido come a soltura.** `Ctrl+Shift+1` trocava de workspace e
+   deixava `CSI 49;1:3u` no filho: o aperto era do app, a soltura vazava. E o
+   X11 solta **Shift e Ctrl antes** da tecla, então o marcador do aperto
+   consumido não pode ser limpo por elas (foi o `take()` cego que causou o
+   vazamento na primeira tentativa).
+
+Desvio conhecido, e é do Python também: Shift+letra sai como `CSI 65;2u` (o
+caractere já vem depois do shift) e não `CSI 97;2u` como no kitty — a tecla base
+exigiria uma tabela de layout. F3 saiu como `CSI 1;2R` (forma do kitty) e **não**
+`CSI 13;2~`: o `kitty_kbd.py` do Python tem F3 como `13 ~`, que é Shift+F3 do
+xterm.
+
+Verificação: `state`/`text` por socket com um filho em modo raw que imprime o
+hex do que recebe — as respostas de consulta (`?0u`, `?3u`, `?11u`) e as teclas
+(`97u`, `97;5u`, `97;1:2u`, `97;1:3u`, `27u`, `1;5A`, `1;2R`) lidas da tela, e
+o atalho local sem deixar rastro no filho.

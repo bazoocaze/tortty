@@ -16,10 +16,10 @@ não por estimativa.
 | área | feito | parcial | falta | não | total |
 |---|---|---|---|---|---|
 | 1. Núcleo: célula, cores, grade | 17 | 0 | 1 | 0 | 18 |
-| 2. Parser: controles, CSI, modos | 25 | 3 | 0 | 0 | 28 |
+| 2. Parser: controles, CSI, modos | 26 | 2 | 0 | 0 | 28 |
 | 3. Parser: SGR e OSC | 13 | 0 | 0 | 0 | 13 |
 | 4. Scrollback e visão do histórico | 8 | 0 | 0 | 0 | 8 |
-| 5. Entrada: teclado e protocolo do kitty | 8 | 0 | 8 | 0 | 16 |
+| 5. Entrada: teclado e protocolo do kitty | 16 | 0 | 0 | 0 | 16 |
 | 6. Entrada: mouse, seleção, clipboard, paste | 13 | 1 | 0 | 0 | 14 |
 | 7. Desenho: fonte, geometria, cores | 11 | 2 | 3 | 0 | 16 |
 | 8. Imagens do protocolo kitty | 0 | 0 | 13 | 3 | 16 |
@@ -29,9 +29,9 @@ não por estimativa.
 | 12. Debug socket e instrumentação | 7 | 5 | 2 | 0 | 14 |
 | 13. Plataforma e distribuição | 5 | 0 | 5 | 0 | 10 |
 | 14. Testes e verificação | 3 | 2 | 4 | 0 | 9 |
-| **total** | **145** | **14** | **46** | **3** | **208** |
+| **total** | **154** | **13** | **38** | **3** | **208** |
 
-Equivalente pronto: **73.1%** (feito conta 1, parcial conta 0,5). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
+Equivalente pronto: **77.2%** (feito conta 1, parcial conta 0,5). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
 tendência; o que decide o que fazer agora é a linha e a seção 16.
 
 ## Regras deste documento
@@ -94,7 +94,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | B9 | `ESC M` RI (scroll reverso na margem) | só move cursor (`term.py:879-881`) → `term.rs` | feito |
 | B10 | `ESC H` HTS, `ESC c` RIS | RIS `term.py:889-890` → `term.rs` | feito |
 | B12 | CSI cursor: CUU/CUD/CUF/CUB/CNL/CPL/CHA/VPA/CUP/HVP | `term.py:688-703` → `term.rs` | feito |
-| B13 | CSI `s`/`u` (SCOSC/SCORC) e `u` com prefixo = kitty kbd | `term.py:734-740` → `term.rs` | parcial: `s`/`u` feitos; kitty kbd falta (D-seção 5) |
+| B13 | CSI `s`/`u` (SCOSC/SCORC) e `u` com prefixo = kitty kbd | `term.py:734-740` → `term.rs` | feito: `CSI s`/`u` clássicos intactos e `u` com prefixo é o protocolo do kitty (`?`/`>`/`<`/`=`) |
 | B14 | IL/DL/ICH/DCH/ECH | `term.py:708-728` → `term.rs` | feito |
 | B16 | EL 0/1/2 e ED 0/1/2 | `term.py:704-707` → `term.rs` | feito |
 | B17 | ED 3 limpa scrollback + invalida âncoras | `term.py:456-465` → `term.rs` | feito |
@@ -158,14 +158,14 @@ Rust (sem linha, para não envelhecer a cada commit).
 | E6 | Alt como prefixo ESC em tecla especial e em texto | `keys.py:121-138,215-216` → `keys.rs` | feito (tecla especial vira `CSI 1;3x`, texto vira `ESC` + letra) |
 | E9 | Dead keys / composição (ABNT2 `~ ^ ´`) | `keys.py:13-44,219-227` → winit | feito (o winit entrega o texto composto; `Key::Dead` não gera byte) |
 | E10 | Texto imprimível vindo do evento (layout não-US) | `view.py:1295-1300` → `app.rs` | feito (usa `event.text` e cai em `acquired` quando vazio) |
-| E12 | Kitty kbd: `CSI > u` push, `CSI < n u` pop, `CSI = f;m u` set | `term.py:982-1001` | falta |
-| E13 | Kitty kbd: `CSI ? u` query | `term.py:986` | falta |
-| E14 | Kitty kbd flag 1 (disambiguate) | `kitty_kbd.py:25-52,115-119` | falta |
-| E15 | Kitty kbd flag 2 (event types, release `:3`) | `kitty_kbd.py:90-109` | falta |
-| E17 | Kitty kbd flag 8 (all keys as CSI u) | `kitty_kbd.py:127-135` | falta |
-| E18 | Kitty kbd flag 16 (associated text) | `kitty_kbd.py:62-79` | falta |
-| E19 | Release sem forma kitty não manda texto (bug do `pi`) | `kitty_kbd.py:90-99` | falta (depende de E12-E18) |
-| E20 | Atalhos locais têm precedência sobre o encoder | `view.py:1263-1267` | falta (não há atalhos locais ainda) |
+| E12 | Kitty kbd: `CSI > u` push, `CSI < n u` pop, `CSI = f;m u` set | `term.py:982-1001` | feito: `CSI > u` empilha (teto de 64, como o kitty), `CSI < n u` desempilha; `Term::kbd_flags` guarda por aba |
+| E13 | Kitty kbd: `CSI ? u` query | `term.py:986` | feito: `CSI ? u` responde `x1b[?<flags>u`; conferido ao vivo (`?0u`, `?3u`, `?11u` após cada push) |
+| E14 | Kitty kbd flag 1 (disambiguate) | `kitty_kbd.py:25-52,115-119` | feito: flag 1 — ESC vira `CSI 27u`, Ctrl+a `CSI 97;5u`, seta com modificador `CSI 1;5A`; seta sem modificador continua no legado (respeita DECCKM) |
+| E15 | Kitty kbd flag 2 (event types, release `:3`) | `kitty_kbd.py:90-109` | feito: flag 2 — `:1`/`:2`/`:3`; tecla segurada deu `CSI 97;1:2u` ×5 e release `:3` no pty (hex lido da tela) |
+| E17 | Kitty kbd flag 8 (all keys as CSI u) | `kitty_kbd.py:127-135` | feito: flag 8 — `a` vira `CSI 97u`, Shift+letra deixa de ser texto puro |
+| E18 | Kitty kbd flag 16 (associated text) | `kitty_kbd.py:62-79` | feito: flag 16 — `CSI 97;97u` (campo de texto depois do código) |
+| E19 | Release sem forma kitty não manda texto (bug do `pi`) | `kitty_kbd.py:90-99` | feito: release sem a flag 2 não manda nada; a soltura só chega ao encoder quando a flag existe (era o texto dobrado no `pi`) |
+| E20 | Atalhos locais têm precedência sobre o encoder | `view.py:1263-1267` | feito: atalho local roda antes do encoder **e** come a soltura da tecla (senão `Ctrl+Shift+1` deixava `CSI 49;1:3u` no filho; o X11 solta Shift/Ctrl antes da tecla) |
 
 ## 6. Entrada: mouse, seleção, clipboard, paste
 
