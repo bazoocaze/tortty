@@ -3,15 +3,16 @@
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 
-use bzmux_core::Term;
+use bzmux_core::{Anchor, Span, Term};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
-use winit::keyboard::{ModifiersState, NamedKey};
+use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
 use crate::cli::Options;
+use crate::clip::Clip;
 use crate::debugsock::{self, DebugServer};
 use crate::glyph::Fonts;
 use crate::keys;
@@ -64,6 +65,14 @@ pub struct App {
     cursor_px: (f64, f64),
     /// Botão que está apertado, para reportar release/movimento com ele.
     held: Option<u8>,
+    /// Seleção de texto (âncoras absolutas: sobrevive a rolagem e output).
+    sel: Option<Span>,
+    /// Âncora e pixel do press: o arrasto só nasce depois de 3 px.
+    press: Option<(Anchor, (f64, f64))>,
+    dragging: bool,
+    clip: Clip,
+    /// Fração de linha acumulada da roda (trackpad manda fração).
+    scroll_frac: f32,
     debug: Option<DebugServer>,
     /// Grid pedido pelo verbo `resize`; o WM pode arredondar em pixels, então
     /// `apply_size` corrige em passos até bater (como um terminal de verdade).
@@ -89,6 +98,11 @@ impl App {
             view_off: 0,
             cursor_px: (0.0, 0.0),
             held: None,
+            sel: None,
+            press: None,
+            dragging: false,
+            clip: Clip::new(),
+            scroll_frac: 0.0,
             debug: None,
             want: None,
             adjust_left: 0,
@@ -162,9 +176,85 @@ impl App {
         }
     }
 
+    /// Tecla: atalhos da janela primeiro (o filho nunca vê Ctrl+Shift+C/V),
+    /// depois o encoder. Qualquer tecla de verdade volta ao vivo.
+    fn on_key(&mut self, event: &winit::event::KeyEvent) {
+        let ctrl = self.mods.control_key();
+        let shift = self.mods.shift_key();
+        let named = match &event.logical_key {
+            Key::Named(n) => Some(*n),
+            _ => None,
+        };
+        let ch = match &event.logical_key {
+            Key::Character(s) => s.chars().next(),
+            _ => None,
+        };
+
+        // Ctrl+Shift+C/V são do terminal, não do app: sem isso o Ctrl+Shift+C
+        // vira o mesmo ^C de Ctrl+C e mata o processo (bug do P-bzmux)
+        if ctrl && shift {
+            match ch.map(|c| c.to_ascii_lowercase()) {
+                Some('c') => {
+                    self.copy();
+                    return;
+                },
+                Some('v') => {
+                    self.paste();
+                    return;
+                },
+                _ => {},
+            }
+        }
+        // Shift+PgUp/PgDn/Home/End olham o histórico sem falar com o app
+        if shift && !ctrl {
+            match named {
+                Some(NamedKey::PageUp) => {
+                    self.scroll_view(self.term.rows as i64 - 1);
+                    return;
+                },
+                Some(NamedKey::PageDown) => {
+                    self.scroll_view(-(self.term.rows as i64 - 1));
+                    return;
+                },
+                Some(NamedKey::Home) if !self.term.scrollback.is_empty() => {
+                    self.scroll_view(self.term.scrollback.len() as i64);
+                    return;
+                },
+                Some(NamedKey::End) => {
+                    self.scroll_view(-(self.term.scrollback.len() as i64));
+                    return;
+                },
+                _ => {},
+            }
+        }
+        // tecla de verdade volta ao vivo; só modificador não (senão o Shift
+        // do Shift+PgUp já resetava a visão antes de rolar)
+        if self.view_off > 0
+            && !matches!(
+                named,
+                Some(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super)
+            )
+        {
+            self.view_off = 0;
+        }
+        let Some(bytes) = keys::encode(event, self.mods, self.term.app_cursor) else {
+            return;
+        };
+        if let Some(pty) = self.pty.as_mut() {
+            pty.write(&bytes);
+        }
+        if let Some(w) = self.window.as_ref() {
+            w.request_redraw();
+        }
+    }
+
     /// Movimento: só interessa ao app quando ele pediu `?1002`/`?1003`.
     fn on_cursor_moved(&mut self, x: f64, y: f64) {
         self.cursor_px = (x, y);
+        if self.term.mouse_mode == 0 {
+            self.drag_select(x, y);
+            return;
+        }
         match self.term.mouse_mode {
             // 1002: movimento só com botão apertado
             2 if self.held.is_some() => {
@@ -178,13 +268,14 @@ impl App {
         }
     }
 
-    /// Press/release de botão. Sem `?1000/1002/1003` o evento é nosso
-    /// (seleção), não do filho.
+    /// Press/release de botão. Com `?1000/1002/1003` o evento vai para o
+    /// filho; sem eles o mouse é nosso (seleção/cópia).
     fn on_mouse_input(&mut self, state: ElementState, button: winit::event::MouseButton) {
         let Some(btn) = crate::mouse::from_winit(button) else {
             return;
         };
         if self.term.mouse_mode == 0 {
+            self.select_input(state, button);
             return;
         }
         match state {
@@ -208,10 +299,14 @@ impl App {
     /// Roda: do app quando ele pediu mouse e estamos no vivo; senão é rolagem
     /// do histórico (o wheel lendo histórico continua sendo nosso).
     fn on_wheel(&mut self, delta: MouseScrollDelta) {
+        // um entalhe vale 3 linhas (o mesmo do bzmux Python); trackpad manda
+        // pixel (ou fração) e o resto é acumulado em `scroll_frac`
         let (hx, lines) = match delta {
-            MouseScrollDelta::LineDelta(x, y) => (x, y),
-            // pixel delta (trackpad): uma "linha" de roda a cada 24 px
-            MouseScrollDelta::PixelDelta(p) => (0.0, p.y as f32 / 24.0),
+            MouseScrollDelta::LineDelta(x, y) => (x * 3.0, y * 3.0),
+            MouseScrollDelta::PixelDelta(p) => {
+                let ch = self.renderer.as_ref().map_or(19.0, |r| r.fonts.ch);
+                (0.0, p.y as f32 / ch)
+            },
         };
         if self.term.mouse_mode != 0 && self.view_off == 0 && (lines != 0.0 || hx != 0.0) {
             for (v, up, down) in [
@@ -227,16 +322,112 @@ impl App {
             }
             return;
         }
-        // roda para cima (delta positivo) entra no histórico
-        let sb = self.term.scrollback.len();
-        if lines > 0.0 {
-            self.view_off = (self.view_off + lines.ceil() as usize).min(sb);
-        } else {
-            self.view_off = self.view_off.saturating_sub((-lines).ceil() as usize);
+        self.scroll_frac += lines;
+        let n = self.scroll_frac.trunc();
+        self.scroll_frac -= n;
+        if n != 0.0 {
+            // roda para cima (delta positivo) entra no histórico
+            self.scroll_view(n as i64);
         }
-        if let Some(w) = self.window.as_ref() {
-            w.request_redraw();
+    }
+
+    /// Mouse do terminal: press fixa a âncora, arrasto vira seleção, release
+    /// copia. Um clique sozinho não pinta célula nem mexe no PRIMARY.
+    fn select_input(&mut self, state: ElementState, button: winit::event::MouseButton) {
+        use winit::event::MouseButton::{Left, Middle};
+        match (state, button) {
+            (ElementState::Pressed, Left) => {
+                // clicar no histórico NÃO volta ao vivo: o arrasto é para
+                // justamente copiar dali
+                self.sel = None;
+                let (col, row) = self.cell_at(self.cursor_px.0, self.cursor_px.1);
+                self.press = Some((self.term.anchor_at(self.view_off, row, col), self.cursor_px));
+                self.dragging = true;
+                self.redraw();
+            },
+            (ElementState::Released, Left) => {
+                self.dragging = false;
+                self.press = None;
+                if self.sel.is_some_and(|s| s.a != s.b) {
+                    // PRIMARY é a convenção do X11; o CLIPBOARD também, para
+                    // colar em app que só olha o CLIPBOARD (`copy_on_select`
+                    // vira opção na F3)
+                    if let Some(txt) = self.selection_text() {
+                        self.clip.set_primary(&txt);
+                        self.clip.set(&txt);
+                    }
+                } else {
+                    self.sel = None;
+                }
+                self.redraw();
+            },
+            (ElementState::Pressed, Middle) => {
+                // botão do meio cola o PRIMARY; colar fala com o app, então a
+                // visão vai para o vivo
+                self.view_off = 0;
+                if let Some(txt) = self.clip.primary_text() {
+                    self.write_paste(&txt);
+                }
+            },
+            _ => {},
         }
+    }
+
+    /// Arrasto: a seleção só nasce depois de 3 px (tremer o mouse com o botão
+    /// apertado não pode pintar uma célula em reverso).
+    fn drag_select(&mut self, x: f64, y: f64) {
+        let Some((anchor, (px, py))) = self.press else {
+            return;
+        };
+        if !self.dragging || ((x - px).abs() <= 3.0 && (y - py).abs() <= 3.0) {
+            return;
+        }
+        let (col, row) = self.cell_at(x, y);
+        let novo = Span::new(anchor, self.term.anchor_at(self.view_off, row, col));
+        if self.sel != Some(novo) {
+            self.sel = Some(novo);
+            self.redraw();
+        }
+    }
+
+    fn selection_text(&self) -> Option<String> {
+        self.sel.and_then(|s| self.term.span_text(&s))
+    }
+
+    /// Ctrl+Shift+C: a seleção ou, sem seleção, a viewport inteira.
+    fn copy(&mut self) {
+        let txt = self
+            .selection_text()
+            .unwrap_or_else(|| self.term.view_text(self.view_off));
+        if txt.is_empty() {
+            return;
+        }
+        self.clip.set(&txt);
+        self.clip.set_primary(&txt);
+    }
+
+    /// Ctrl+Shift+V: cola do CLIPBOARD.
+    fn paste(&mut self) {
+        if let Some(txt) = self.clip.text() {
+            self.view_off = 0;
+            self.write_paste(&txt);
+        }
+    }
+
+    /// Escreve o texto no filho respeitando o bracketed paste (`?2004`).
+    fn write_paste(&mut self, txt: &str) {
+        let payload = self.term.paste_payload(txt);
+        if let Some(pty) = self.pty.as_mut() {
+            pty.write(&payload);
+        }
+        self.redraw();
+    }
+
+    /// Rola a visão em `n` linhas (positivo = para o histórico).
+    fn scroll_view(&mut self, n: i64) {
+        let sb = self.term.scrollback.len() as i64;
+        self.view_off = (self.view_off as i64 + n).clamp(0, sb) as usize;
+        self.redraw();
     }
 
     fn drain(&mut self) {
@@ -277,7 +468,7 @@ impl App {
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
-        match renderer.render(&self.term, self.view_off) {
+        match renderer.render(&self.term, self.view_off, self.sel) {
             crate::render::FrameOutcome::Reconfigure => {
                 let (w, h) = (renderer.config.width, renderer.config.height);
                 renderer.resize(w, h);
@@ -330,6 +521,15 @@ impl App {
                     Some(r) => (r.fonts.cw, r.fonts.ch),
                     None => (0.0, 0.0),
                 };
+                let at = self.cell_at(self.cursor_px.0, self.cursor_px.1);
+                let sel_json = match self.sel {
+                    Some(s) => serde_json::json!({
+                        "a": [s.a.line, s.a.col],
+                        "b": [s.b.line, s.b.col],
+                        "scrolled": self.term.scrolled,
+                    }),
+                    None => serde_json::Value::Null,
+                };
                 debugsock::ok(serde_json::json!({
                     "pid": std::process::id(),
                     "cols": self.term.cols,
@@ -344,6 +544,9 @@ impl App {
                     "mouse_mode": self.term.mouse_mode,
                     "mouse_sgr": self.term.mouse_sgr,
                     "mouse_utf8": self.term.mouse_utf8,
+                    "cursor_px": [self.cursor_px.0, self.cursor_px.1],
+                    "cell_at": [at.0, at.1],
+                    "sel": sel_json,
                     "cell": [cw, ch],
                     "font": match &self.renderer { Some(r) => r.fonts.family.clone(), None => String::new() },
                     "font_px": match &self.renderer { Some(r) => r.fonts.px, None => 0.0 },
@@ -640,23 +843,7 @@ impl ApplicationHandler<UserEvent> for App {
             },
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed {
-                    if self.view_off > 0 {
-                        self.view_off = 0; // qualquer tecla volta para o vivo
-                    }
-                    let keysym_scroll = self.view_off;
-                    let _ = keysym_scroll;
-                    let Some(bytes) = keys::encode(&event, self.mods, self.term.app_cursor) else {
-                        return;
-                    };
-                    if self.view_off > 0 {
-                        self.view_off = 0;
-                    }
-                    if let Some(pty) = self.pty.as_mut() {
-                        pty.write(&bytes);
-                    }
-                    if let Some(w) = self.window.as_ref() {
-                        w.request_redraw();
-                    }
+                    self.on_key(&event);
                 }
             },
             WindowEvent::CursorMoved { position, .. } => {

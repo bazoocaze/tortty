@@ -116,7 +116,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | B24 | `?1000`/`?1002`/`?1003` (estado do mouse) | `term.py:635-639` → `term.rs` | feito (estado; a codificação falta — E) |
 | B25 | `?1006` SGR mouse (estado) | `term.py:640-641` → `term.rs` | feito (estado; codificação falta) |
 | B26 | `?1004` focus report (estado + envio no app) | `term.py:642-643` → `term.rs`, `app.rs` | feito |
-| B27 | `?2004` bracketed paste (estado) | `term.py:648-651` → `term.rs` | parcial: falta envolver o payload no paste |
+| B27 | `?2004` bracketed paste + payload `200~`/`201~` | `term.py:648-651,1082-1091` → `select.rs` | feito |
 | B28 | `?2026` synchronized output | `term.py:652-655` | parcial: estado existe, o frame não é segurado |
 | B29 | DSR/CPR `CSI 6 n`, status `CSI 5 n` | `term.py:772-773` → `term.rs` | feito |
 | B30 | DA1 `CSI c`, DA2 `CSI > c` | `term.py:743-749` → `term.rs` | feito |
@@ -159,9 +159,9 @@ Rust (sem linha, para não envelhecer a cada commit).
 | D2 | Flag de quebra mole paralela ao histórico | `term.py:106-118` → `grid.rs` | feito |
 | D3 | `visible_rows(off)` sempre devolve `rows` linhas | `term.py:1006-1024` → `term.rs` | feito |
 | D4 | Roda do mouse rola 3 linhas | `view.py:1208-1226` → `app.rs` | feito |
-| D5 | Roda com delta fracionário (trackpad) acumula | não existe (GDK smooth é descartado) | falta (**melhoria**) |
-| D6 | Shift+PgUp/PgDn/Home/End | `view.py:1285-1292` | falta |
-| D7 | Qualquer tecla volta ao vivo (modificador não conta) | `view.py:1290-1292` | falta |
+| D5 | Roda com delta fracionário (trackpad) acumula | não existe (GDK smooth é descartado) → `app.rs` | feito (**melhoria**) |
+| D6 | Shift+PgUp/PgDn/Home/End | `view.py:1285-1292` → `app.rs` | feito |
+| D7 | Qualquer tecla volta ao vivo (modificador não conta) | `view.py:1290-1292` → `app.rs` | feito |
 | D8 | Indicador `↑N` no canto quando no histórico | `view.py:1082-1091` | falta |
 | D9 | Barra de rolagem (visual, arrastável) | não existe no Python | falta (**melhoria**) |
 | D10 | Visão fixada ao ler enquanto chega output | `view.py` + `term.py:1026-1078` | parcial: `view_off` existe; sem âncora por geração (A21) |
@@ -204,15 +204,15 @@ Rust (sem linha, para não envelhecer a cada commit).
 | F6 | Motion com botão (`?1002`) e sem botão (`?1003`) | `view.py:1199-1205` → `app.rs` | feito |
 | F7 | Mouse reporting em pixels (`?1016`) | não existe | falta (**melhoria**) |
 | F20 | `?1005` coordenada em UTF-8 (sai do teto de 222) | Python ignora (`term.py:644`) | feito (**melhoria**) |
-| F8 | Seleção por arrasto com limiar de 3 px | `view.py:1145-1200` | falta |
-| F9 | Seleção em âncora absoluta (sobrevive a rolagem e output) | `view.py:854-881`, `term.py:1056-1075` | falta (depende de A21) |
+| F8 | Seleção por arrasto com limiar de 3 px | `view.py:1145-1200` → `app.rs` | feito |
+| F9 | Seleção em âncora absoluta (sobrevive a rolagem e output) | `view.py:854-881`, `term.py:1056-1075` → `select.rs` | feito (o reflow da A21 ainda mata a âncora, igual ao Python) |
 | F10 | Seleção por palavra (duplo clique) e por linha (triplo) | não existe (`LIMITATIONS.md:71-72`) | falta (**melhoria**) |
 | F11 | Seleção retangular / bloco | não existe | falta (**melhoria**) |
-| F12 | Seleção: cópia no release para PRIMARY; `copy_on_select` copia CLIPBOARD | `view.py:1168-1176` | falta |
-| F13 | Ctrl+Shift+C copia (seleção ou viewport), Ctrl+Shift+V cola | `view.py:1271-1277,1239-1254` | falta |
-| F14 | Botão 2 cola PRIMARY | `view.py:1152-1154` | falta |
-| F15 | Bracketed paste envolve payload em `200~`/`201~` | `term.py:1082-1091` | falta |
-| F16 | Clipboard sobrevive ao exit / integração com o sistema | `Gtk.Clipboard` | falta |
+| F12 | Seleção: cópia no release para PRIMARY; `copy_on_select` copia CLIPBOARD | `view.py:1168-1176` → `app.rs` | parcial: copia para PRIMARY **e** CLIPBOARD; `copy_on_select` vira opção na F3 |
+| F13 | Ctrl+Shift+C copia (seleção ou viewport), Ctrl+Shift+V cola | `view.py:1271-1277,1239-1254` → `app.rs` | feito |
+| F14 | Botão 2 cola PRIMARY | `view.py:1152-1154` → `clip.rs` | feito |
+| F15 | Bracketed paste envolve payload em `200~`/`201~` | `term.py:1082-1091` → `select.rs` | feito |
+| F16 | Clipboard sobrevive ao exit / integração com o sistema | `Gtk.Clipboard` → `clip.rs` (`arboard`) | feito no CLIPBOARD; PRIMARY morre com o app (é o dono da seleção) |
 | F17 | Abrir link com Ctrl+clique | não existe | falta (depende de C14) |
 | F18 | Menu de contexto | não existe | falta |
 | F19 | Clique com mouse mode ativo volta ao vivo antes de reportar | `view.py:1136-1141` → `app.rs` | feito |
@@ -234,7 +234,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | G11 | Paleta/tema configurável | não existe (`LIMITATIONS.md:133-140`) | falta (**melhoria**) |
 | G12 | Cursor: block/beam/underline + pisca | `view.py:1058-1079`, `828-838` → `render.rs` | parcial: formas sim; pisca falta |
 | G13 | Sublinhado na largura do run | `view.py:1022-1025` → `render.rs` | feito |
-| G14 | Seleção desenhada como inversão | `view.py:943,953-973` | falta (depende de F8) |
+| G14 | Seleção desenhada como inversão | `view.py:943,953-973` → `render.rs` | feito (o default resolve pelo outro extremo) |
 | G15 | `?2026` segura o frame (teto 200 ms) | `view.py:296-324` | falta |
 | G16 | Frame coalescido (~16 ms), não um desenho por leitura | `view.py:286-320` | parcial: desenha por leitura quando `--no-vsync` |
 | G17 | Dano por região (`queue_draw_area`) | `view.py:330-364` | falta |

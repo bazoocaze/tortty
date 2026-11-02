@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
-use bzmux_core::cell::Cell;
-use bzmux_core::{Color, Term};
+use bzmux_core::cell::{Cell, INV};
+use bzmux_core::{Color, Span, Term};
 use swash::scale::ScaleContext;
 use winit::window::Window;
 
@@ -29,6 +29,20 @@ struct Instance {
     color: [f32; 4],
     /// u0, v0, u1, v1 — os quatro iguais = quad sólido (pixel branco).
     uv: [f32; 4],
+}
+
+/// A célula está invertida nesta linha/coluna? `SGR 7` inverte sempre; a
+/// seleção inverte o que está dentro dela.
+#[inline]
+fn is_swap(cell: &Cell, sel: Option<(usize, usize, usize, usize)>, y: usize, x: usize) -> bool {
+    let inv = cell.flags & INV != 0;
+    let dentro = sel.is_some_and(|(r1, c1, r2, c2)| {
+        y >= r1
+            && y <= r2
+            && x >= (if y == r1 { c1 } else { 0 })
+            && x <= (if y == r2 { c2 } else { usize::MAX })
+    });
+    inv ^ dentro
 }
 
 #[derive(Copy, Clone)]
@@ -277,16 +291,15 @@ impl Renderer {
 
     /// Glifo + decoração de uma célula. A ordem aqui é a ordem de blend:
     /// tudo do texto sai antes do cursor.
-    fn draw_cell(&mut self, cell: &Cell, x: usize, py: f32) {
+    fn draw_cell(&mut self, cell: &Cell, x: usize, py: f32, swap: bool) {
         use bzmux_core::cell::{
-            BOLD, FAINT, INV, ITALIC, OVERLINE, STRIKE, UL_CURLY, UL_DASHED, UL_DOTTED, UL_DOUBLE,
+            BOLD, FAINT, ITALIC, OVERLINE, STRIKE, UL_CURLY, UL_DASHED, UL_DOTTED, UL_DOUBLE,
         };
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
         let ascent = self.fonts.ascent;
-        let inv = cell.flags & INV != 0;
-        let fg = if inv { cell.bg } else { cell.fg };
-        let mut c = self.color(fg, FG);
+        let fg = if swap { cell.bg } else { cell.fg };
+        let mut c = self.color(fg, if swap { BG } else { FG });
         // esmaecido: o mesmo tom com menos opacidade (Pango usava alpha 0.55)
         let mut alpha = if cell.flags & FAINT != 0 { 0.55 } else { 1.0 };
         if cell.flags & bzmux_core::cell::BLINK != 0 {
@@ -366,49 +379,46 @@ impl Renderer {
 
     /// Monta as instâncias do frame. Público para o teste de sanidade do formato.
     #[allow(clippy::too_many_lines)] // um laço por categoria, na ordem de blend
-    pub fn build(&mut self, term: &Term, view_off: usize) {
+    pub fn build(&mut self, term: &Term, view_off: usize, sel: Option<Span>) {
         self.instances.clear();
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
         let cols = term.cols;
         let wide = term.in_alt_screen();
         let _ = wide;
+        // retângulo da seleção na visão (preso à tela); fora dela nada muda
+        let sel = sel.and_then(|s| s.visible(term, view_off));
 
         let rows = term.visible_rows(view_off);
         for (y, row) in rows.iter().enumerate() {
             let py = y as f32 * chh;
 
-            // 1) fundos, agrupados por cor (uma instância por trecho)
+            // 1) fundos, agrupados por cor (uma instância por trecho). O
+            // inverso (SGR 7) e a seleção usam a mesma regra: troca fg/bg e
+            // resolve o default pelo *outro* extremo (senão seleção em célula
+            // sem cor não apareceria).
             let mut x = 0usize;
             while x < cols {
                 let cell = match row.cells.get(x) {
                     Some(c) => *c,
                     None => break,
                 };
-                let (bg, fg, flags) = if cell.flags & bzmux_core::cell::INV != 0 {
-                    (cell.fg, cell.bg, cell.flags)
-                } else {
-                    (cell.bg, cell.fg, cell.flags)
-                };
-                let _ = fg;
+                let swap = is_swap(&cell, sel, y, x);
+                let bg = if swap { cell.fg } else { cell.bg };
                 let mut end = x + 1;
                 while end < cols {
-                    let c2 = match row.cells.get(end) {
-                        Some(c) => *c,
-                        None => break,
-                    };
-                    let same = if c2.flags & bzmux_core::cell::INV != 0 {
-                        c2.fg == bg && c2.bg == cell.fg
-                    } else {
-                        c2.bg == bg
-                    };
-                    if !same {
+                    let Some(c2) = row.cells.get(end) else { break };
+                    if is_swap(c2, sel, y, end) != swap {
+                        break;
+                    }
+                    let bg2 = if swap { c2.fg } else { c2.bg };
+                    if bg2 != bg {
                         break;
                     }
                     end += 1;
                 }
-                if bg != Color::Default {
-                    let c = self.color(bg, BG);
+                if swap || bg != Color::Default {
+                    let c = self.color(bg, if swap { FG } else { BG });
                     self.push_rect(
                         x as f32 * cw,
                         py,
@@ -417,7 +427,6 @@ impl Renderer {
                         [c[0], c[1], c[2], 1.0],
                     );
                 }
-                let _ = flags;
                 x = end;
             }
 
@@ -429,7 +438,7 @@ impl Renderer {
                 if cell.is_cont() {
                     continue;
                 }
-                self.draw_cell(&cell, x, py);
+                self.draw_cell(&cell, x, py, is_swap(&cell, sel, y, x));
             }
         }
 
@@ -454,7 +463,7 @@ impl Renderer {
         }
     }
 
-    pub fn render(&mut self, term: &Term, view_off: usize) -> FrameOutcome {
+    pub fn render(&mut self, term: &Term, view_off: usize, sel: Option<Span>) -> FrameOutcome {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
@@ -468,7 +477,7 @@ impl Renderer {
         };
 
         let t0 = std::time::Instant::now();
-        self.build(term, view_off);
+        self.build(term, view_off, sel);
         self.atlas.flush(&self.queue);
 
         let needed = self.instances.len() * std::mem::size_of::<Instance>();

@@ -76,3 +76,23 @@ abortar era "se não fizer ≥3× o MB/s do Python e não abrir vim/mc, não pag
   roda em `?1000/?1006` → `ESC[<0;11;4M`, `ESC[<0;11;4m`, `ESC[<2;11;4M`,
   `ESC[<64;…M` + `m`. E com `vim -c 'set mouse=a'`: clique na linha 6 moveu o
   cursor para 7,7 (lido no `state` e na barra de status).
+
+## 2026-11-02 — seleção, clipboard e paste (F8, F9, F12-F16, G14, D5-D7)
+
+- `bzmux-core/select.rs`: âncora absoluta (`(linha, coluna, geração)`) e texto
+  por `span`, como o Python — a seleção sobrevive a rolar e a output chegando,
+  e morre quando o histórico é reescrito (`CSI 3J`/RIS/reflow), em vez de
+  copiar texto errado.
+- Desenho: inversão de verdade, inclusive para célula sem cor (o default
+  resolve pelo outro extremo); a mesma regra vale para `SGR 7`.
+- `clip.rs` com `arboard` sem a feature de imagem (binário segue 10 MB, sem
+  `libX11`: o arboard fala o protocolo direto).
+- Atalhos: Ctrl+Shift+C/V antes do encoder (senão Ctrl+Shift+C vira `^C`),
+  botão do meio cola o PRIMARY, Shift+PgUp/PgDn/Home/End navegam o histórico,
+  roda vale 3 linhas por entalhe e fração de trackpad acumula.
+- **Armadilha medida**: coordenada do `xdotool` não é a do `winit` (moldura da
+  janela). Teste de arrasto calibra o deslocamento movendo o mouse para dois
+  pontos conhecidos e lendo `cursor_px`/`cell_at` do `state`.
+- Verificado de ponta a ponta: arrasto em "CCC DDD" → inversão na tela, `state`
+  com âncoras `a=(1,0) b=(1,6)`, Ctrl+Shift+V e botão do meio entregaram
+  "CCC DDD" ao `cat` (conferido no arquivo e na tela).

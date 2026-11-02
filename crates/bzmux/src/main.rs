@@ -3,6 +3,7 @@
 mod app;
 mod atlas;
 mod cli;
+mod clip;
 mod debugsock;
 mod glyph;
 mod keys;

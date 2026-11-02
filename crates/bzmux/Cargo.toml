@@ -18,6 +18,8 @@ fontdb = "0.23"
 swash = "0.2"
 portable-pty = "0.9"
 serde_json = "1"
+# só texto: `default-features = false` tira o suporte a imagem (tiff/png/jpeg)
+arboard = { version = "3.7", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -8,9 +8,11 @@ pub mod cell;
 pub mod charset;
 pub mod color;
 pub mod grid;
+pub mod select;
 pub mod term;
 
 pub use cell::Cell;
 pub use color::Color;
 pub use grid::Row;
+pub use select::{Anchor, Span};
 pub use term::Term;

@@ -42,6 +42,23 @@ impl Row {
         s
     }
 
+    /// Texto das colunas `a..b` (fim exclusivo), sem cont e sem espaço à
+    /// direita. É a base da cópia: cortar por coluna, não por caractere.
+    #[must_use]
+    pub fn text_cols(&self, a: usize, b: usize) -> String {
+        let b = b.min(self.cells.len());
+        let a = a.min(b);
+        let mut s: String = self.cells[a..b]
+            .iter()
+            .filter(|c| !c.is_cont())
+            .map(|c| c.ch)
+            .collect();
+        while s.ends_with(' ') {
+            s.pop();
+        }
+        s
+    }
+
     /// Redimensiona a linha (cresce com célula em branco, corta o excedente).
     pub fn resize(&mut self, cols: usize) {
         self.cells.resize(cols, Cell::BLANK);
