@@ -20,8 +20,9 @@ documentos com o mesmo trabalho em 2026-11-02 (ver `HISTORY.md`).
 - **Cada item tem um gatilho.** Melhoria sem gatilho vira desejo: só entra na
   tabela o que tem uma frase do tipo "quando X aparecer". Item sem gatilho é
   limitação ([`LIMITATIONS.md`](LIMITATIONS.md)), não fila.
-- **Ao fechar um item**: sai da tabela de aberto, entra em **Fechados** aqui e
-  ganha uma linha datada em [`HISTORY.md`](HISTORY.md) com o que foi verificado.
+- **Ao fechar um item**: sai da tabela deste arquivo e ganha uma linha datada em
+  [`HISTORY.md`](HISTORY.md) com o que foi verificado. Item fechado não fica
+  aqui: passado tem um dono só.
 - **Bug corrigido fora de item** entra na lista numerada do `HISTORY.md`; se for
   armadilha de ambiente/ferramenta, entra em [`DEBUG.md`](DEBUG.md).
 - **Decisão de não fazer** vai para [`LIMITATIONS.md`](LIMITATIONS.md).
@@ -49,28 +50,3 @@ documentos com o mesmo trabalho em 2026-11-02 (ver `HISTORY.md`).
 | M-S | Teclas que o Python não entrega: F13-F24 e teclado numérico com NumLock off (`KP_*`) | teclado estendido e numérico de notebook ficam mudos | quando alguém mapear F13 ou usar `KP_*` num app | baixo: tabela em `keys.rs` |
 | M-T | Mouse reporting em pixels (`?1016`) | app gráfico pedindo coordenada de pixel recebe célula | quando um app de TUI gráfica pedir `?1016` | baixo: já há `cell_at`/`px` |
 | M-U | Parser: DECALN (`ESC # 8`) e caracteres combinantes (compor na célula anterior) | DECALN é a tela de teste do VT100; combinante hoje ocupa célula própria, e é o que quebra acento morto em app que manda `U+0301` separado | primeiro acento decomposto saindo deslocado (ou teste de tela VT100) | baixo para DECALN; médio para combinante (mexe em `wcwidth`/avanço) |
-
-## Fechados
-
-Atividade nova que já está no programa. Não voltam para o `MIGRATION.md`: não
-eram paridade quando começaram e não são paridade agora.
-
-| id | atividade | o que ficou |
-|---|---|---|
-| M-B | SGR completo: itálico, faint, blink, riscado, overline, cor e estilos de sublinhado | `cell.rs`/`term.rs`/`render.rs`; verificado com `bat`, `git diff` e `mc` |
-| M-O | `--selftest` no binário | 14 checagens sem display/GPU, dentro do `check.sh` e do CI |
-| — | Charset G1 + SO/SI (lock shift) | `term.rs` |
-| — | Wide char (`wcwidth`) com célula de continuação | `cell.rs`/`term.rs`; o Python não tem |
-| — | Tab stops configuráveis (HTS/TBC/CHT/CBT) | `term.rs` |
-| — | Origin mode (`?6`) e autowrap desligável (`?7`) | `term.rs` |
-| — | DCS/APC/PM/SOS consumidos até ST (não vazam na tela) | `term.rs`; no Python vazam |
-| — | DECSC salva SGR/origin/autowrap (não só o cursor) | `term.rs` |
-| — | `ESC D` (IND) e `ESC E` (NEL) | `term.rs`; no Python eram no-op |
-| — | Clamp de `n` em IL/DL/ICH/DCH/ECH | `term.rs` |
-| — | SU/SD, REP (`CSI b`), teto de comprimento em `csi`/`osc` | `term.rs` |
-| — | OSC 4/104/110/111/112 como **set** (redefinir cor em runtime) | `Term::theme` |
-| — | Paleta/tema configurável e `color0..15`/fg/bg/cursor no arquivo | `config.rs`, `docs/CONFIG.md` |
-| — | Roda com delta fracionário (trackpad) acumulando | `app.rs` |
-| — | `?1005` coordenada em UTF-8 (acima do teto de 222) | `mouse.rs` |
-| — | Grid travado pelo socket sobrevive ao arredondamento do WM | `app.rs` |
-| — | `--cols`/`--rows`/`--dpi`/`--no-vsync`/`--prof` | `cli.rs` |

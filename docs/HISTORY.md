@@ -381,3 +381,34 @@ Duas linhas do backlog eram paridade disfarçada e voltaram para o painel:
 Seis linhas da fila ficaram órfãs ao sair do painel e ganharam item próprio:
 `M-R` (OSC 52/7/133), `M-S` (F13-F24 e `KP_*`), `M-T` (`?1016`), `M-U` (DECALN
 e combinantes) e `M-V` (menu de contexto, que é o gatilho declarado do `M-Q`).
+
+## 2026-11-02 — atividade nova que já estava no programa
+
+Consolidação, não trabalho novo: o que o Python **não** faz e que já foi feito
+aqui sai do painel de paridade e fica registrado só nesta linha. A verificação é
+a que rodou em cima delas — `cargo test` (52 no `bzmux-core`), `--selftest`
+14/14, `mc`/`vim`/`dmesg` no roteiro manual, mais as provas específicas citadas
+(item a item, quando houve uma).
+
+**Parser e grade:** charset G1 com SO/SI; wide char (`wcwidth`) com célula de
+continuação; tab stops configuráveis (HTS/TBC/CHT/CBT); origin mode `?6` e
+autowrap desligável `?7`; DCS/APC/PM/SOS consumidos até ST (no Python vazam na
+tela); DECSC salvando SGR/origin/autowrap e não só o cursor; `ESC D`/`ESC E`
+(IND/NEL, no-op no Python); clamp de `n` em IL/DL/ICH/DCH/ECH; SU/SD; REP
+(`CSI b`); teto de comprimento nos estados `csi`/`osc`.
+
+**Cores e desenho:** SGR completo (itálico, faint, blink, riscado, overline, cor
+e estilos de sublinhado) — provado com `bat` e `git diff`; OSC 4/104/110/111/112
+como *set* em runtime; paleta/tema configurável, com `color0..15`/fg/bg/cursor
+no arquivo — conferido por amostragem de pixel contra o `tortty-python` (`mc` e `htop`
+idênticos).
+
+**Entrada:** roda com delta fracionário (trackpad) acumulando; `?1005`
+coordenada em UTF-8 acima do teto de 222 (testes de unidade em `mouse.rs`).
+
+**Janela e CLI:** grid travado pelo socket sobrevive ao arredondamento do WM
+(laço de correção `dw/dh`); `--cols`/`--rows`/`--dpi`/`--no-vsync`/`--prof`
+(conferido com `stty`: 100x10 pedido, 10 100 na saída).
+
+**Ferramenta:** `--selftest` no binário (14 checagens sem display nem GPU), no
+`check.sh` e no CI.
