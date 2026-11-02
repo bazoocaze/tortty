@@ -165,11 +165,20 @@ fn scroll_anchor() -> Result<(), String> {
     esperado("histórico no teto", t.scrollback.len(), 1000)?;
     let ancora = t.scrolled as i64 - 3;
     let topo = t.visible_rows(3)[0].text();
+    let (teto_scrolled, teto_hist) = (t.scrolled, t.scrollback.len());
     for i in 1100..1110 {
         t.feed(format!("{i}\r\n").as_bytes());
     }
     let off = off_da_ancora(&t, ancora);
     esperado("offset absoluto", off, 13)?;
+    // a conta incremental do app tem que dar o mesmo **no teto**: era aqui que
+    // ela subtraía as linhas descartadas e a visão derrapava — o leitor perdia
+    // uma linha de conteúdo por linha nova, o oposto do D10
+    esperado(
+        "view_after_output no teto",
+        t.view_after_output(3, teto_scrolled, teto_hist),
+        off,
+    )?;
     esperado(
         "mesma linha no topo",
         t.visible_rows(off)[0].text(),

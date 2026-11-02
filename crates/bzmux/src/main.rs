@@ -22,13 +22,7 @@ fn main() {
         Ok(o) => o,
         Err(msg) => {
             println!("{msg}");
-            // ajuda/versão saem em código 0; erro de uso em 2
-            let code = if msg.contains("opção desconhecida") || msg.starts_with("falta") {
-                2
-            } else {
-                0
-            };
-            std::process::exit(code);
+            std::process::exit(cli::exit_code(&msg));
         },
     };
     if over.selftest {

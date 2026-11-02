@@ -274,6 +274,25 @@ fn scrollback_and_bell() -> Result<(), String> {
         t.feed(format!("linha {i}\r\n").as_bytes());
     }
     esperado("histórico encheu de novo", t.scrollback.len(), 2)?;
+    // DECRQM tem que enxergar os modos de mouse que existem: `?1005` estava
+    // fora da tabela e respondia 0 com o modo ligado
+    let mut q = Term::new(10, 3);
+    q.feed(b"\x1b[?1005h");
+    q.take_child_out();
+    q.feed(b"\x1b[?1005$p");
+    esperado(
+        "DECRQM 1005 ligado",
+        q.take_child_out(),
+        b"\x1b[?1005;1$y".to_vec(),
+    )?;
+    q.feed(b"\x1b[?1005l");
+    q.take_child_out();
+    q.feed(b"\x1b[?1005$p");
+    esperado(
+        "DECRQM 1005 desligado",
+        q.take_child_out(),
+        b"\x1b[?1005;2$y".to_vec(),
+    )?;
     // RIS (ESC c) limpa a tela mas não é dono da configuração
     t.feed(b"\x1bc");
     esperado("RIS preserva o teto", t.scrollback_limit, 2)?;

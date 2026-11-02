@@ -286,9 +286,13 @@ impl Term {
         if d == 0 {
             return off;
         }
-        let sb = self.scrollback.len();
-        let dropped = (prev_hist + d).saturating_sub(sb);
-        (off + d - dropped).min(sb)
+        // Só a distância do vivo importa: linha que saiu do histórico (por
+        // teto ou por `CSI 3J`) já é tratada pelo clamp em `sb`. Subtrair as
+        // descartadas fazia a visão andar para o lado errado a cada linha que
+        // a grade descartava — no teto, `off` congelava e o leitor perdia uma
+        // linha de conteúdo por linha nova (o oposto do D10).
+        let _ = prev_hist;
+        (off + d).min(self.scrollback.len())
     }
 
     pub fn resize(&mut self, cols: usize, rows: usize) {
@@ -1006,6 +1010,7 @@ impl Term {
             1002 => onoff(self.mouse_mode == 2),
             1003 => onoff(self.mouse_mode == 3),
             1004 => onoff(self.focus_report),
+            1005 => onoff(self.mouse_utf8),
             1006 => onoff(self.mouse_sgr),
             2004 => onoff(self.bracketed_paste),
             2026 => onoff(self.sync_output),

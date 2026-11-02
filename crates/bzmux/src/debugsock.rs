@@ -169,14 +169,23 @@ fn serve(conn: UnixStream, sink: &dyn Sink) {
     let Ok(mut out) = conn.try_clone() else {
         return;
     };
-    let reader = BufReader::new(conn);
-    for line in reader.lines() {
-        let Ok(line) = line else { break };
+    let mut reader = BufReader::new(conn);
+    let mut buf: Vec<u8> = Vec::new();
+    loop {
+        buf.clear();
+        // `read_until` em vez de `lines()`: byte que não é UTF-8 não pode
+        // matar a conexão sem resposta — o pedido torto vira `err` do app
+        // EOF (0 bytes) e erro de I/O acabam a conexão; byte lido é pedido
+        if !matches!(reader.read_until(b'\n', &mut buf), Ok(n) if n > 0) {
+            break;
+        }
+        let line = String::from_utf8_lossy(&buf);
+        let line = line.trim_end_matches(['\n', '\r']);
         if line.trim().is_empty() {
             continue;
         }
         let (tx, rx) = std::sync::mpsc::channel::<String>();
-        if !sink.enqueue(line, tx) {
+        if !sink.enqueue(line.to_string(), tx) {
             break;
         }
         let Ok(reply) = rx.recv() else { break };
@@ -396,6 +405,35 @@ mod checks_socket {
         // o pedido torto continua sendo um pedido: erro é resposta, não queda
         assert_eq!(cli.pede("null")["ok"], json!(false));
 
+        drop(srv);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn utf8_invalido_vira_pedido_torto_e_nao_queda() {
+        // antes, `lines()` devolvia Err e a conexão morria sem resposta: quem
+        // mandou lixo recebia EOF em vez de `{"ok":false,...}`
+        let path = caminho("utf8");
+        let srv = fake(&path, |line| {
+            match serde_json::from_str::<serde_json::Value>(line) {
+                // a linha chega com U+FFFD no lugar do byte inválido, como no
+                // `decode("utf-8","replace")` do Python: o app vê JSON válido
+                Ok(_) => ok(json!({ "echo": line })),
+                Err(_) => err("json inválido"),
+            }
+        });
+        let mut cli = Cli::connect(&path);
+        // 0xFF sozinho não é UTF-8 válido
+        cli.envia_bruto(b"{\"x\":\"\xff\"}\n");
+        let v = cli.resposta();
+        assert_eq!(v["ok"], json!(true), "conexão morreu em vez de responder");
+        assert!(
+            v["echo"].as_str().is_some_and(|s| s.contains('\u{fffd}')),
+            "o byte inválido tinha virado U+FFFD: {}",
+            v["echo"]
+        );
+        // e a conexão continua viva para o próximo pedido
+        assert_eq!(cli.pede(r#"{"y":1}"#)["ok"], json!(true));
         drop(srv);
         let _ = std::fs::remove_file(&path);
     }

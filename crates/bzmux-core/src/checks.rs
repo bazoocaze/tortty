@@ -69,8 +69,8 @@ pub fn all() -> Vec<Check> {
             run: csi_with_intermediate,
         },
         Check {
-            name: "config_file",
-            run: config_file,
+            name: "config_defaults",
+            run: config_defaults,
         },
         Check {
             name: "theme_osc",
@@ -309,7 +309,7 @@ fn csi_with_intermediate() -> Result<(), String> {
     Ok(())
 }
 
-fn config_file() -> Result<(), String> {
+fn config_defaults() -> Result<(), String> {
     let (cfg, errs) = Config::parse("font_size 15\nfont_size 16\nbell visual\n");
     if !errs.is_empty() {
         return Err(format!("erros inesperados: {errs:?}"));

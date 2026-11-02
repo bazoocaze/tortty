@@ -146,13 +146,17 @@ const RELEASE: u8 = 3;
 fn kitty_functional(n: NamedKey) -> Option<(u32, char)> {
     use NamedKey::{
         ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Backspace, Delete, End, Enter, Escape, Home,
-        Insert, PageDown, PageUp, Tab, F1, F10, F11, F12, F2, F3, F4, F5, F6, F7, F8, F9,
+        Insert, PageDown, PageUp, Space, Tab, F1, F10, F11, F12, F2, F3, F4, F5, F6, F7, F8, F9,
     };
     Some(match n {
         Escape => (27, 'u'),
         Enter => (13, 'u'),
         Tab => (9, 'u'),
         Backspace => (127, 'u'),
+        // Space não é "funcional" no legado: só vira `CSI u` quando o app
+        // pediu desambiguação (flag 1) ou todas as teclas (flag 8) — ver a
+        // guarda em `kitty_encode`
+        Space => (32, 'u'),
         Insert => (2, '~'),
         Delete => (3, '~'),
         ArrowLeft => (1, 'D'),
@@ -249,6 +253,12 @@ fn kitty_encode(
             n,
             NamedKey::Escape | NamedKey::Enter | NamedKey::Tab | NamedKey::Backspace
         );
+        // com só a flag 2 (eventos), o Ctrl+Space tem de continuar NUL: é o
+        // que o readline/vim esperam, e trocar por `CSI 32;5u` quebraria quem
+        // liga a flag 2 e nada mais
+        if n == NamedKey::Space && !(dis || all_keys) {
+            return Kitty::Legacy;
+        }
         if !especial && m == 1 && !all_keys {
             // seta/Home/F1 sem modificador: o legado já manda o certo (e
             // respeita DECCKM)
@@ -810,6 +820,33 @@ mod checks_teclado {
             enc_ev(&so_eventos, Some(NamedKey::Escape), None, NONE, PRESS).as_deref(),
             Some("\x1b[27u")
         );
+    }
+
+    #[test]
+    fn ctrl_space_depende_da_flag_e_nao_do_atalho() {
+        // só a flag 2 (eventos): o Ctrl+Space continua NUL — readline/vim
+        // dependem disso e trocar por `CSI 32;5u` quebraria quem liga a flag 2
+        let mut t = term();
+        t.feed(b"\x1b[>2u");
+        assert_eq!(
+            enc(&t, Some(NamedKey::Space), None, ModifiersState::CONTROL).as_deref(),
+            Some("\x00")
+        );
+        // com a flag 1 o kitty desambigua: `CSI 32;5u`
+        t.feed(b"\x1b[=1;2u");
+        assert_eq!(
+            enc(&t, Some(NamedKey::Space), None, ModifiersState::CONTROL).as_deref(),
+            Some("\x1b[32;5u")
+        );
+        // sem modificador e sem a flag 8, espaço continua espaço
+        assert_eq!(
+            enc(&t, Some(NamedKey::Space), None, NONE).as_deref(),
+            Some(" ")
+        );
+        // com a flag 8, todas as teclas: espaço vira `CSI 32u`
+        t.feed(b"\x1b[=24;1u");
+        assert_eq!(t.kbd_flags, F_ALL_KEYS | F_TEXT);
+        assert_eq!(enc_texto(&t, " ", " ").as_deref(), Some("\x1b[32;32u"));
     }
 
     #[test]

@@ -80,6 +80,9 @@ impl Options {
         let font_size_pt = over.font_size_pt.unwrap_or(cfg.font_size);
         let scrollback = over.scrollback.unwrap_or(cfg.scrollback);
         let debug_log = over.debug_log.or_else(|| cfg.debug_log.clone());
+        // caminho vazio é "não pedi socket": sem isto o `bind("")` falha com
+        // uma mensagem que não diz nada (o Python trata vazio como desligado)
+        let debug_socket = over.debug_socket.filter(|p| !p.is_empty());
         let opts = Options {
             cmd: over.cmd,
             cols: over.cols.unwrap_or(80).max(1),
@@ -88,7 +91,7 @@ impl Options {
             font_size_pt,
             dpi: over.dpi.unwrap_or(96.0),
             scrollback,
-            debug_socket: over.debug_socket,
+            debug_socket,
             debug_log,
             vsync: !over.no_vsync,
             prof: over.prof,
@@ -193,6 +196,23 @@ fn float(it: &mut impl Iterator<Item = String>, flag: &str) -> Result<f32, Strin
 /// Equivalente ao `argv_parsing` do `checks.py`: o parsing de argv e o merge
 /// CLI > arquivo > padrões não abrem janela, então cabem num teste comum (o
 /// `--selftest` só roda o núcleo, que não conhece `cli.rs`).
+/// Código de saída para a mensagem de `parse`: `--help`/`--version` são
+/// informativas (0), **todo o resto é erro de uso (2)** — inclusive valor que
+/// não é número, que antes saía 0 e fazia script de automação passar por cima
+/// de um comando inválido.
+#[must_use]
+pub fn exit_code(msg: &str) -> i32 {
+    // `--help` e `--version` **começam** com o nome do programa; a mensagem de
+    // erro de uso também traz a ajuda colada no fim, então procurar "USO:" no
+    // texto classificava erro como ajuda
+    let informativa = msg.starts_with("bzmux ");
+    if informativa {
+        0
+    } else {
+        2
+    }
+}
+
 #[cfg(test)]
 mod checks_cli {
     use bzmux_core::config::Bell;
@@ -321,6 +341,22 @@ mod checks_cli {
         assert!(e.contains("--font-size") && e.contains("grande"), "{e}");
         let e = erro(&["--rows", "-1"]);
         assert!(e.contains("--rows"), "{e}");
+    }
+
+    #[test]
+    fn codigo_de_saida_do_uso() {
+        // informativa = 0 (quem canaliza `--help` num script não vê erro)
+        assert_eq!(exit_code(&erro(&["--help"])), 0);
+        assert_eq!(exit_code(&erro(&["--version"])), 0);
+        // erro de uso = 2, inclusive valor que não é número (saía 0 antes)
+        for v in [
+            &["--cols", "abc"][..],
+            &["--quit-after", "x"][..],
+            &["--nada"][..],
+            &["--cmd"][..],
+        ] {
+            assert_eq!(exit_code(&erro(v)), 2, "{v:?}");
+        }
     }
 
     #[test]
