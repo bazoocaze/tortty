@@ -381,6 +381,29 @@ impl App {
         )
     }
 
+    /// Índice da aba sob o cursor, se ele estiver na faixa da barra.
+    fn tab_at(&self, px: f64, py: f64) -> Option<usize> {
+        let (cw, ch, pad) = self
+            .renderer
+            .as_ref()
+            .map_or((10.0, 19.0, 0.0), |r| (r.fonts.cw, r.fonts.ch, r.pad));
+        let bar = f64::from(self.bar_h(ch));
+        if bar <= 0.0 || py < f64::from(pad) || py >= f64::from(pad) + bar {
+            return None;
+        }
+        let info = self.tabinfo();
+        let mut x = f64::from(pad);
+        for (i, t) in info.iter().enumerate() {
+            let rotulo = format!(" {} {} ", i + 1, t.titulo);
+            let largura = rotulo.chars().count() as f64 * f64::from(cw);
+            if px >= x && px < x + largura {
+                return Some(i);
+            }
+            x += largura;
+        }
+        None
+    }
+
     fn mouse_mods(&self) -> u8 {
         let mut m = 0;
         if self.mods.shift_key() {
@@ -550,6 +573,15 @@ impl App {
         }
         match state {
             ElementState::Pressed => {
+                // clique na barra não é do app (troca a aba, como na seleção)
+                if let Some(i) = self.tab_at(self.cursor_px.0, self.cursor_px.1) {
+                    self.select_tab(i);
+                    self.held = None;
+                    if let Some(w) = self.window.as_ref() {
+                        w.request_redraw();
+                    }
+                    return;
+                }
                 // F19: o app desenha o vivo; clique no histórico só faz
                 // sentido depois de voltar para ele
                 self.tabs[self.active].view_off = 0;
@@ -610,6 +642,14 @@ impl App {
         use winit::event::MouseButton::{Left, Middle};
         match (state, button) {
             (ElementState::Pressed, Left) => {
+                // clique na barra de abas troca de aba (não seleciona texto)
+                if let Some(i) = self.tab_at(self.cursor_px.0, self.cursor_px.1) {
+                    self.select_tab(i);
+                    self.tabs[self.active].dragging = false;
+                    self.tabs[self.active].press = None;
+                    self.redraw();
+                    return;
+                }
                 // clicar no histórico NÃO volta ao vivo: o arrasto é para
                 // justamente copiar dali
                 self.tabs[self.active].sel = None;

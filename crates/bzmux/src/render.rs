@@ -367,7 +367,10 @@ impl Renderer {
         let fundo = self.color(Color::Idx(0), self.bg);
         // texto sobre a aba ativa usa a cor de fundo da grade (inversão)
         let sobre = self.color(Color::Default, self.bg);
-        self.push_rect(0.0, 0.0, largo, chh, [fundo[0], fundo[1], fundo[2], 1.0]);
+        // `origin.y` é `pad + bar`: para a barra cair na faixa reservada (e não
+        // sobre a primeira linha da grade) ela é desenhada em y = -bar
+        let y0 = -self.bar;
+        self.push_rect(0.0, y0, largo, chh, [fundo[0], fundo[1], fundo[2], 1.0]);
         let mut x = 0.0f32;
         for (i, t) in tabs.iter().enumerate() {
             let rotulo = format!(" {} {} ", i + 1, t.titulo);
@@ -385,7 +388,7 @@ impl Renderer {
             };
             // um retângulo por aba (não um por letra): o fundo do rótulo é uma
             // peça só, e o texto é desenhado por cima
-            self.push_rect(x, 0.0, largura, chh, [bg[0], bg[1], bg[2], 1.0]);
+            self.push_rect(x, y0, largura, chh, [bg[0], bg[1], bg[2], 1.0]);
             for (k, ch) in rotulo.chars().enumerate() {
                 if ch == ' ' {
                     continue;
@@ -398,7 +401,7 @@ impl Renderer {
                     self.instances.push(Instance {
                         rect: [
                             px + q.left as f32,
-                            ascent - q.top as f32,
+                            y0 + ascent - q.top as f32,
                             q.w as f32,
                             q.h as f32,
                         ],

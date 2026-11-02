@@ -46,25 +46,28 @@ copy_on_select off
 # log de diagnóstico; `off` desliga (o --debug-log troca o caminho)
 debug_log off
 
-# cores: foreground/background/cursor e a paleta ANSI de 16
-foreground #e6e6e6
-background #16181d
-cursor_color #e6e6e6
-color0 #1d1f21
-color1 #cc342b
-color2 #198844
-color3 #fba922
-color4 #3971ed
-color5 #a36ac7
-color6 #3971ed
-color7 #c5c8c6
-color8 #969896
-color9 #cc342b
-color10 #198844
-color11 #fba922
-color12 #3971ed
-color13 #a36ac7
-color14 #3971ed
+# cores: foreground/background/cursor e a paleta ANSI de 16.
+# Os padrões são a paleta clássica do xterm (a mesma do bzmux Python): mc, htop
+# e ls --color foram calibrados nela, e trocar por um \"tema bonito\" muda o
+# significado das cores que o programa escolheu.
+foreground #d6d6d6
+background #000000
+cursor_color #d6d6d6
+color0 #000000
+color1 #cd0000
+color2 #00cd00
+color3 #cdcd00
+color4 #0000ee
+color5 #cd00cd
+color6 #00cdcd
+color7 #e5e5e5
+color8 #7f7f7f
+color9 #ff0000
+color10 #00ff00
+color11 #ffff00
+color12 #5c5cff
+color13 #ff00ff
+color14 #00ffff
 color15 #ffffff
 ";
 
@@ -237,9 +240,9 @@ impl Config {
             bell: Bell::None,
             copy_on_select: false,
             debug_log: None,
-            fg: Color::Rgb(230, 230, 230),
-            bg: Color::Rgb(0x16, 0x18, 0x1d),
-            cursor: Color::Rgb(230, 230, 230),
+            fg: Color::Rgb(0xd6, 0xd6, 0xd6),
+            bg: Color::Rgb(0, 0, 0),
+            cursor: Color::Rgb(0xd6, 0xd6, 0xd6),
             palette: [
                 Color::Idx(0),
                 Color::Idx(1),
@@ -463,7 +466,9 @@ mod tests {
         assert_eq!(cfg.debug_log, None);
         assert_eq!(cfg.shell, None);
         assert_eq!(cfg.palette.len(), 16);
-        assert!(matches!(cfg.palette[1], Color::Rgb(0xcc, 0x34, 0x2b)));
+        // a paleta clássica do xterm: mc/htop contam com ela (ver CONFIG.md)
+        assert!(matches!(cfg.palette[1], Color::Rgb(0xcd, 0x00, 0x00)));
+        assert_eq!(cfg.bg, Color::Rgb(0, 0, 0));
     }
 
     #[test]

@@ -31,10 +31,16 @@ sobrescrevem o arquivo.
 | `bell` | `none` | BEL: `none`, `visual` (marca a janela) ou `audible` |
 | `copy_on_select` | `off` | seleção já vai para CLIPBOARD (PRIMARY é sempre) |
 | `debug_log` | `off` | log de diagnóstico; `off` desliga, caminho liga |
-| `foreground` | `#e6e6e6` | cor do texto (`#rrggbb` ou `#rgb`) |
-| `background` | `#16181d` | cor do fundo |
-| `cursor_color` | `#e6e6e6` | cor do cursor |
+| `foreground` | `#d6d6d6` | cor do texto (`#rrggbb` ou `#rgb`) |
+| `background` | `#000000` | cor do fundo |
+| `cursor_color` | `#d6d6d6` | cor do cursor |
 | `color0` … `color15` | ver arquivo | paleta ANSI; o resto da paleta 256 (cubo e cinzas) é calculado |
+
+O padrão das cores é a **paleta clássica do xterm** (fundo preto, azul
+`#0000ee`), a mesma do bzmux Python. Não é preguiça: `mc`, `htop`, `ls
+--color` e `git diff` foram calibrados nela, e trocar por um tema "bonito"
+muda o significado das cores que o programa escolheu — o `mc` azul vira outra
+coisa.
 
 Booleano aceita `on/yes/true/1` e `off/no/false/0`.
 

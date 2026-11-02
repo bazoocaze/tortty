@@ -60,7 +60,15 @@ impl Fonts {
         let mut db = fontdb::Database::new();
         db.load_system_fonts();
 
-        let explicit = !family.is_empty() && family != "monospace";
+        // Nome genérico (`Monospace`, que é o padrão do arquivo) tem que cair
+        // na lista de preferência: o fontdb **não** tem os aliases do
+        // fontconfig, então casar "Monospace" pelo nome dá FreeMono — a fonte
+        // feia que o Python nunca usava (o Pango consultava o fontconfig).
+        let generico = matches!(
+            family.to_ascii_lowercase().as_str(),
+            "" | "monospace" | "mono" | "fixed" | "sans-serif" | "sans" | "serif" | "system-ui"
+        );
+        let explicit = !generico;
         let mut chosen: Option<(Face, String)> = None;
         if explicit {
             chosen = query(&db, family, 400, fontdb::Style::Normal);
