@@ -1,0 +1,8 @@
+#!/bin/sh
+# pre-commit: barra commit com fmt/clippy/teste vermelho.
+#
+# Instale uma vez com:  git config core.hooksPath .githooks
+# Pular (só quando for mesmo necessário):  git commit --no-verify
+set -eu
+HERE=$(git rev-parse --show-toplevel)
+exec "$HERE/tools/check.sh" --fast
