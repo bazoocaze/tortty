@@ -536,3 +536,51 @@ dizia nada sobre eles. Agora há um `selftest_completo` que roda `run_all()` e
 mostra as falhas, e a verificação foi feita por mutação: quebrar
 `view_after_output` faz o `scroll_anchor` falhar com "esperado 7, obtido 2";
 tirar a guarda de "não é socket" do `clear_stale` faz o teste do L12 falhar.
+
+## 2026-11-02 — cinco bugs que os checks acharam antes de virarem rotina
+
+Os agentes que escreveram a bateria da Onda 1 reportaram suspeitas no fim do
+relatório. Nenhuma foi inventada: as cinco abaixo foram reproduzidas e agora
+têm teste.
+
+**A deriva do D10 no teto do histórico** (a grave). `view_after_output`
+subtraía as linhas que o scrollback descartava. Reproduzido: histórico no teto,
+`off=3`, 10 linhas novas → a conta devolvia 3 (mostrando a linha `43`) quando a
+âncora absoluta pedia 13 (a linha `33` que o usuário estava lendo). Ou seja, no
+caso em que o D10 existe para servir — log grande despejando enquanto se lê o
+passado — a visão andava **uma linha por linha nova**, e o leitor perdia o
+lugar. A conta certa é `(off + d).min(len)`: quem trata "a linha lida morreu" é
+o clamp, não a subtração. O check `scroll_anchor` agora cobra a concordância das
+duas contas também no teto, e a verificação foi por mutação: repor a subtração
+derruba o check.
+
+**Ctrl+Space sob as flags do kitty.** O NUL era devolvido antes da forma do
+kitty, então com a flag 1 (desambiguação) ou 8 (todas as teclas) o app recebia
+`0x00` em vez de `CSI 32;5u`, e o modificador se perdia. Agora `Space` entra na
+tabela do kitty, mas **só** quando o app pediu desambiguação ou todas as teclas:
+com a flag 2 sozinha (o caso do `pi`) o NUL continua, porque é o que
+readline/vim esperam.
+
+**`?1005` fora do DECRQM.** `CSI ? 1005 $ p` respondia 0 com o modo ligado: o
+modo existia no parser e não na tabela de consulta.
+
+**Código de saída do erro de uso.** `bzmux --cols abc` saía com **0**: o `main`
+só mapeava dois prefixos de mensagem para 2 e o resto caía em 0, então script
+de automação passava por cima de comando inválido. A regra foi para o `cli.rs`
+(dono das mensagens) numa função com teste: só `--help`/`--version` saem com 0,
+todo o resto com 2. A distinção é por **prefixo** ("bzmux …"), não por conteúdo
+— a mensagem de erro de uso traz a ajuda colada no fim, e procurar "USO:" no
+texto classificava erro como ajuda.
+
+**UTF-8 inválido no socket.** `lines()` devolvia `Err` e a conexão morria **sem
+resposta**: quem mandava um byte torto recebia EOF em vez de JSON. Agora a
+leitura é por `read_until` com `from_utf8_lossy` (o mesmo
+`decode("utf-8","replace")` do Python): o byte vira U+FFFD, o pedido segue para
+o app e a resposta é um `err` normal — conferido com `0xFF` no meio de uma
+linha: `{"err":"cmd desconhecido: …","ok":false}` e a conexão viva para o
+próximo pedido.
+
+**Também corrigido, menor:** `--debug-socket ""` deixou de tentar `bind("")`
+(caminho vazio é "não pedi socket", como o `debug_log` vazio), e o relatório do
+`--selftest` tinha `config_file` **duas vezes** (o antigo do `checks.rs` virou
+`config_defaults`).
