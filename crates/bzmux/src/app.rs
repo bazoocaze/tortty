@@ -1721,6 +1721,14 @@ impl App {
                     // funciona — sem depender de olhar a tela.
                     "draws": self.renderer.as_ref().map_or(0, |r| r.draws),
                     "last_frame": self.renderer.as_ref().map_or("", |r| r.ultimo),
+                    "last_damage": self.renderer.as_ref().map_or("", |r| r.last_damage.as_str()),
+                    "frames_all": self.renderer.as_ref().map_or(0, |r| r.frames_all),
+                    "rows_max": self.renderer.as_ref().map_or(0, |r| r.rows_max),
+                    "all_reason": self.renderer.as_ref().map_or("", |r| r.all_reason),
+                    "dirty_all": self.tabs[self.active].term.dirty_all,
+                    "global_marks": self.tabs[self.active].term.global_marks,
+                    "global_why": self.tabs[self.active].term.global_why,
+                    "dirty_rows": self.tabs[self.active].term.dirty.iter().filter(|d| **d).count(),
                     "rows_built": self.renderer.as_ref().map_or(0, |r| r.linhas_remontadas),
                     "cells_built": self.renderer.as_ref().map_or(0, |r| r.celulas_remontadas),
                     // imagens do kitty: sem isto não há como conferir a

@@ -1,4 +1,6 @@
 //! bzmux em Rust — experimento de viabilidade (ver TASK-bzmux-in-rust.md).
+// o `json!` do `state` passa do limite padrão de expansão do macro
+#![recursion_limit = "256"]
 
 mod app;
 mod atlas;

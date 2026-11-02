@@ -111,6 +111,17 @@ pub struct Renderer {
     /// Resultado do último frame ("drawn"/"skipped"/"occluded"...): a primeira
     /// pergunta quando a janela não atualiza é se o frame saiu.
     pub ultimo: &'static str,
+    /// Decisão do dano no último frame (`all`/`rows: N`): responde na hora por
+    /// que `rows_built` cresce demais.
+    pub last_damage: String,
+    /// Quantos frames foram "tudo" e a maior faixa já remontada: separa
+    /// "o dano não decidiu" de "decidiu e o núcleo sujou tudo".
+    pub frames_all: u64,
+    pub rows_max: usize,
+    /// Por que o último frame foi "tudo": `global` (dano do núcleo) ou
+    /// `signature` (algo de tela inteira mudou). Sem isso o contador só diz
+    /// que aconteceu, não quem pediu.
+    pub all_reason: &'static str,
     pub linhas_remontadas: u64,
     pub celulas_remontadas: u64,
 }
@@ -404,6 +415,10 @@ impl Renderer {
             tema_gen: 0,
             draws: 0,
             ultimo: "nenhum",
+            last_damage: String::new(),
+            frames_all: 0,
+            rows_max: 0,
+            all_reason: "",
             linhas_remontadas: 0,
             celulas_remontadas: 0,
         })
@@ -1020,6 +1035,7 @@ impl Renderer {
             fg: self.fg,
             bg: self.bg,
         };
+        let changed = self.assinatura != assinatura;
         let dano = crate::damage::decide(
             &assinatura,
             &mut self.assinatura,
@@ -1027,35 +1043,54 @@ impl Renderer {
             &term.dirty,
             rows.len(),
         );
+        if matches!(dano, crate::damage::Damage::All) {
+            self.frames_all = self.frames_all.saturating_add(1);
+            self.all_reason = if term.dirty_all {
+                "global"
+            } else if changed {
+                "signature"
+            } else {
+                "?"
+            };
+        }
+        self.last_damage = match &dano {
+            crate::damage::Damage::All => "all".to_string(),
+            crate::damage::Damage::Rows(ls) if ls.is_empty() => "rows: 0".to_string(),
+            #[allow(clippy::cast_precision_loss)]
+            crate::damage::Damage::Rows(ls) if ls.len() > self.rows_max => {
+                self.rows_max = ls.len();
+                format!("rows: {}", ls.len())
+            },
+            crate::damage::Damage::Rows(ls) => format!("rows: {}", ls.len()),
+        };
         if self.por_linha.len().ne(&rows.len()) {
             // grade mudou de tamanho: nada de reaproveitar faixa antiga
             self.assinatura = assinatura;
             self.por_linha = vec![Vec::new(); rows.len()];
             for (y, row) in rows.iter().enumerate() {
-                self.por_linha[y] = self.linha(row, y, cols, sel, blink);
+                self.por_linha[y] = self.linha(row, cols, sel, blink);
             }
         } else {
-            match dano {
-                crate::damage::Damage::All => {
-                    for (y, row) in rows.iter().enumerate() {
-                        self.por_linha[y] = self.linha(row, y, cols, sel, blink);
-                    }
-                },
-                crate::damage::Damage::Rows(v) => {
-                    for y in v {
-                        if let Some(row) = rows.get(y) {
-                            self.por_linha[y] = self.linha(row, y, cols, sel, blink);
-                        }
-                    }
-                },
-            }
+            let shift = if term.scroll_conflict {
+                0
+            } else {
+                term.scroll_shift
+            };
+            self.rebuild_rows(&dano, &rows, cols, sel, blink, shift);
         }
 
         // lista final na ordem de blend: grade (por linha) → imagens → cromo
         // → cursor → badge → toast
         self.instances.clear();
-        for linha in &self.por_linha {
-            self.instances.extend_from_slice(linha);
+        let chh = self.fonts.ch;
+        for (y, linha) in self.por_linha.iter().enumerate() {
+            #[allow(clippy::cast_precision_loss)]
+            let dy = y as f32 * chh;
+            for inst in linha {
+                let mut copia = *inst;
+                copia.rect[1] += dy;
+                self.instances.push(copia);
+            }
         }
 
         // aqui acaba o texto da grade: as imagens (H1–H13) entram por cima
@@ -1101,17 +1136,62 @@ impl Renderer {
     }
 
     /// Monta as instâncias de uma linha sem tocar na lista do frame.
+    /// Remonta o que o dano pediu. Rolagem de tela inteira desloca as linhas
+    /// prontas: só as que entram (topo ou fim) precisam de glifo novo.
+    fn rebuild_rows(
+        &mut self,
+        dano: &crate::damage::Damage,
+        rows: &[&bzmux_core::grid::Row],
+        cols: usize,
+        sel: Option<(usize, usize, usize, usize)>,
+        blink: Blink,
+        shift: isize,
+    ) {
+        let crate::damage::Damage::Rows(linhas) = dano else {
+            for (y, row) in rows.iter().enumerate() {
+                self.por_linha[y] = self.linha(row, cols, sel, blink);
+            }
+            return;
+        };
+        let mut rebuild = linhas.clone();
+        if shift != 0 {
+            let n = shift.unsigned_abs().min(self.por_linha.len());
+            for _ in 0..n {
+                if shift > 0 {
+                    self.por_linha.remove(0);
+                    self.por_linha.push(Vec::new());
+                    rebuild.push(self.por_linha.len() - 1);
+                } else {
+                    self.por_linha.pop();
+                    self.por_linha.insert(0, Vec::new());
+                }
+            }
+            if shift < 0 {
+                rebuild.extend(0..n);
+            }
+        }
+        rebuild.sort_unstable();
+        rebuild.dedup();
+        for y in rebuild {
+            if let Some(row) = rows.get(y) {
+                self.por_linha[y] = self.linha(row, cols, sel, blink);
+            }
+        }
+    }
+
+    /// Monta uma linha **relativa ao topo da grade** (y = 0). A posição
+    /// vertical entra na concatenação, e é isso que permite rolar a tela
+    /// deslocando a linha pronta em vez de remontar o glifo.
     fn linha(
         &mut self,
         row: &bzmux_core::grid::Row,
-        y: usize,
         cols: usize,
         sel: Option<(usize, usize, usize, usize)>,
         blink: Blink,
     ) -> Vec<Instance> {
         let guardado = std::mem::take(&mut self.instances);
         self.instances.clear();
-        self.pinta_linha(row, y, cols, sel, blink);
+        self.pinta_linha(row, 0, cols, sel, blink);
         std::mem::replace(&mut self.instances, guardado)
     }
 

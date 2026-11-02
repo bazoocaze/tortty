@@ -131,6 +131,18 @@ pub struct Term {
     tabstops: Vec<bool>,
     pub dirty: Vec<bool>,
     pub dirty_all: bool,
+    /// Quantas vezes o dano global foi marcado, e por quem. É a primeira
+    /// pergunta quando a grade inteira remonta sem motivo aparente.
+    pub global_marks: u64,
+    pub global_why: &'static str,
+    /// Linhas que a tela inteira subiu (+) ou desceu (−) desde o último
+    /// `clear_damage`. Rolagem de tela cheia não suja linha nenhuma: o conteúdo
+    /// só mudou de lugar, e o desenho aproveita as linhas já montadas.
+    pub scroll_shift: isize,
+    /// Houve rolagem para os dois lados: aí o deslocamento líquido não descreve
+    /// o que aconteceu (linha que sai vira branco e não volta), e o desenho tem
+    /// de remontar tudo.
+    pub scroll_conflict: bool,
     /// Linhas que saíram pelo topo desde o início (índice absoluto).
     pub scrolled: u64,
     pub abs_gen: u64,
@@ -198,7 +210,11 @@ impl Term {
             respond_size: false,
             tabstops: (0..cols).map(|i| i % 8 == 0).collect(),
             dirty: vec![true; rows],
+            scroll_shift: 0,
+            scroll_conflict: false,
             dirty_all: true,
+            global_marks: 0,
+            global_why: "",
             scrolled: 0,
             abs_gen: 0,
             hist_gen: 0,
@@ -241,16 +257,32 @@ impl Term {
     }
 
     pub fn touch_all(&mut self) {
-        self.dirty_all = true;
+        self.mark_global("touch_all");
     }
 
     pub fn has_damage(&self) -> bool {
         self.dirty_all || self.dirty.iter().any(|&d| d)
     }
 
+    /// Suja um intervalo de linhas (fim exclusivo), limitado à grade.
+    pub fn mark_rows(&mut self, from: usize, to: usize) {
+        for y in from..to.min(self.dirty.len()) {
+            self.dirty[y] = true;
+        }
+    }
+
+    /// Marca a grade inteira como suja, guardando quem pediu.
+    pub fn mark_global(&mut self, why: &'static str) {
+        self.dirty_all = true;
+        self.global_marks = self.global_marks.saturating_add(1);
+        self.global_why = why;
+    }
+
     pub fn clear_damage(&mut self) {
         self.dirty_all = false;
         self.dirty.fill(false);
+        self.scroll_shift = 0;
+        self.scroll_conflict = false;
     }
 
     pub fn reset(&mut self) {
@@ -310,7 +342,7 @@ impl Term {
         if (cols, rows) == (self.cols, self.rows) {
             return;
         }
-        self.dirty_all = true;
+        self.mark_global("resize");
         self.abs_gen += 1;
         if let Some(alt) = self.alt.as_mut() {
             // Alt-screen não tem histórico: quem sai pela tela morre, e sem
@@ -557,8 +589,19 @@ impl Term {
     }
 
     pub fn scroll_up(&mut self, n: usize) {
-        self.dirty_all = true;
         let full = self.top == 0 && self.bottom + 1 == self.rows;
+        if full {
+            // a tela inteira subiu: o desenho desloca as linhas prontas
+            if self.scroll_shift < 0 {
+                self.scroll_conflict = true;
+            }
+            #[allow(clippy::cast_possible_wrap)]
+            {
+                self.scroll_shift += n as isize;
+            }
+        } else {
+            self.mark_global("scroll_up_region");
+        }
         let keep = full && self.alt.is_none();
         // H12: a imagem sobe junto com o texto. Rolagem de tela cheia manda a
         // colocação para o histórico (linha negativa) e ela volta ao subir no
@@ -587,6 +630,9 @@ impl Term {
             let blank = Row::blank(self.cols);
             let at = self.bottom.min(self.grid.len());
             self.grid.insert(at, blank);
+            if let Some(d) = self.dirty.get_mut(at) {
+                *d = true; // linha nova: não existe versão pronta para deslocar
+            }
             self.scrolled += 1;
         }
         // a região pode ter encolhido (linhas fora dela não se movem)
@@ -596,13 +642,27 @@ impl Term {
     }
 
     fn scroll_down(&mut self, n: usize) {
-        self.dirty_all = true;
+        let full = self.top == 0 && self.bottom + 1 == self.rows;
+        if full {
+            if self.scroll_shift > 0 {
+                self.scroll_conflict = true;
+            }
+            #[allow(clippy::cast_possible_wrap)]
+            {
+                self.scroll_shift -= n as isize;
+            }
+        } else {
+            self.mark_global("scroll_down_region");
+        }
         for _ in 0..n {
             let at = self.bottom.min(self.grid.len().saturating_sub(1));
             if self.grid.len() > at {
                 self.grid.remove(at);
             }
             self.grid.insert(self.top, Row::blank(self.cols));
+            if let Some(d) = self.dirty.get_mut(self.top) {
+                *d = true; // linha nova no topo: nada pronto para deslocar
+            }
             while self.grid.len() > self.rows {
                 self.grid.pop();
             }
@@ -684,7 +744,11 @@ impl Term {
     // ---------------------------------------------------------------- apagar
 
     fn erase_display(&mut self, n: u32) {
-        self.touch_all();
+        match n {
+            2 | 3 => self.touch_all(),
+            1 => self.mark_rows(0, self.cy + 1),
+            _ => self.mark_rows(self.cy, self.rows),
+        }
         match n {
             2 | 3 => {
                 let cell = self.blank_cell();
@@ -752,7 +816,7 @@ impl Term {
     }
 
     fn insert_lines(&mut self, n: usize) {
-        self.touch_all();
+        self.mark_rows(self.cy, self.bottom + 1);
         if !(self.top..=self.bottom).contains(&self.cy) {
             return;
         }
@@ -769,7 +833,7 @@ impl Term {
     }
 
     fn delete_lines(&mut self, n: usize) {
-        self.touch_all();
+        self.mark_rows(self.cy, self.bottom + 1);
         if !(self.top..=self.bottom).contains(&self.cy) {
             return;
         }
@@ -997,7 +1061,7 @@ impl Term {
         if self.alt.is_some() {
             return;
         }
-        self.dirty_all = true;
+        self.mark_global("enter_alt");
         self.save_cursor();
         self.abs_gen += 1;
         let blank = (0..self.rows).map(|_| Row::blank(self.cols)).collect();
@@ -1017,7 +1081,7 @@ impl Term {
         let Some(saved_grid) = self.alt.take() else {
             return;
         };
-        self.dirty_all = true;
+        self.mark_global("leave_alt");
         self.abs_gen += 1;
         self.grid = saved_grid;
         if self.grid.len() != self.rows
@@ -1964,6 +2028,89 @@ fn reflow(all: Vec<Row>, cols: usize, cur_abs: usize, cur_col: usize) -> Reflowe
         cur_row,
         cur_col: cur_col_new,
         wrap,
+    }
+}
+
+#[cfg(test)]
+mod scroll_shift_tests {
+    use super::*;
+
+    /// Tela cheia rolada reporta o deslocamento líquido, não dano global.
+    #[test]
+    fn full_scroll_reports_shift() {
+        let mut t = Term::new(10, 4);
+        t.clear_damage();
+        t.feed(b"\x1b[4;1H\n"); // LF na última linha rola a tela
+        assert_eq!(t.scroll_shift, 1);
+        assert!(!t.dirty_all);
+        t.feed(b"\n\n");
+        assert_eq!(t.scroll_shift, 3);
+        t.clear_damage();
+        assert_eq!(t.scroll_shift, 0, "consumir o dano zera o deslocamento");
+    }
+
+    /// Rolar para cima e depois para baixo não é deslocamento zero: a linha que
+    /// saiu não volta, então o desenho tem de remontar tudo.
+    #[test]
+    fn scroll_both_ways_conflicts() {
+        let mut t = Term::new(10, 4);
+        t.clear_damage();
+        t.feed(b"\x1b[4;1H\n"); // rola para cima
+        t.feed(b"\x1b[1;1H\x1bM"); // RI no topo: rola para baixo
+        assert!(t.scroll_conflict, "sentidos opostos têm de marcar conflito");
+    }
+
+    /// Rolagem de região não desloca a tela inteira: só dano global resolve.
+    #[test]
+    fn region_scroll_is_global_damage() {
+        let mut t = Term::new(10, 4);
+        t.feed(b"\x1b[2;3r");
+        t.clear_damage();
+        t.feed(b"\x1b[3;1H\n");
+        assert!(t.dirty_all);
+        assert_eq!(t.scroll_shift, 0);
+    }
+}
+
+#[cfg(test)]
+mod damage_precision_tests {
+    use super::*;
+
+    fn marks(t: &Term) -> (u64, &'static str) {
+        (t.global_marks, t.global_why)
+    }
+
+    /// IL/DL mudam do cursor até o fim da região: nada de tela toda.
+    #[test]
+    fn insert_and_delete_lines_mark_only_the_tail() {
+        let mut t = Term::new(10, 6);
+        t.clear_damage();
+        t.feed(b"\x1b[3;1H\x1b[L"); // IL na linha 3
+        assert_eq!(marks(&t).0, 0, "IL não é dano global");
+        assert!(t.dirty[2] && t.dirty[5], "do cursor ao fim da região");
+        assert!(!t.dirty[0] && !t.dirty[1], "acima do cursor não mudou");
+        t.clear_damage();
+        t.feed(b"\x1b[3;1H\x1b[M"); // DL na linha 3
+        assert_eq!(marks(&t).0, 0, "DL não é dano global");
+        assert!(!t.dirty[0] && !t.dirty[1]);
+    }
+
+    /// ED 0 e ED 1 atingem do cursor para um lado; ED 2 é a tela toda.
+    #[test]
+    fn erase_display_marks_the_right_side() {
+        let mut t = Term::new(10, 6);
+        t.feed(b"\x1b[3;1H");
+        t.clear_damage();
+        t.feed(b"\x1b[0J");
+        assert_eq!(marks(&t).0, 0, "ED0 não é dano global");
+        assert!(!t.dirty[0] && t.dirty[2] && t.dirty[5]);
+        t.clear_damage();
+        t.feed(b"\x1b[3;1H\x1b[1J");
+        assert_eq!(marks(&t).0, 0, "ED1 não é dano global");
+        assert!(t.dirty[0] && t.dirty[2] && !t.dirty[5]);
+        t.clear_damage();
+        t.feed(b"\x1b[2J");
+        assert_eq!(marks(&t).1, "touch_all", "ED2 é a tela toda");
     }
 }
 

@@ -278,11 +278,30 @@ fn draw_damage() -> Result<(), String> {
     if take_damage(&mut t).is_some() {
         return Err("ED2 deveria sujar a tela toda".to_string());
     }
-    // rolagem, resize e RIS: a grade inteira (as linhas mudam de posição)
+    // rolagem de tela cheia não suja a grade: reporta o deslocamento, e a
+    // linha que entra em branco é a única a remontar (o desenho desliza o resto)
     t.feed(b"\x1b[5;1H\n");
-    if take_damage(&mut t).is_some() {
-        return Err("rolagem move toda linha: dano tinha que ser a grade".to_string());
+    if t.scroll_shift != 1 {
+        return Err(format!(
+            "rolagem tinha que reportar deslocamento 1, veio {}",
+            t.scroll_shift
+        ));
     }
+    if t.dirty_all {
+        return Err("rolagem de tela cheia não pode sujar a grade toda".to_string());
+    }
+    if !t.dirty.get(t.rows - 1).copied().unwrap_or(false) {
+        return Err("a linha que entrou em branco tinha que estar suja".to_string());
+    }
+    // rolagem de região não tem deslocamento de tela inteira: dano global
+    t.clear_damage();
+    t.feed(b"\x1b[2;3r"); // região 2..3
+    t.feed(b"\x1b[3;1H\n");
+    if !t.dirty_all {
+        return Err("rolagem de região tinha que sujar a grade toda".to_string());
+    }
+    t.feed(b"\x1b[r");
+    t.feed(b"\x1b[2J");
     t.resize(8, 4);
     if take_damage(&mut t).is_some() {
         return Err("reflow move toda linha: dano tinha que ser a grade".to_string());
