@@ -36,12 +36,8 @@ fn frame(cols: usize, rows: usize) -> Vec<u8> {
             let i = (row * cols + x) % TONS.len();
             let (r, g, b) = TONS[i];
             let (r2, g2, b2) = TONS[(i + 3) % TONS.len()];
-            out.extend_from_slice(
-                format!("\x1b[38;2;{};{};{}m", r, g, b).as_bytes(),
-            );
-            out.extend_from_slice(
-                format!("\x1b[48;2;{};{};{}m", r2, g2, b2).as_bytes(),
-            );
+            out.extend_from_slice(format!("\x1b[38;2;{r};{g};{b}m").as_bytes());
+            out.extend_from_slice(format!("\x1b[48;2;{r2};{g2};{b2}m").as_bytes());
             out.extend_from_slice("▀".as_bytes());
         }
     }
@@ -51,7 +47,7 @@ fn frame(cols: usize, rows: usize) -> Vec<u8> {
 fn arg(name: &str, default: usize) -> usize {
     let args: Vec<String> = std::env::args().collect();
     for (i, a) in args.iter().enumerate() {
-        if a == &format!("--{}", name) {
+        if a == &format!("--{name}") {
             if let Some(v) = args.get(i + 1) {
                 if let Ok(n) = v.parse() {
                     return n;
@@ -65,7 +61,7 @@ fn arg(name: &str, default: usize) -> usize {
 fn arg_s(name: &str) -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
     for (i, a) in args.iter().enumerate() {
-        if a == &format!("--{}", name) {
+        if a == &format!("--{name}") {
             return args.get(i + 1).cloned();
         }
     }
@@ -75,12 +71,13 @@ fn arg_s(name: &str) -> Option<String> {
 /// Modo "carga real": despeja um arquivo (o `dmesg` do sistema, com e sem cor)
 /// no parser, como o BENCHMARKS do Python faz com o `Term` sem GTK.
 fn bench_file(path: &str, cols: usize, rows: usize) {
+    const RODADAS: usize = 20;
     let data = match std::fs::read(path) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("não abriu {}: {}", path, e);
+            eprintln!("não abriu {path}: {e}");
             return;
-        }
+        },
     };
     let mut term = Term::new(cols, rows);
     term.scrollback_limit = 100_000;
@@ -90,7 +87,6 @@ fn bench_file(path: &str, cols: usize, rows: usize) {
         term.clear_damage();
     }
     let mut best = f64::MAX;
-    const RODADAS: usize = 20;
     for _ in 0..RODADAS {
         let t0 = Instant::now();
         term.feed(&data);
@@ -100,9 +96,15 @@ fn bench_file(path: &str, cols: usize, rows: usize) {
             best = ms;
         }
     }
+    #[allow(clippy::naive_bytecount)] // uma passada, fora do cronômetro
     let linhas = data.iter().filter(|&&b| b == b'\n').count();
-    println!("arquivo      {} ({} B, {} linhas)", path, data.len(), linhas);
-    println!("grade        {}x{}", cols, rows);
+    println!(
+        "arquivo      {} ({} B, {} linhas)",
+        path,
+        data.len(),
+        linhas
+    );
+    println!("grade        {cols}x{rows}");
     println!(
         "parse        {:.2} ms  ({:.2} MB/s, {:.1} µs/linha) — melhor de {}",
         best,
@@ -163,26 +165,23 @@ fn main() {
     let escapes = 1 + cells_por_frame * 2;
     let ns_escape = media_ns / escapes as f64;
 
-    println!("grade        {}x{} ({} células)", cols, rows, cells_por_frame);
+    println!("grade        {cols}x{rows} ({cells_por_frame} células)");
     println!(
         "frame        {} B ({} B/célula)",
         payload.len(),
         payload.len() / cells_por_frame
     );
-    println!("frames       {}", frames);
+    println!("frames       {frames}");
     println!(
-        "média        {:.3} µs/célula  {:.1} MB/s  {:.1} ns/escape",
-        media_us_cell, media_mbs, ns_escape
+        "média        {media_us_cell:.3} µs/célula  {media_mbs:.1} MB/s  {ns_escape:.1} ns/escape"
     );
-    println!(
-        "melhor       {:.3} µs/célula  {:.1} MB/s",
-        best, best_mbs
-    );
-    println!(
-        "referência   python pós-P20 5,49 µs/célula · python pré-P20 35,0 · kitty ~1,0"
-    );
+    println!("melhor       {best:.3} µs/célula  {best_mbs:.1} MB/s");
+    println!("referência   python pós-P20 5,49 µs/célula · python pré-P20 35,0 · kitty ~1,0");
     if best > 0.0 {
-        println!("ganho        {:.1}x sobre o python pós-P20, {:.1}x sobre o pré-P20",
-            5.49 / best, 35.0 / best);
+        println!(
+            "ganho        {:.1}x sobre o python pós-P20, {:.1}x sobre o pré-P20",
+            5.49 / best,
+            35.0 / best
+        );
     }
 }

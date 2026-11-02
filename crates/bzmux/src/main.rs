@@ -19,7 +19,7 @@ fn main() {
     let opts = match cli::parse(args) {
         Ok(o) => o,
         Err(msg) => {
-            println!("{}", msg);
+            println!("{msg}");
             // ajuda/versão saem em código 0; erro de uso em 2
             let code = if msg.contains("opção desconhecida") || msg.starts_with("falta") {
                 2
@@ -27,7 +27,7 @@ fn main() {
                 0
             };
             std::process::exit(code);
-        }
+        },
     };
     if opts.prof {
         prof::set_on(true);
@@ -36,15 +36,15 @@ fn main() {
     let event_loop = match EventLoop::<UserEvent>::with_user_event().build() {
         Ok(e) => e,
         Err(e) => {
-            eprintln!("bzmux: event loop: {}", e);
+            eprintln!("bzmux: event loop: {e}");
             std::process::exit(1);
-        }
+        },
     };
     event_loop.set_control_flow(ControlFlow::Wait);
     let proxy = event_loop.create_proxy();
     let mut app = App::new(opts, proxy);
     if let Err(e) = event_loop.run_app(&mut app) {
-        eprintln!("bzmux: {}", e);
+        eprintln!("bzmux: {e}");
         std::process::exit(1);
     }
 }

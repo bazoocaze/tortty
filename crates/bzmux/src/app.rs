@@ -45,7 +45,7 @@ pub fn logln(msg: &str) {
     if let Ok(mut slot) = LOG.lock() {
         if let Some(f) = slot.as_mut() {
             use std::io::Write as _;
-            let _ = writeln!(f, "{}", msg);
+            let _ = writeln!(f, "{msg}");
         }
     }
 }
@@ -113,13 +113,13 @@ impl App {
                     Ok(v) if v.is_empty() => {
                         self.eof = true;
                         break;
-                    }
+                    },
                     Ok(v) => bytes.extend_from_slice(&v),
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => {
                         self.eof = true;
                         break;
-                    }
+                    },
                 }
             }
         }
@@ -147,9 +147,9 @@ impl App {
             crate::render::FrameOutcome::Reconfigure => {
                 let (w, h) = (renderer.config.width, renderer.config.height);
                 renderer.resize(w, h);
-            }
+            },
             crate::render::FrameOutcome::Fatal => self.exiting = true,
-            _ => {}
+            _ => {},
         }
     }
 
@@ -183,6 +183,7 @@ impl App {
         }
     }
 
+    #[allow(clippy::too_many_lines)] // um braço por verbo do protocolo
     fn debug_dispatch(&mut self, line: &str) -> String {
         let req: serde_json::Value = match serde_json::from_str(line) {
             Ok(v) => v,
@@ -213,13 +214,16 @@ impl App {
                     "workspaces": 1,
                     "errors": [],
                 }))
-            }
+            },
             "text" => {
                 let where_ = req.get("where").and_then(|v| v.as_str()).unwrap_or("view");
-                let start = req.get("start").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let start = req
+                    .get("start")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0) as usize;
                 let count = req
                     .get("count")
-                    .and_then(|v| v.as_u64())
+                    .and_then(serde_json::Value::as_u64)
                     .unwrap_or(40)
                     .clamp(1, 2000) as usize;
                 let lines: Vec<String> = match where_ {
@@ -237,19 +241,25 @@ impl App {
                         .collect(),
                 };
                 debugsock::ok(serde_json::json!({ "lines": lines }))
-            }
+            },
             "write" => match req.get("data").and_then(|v| v.as_str()) {
                 Some(data) => {
                     if let Some(pty) = self.pty.as_mut() {
                         pty.write(data.as_bytes());
                     }
                     debugsock::ok(serde_json::json!({}))
-                }
+                },
                 None => debugsock::err("write precisa de data (string)"),
             },
             "resize" => {
-                let cols = req.get("cols").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                let rows = req.get("rows").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let cols = req
+                    .get("cols")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0) as usize;
+                let rows = req
+                    .get("rows")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0) as usize;
                 if cols == 0 || rows == 0 {
                     return debugsock::err("resize precisa de cols e rows > 0");
                 }
@@ -261,7 +271,7 @@ impl App {
                     let _ = w.request_inner_size(PhysicalSize::new(pw.max(1), ph.max(1)));
                 }
                 debugsock::ok(serde_json::json!({ "requested": [cols, rows] }))
-            }
+            },
             "keys" => match req.get("data").and_then(|v| v.as_str()) {
                 Some(spec) => {
                     let bytes = encode_spec(spec);
@@ -269,42 +279,42 @@ impl App {
                         pty.write(&bytes);
                     }
                     debugsock::ok(serde_json::json!({ "keys": [bytes.len()] }))
-                }
+                },
                 None => debugsock::err("keys precisa de data"),
             },
             "prof" => {
-                if let Some(on) = req.get("on").and_then(|v| v.as_bool()) {
+                if let Some(on) = req.get("on").and_then(serde_json::Value::as_bool) {
                     if on {
                         prof::reset();
                     }
                     prof::set_on(on);
                 }
                 debugsock::ok(prof::fields())
-            }
+            },
             "log" => {
                 let value = req.get("value").and_then(|v| v.as_str()).unwrap_or("off");
                 set_log(value);
                 debugsock::ok(serde_json::json!({ "path": value }))
-            }
+            },
             "quit" => {
                 self.exiting = true;
                 debugsock::ok(serde_json::json!({}))
-            }
-            _ => debugsock::err(format!("cmd desconhecido: {:?}", cmd)),
+            },
+            _ => debugsock::err(format!("cmd desconhecido: {cmd:?}")),
         }
     }
 
     fn spawn_shell(&mut self, cols: usize, rows: usize, wake: Arc<dyn Fn() + Send + Sync>) {
         let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
-        match Pty::spawn(self.opts.cmd.clone(), cols as u16, rows as u16, tx, wake) {
+        match Pty::spawn(self.opts.cmd.as_deref(), cols as u16, rows as u16, tx, wake) {
             Ok(p) => {
                 self.pty = Some(p);
                 self.rx = Some(rx);
-            }
+            },
             Err(e) => {
-                eprintln!("bzmux: {}", e);
+                eprintln!("bzmux: {e}");
                 self.exiting = true;
-            }
+            },
         }
     }
 }
@@ -376,15 +386,14 @@ impl ApplicationHandler<UserEvent> for App {
         }
         let scale = event_loop
             .primary_monitor()
-            .map(|m| m.scale_factor())
-            .unwrap_or(1.0);
+            .map_or(1.0, |m| m.scale_factor());
         let fonts = match Fonts::new(&self.opts.font_family, self.font_px(scale)) {
             Ok(f) => f,
             Err(e) => {
-                eprintln!("bzmux: {}", e);
+                eprintln!("bzmux: {e}");
                 event_loop.exit();
                 return;
-            }
+            },
         };
         let w = (self.opts.cols as f32 * fonts.cw).round() as u32;
         let h = (self.opts.rows as f32 * fonts.ch).round() as u32;
@@ -394,18 +403,18 @@ impl ApplicationHandler<UserEvent> for App {
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
             Err(e) => {
-                eprintln!("bzmux: janela: {}", e);
+                eprintln!("bzmux: janela: {e}");
                 event_loop.exit();
                 return;
-            }
+            },
         };
-        let renderer = match Renderer::new(window.clone(), fonts, self.opts.vsync) {
+        let renderer = match Renderer::new(&window, fonts, self.opts.vsync) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("bzmux: GPU: {}", e);
+                eprintln!("bzmux: GPU: {e}");
                 event_loop.exit();
                 return;
-            }
+            },
         };
         // o grid real vem do tamanho que a janela conseguiu, não do pedido
         let size = window.inner_size();
@@ -428,8 +437,8 @@ impl ApplicationHandler<UserEvent> for App {
                 Ok(s) => {
                     logln(&format!("debug socket: {}", s.path()));
                     self.debug = Some(s);
-                }
-                Err(e) => eprintln!("bzmux: debug socket: {}", e),
+                },
+                Err(e) => eprintln!("bzmux: debug socket: {e}"),
             }
         }
         if let Some(path) = self.opts.debug_log.clone() {
@@ -440,10 +449,13 @@ impl ApplicationHandler<UserEvent> for App {
             env!("CARGO_PKG_VERSION"),
             cols,
             rows,
-            self.renderer.as_ref().map(|r| r.fonts.cw).unwrap_or(0.0),
-            self.renderer.as_ref().map(|r| r.fonts.ch).unwrap_or(0.0),
-            self.renderer.as_ref().map(|r| r.fonts.family.clone()).unwrap_or_default(),
-            self.renderer.as_ref().map(|r| r.fonts.px).unwrap_or(0.0),
+            self.renderer.as_ref().map_or(0.0, |r| r.fonts.cw),
+            self.renderer.as_ref().map_or(0.0, |r| r.fonts.ch),
+            self.renderer
+                .as_ref()
+                .map(|r| r.fonts.family.clone())
+                .unwrap_or_default(),
+            self.renderer.as_ref().map_or(0.0, |r| r.fonts.px),
         ));
         window.request_redraw();
     }
@@ -454,7 +466,7 @@ impl ApplicationHandler<UserEvent> for App {
                 if let Some(w) = self.window.as_ref() {
                     w.request_redraw();
                 }
-            }
+            },
             UserEvent::Debug(line, reply) => {
                 let out = self.debug_dispatch(&line);
                 let _ = reply.send(out);
@@ -462,16 +474,11 @@ impl ApplicationHandler<UserEvent> for App {
                 if let Some(w) = self.window.as_ref() {
                     w.request_redraw();
                 }
-            }
+            },
         }
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _id: WindowId,
-        event: WindowEvent,
-    ) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
@@ -479,16 +486,16 @@ impl ApplicationHandler<UserEvent> for App {
                 if let Some(w) = self.window.as_ref() {
                     w.request_redraw();
                 }
-            }
+            },
             WindowEvent::RedrawRequested => {
                 self.redraw();
                 if self.exiting {
                     event_loop.exit();
                 }
-            }
+            },
             WindowEvent::ModifiersChanged(m) => {
                 self.mods = m.state();
-            }
+            },
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed {
                     if self.view_off > 0 {
@@ -496,8 +503,7 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                     let keysym_scroll = self.view_off;
                     let _ = keysym_scroll;
-                    let Some(bytes) = keys::encode(&event, self.mods, self.term.app_cursor)
-                    else {
+                    let Some(bytes) = keys::encode(&event, self.mods, self.term.app_cursor) else {
                         return;
                     };
                     if self.view_off > 0 {
@@ -510,7 +516,7 @@ impl ApplicationHandler<UserEvent> for App {
                         w.request_redraw();
                     }
                 }
-            }
+            },
             WindowEvent::MouseWheel { delta, .. } => {
                 let lines = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
@@ -526,14 +532,14 @@ impl ApplicationHandler<UserEvent> for App {
                 if let Some(w) = self.window.as_ref() {
                     w.request_redraw();
                 }
-            }
+            },
             WindowEvent::Focused(focused) if self.term.focus_report => {
                 let seq = if focused { "\x1b[I" } else { "\x1b[O" };
                 if let Some(pty) = self.pty.as_mut() {
                     pty.write(seq.as_bytes());
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -543,7 +549,7 @@ impl ApplicationHandler<UserEvent> for App {
             return;
         }
         // filho saiu: fecha a janela (fase 1 = uma sessão por janela)
-        let exited = self.pty.as_mut().map(|p| p.child_exited()).unwrap_or(false);
+        let exited = self.pty.as_mut().is_some_and(super::pty::Pty::child_exited);
         if exited {
             self.drain();
             self.redraw();
@@ -554,8 +560,8 @@ impl ApplicationHandler<UserEvent> for App {
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
         if prof::enabled() || self.opts.prof {
             let summary = prof::summary();
-            eprintln!("prof: {}", summary);
-            logln(&format!("prof: {}", summary));
+            eprintln!("prof: {summary}");
+            logln(&format!("prof: {summary}"));
         }
         if let Some(pty) = self.pty.as_mut() {
             pty.kill();

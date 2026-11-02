@@ -9,11 +9,14 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 
 /// 1 + shift(1) + alt(2) + ctrl(4) — o parâmetro de modificador do xterm.
 fn mod_param(ctrl: bool, alt: bool, shift: bool) -> u8 {
-    1 + (shift as u8) + 2 * (alt as u8) + 4 * (ctrl as u8)
+    1 + u8::from(shift) + 2 * u8::from(alt) + 4 * u8::from(ctrl)
 }
 
 fn named_base(n: NamedKey, app_cursor: bool) -> Option<&'static str> {
-    use NamedKey::*;
+    use NamedKey::{
+        ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Backspace, Delete, End, Enter, Escape, Home,
+        Insert, PageDown, PageUp, Space, Tab, F1, F10, F11, F12, F2, F3, F4, F5, F6, F7, F8, F9,
+    };
     let s = match n {
         Enter => "\r",
         Backspace => "\x7f",
@@ -26,42 +29,42 @@ fn named_base(n: NamedKey, app_cursor: bool) -> Option<&'static str> {
             } else {
                 "\x1b[A"
             }
-        }
+        },
         ArrowDown => {
             if app_cursor {
                 "\x1bOB"
             } else {
                 "\x1b[B"
             }
-        }
+        },
         ArrowRight => {
             if app_cursor {
                 "\x1bOC"
             } else {
                 "\x1b[C"
             }
-        }
+        },
         ArrowLeft => {
             if app_cursor {
                 "\x1bOD"
             } else {
                 "\x1b[D"
             }
-        }
+        },
         Home => {
             if app_cursor {
                 "\x1bOH"
             } else {
                 "\x1b[H"
             }
-        }
+        },
         End => {
             if app_cursor {
                 "\x1bOF"
             } else {
                 "\x1b[F"
             }
-        }
+        },
         Insert => "\x1b[2~",
         Delete => "\x1b[3~",
         PageUp => "\x1b[5~",
@@ -84,8 +87,9 @@ fn named_base(n: NamedKey, app_cursor: bool) -> Option<&'static str> {
 }
 
 /// Aplica modificadores no formato do xterm (como o `_special` do Python).
-fn with_mods(seq: &str, ctrl: bool, alt: bool, shift: bool, is_tab: bool) -> Vec<u8> {
-    if is_tab && shift {
+fn with_mods(seq: &str, ctrl: bool, alt: bool, shift: bool) -> Vec<u8> {
+    // Shift+Tab chega como `\t` com shift: a forma canônica é backtab
+    if seq == "\t" && shift {
         // Shift+Tab é backtab; o shift já está na forma canônica
         if ctrl || alt {
             return format!("\x1b[1;{}Z", mod_param(ctrl, alt, false)).into_bytes();
@@ -98,12 +102,12 @@ fn with_mods(seq: &str, ctrl: bool, alt: bool, shift: bool, is_tab: bool) -> Vec
     let m = mod_param(ctrl, alt, shift);
     if let Some(body) = seq.strip_prefix("\x1b[") {
         if let Some(num) = body.strip_suffix('~') {
-            return format!("\x1b[{};{}~", num, m).into_bytes();
+            return format!("\x1b[{num};{m}~").into_bytes();
         }
-        return format!("\x1b[1;{}{}", m, body).into_bytes();
+        return format!("\x1b[1;{m}{body}").into_bytes();
     }
     if let Some(body) = seq.strip_prefix("\x1bO") {
-        return format!("\x1b[1;{}{}", m, body).into_bytes();
+        return format!("\x1b[1;{m}{body}").into_bytes();
     }
     if alt {
         let mut v = Vec::with_capacity(seq.len() + 1);
@@ -129,7 +133,7 @@ pub fn encode(ev: &KeyEvent, mods: ModifiersState, app_cursor: bool) -> Option<V
 
     if let Key::Named(n) = &ev.logical_key {
         let base = named_base(*n, app_cursor)?;
-        return Some(with_mods(base, ctrl, alt, shift, *n == NamedKey::Tab));
+        return Some(with_mods(base, ctrl, alt, shift));
     }
 
     let Key::Character(s) = &ev.logical_key else {
@@ -160,7 +164,7 @@ pub fn encode(ev: &KeyEvent, mods: ModifiersState, app_cursor: bool) -> Option<V
 
     // texto composto (dead keys já resolvidas pelo winit)
     let text = ev.text.as_deref().unwrap_or("");
-    let body: &str = if !text.is_empty() { text } else { s.as_str() };
+    let body: &str = if text.is_empty() { s.as_str() } else { text };
     if body.is_empty() {
         return None;
     }

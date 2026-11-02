@@ -7,6 +7,38 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 
+# Lints de workspace: os crates aderem com `[lints] workspace = true`.
+#
+# Regra de ouro: lint que o código **quer** violar fica aqui, com o motivo.
+# Terminal é aritmética de célula — truncar f32 para u16 e perder precisão de
+# f32 é o desenho, não descuido. O que sobra do `pedantic` é sinal: formato
+# inline, `&str` no lugar de `String`, item depois de statement.
+[workspace.lints.rust]
+unsafe_code = "deny" # único bloco permitido: `#[allow]` local em debugsock (SO_PEERCRED)
+unused_must_use = "deny"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+# aritmética de célula/pixel: conversão é o domínio, não acidente
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_lossless = "warn"
+# API interna de app, não biblioteca publicada
+doc_markdown = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+# `new()` que devolve `Self` sem validação não precisa de `#[must_use]`
+return_self_not_must_use = "allow"
+
 [profile.release]
 opt-level = 3
 lto = "thin"

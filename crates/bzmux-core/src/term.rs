@@ -53,6 +53,7 @@ impl Default for SavedCursor {
     }
 }
 
+#[allow(clippy::struct_excessive_bools)] // estado do VT é booleano por natureza
 pub struct Term {
     pub cols: usize,
     pub rows: usize,
@@ -200,9 +201,7 @@ impl Term {
 
     pub fn clear_damage(&mut self) {
         self.dirty_all = false;
-        for d in self.dirty.iter_mut() {
-            *d = false;
-        }
+        self.dirty.fill(false);
     }
 
     pub fn reset(&mut self) {
@@ -238,7 +237,13 @@ impl Term {
         }
         self.dirty_all = true;
         self.abs_gen += 1;
-        let removed = resize_main(&mut self.grid, &mut self.scrollback, self.scrollback_limit, cols, rows);
+        let removed = resize_main(
+            &mut self.grid,
+            &mut self.scrollback,
+            self.scrollback_limit,
+            cols,
+            rows,
+        );
         if let Some(alt) = self.alt.as_mut() {
             // Alt-screen não tem histórico: quem sai pela tela morre.
             crop_rows(alt, cols, rows);
@@ -540,9 +545,7 @@ impl Term {
                 let cell = self.blank_cell();
                 for y in 0..self.rows {
                     let mut row = Row::blank(self.cols);
-                    for c in row.cells.iter_mut() {
-                        *c = cell;
-                    }
+                    row.cells.fill(cell);
                     self.grid[y] = row;
                 }
                 if n == 3 {
@@ -552,7 +555,7 @@ impl Term {
                 }
                 self.cx = 0;
                 self.cy = 0;
-            }
+            },
             1 => {
                 let cell = self.blank_cell();
                 for x in 0..=self.cx.min(self.cols - 1) {
@@ -560,12 +563,10 @@ impl Term {
                 }
                 for y in 0..self.cy {
                     let mut row = Row::blank(self.cols);
-                    for c in row.cells.iter_mut() {
-                        *c = cell;
-                    }
+                    row.cells.fill(cell);
                     self.grid[y] = row;
                 }
-            }
+            },
             _ => {
                 let cell = self.blank_cell();
                 for x in self.cx..self.cols {
@@ -573,12 +574,10 @@ impl Term {
                 }
                 for y in self.cy + 1..self.rows {
                     let mut row = Row::blank(self.cols);
-                    for c in row.cells.iter_mut() {
-                        *c = cell;
-                    }
+                    row.cells.fill(cell);
                     self.grid[y] = row;
                 }
-            }
+            },
         }
     }
 
@@ -588,21 +587,19 @@ impl Term {
         match n {
             2 => {
                 let mut row = Row::blank(self.cols);
-                for c in row.cells.iter_mut() {
-                    *c = cell;
-                }
+                row.cells.fill(cell);
                 self.grid[self.cy] = row;
-            }
+            },
             1 => {
                 for x in 0..=self.cx.min(self.cols - 1) {
                     self.grid[self.cy].cells[x] = cell;
                 }
-            }
+            },
             _ => {
                 for x in self.cx..self.cols {
                     self.grid[self.cy].cells[x] = cell;
                 }
-            }
+            },
         }
     }
 
@@ -685,7 +682,7 @@ impl Term {
                     self.fg = Color::Default;
                     self.bg = Color::Default;
                     self.flags = 0;
-                }
+                },
                 1 => self.flags |= BOLD,
                 4 => self.flags |= UL,
                 7 => self.flags |= INV,
@@ -700,12 +697,12 @@ impl Term {
                 49 => self.bg = Color::Default,
                 90..=97 => self.fg = Color::Idx((code - 90 + 8) as u8),
                 100..=107 => self.bg = Color::Idx((code - 100 + 8) as u8),
-                _ => {}
+                _ => {},
             }
         }
     }
 
-    fn extended(&mut self, toks: &mut Toks, is_fg: bool) {
+    fn extended(&mut self, toks: &mut Toks<'_>, is_fg: bool) {
         let Some(mode) = toks.next_num() else { return };
         let color = match mode {
             5 => match toks.next_num() {
@@ -719,7 +716,7 @@ impl Term {
                     return;
                 };
                 Color::rgb(r, g, b)
-            }
+            },
             _ => return,
         };
         if is_fg {
@@ -762,14 +759,14 @@ impl Term {
                 } else {
                     self.bg = color;
                 }
-            }
+            },
             4 => self.flags |= UL,
             0 => {
                 self.fg = Color::Default;
                 self.bg = Color::Default;
                 self.flags = 0;
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -795,7 +792,7 @@ impl Term {
                     } else {
                         self.leave_alt();
                     }
-                }
+                },
                 1000 | 1002 | 1003 => {
                     self.mouse_mode = if on {
                         match p {
@@ -806,12 +803,12 @@ impl Term {
                     } else {
                         0
                     }
-                }
+                },
                 1006 => self.mouse_sgr = on,
                 1004 => self.focus_report = on,
                 2004 => self.bracketed_paste = on,
                 2026 => self.sync_output = on,
-                _ => {}
+                _ => {},
             }
         }
         // modos ANSI (IRM=4, LNM=20) não são implementados de propósito;
@@ -847,7 +844,7 @@ impl Term {
         self.abs_gen += 1;
         self.grid = saved_grid;
         if self.grid.len() != self.rows
-            || self.grid.first().map(|r| r.len()) != Some(self.cols)
+            || self.grid.first().map(super::grid::Row::len) != Some(self.cols)
         {
             crop_rows(&mut self.grid, self.cols, self.rows);
         }
@@ -879,6 +876,7 @@ impl Term {
 
     // ------------------------------------------------------------ dispatch
 
+    #[allow(clippy::too_many_lines)] // tabela de despacho: partir só esconde o mapa
     fn csi_dispatch(&mut self, final_: u8) {
         let body = std::mem::take(&mut self.csi);
         let prefix = self.csi_prefix;
@@ -894,42 +892,42 @@ impl Term {
                 let k = (p(0, 1).max(1)) as isize;
                 let (cy, cx) = (self.cy as isize, self.cx as isize);
                 self.cursor_to(cy - k, cx);
-            }
+            },
             b'B' => {
                 let k = (p(0, 1).max(1)) as isize;
                 let (cy, cx) = (self.cy as isize, self.cx as isize);
                 self.cursor_to(cy + k, cx);
-            }
+            },
             b'C' => {
                 let k = (p(0, 1).max(1)) as isize;
                 let (cy, cx) = (self.cy as isize, self.cx as isize);
                 self.cursor_to(cy, cx + k);
-            }
+            },
             b'D' => {
                 let k = (p(0, 1).max(1)) as isize;
                 let (cy, cx) = (self.cy as isize, self.cx as isize);
                 self.cursor_to(cy, cx - k);
-            }
+            },
             b'E' => {
                 let k = (p(0, 1).max(1)) as isize;
                 let cy = self.cy as isize;
                 self.cursor_to(cy + k, 0);
-            }
+            },
             b'F' => {
                 let k = (p(0, 1).max(1)) as isize;
                 let cy = self.cy as isize;
                 self.cursor_to(cy - k, 0);
-            }
+            },
             b'G' | b'`' => {
                 let k = p(0, 1).max(1);
                 let cy = self.cy as isize;
                 self.cursor_to(cy, k as isize - 1);
-            }
+            },
             b'H' | b'f' => {
                 let r = p(0, 1).max(1);
                 let c = p(1, 1).max(1);
                 self.cursor_to(r as isize - 1, c as isize - 1);
-            }
+            },
             b'I' => self.forward_tab(p(0, 1).max(1) as usize),
             b'Z' => self.backward_tab(p(0, 1).max(1) as usize),
             b'J' => self.erase_display(p(0, 0)),
@@ -947,7 +945,7 @@ impl Term {
                 for _ in 0..n {
                     self.put_char(ch);
                 }
-            }
+            },
             b'c' => {
                 if prefix == b'>' {
                     // DA2: a resposta TEM de começar com '>'
@@ -955,24 +953,22 @@ impl Term {
                 } else if body.is_empty() || body == b"0" {
                     self.child_out.extend_from_slice(b"\x1b[?62c");
                 }
-            }
+            },
             b'd' => {
                 let r = p(0, 1).max(1);
                 let cx = self.cx as isize;
                 self.cursor_to(r as isize - 1, cx);
-            }
+            },
             b'g' => match p(0, 0) {
                 0 => {
                     if self.cx < self.tabstops.len() {
                         self.tabstops[self.cx] = false;
                     }
-                }
+                },
                 3 => {
-                    for t in self.tabstops.iter_mut() {
-                        *t = false;
-                    }
-                }
-                _ => {}
+                    self.tabstops.fill(false);
+                },
+                _ => {},
             },
             b'h' => self.set_mode(&body, private, true),
             b'l' => self.set_mode(&body, private, false),
@@ -988,8 +984,8 @@ impl Term {
                             format!("\x1b[{};{}R", self.cy + 1, self.cx + 1).as_bytes(),
                         );
                     }
-                }
-                _ => {}
+                },
+                _ => {},
             },
             b'p' => {
                 if inter == b'$' {
@@ -997,11 +993,11 @@ impl Term {
                     let st = self.mode_state(ps, private);
                     let pre = if private { "?" } else { "" };
                     self.child_out
-                        .extend_from_slice(format!("\x1b[{}{};{}$y", pre, ps, st).as_bytes());
+                        .extend_from_slice(format!("\x1b[{pre}{ps};{st}$y").as_bytes());
                 } else if inter == b'!' {
                     self.soft_reset(); // DECSTR
                 }
-            }
+            },
             b'q' => {
                 if inter == b' ' {
                     let ps = p(0, 0);
@@ -1012,7 +1008,7 @@ impl Term {
                         None
                     };
                 }
-            }
+            },
             b'r' => {
                 let t = p(0, 1).max(1) as isize - 1;
                 let b = p(1, self.rows as u32).max(1) as isize - 1;
@@ -1021,31 +1017,31 @@ impl Term {
                     self.bottom = b as usize;
                     self.cursor_to(0, 0);
                 }
-            }
+            },
             b's' => {
                 if prefix == 0 {
                     self.save_cursor();
                 }
-            }
+            },
             b'u' => {
                 if prefix == 0 {
                     self.restore_cursor();
                 }
-            }
+            },
             b't' => match p(0, 0) {
                 16 => {
                     let (cw, ch) = self.cell_size;
                     self.child_out
-                        .extend_from_slice(format!("\x1b[6;{};{}t", ch, cw).as_bytes());
-                }
+                        .extend_from_slice(format!("\x1b[6;{ch};{cw}t").as_bytes());
+                },
                 18 => {
                     self.child_out.extend_from_slice(
                         format!("\x1b[8;{};{}t", self.rows, self.cols).as_bytes(),
                     );
-                }
-                _ => {}
+                },
+                _ => {},
             },
-            _ => {}
+            _ => {},
         }
         // devolve o buffer (sem realocar no próximo escape)
         self.csi = body;
@@ -1060,8 +1056,8 @@ impl Term {
         match parse_u32(cmd) {
             0 | 2 if !arg.is_empty() => {
                 self.title = String::from_utf8_lossy(arg).to_string();
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -1092,22 +1088,22 @@ impl Term {
                             self.control(c);
                         }
                     }
-                }
+                },
                 State::Escape => {
                     let b = bytes[i];
                     i += 1;
                     self.escape(b);
-                }
+                },
                 State::EscInter => {
                     let b = bytes[i];
                     i += 1;
                     self.escape_inter(b);
-                }
+                },
                 State::Csi => {
                     let b = bytes[i];
                     i += 1;
                     self.csi_byte(b);
-                }
+                },
                 State::Osc => {
                     let b = bytes[i];
                     i += 1;
@@ -1118,15 +1114,15 @@ impl Term {
                             self.osc = data;
                             self.osc.clear();
                             self.state = State::Ground;
-                        }
+                        },
                         0x1b => self.state = State::OscEsc,
                         _ => {
                             if self.osc.len() < 4096 {
                                 self.osc.push(b);
                             }
-                        }
+                        },
                     }
-                }
+                },
                 State::OscEsc => {
                     let b = bytes[i];
                     i += 1;
@@ -1144,14 +1140,14 @@ impl Term {
                         }
                         self.state = State::Osc;
                     }
-                }
+                },
                 State::Str => {
                     let b = bytes[i];
                     i += 1;
                     if b == 0x1b {
                         self.state = State::StrEsc;
                     }
-                }
+                },
                 State::StrEsc => {
                     let b = bytes[i];
                     i += 1;
@@ -1160,7 +1156,7 @@ impl Term {
                     } else {
                         self.state = State::Str;
                     }
-                }
+                },
             }
         }
     }
@@ -1171,30 +1167,30 @@ impl Term {
             0x08 => {
                 self.cx = self.cx.saturating_sub(1);
                 self.wrap_pending = false;
-            }
+            },
             0x09 => {
                 self.wrap_pending = false;
                 self.forward_tab(1);
-            }
+            },
             0x0a..=0x0c => {
                 self.wrap_pending = false;
                 self.newline();
-            }
+            },
             0x0d => {
                 self.cx = 0;
                 self.wrap_pending = false;
-            }
+            },
             0x0e => self.use_g1 = true,
             0x0f => self.use_g1 = false,
             0x18 | 0x1a => {
                 self.state = State::Ground;
                 self.csi.clear();
-            }
+            },
             0x1b => {
                 self.state = State::Escape;
                 self.esc_inter = 0;
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -1205,55 +1201,55 @@ impl Term {
                 self.csi.clear();
                 self.csi_prefix = 0;
                 self.csi_inter = 0;
-            }
+            },
             b']' => {
                 self.state = State::Osc;
                 self.osc.clear();
-            }
+            },
             b'P' | b'_' | b'^' | b'X' => {
                 self.state = State::Str;
-            }
+            },
             0x20..=0x2f => {
                 self.esc_inter = b;
                 self.state = State::EscInter;
-            }
+            },
             b'7' => {
                 self.save_cursor();
                 self.state = State::Ground;
-            }
+            },
             b'8' => {
                 self.restore_cursor();
                 self.state = State::Ground;
-            }
+            },
             b'D' => {
                 self.state = State::Ground;
                 self.wrap_pending = false;
                 self.index();
-            }
+            },
             b'E' => {
                 self.state = State::Ground;
                 self.cx = 0;
                 self.wrap_pending = false;
                 self.index();
-            }
+            },
             b'M' => {
                 self.state = State::Ground;
                 self.reverse_index();
-            }
+            },
             b'H' => {
                 self.state = State::Ground;
                 if self.cx < self.tabstops.len() {
                     self.tabstops[self.cx] = true;
                 }
-            }
+            },
             b'c' => {
                 self.state = State::Ground;
                 self.reset();
-            }
+            },
             _ => {
                 // ESC = / ESC > (keypad), ESC \ (ST), e o resto: sem efeito
                 self.state = State::Ground;
-            }
+            },
         }
     }
 
@@ -1262,11 +1258,11 @@ impl Term {
             b'(' => {
                 self.g0_dec = b == b'0';
                 self.state = State::Ground;
-            }
+            },
             b')' => {
                 self.g1_dec = b == b'0';
                 self.state = State::Ground;
-            }
+            },
             b'#' if b == b'8' => {
                 // DECALN: tela cheia de 'E' (usado por teste de alinhamento)
                 let cell = Cell {
@@ -1276,13 +1272,11 @@ impl Term {
                     flags: 0,
                 };
                 for y in 0..self.rows {
-                    for c in self.grid[y].cells.iter_mut() {
-                        *c = cell;
-                    }
+                    self.grid[y].cells.fill(cell);
                 }
                 self.touch_all();
                 self.state = State::Ground;
-            }
+            },
             _ => self.state = State::Ground,
         }
     }
@@ -1292,20 +1286,20 @@ impl Term {
             0x1b => {
                 self.state = State::Escape;
                 self.esc_inter = 0;
-            }
-            0x00..=0x1f => {}
+            },
+            0x00..=0x1f => {},
             0x20..=0x2f => self.csi_inter = b,
             0x40..=0x7e => {
                 self.state = State::Ground;
                 self.csi_dispatch(b);
-            }
+            },
             _ => {
                 if self.csi.is_empty() && matches!(b, b'?' | b'>' | b'=' | b'<') {
                     self.csi_prefix = b;
                 } else if self.csi.len() < 128 {
                     self.csi.push(b);
                 }
-            }
+            },
         }
     }
 
@@ -1323,7 +1317,7 @@ impl Term {
                     _ => {
                         self.put_char(REPLACEMENT);
                         return;
-                    }
+                    },
                 };
                 self.utf8[0] = b;
                 self.utf8_len = 1;
@@ -1340,7 +1334,7 @@ impl Term {
                             if let Some(ch) = s.chars().next() {
                                 self.put_char(ch);
                             }
-                        }
+                        },
                         Err(_) => self.put_char(REPLACEMENT),
                     }
                 }
@@ -1383,7 +1377,7 @@ impl Term {
             .iter()
             .skip(start)
             .take(count)
-            .map(|r| r.text())
+            .map(super::grid::Row::text)
             .collect()
     }
 
@@ -1446,7 +1440,7 @@ fn parse_u32(t: &[u8]) -> u32 {
     let mut v: u32 = 0;
     for &c in t {
         if c.is_ascii_digit() {
-            v = v.saturating_mul(10).saturating_add((c - b'0') as u32);
+            v = v.saturating_mul(10).saturating_add(u32::from(c - b'0'));
         } else {
             break;
         }
@@ -1693,7 +1687,7 @@ mod tests {
     fn scrollback_guarda_o_que_saiu() {
         let mut t = term();
         for i in 0..8 {
-            t.feed(format!("linha{}\r\n", i).as_bytes());
+            t.feed(format!("linha{i}\r\n").as_bytes());
         }
         assert!(!t.scrollback.is_empty());
         let hist = t.history_text(0, 10);
@@ -1704,7 +1698,7 @@ mod tests {
     fn resize_preserva_roda_para_o_historico() {
         let mut t = term();
         for i in 0..6 {
-            t.feed(format!("l{}\r\n", i).as_bytes());
+            t.feed(format!("l{i}\r\n").as_bytes());
         }
         t.resize(20, 3);
         assert_eq!(t.rows, 3);

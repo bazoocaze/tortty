@@ -62,11 +62,16 @@ impl Atlas {
         let c = (WHITE as f32 / 2.0) / size as f32;
         atlas.uv_white = [c, c, c, c];
         // o bloco branco precisa ir para a GPU no primeiro flush
-        atlas.pending.push((0, 0, WHITE, WHITE, vec![255u8; (WHITE * WHITE) as usize]));
+        atlas
+            .pending
+            .push((0, 0, WHITE, WHITE, vec![255u8; (WHITE * WHITE) as usize]));
         atlas
     }
 
     /// Reserva espaço e devolve o retângulo UV (u0, v0, u1, v1).
+    // w/h/x/y/u/v são as coordenadas de um retângulo no atlas: renomear só
+    // afasta o código do desenho
+    #[allow(clippy::many_single_char_names)]
     pub fn add(&mut self, w: u32, h: u32, data: &[u8]) -> Option<[f32; 4]> {
         if w == 0 || h == 0 || w + 2 > self.size || h + 2 > self.size {
             return None;

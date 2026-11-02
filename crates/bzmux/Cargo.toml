@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 description = "Terminal com workspaces e abas (experimento Rust do bzmux)"
 
+[lints]
+workspace = true
+
 [dependencies]
 bzmux-core = { path = "../bzmux-core" }
 winit = "0.30"

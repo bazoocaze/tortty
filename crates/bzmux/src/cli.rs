@@ -63,7 +63,7 @@ pub fn parse(args: Vec<String>) -> Result<Options, String> {
             "-h" | "--help" => return Err(HELP.to_string()),
             "-V" | "--version" => {
                 return Err(format!("bzmux {}", env!("CARGO_PKG_VERSION")));
-            }
+            },
             "--cmd" => o.cmd = Some(need(&mut it, "--cmd")?),
             "--cols" => o.cols = num(&mut it, "--cols")?,
             "--rows" => o.rows = num(&mut it, "--rows")?,
@@ -75,7 +75,7 @@ pub fn parse(args: Vec<String>) -> Result<Options, String> {
             "--debug-log" => o.debug_log = Some(need(&mut it, "--debug-log")?),
             "--no-vsync" => o.vsync = false,
             "--prof" => o.prof = true,
-            other => return Err(format!("opção desconhecida: {}\n\n{}", other, HELP)),
+            other => return Err(format!("opção desconhecida: {other}\n\n{HELP}")),
         }
     }
     o.cols = o.cols.max(1);
@@ -84,15 +84,17 @@ pub fn parse(args: Vec<String>) -> Result<Options, String> {
 }
 
 fn need(it: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, String> {
-    it.next().ok_or_else(|| format!("falta o valor de {}", flag))
+    it.next().ok_or_else(|| format!("falta o valor de {flag}"))
 }
 
 fn num(it: &mut impl Iterator<Item = String>, flag: &str) -> Result<usize, String> {
     let v = need(it, flag)?;
-    v.parse().map_err(|_| format!("{} espera um inteiro: {}", flag, v))
+    v.parse()
+        .map_err(|_| format!("{flag} espera um inteiro: {v}"))
 }
 
 fn float(it: &mut impl Iterator<Item = String>, flag: &str) -> Result<f32, String> {
     let v = need(it, flag)?;
-    v.parse().map_err(|_| format!("{} espera um número: {}", flag, v))
+    v.parse()
+        .map_err(|_| format!("{flag} espera um número: {v}"))
 }

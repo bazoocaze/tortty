@@ -37,6 +37,17 @@ pub struct Fonts {
 }
 
 /// Índices de face usados pelo cache de glifo.
+/// Com "monospace" (ou vazio) a escolha é nossa: a família genérica do fontdb
+/// cai em FreeMono nesta máquina. Com nome explícito, o nome manda.
+const PREFER: [&str; 6] = [
+    "DejaVu Sans Mono",
+    "Liberation Mono",
+    "Noto Sans Mono",
+    "JetBrains Mono",
+    "Hack",
+    "Menlo",
+];
+
 pub const FACE_PRIMARY: usize = 0;
 pub const FACE_STYLED: usize = 1;
 pub const FACE_ITALIC: usize = 2;
@@ -47,16 +58,6 @@ impl Fonts {
         let mut db = fontdb::Database::new();
         db.load_system_fonts();
 
-        // Com "monospace" (ou vazio) a escolha é nossa: a família genérica do
-        // fontdb cai em FreeMono nesta máquina. Com nome explícito, ele manda.
-        const PREFER: [&str; 6] = [
-            "DejaVu Sans Mono",
-            "Liberation Mono",
-            "Noto Sans Mono",
-            "JetBrains Mono",
-            "Hack",
-            "Menlo",
-        ];
         let explicit = !family.is_empty() && family != "monospace";
         let mut chosen: Option<(Face, String)> = None;
         if explicit {
@@ -72,8 +73,12 @@ impl Fonts {
         }
         let (primary, real_family) = chosen
             .or_else(|| query(&db, "monospace", 400, fontdb::Style::Normal))
-            .ok_or_else(|| format!("nenhuma fonte monoespaçada encontrada ({})", family))?;
-        let family: &str = if explicit { family } else { real_family.as_str() };
+            .ok_or_else(|| format!("nenhuma fonte monoespaçada encontrada ({family})"))?;
+        let family: &str = if explicit {
+            family
+        } else {
+            real_family.as_str()
+        };
 
         let styled = query(&db, family, 700, fontdb::Style::Normal).map(|(f, _)| f);
         let italic = query(&db, family, 400, fontdb::Style::Italic).map(|(f, _)| f);
@@ -117,7 +122,8 @@ impl Fonts {
 
     /// Face + glyph id para um caractere. `glyph == 0` = .notdef.
     pub fn pick(&self, ch: char, bold: bool, italic: bool) -> (usize, u16) {
-        let mut candidates: [usize; 4] = [FACE_PRIMARY, FACE_FALLBACK, FACE_FALLBACK, FACE_FALLBACK];
+        let mut candidates: [usize; 4] =
+            [FACE_PRIMARY, FACE_FALLBACK, FACE_FALLBACK, FACE_FALLBACK];
         let mut n = 1usize;
         if bold && self.styled.is_some() {
             candidates[n] = FACE_STYLED;
@@ -131,7 +137,7 @@ impl Fonts {
             candidates[n] = FACE_FALLBACK;
             n += 1;
         }
-        for &idx in candidates[..n].iter() {
+        for &idx in &candidates[..n] {
             let face = self.face(idx);
             if let Some(font) = face.font() {
                 let g = font.charmap().map(ch);
@@ -155,9 +161,8 @@ fn query(
         return Some(r);
     }
     let generic = match family.to_ascii_lowercase().as_str() {
-        "sans-serif" | "sans" => fontdb::Family::SansSerif,
+        "sans-serif" | "sans" | "system-ui" => fontdb::Family::SansSerif,
         "serif" => fontdb::Family::Serif,
-        "system-ui" => fontdb::Family::SansSerif,
         "cursive" => fontdb::Family::Cursive,
         "fantasy" => fontdb::Family::Fantasy,
         _ => fontdb::Family::Monospace,
@@ -167,7 +172,7 @@ fn query(
 
 fn query_one(
     db: &fontdb::Database,
-    families: &[fontdb::Family],
+    families: &[fontdb::Family<'_>],
     weight: u16,
     style: fontdb::Style,
 ) -> Option<(Face, String)> {
@@ -220,6 +225,6 @@ pub fn rasterize(ctx: &mut ScaleContext, face: &Face, px: f32, glyph: u16) -> Op
         h: image.placement.height,
         left: image.placement.left,
         top: image.placement.top,
-        data: image.data.to_vec(),
+        data: image.data.clone(),
     })
 }

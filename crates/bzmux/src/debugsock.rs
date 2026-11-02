@@ -24,13 +24,10 @@ pub struct DebugServer {
 }
 
 impl DebugServer {
-    pub fn start(
-        path: &str,
-        proxy: EventLoopProxy<UserEvent>,
-    ) -> Result<DebugServer, String> {
+    pub fn start(path: &str, proxy: EventLoopProxy<UserEvent>) -> Result<DebugServer, String> {
         let path = resolve(path);
         clear_stale(&path)?;
-        let listener = UnixListener::bind(&path).map_err(|e| format!("{}: {}", path, e))?;
+        let listener = UnixListener::bind(&path).map_err(|e| format!("{path}: {e}"))?;
         {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
@@ -50,10 +47,10 @@ impl DebugServer {
                         continue;
                     }
                     let proxy = proxy.clone();
-                    std::thread::spawn(move || serve(conn, proxy));
+                    std::thread::spawn(move || serve(conn, &proxy));
                 }
             })
-            .map_err(|e| format!("thread do socket: {}", e))?;
+            .map_err(|e| format!("thread do socket: {e}"))?;
         Ok(DebugServer { path, stop })
     }
 
@@ -84,15 +81,16 @@ fn clear_stale(path: &str) -> Result<(), String> {
     if !p.exists() {
         return Ok(());
     }
-    match UnixStream::connect(p) {
-        Ok(_) => Err(format!("outro processo está escutando em {}", path)),
-        Err(_) => {
-            let _ = std::fs::remove_file(p); // socket órfão
-            Ok(())
-        }
+    if UnixStream::connect(p).is_ok() {
+        return Err(format!("outro processo está escutando em {path}"));
     }
+    let _ = std::fs::remove_file(p); // socket órfão
+    Ok(())
 }
 
+/// `SO_PEERCRED`: só o mesmo uid fala com o socket. É o único `unsafe` do
+/// projeto — `getsockopt` é FFI sem alternativa estável em Rust.
+#[allow(unsafe_code)]
 fn same_uid(conn: &UnixStream) -> bool {
     use std::os::unix::io::AsRawFd;
     let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
@@ -102,15 +100,17 @@ fn same_uid(conn: &UnixStream) -> bool {
             conn.as_raw_fd(),
             libc::SOL_SOCKET,
             libc::SO_PEERCRED,
-            &mut cred as *mut _ as *mut libc::c_void,
-            &mut len,
+            (&raw mut cred).cast::<libc::c_void>(),
+            &raw mut len,
         )
     };
     rc == 0 && cred.uid == unsafe { libc::getuid() }
 }
 
-fn serve(conn: UnixStream, proxy: EventLoopProxy<UserEvent>) {
-    let Ok(mut out) = conn.try_clone() else { return };
+fn serve(conn: UnixStream, proxy: &EventLoopProxy<UserEvent>) {
+    let Ok(mut out) = conn.try_clone() else {
+        return;
+    };
     let reader = BufReader::new(conn);
     for line in reader.lines() {
         let Ok(line) = line else { break };
@@ -121,10 +121,7 @@ fn serve(conn: UnixStream, proxy: EventLoopProxy<UserEvent>) {
         if proxy.send_event(UserEvent::Debug(line, tx)).is_err() {
             break;
         }
-        let reply = match rx.recv() {
-            Ok(r) => r,
-            Err(_) => break,
-        };
+        let Ok(reply) = rx.recv() else { break };
         if out.write_all(reply.as_bytes()).is_err() || out.write_all(b"\n").is_err() {
             break;
         }
@@ -138,8 +135,8 @@ pub fn ok(fields: serde_json::Value) -> String {
         serde_json::Value::Object(mut m) => {
             m.insert("ok".into(), serde_json::Value::Bool(true));
             serde_json::Value::Object(m).to_string()
-        }
-        _ => format!("{{\"ok\":true,\"value\":{}}}", fields),
+        },
+        _ => format!("{{\"ok\":true,\"value\":{fields}}}"),
     }
 }
 

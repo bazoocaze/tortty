@@ -23,7 +23,7 @@ pub struct Pty {
 
 impl Pty {
     pub fn spawn(
-        cmd: Option<String>,
+        cmd: Option<&str>,
         cols: u16,
         rows: u16,
         tx: Sender<Vec<u8>>,
@@ -37,17 +37,17 @@ impl Pty {
                 pixel_width: 0,
                 pixel_height: 0,
             })
-            .map_err(|e| format!("openpty: {}", e))?;
+            .map_err(|e| format!("openpty: {e}"))?;
 
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-        let mut cb = match &cmd {
+        let mut cb = match cmd {
             // o `--cmd` do Python passa por `sh -c`: mantém a mesma semântica
             Some(c) => {
                 let mut cb = CommandBuilder::new("sh");
                 cb.arg("-c");
                 cb.arg(c);
                 cb
-            }
+            },
             None => CommandBuilder::new(&shell),
         };
         // o portable-pty cai em $HOME quando não há cwd; o Python herda o cwd
@@ -63,22 +63,23 @@ impl Pty {
         let child = pair
             .slave
             .spawn_command(cb)
-            .map_err(|e| format!("spawn: {}", e))?;
+            .map_err(|e| format!("spawn: {e}"))?;
         drop(pair.slave);
 
         let mut reader = pair
             .master
             .try_clone_reader()
-            .map_err(|e| format!("reader: {}", e))?;
+            .map_err(|e| format!("reader: {e}"))?;
         let writer = pair
             .master
             .take_writer()
-            .map_err(|e| format!("writer: {}", e))?;
+            .map_err(|e| format!("writer: {e}"))?;
 
         std::thread::Builder::new()
             .name("pty-read".into())
             .spawn(move || {
-                let mut buf = [0u8; 65536];
+                // 64 KB no heap: no stack estoura o frame da thread
+                let mut buf = vec![0u8; 65536];
                 loop {
                     let t0 = Instant::now();
                     match reader.read(&mut buf) {
@@ -91,8 +92,8 @@ impl Pty {
                                 return;
                             }
                             wake();
-                        }
-                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                        },
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {},
                         Err(_) => break,
                     }
                 }
@@ -101,7 +102,7 @@ impl Pty {
                 let _ = tx.send(Vec::new());
                 wake();
             })
-            .map_err(|e| format!("thread: {}", e))?;
+            .map_err(|e| format!("thread: {e}"))?;
 
         Ok(Pty {
             master: pair.master,

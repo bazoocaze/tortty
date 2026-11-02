@@ -36,8 +36,8 @@ impl fmt::Display for Color {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Color::Default => f.write_str("default"),
-            Color::Idx(i) => write!(f, "{}", i),
-            Color::Rgb(r, g, b) => write!(f, "#{:02x}{:02x}{:02x}", r, g, b),
+            Color::Idx(i) => write!(f, "{i}"),
+            Color::Rgb(r, g, b) => write!(f, "#{r:02x}{g:02x}{b:02x}"),
         }
     }
 }
@@ -64,12 +64,12 @@ pub const PALETTE: [(u8, u8, u8); 16] = [
 
 /// Paleta xterm-256 completa (16 ANSI + cubo 6×6×6 + 24 tons de cinza).
 pub fn palette256() -> Vec<(u8, u8, u8)> {
-    let mut pal: Vec<(u8, u8, u8)> = PALETTE.to_vec();
     // cubo 6x6x6: componentes 0, 95, 135, 175, 215, 255
     const STEPS: [u8; 6] = [0, 95, 135, 175, 215, 255];
-    for &r in STEPS.iter() {
-        for &g in STEPS.iter() {
-            for &b in STEPS.iter() {
+    let mut pal: Vec<(u8, u8, u8)> = PALETTE.to_vec();
+    for &r in &STEPS {
+        for &g in &STEPS {
+            for &b in &STEPS {
                 pal.push((r, g, b));
             }
         }

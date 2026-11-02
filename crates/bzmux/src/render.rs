@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bzmux_core::{Color, Term};
 use bytemuck::{Pod, Zeroable};
+use bzmux_core::{Color, Term};
 use swash::scale::ScaleContext;
 use winit::window::Window;
 
@@ -59,21 +59,23 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(window: Arc<Window>, fonts: Fonts, vsync: bool) -> Result<Renderer, String> {
+    #[allow(clippy::too_many_lines)] // setup de GPU é uma sequência única, partir não ajuda
+    pub fn new(window: &Arc<Window>, fonts: Fonts, vsync: bool) -> Result<Renderer, String> {
         let size = window.inner_size();
         let (w, h) = (size.width.max(1), size.height.max(1));
 
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let surface = instance
             .create_surface(window.clone())
-            .map_err(|e| format!("surface: {}", e))?;
+            .map_err(|e| format!("surface: {e}"))?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::LowPower,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
             apply_limit_buckets: false,
         }))
-        .map_err(|e| format!("adapter: {}", e))?;
+        .map_err(|e| format!("adapter: {e}"))?;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("bzmux"),
             required_features: wgpu::Features::empty(),
@@ -82,7 +84,7 @@ impl Renderer {
             memory_hints: wgpu::MemoryHints::default(),
             trace: wgpu::Trace::Off,
         }))
-        .map_err(|e| format!("device: {}", e))?;
+        .map_err(|e| format!("device: {e}"))?;
 
         let caps = surface.get_capabilities(&adapter);
         // formato não-srgb: as cores da célula já são sRGB e não devem ser
@@ -158,7 +160,7 @@ impl Renderer {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Instance>() as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Instance,
@@ -168,7 +170,7 @@ impl Renderer {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -227,7 +229,11 @@ impl Renderer {
     #[inline]
     fn color(&self, c: Color, default: (u8, u8, u8)) -> [f32; 3] {
         let (r, g, b) = bzmux_core::color::resolve(c, &self.palette, default);
-        [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0]
+        [
+            f32::from(r) / 255.0,
+            f32::from(g) / 255.0,
+            f32::from(b) / 255.0,
+        ]
     }
 
     fn glyph_quad(&mut self, ch: char, bold: bool, italic: bool) -> Option<GlyphQuad> {
@@ -269,6 +275,7 @@ impl Renderer {
     }
 
     /// Monta as instâncias do frame. Público para o teste de sanidade do formato.
+    #[allow(clippy::too_many_lines)] // um laço por categoria, na ordem de blend
     pub fn build(&mut self, term: &Term, view_off: usize) {
         self.instances.clear();
         let cw = self.fonts.cw;
@@ -367,7 +374,7 @@ impl Renderer {
         if view_off == 0 && term.cursor_visible && term.cy < term.rows && term.cx < cols {
             let cx = term.cx as f32 * cw;
             let cy = term.cy as f32 * chh;
-            let style = term.app_cursor_style.map(|(f, _)| f).unwrap_or(0);
+            let style = term.app_cursor_style.map_or(0, |(f, _)| f);
             let c = self.color(Color::Default, FG);
             match style {
                 1 | 2 => {
@@ -376,24 +383,24 @@ impl Renderer {
                     let w = if style == 1 { cw } else { 2.0 };
                     let y = if style == 1 { cy + chh - 3.0 } else { cy };
                     self.push_rect(cx, y, w, h, [c[0], c[1], c[2], 0.9]);
-                }
+                },
                 _ => {
                     self.push_rect(cx, cy, cw, chh, [c[0], c[1], c[2], 0.85]);
-                }
+                },
             }
         }
     }
 
     pub fn render(&mut self, term: &Term, view_off: usize) -> FrameOutcome {
         let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t) => t,
-            wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
                 return FrameOutcome::Skipped;
-            }
+            },
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 return FrameOutcome::Reconfigure;
-            }
+            },
             wgpu::CurrentSurfaceTexture::Validation => return FrameOutcome::Fatal,
         };
 
@@ -432,9 +439,9 @@ impl Renderer {
                     depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: r as f64 / 255.0,
-                            g: g as f64 / 255.0,
-                            b: b as f64 / 255.0,
+                            r: f64::from(r) / 255.0,
+                            g: f64::from(g) / 255.0,
+                            b: f64::from(b) / 255.0,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,

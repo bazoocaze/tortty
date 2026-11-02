@@ -5,10 +5,27 @@ desenho na GPU (`wgpu`) por instâncias. É o experimento da pergunta "reescreve
 o bzmux (Python/GTK) em Rust resolve distribuição e desempenho?" — o andamento,
 os números e as decisões estão em [`TASK-bzmux-in-rust.md`](TASK-bzmux-in-rust.md).
 
-Estado: **experimento funcional**. Abre janela, roda shell em pty, desenha a
-grade, funciona em `vim`, `mc` e despejo de console (`dmesg`), e tem o mesmo
-debug socket JSON do bzmux Python. Fora de escopo ainda: abas/workspaces,
-imagens do kitty, config em arquivo, seleção/clipboard, mouse reporting, reflow.
+Estado: **migração em andamento**. O experimento de viabilidade fechou com
+8–9,5x o Python em vazão ([`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)) e a decisão
+foi migrar. O que já veio e o que falta de cada funcionalidade do bzmux Python
+está item por item em [`docs/MIGRATION.md`](docs/MIGRATION.md) — hoje: parser VT,
+grade, pty, GPU, teclado, debug socket e scrollback funcionam; abas/workspaces,
+imagens do kitty, config em arquivo, seleção/clipboard, mouse reporting, reflow e
+busca ainda não.
+
+## Documentação
+
+| arquivo | para que serve |
+|---|---|
+| [`docs/MIGRATION.md`](docs/MIGRATION.md) | o checklist da migração: funcionalidade, estado, o que falta |
+| [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | o único lugar com número (vazão, parse, desenho, pegada) |
+| [`docs/DEBUG.md`](docs/DEBUG.md) | ferramentas, debug socket e armadilhas — ler antes de rodar GUI |
+| [`docs/PORTABILITY.md`](docs/PORTABILITY.md) | Linux/Windows/macOS: o que funciona, o que bloqueia, distribuição |
+| [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) | o que não é feito e por quê (decisão, não fila) |
+| [`docs/BACKLOG.md`](docs/BACKLOG.md) | fila de trabalho |
+| [`docs/HISTORY.md`](docs/HISTORY.md) | registro datado do que foi feito |
+| [`AGENTS.md`](AGENTS.md) | convenções, arquitetura e ferramentas (para agente) |
+| [`TASK-bzmux-in-rust.md`](TASK-bzmux-in-rust.md) | registro datado da fase 1 (o experimento) |
 
 ## Rodar
 
