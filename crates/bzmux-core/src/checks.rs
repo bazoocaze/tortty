@@ -22,8 +22,8 @@ pub struct Check {
 
 /// Todos os checks, na ordem em que aparecem no relatório.
 #[must_use]
-pub fn all() -> &'static [Check] {
-    &[
+pub fn all() -> Vec<Check> {
+    let mut v = vec![
         Check {
             name: "parser_text_and_cursor",
             run: parser_text_and_cursor,
@@ -80,7 +80,12 @@ pub fn all() -> &'static [Check] {
             name: "damage_tracking",
             run: damage_tracking,
         },
-    ]
+    ];
+    // N2 (config/CLI) e N5 (histórico/rolagem/seleção) moram em módulos
+    // próprios só para o arquivo não virar 3 mil linhas.
+    v.extend(crate::checks_n2::all());
+    v.extend(crate::checks_n5::all());
+    v
 }
 
 /// Roda tudo. Devolve `(passaram, falhas)` com o texto de cada falha.

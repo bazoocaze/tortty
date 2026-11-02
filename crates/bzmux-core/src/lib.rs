@@ -7,6 +7,8 @@
 pub mod cell;
 pub mod charset;
 pub mod checks;
+pub mod checks_n2;
+pub mod checks_n5;
 pub mod color;
 pub mod config;
 pub mod grid;
