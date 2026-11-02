@@ -204,3 +204,16 @@ cada `feed`. Verificado com o app: `view_off` 29 → 0 e histórico vazio.
 Fica registrado o desvio: o reflow mata a seleção em vez de remapear a âncora
 (mesmo comportamento do Python). Remapear é a melhoria M-P, porque o `reflow`
 já sabe o `(parágrafo, offset)` de cada linha velha.
+
+## 2026-11-02 — `bzmux --selftest` (N6)
+
+Um comando que responde "o emulador ainda está inteiro?" sem display, sem GPU e
+sem pty: 14 checks no núcleo (`checks.rs`), cada um montando o cenário e
+comparando com o esperado — parser/cursor, autowrap e `?7l`, SGR e ED, truecolor
+e paleta do tema, DEC special graphics + DA1 + CPR, alt screen e DECSTBM,
+histórico e ED3, reflow, seleção sobre histórico, bracketed paste, CSI com
+intermediário (DECSCUSR e soft reset), config, OSC de cor e dano.
+
+Entrou no `tools/check.sh` (que roda no pre-commit) e no CI. Três expectativas
+minhas estavam erradas e o check pegou: o backspace depois de `z	w` sobrescreve
+o `w`, o `DECSCUSR 4` guarda `(forma 1, pisca false)` e `ECH 2` deixa `"  c"`.

@@ -25,13 +25,13 @@ não por estimativa.
 | 8. Imagens do protocolo kitty | 0 | 0 | 16 | 3 | 19 |
 | 9. Janela: abas, workspaces, cromo | 0 | 3 | 17 | 0 | 20 |
 | 10. Janela: ciclo de vida, geometria, estado | 3 | 0 | 8 | 0 | 11 |
-| 11. Configuração e CLI | 15 | 2 | 4 | 0 | 21 |
+| 11. Configuração e CLI | 15 | 3 | 3 | 0 | 21 |
 | 12. Debug socket e instrumentação | 7 | 5 | 3 | 0 | 15 |
 | 13. Plataforma e distribuição | 4 | 0 | 6 | 0 | 10 |
-| 14. Testes e verificação | 2 | 2 | 5 | 0 | 9 |
-| **total** | **141** | **19** | **89** | **3** | **252** |
+| 14. Testes e verificação | 3 | 2 | 4 | 0 | 9 |
+| **total** | **142** | **20** | **87** | **3** | **252** |
 
-Equivalente pronto: **59.7%** (feito conta 1, parcial conta 0,5). O total serve para ver
+Equivalente pronto: **60.3%** (feito conta 1, parcial conta 0,5). O total serve para ver
 tendência; o que decide o que fazer agora é a linha e a seção 17.
 
 ## Regras deste documento
@@ -322,7 +322,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | K12 | Auto-reload com debounce de 250 ms | `config.py:307-329` → `App::check_config` | feito |
 | K13 | Erros de config viram toast (1º + contagem) | `config.py:331-345` | parcial: log com linha e chave; toast depende de I12 (F4) |
 | K14 | `-c/--config`, `--cmd`, `--debug-socket`, `--debug-log` | `cli.py:31-41` → `cli.rs` | feito |
-| K15 | `--quit-after`, `--dump-to`, `--selftest`, `--install-shortcut` | `cli.py:35-96` | falta |
+| K15 | `--quit-after`, `--dump-to`, `--selftest`, `--install-shortcut` | `cli.py:35-96` | parcial: `--selftest` feito (atalho virou o `install.sh`); falta `--quit-after`/`--dump-to` |
 | K16 | `--version`, `--help`, código 2 para uso inválido | `cli.py:85-101` → `cli.rs` | feito |
 | K17 | `--cols`/`--rows`/`--dpi`/`--no-vsync`/`--prof` | não existem no Python → `cli.rs` | feito (**melhoria**) |
 | K18 | `.desktop` + ícone (`--install-shortcut`) | `shortcut.py:34-136` | falta |
@@ -369,12 +369,12 @@ Rust (sem linha, para não envelhecer a cada commit).
 
 | # | funcionalidade | ref (Python → Rust) | estado |
 |---|---|---|---|
-| N1 | Suíte de checks do núcleo sem display (`checks.py`, 27 checks) | `checks.py:820-838` → `term.rs` (`#[test]`) | parcial: 23 testes; faltam ~14 áreas (lista em 17.2) |
+| N1 | Suíte de checks do núcleo sem display (`checks.py`, 27 checks) | `checks.py:820-838` → `checks.rs` + `#[test]` | parcial: 14 checks de fumaça + 52 testes; falta socket/teclado/mouse |
 | N2 | Checks de config/CLI | `checks.py:125-287` | falta (depende de K1) |
 | N3 | Checks de teclado/mouse | `checks.py:325-343,554-562` | falta (depende de E/F) |
 | N4 | Checks de socket | `checks.py:702-810` | falta |
 | N5 | Checks de reflow/seleção/âncora | `checks.py:380-520` | falta |
-| N6 | `--selftest` no binário (roda N1..N5 sem display) | `cli.py:92` | falta |
+| N6 | `--selftest` no binário (roda N1..N5 sem display) | `cli.py:92` → `checks.rs` | feito: `bzmux --selftest` (14 checks), no `check.sh` e no CI |
 | N7 | Verificação visual automatizada (captura + comparação) | `tools/pixel.py`, `xtest.py` → `tools/` | parcial: captura manual (`xwd`) |
 | N8 | Benchmark reprodutível com grade travada | `tools/benchrun.py` → `tools/benchrun.py` | feito |
 | N9 | Escada Rust x Python | `bench.sh` → `tools/bench.sh` | feito |
@@ -395,11 +395,11 @@ Rust (sem linha, para não envelhecer a cada commit).
 | Imagens do protocolo kitty | 0 | 0 | 16 | 3 |
 | Janela: abas, workspaces, cromo | 0 | 3 | 17 | 0 |
 | Janela: ciclo de vida, geometria, estado | 3 | 0 | 8 | 0 |
-| Configuração e CLI | 15 | 2 | 4 | 0 |
+| Configuração e CLI | 15 | 3 | 3 | 0 |
 | Debug socket e instrumentação | 7 | 5 | 3 | 0 |
 | Plataforma e distribuição | 4 | 0 | 6 | 0 |
-| Testes e verificação | 2 | 2 | 5 | 0 |
-| **total** | **141** | **19** | **89** | **3** |
+| Testes e verificação | 3 | 2 | 4 | 0 |
+| **total** | **142** | **20** | **87** | **3** |
 
 ## 16. Melhorias propostas
 
@@ -423,7 +423,7 @@ estão implementadas aparecem nas tabelas marcadas `(**melhoria**)`.
 | M-L | Imagens: z-index, placement id, placeholder, recorte de origem (H14-H16) | o Python mostra imagem sempre por cima e sem controle fino | médio |
 | M-M | Scrollbar visível e arrastável (D9) | hoje só roda e Shift+Pg (que também falta) | baixo: retângulo + estado |
 | M-N | Transporte de socket no Windows (L14) | o `benchrun.py` e a automação precisam funcionar lá também | baixo |
-| M-O | `--selftest` no binário (N6) | dá um comando único de verificação sem build de teste, como no Python | baixo |
+| M-O | `--selftest` no binário (N6) | dá um comando único de verificação sem build de teste, como no Python | feito |
 
 ## 17. Ordem de execução
 

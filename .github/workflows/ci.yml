@@ -30,6 +30,8 @@ jobs:
         run: ./tools/check.sh
       # o instalador é o que o usuário roda: um passo em prefixo temporário pega
       # caminho quebrado, `install` faltando e `--version` que não responde
+      - name: selftest (sem display)
+        run: ./target/release/bzmux --selftest
       - name: instalador
         run: |
           ./install.sh --prefix "$RUNNER_TEMP/inst" --no-shortcut \

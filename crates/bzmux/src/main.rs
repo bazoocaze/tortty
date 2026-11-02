@@ -31,6 +31,9 @@ fn main() {
             std::process::exit(code);
         },
     };
+    if over.selftest {
+        std::process::exit(selftest());
+    }
     // CLI vence o arquivo; o arquivo vence os padrões embutidos
     let (opts, cfg_errors) = cli::Options::build(over.clone());
     for e in &cfg_errors {
@@ -53,5 +56,29 @@ fn main() {
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("bzmux: {e}");
         std::process::exit(1);
+    }
+}
+
+/// `--selftest`: um comando que responde "o emulador ainda está inteiro?" sem
+/// display, sem GPU e sem pty. É o que o `checks.py` do Python fazia à parte.
+fn selftest() -> i32 {
+    let mut falhas = 0;
+    for c in bzmux_core::checks::all() {
+        match (c.run)() {
+            Ok(()) => println!("ok    {}", c.name),
+            Err(e) => {
+                falhas += 1;
+                println!("FALHA {}: {e}", c.name);
+            },
+        }
+    }
+    let total = bzmux_core::checks::all().len();
+    println!();
+    if falhas == 0 {
+        println!("selftest: {total}/{total} ok");
+        0
+    } else {
+        println!("selftest: {falhas} falha(s) de {total}");
+        1
     }
 }

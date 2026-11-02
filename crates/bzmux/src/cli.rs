@@ -23,6 +23,7 @@ pub struct Overrides {
     pub config: Option<String>,
     pub no_vsync: bool,
     pub prof: bool,
+    pub selftest: bool,
 }
 
 pub struct Options {
@@ -119,6 +120,7 @@ OPÇÕES:
   --debug-log ARQ       arquivo de log de diagnóstico (off = desligado)
   --no-vsync            desliga a sincronia vertical (mede vazão, não o monitor)
   --prof                liga os contadores de custo (parse/draw/pty)
+  --selftest            roda os checks do núcleo sem abrir janela e sai
   -h, --help            esta ajuda
   -V, --version         versão
 
@@ -147,6 +149,7 @@ pub fn parse(args: Vec<String>) -> Result<Overrides, String> {
             "--debug-log" => o.debug_log = Some(need(&mut it, "--debug-log")?),
             "--no-vsync" => o.no_vsync = true,
             "--prof" => o.prof = true,
+            "--selftest" => o.selftest = true,
             other => return Err(format!("opção desconhecida: {other}\n\n{HELP}")),
         }
     }

@@ -6,6 +6,7 @@
 
 pub mod cell;
 pub mod charset;
+pub mod checks;
 pub mod color;
 pub mod config;
 pub mod grid;

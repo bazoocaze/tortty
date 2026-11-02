@@ -55,6 +55,8 @@ if [ "$FAST" = 0 ]; then
     passo "build --release" cargo build --release --workspace
     # parsebench é o benchmark sem display: se ele quebra, o número do
     # docs/BENCHMARKS.md morre junto
+    # `--selftest` é o smoke do emulador sem display: 14 áreas do núcleo
+    passo "selftest" ./target/release/bzmux --selftest
     passo "parsebench" ./target/release/parsebench --frames 100 --cols 40 --rows 12
 fi
 
