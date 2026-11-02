@@ -127,3 +127,22 @@ Verificado: `--cols 100 --rows 10` → `stty size` = `10 100` e linha de 250
 caracteres quebra em 100/100/50. (A suspeita inicial de "texto intercalado" era
 leitura errada minha: as linhas 17 e 18 do `keys.rs` quebravam nos lugares
 certos.)
+
+## 2026-11-02 — instalador: `bzmux` é o Rust, `tortty-python` é o Python
+
+O Python já foi renomeado no pipx (`~/.local/bin/tortty-python`), então o nome curto
+ficou livre e o `install.sh` daqui passa a ocupá-lo.
+
+O instalador é o oposto do Python em tamanho: lá são pacotes de distro
+(`python3-gi`, `gir1.2-gtk-3.0`, cairo, pipx) e um passo do pipx; aqui é
+**copiar um arquivo**. O que ele faz de fato é o que dá errado quando falta:
+avisa se `bzmux` já existe no `PATH` (o shim do pipx não tem "pipx" no nome, o
+alvo tem), instala com `install` em vez de symlink para o `target/` (senão
+`cargo clean` deixa o comando quebrado), grava `.desktop` + ícone SVG, e
+verifica `--version` + `ldd` sem "not found" antes de dizer que deu certo.
+
+Dois bugs meus no caminho: a função do modo se chamava `install`, então o
+`install -m 755` de dentro dela chamava a si mesma (recursão silenciosa); e o
+teste de escrita usava `-w` num diretório que ainda não existia, o que pedia
+`sudo` para instalar em `/tmp`. Funções renomeadas (`do_install`) e o teste
+sobe até o ancestral existente.

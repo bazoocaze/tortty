@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ícone do bzmux: janela de terminal com prompt e cursor de bloco -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect x="2" y="6" width="60" height="52" rx="7" fill="#1b1d23" stroke="#3a3f4b" stroke-width="2"/>
+  <rect x="2" y="6" width="60" height="11" rx="7" fill="#262a33"/>
+  <rect x="2" y="14" width="60" height="3" fill="#262a33"/>
+  <circle cx="11" cy="11.5" r="2.2" fill="#e05252"/>
+  <circle cx="18.5" cy="11.5" r="2.2" fill="#e0b452"/>
+  <circle cx="26" cy="11.5" r="2.2" fill="#5ec46a"/>
+  <path d="M11 27 l6.5 5.5 -6.5 5.5" fill="none" stroke="#6fd08a" stroke-width="3"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="22" y="33.5" width="20" height="3.6" rx="1.8" fill="#c9d1d9" opacity="0.85"/>
+  <rect x="11" y="45" width="10" height="3.2" rx="1.6" fill="#c9d1d9" opacity="0.4"/>
+</svg>

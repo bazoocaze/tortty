@@ -28,3 +28,13 @@ jobs:
       # o mesmo script do pre-commit: hook e CI não podem discordar
       - name: fmt + clippy + test
         run: ./tools/check.sh
+      # o instalador é o que o usuário roda: um passo em prefixo temporário pega
+      # caminho quebrado, `install` faltando e `--version` que não responde
+      - name: instalador
+        run: |
+          ./install.sh --prefix "$RUNNER_TEMP/inst" --no-shortcut \
+            --binary target/release/bzmux
+          "$RUNNER_TEMP/inst/bin/bzmux" --version
+          ./install.sh --prefix "$RUNNER_TEMP/inst" --check
+          ./install.sh --prefix "$RUNNER_TEMP/inst" --uninstall
+          test ! -e "$RUNNER_TEMP/inst/bin/bzmux"

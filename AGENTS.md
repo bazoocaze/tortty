@@ -30,6 +30,8 @@ só o README.md é para humano.
 - `docs/BENCHMARKS.md` — **o único lugar com número** de vazão, parse, desenho
   e pegada (com data, governor e condição). Os outros docs citam o fato em uma
   frase e linkam.
+- `docs/INSTALL.md` — instalar/desinstalar o comando `bzmux` (e o que sai em
+  cada prefixo). É o único lugar que descreve o instalador.
 - `docs/DEBUG.md` — manual operacional: como subir/matar sem derrubar a sessão,
   sondas, o contrato do debug socket e as armadilhas (winit/wgpu/pty/parser).
   **Ler antes de rodar qualquer ferramenta gráfica.**

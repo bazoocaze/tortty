@@ -27,11 +27,11 @@ não por estimativa.
 | 10. Janela: ciclo de vida, geometria, estado | 3 | 0 | 8 | 0 | 11 |
 | 11. Configuração e CLI | 3 | 5 | 13 | 0 | 21 |
 | 12. Debug socket e instrumentação | 7 | 5 | 3 | 0 | 15 |
-| 13. Plataforma e distribuição | 3 | 0 | 6 | 0 | 9 |
+| 13. Plataforma e distribuição | 4 | 0 | 6 | 0 | 10 |
 | 14. Testes e verificação | 2 | 2 | 5 | 0 | 9 |
-| **total** | **118** | **25** | **105** | **3** | **251** |
+| **total** | **119** | **25** | **105** | **3** | **252** |
 
-Equivalente pronto: **52.0%** (feito conta 1, parcial conta 0,5). O total serve para ver
+Equivalente pronto: **52.2%** (feito conta 1, parcial conta 0,5). O total serve para ver
 tendência; o que decide o que fazer agora é a linha e a seção 17.
 
 ## Regras deste documento
@@ -363,6 +363,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | M7 | macOS arm64 e x86_64 (Metal) | não roda | falta |
 | M8 | CI matriz de build + release por tag | não existe | falta |
 | M9 | Notarização macOS / assinatura Windows | não existe | falta (decisão adiada: ver `PORTABILITY.md`) |
+| M10 | Instalador: comando `bzmux`, menu, ícone, `--uninstall`, `--check` | `install.sh` (pipx + deps de sistema) → `install.sh` (copia 1 binário) | feito |
 
 ## 14. Testes e verificação
 
@@ -396,9 +397,9 @@ Rust (sem linha, para não envelhecer a cada commit).
 | Janela: ciclo de vida, geometria, estado | 3 | 0 | 8 | 0 |
 | Configuração e CLI | 3 | 5 | 13 | 0 |
 | Debug socket e instrumentação | 7 | 5 | 3 | 0 |
-| Plataforma e distribuição | 3 | 0 | 6 | 0 |
+| Plataforma e distribuição | 4 | 0 | 6 | 0 |
 | Testes e verificação | 2 | 2 | 5 | 0 |
-| **total** | **118** | **25** | **105** | **3** |
+| **total** | **119** | **25** | **105** | **3** |
 
 ## 16. Melhorias propostas
 

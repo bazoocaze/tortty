@@ -9,9 +9,9 @@ Estado: **migração em andamento**. O experimento de viabilidade fechou com
 8–9,5x o Python em vazão ([`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)) e a decisão
 foi migrar. O que já veio e o que falta de cada funcionalidade do bzmux Python
 está item por item em [`docs/MIGRATION.md`](docs/MIGRATION.md) — hoje: parser VT,
-grade, pty, GPU, teclado, debug socket e scrollback funcionam; abas/workspaces,
-imagens do kitty, config em arquivo, seleção/clipboard, mouse reporting, reflow e
-busca ainda não.
+grade, pty, GPU, teclado, mouse, seleção/clipboard, debug socket e scrollback
+funcionam; abas/workspaces, imagens do kitty, config em arquivo, reflow e busca
+ainda não.
 
 ## Documentação
 
@@ -19,6 +19,7 @@ busca ainda não.
 |---|---|
 | [`docs/MIGRATION.md`](docs/MIGRATION.md) | o checklist da migração: funcionalidade, estado, o que falta |
 | [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | o único lugar com número (vazão, parse, desenho, pegada) |
+| [`docs/INSTALL.md`](docs/INSTALL.md) | instalar, desinstalar, verificar e publicar binário |
 | [`docs/DEBUG.md`](docs/DEBUG.md) | ferramentas, debug socket e armadilhas — ler antes de rodar GUI |
 | [`docs/PORTABILITY.md`](docs/PORTABILITY.md) | Linux/Windows/macOS: o que funciona, o que bloqueia, distribuição |
 | [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) | o que não é feito e por quê (decisão, não fila) |
@@ -26,6 +27,17 @@ busca ainda não.
 | [`docs/HISTORY.md`](docs/HISTORY.md) | registro datado do que foi feito |
 | [`AGENTS.md`](AGENTS.md) | convenções, arquitetura e ferramentas (para agente) |
 | [`TASK-bzmux-in-rust.md`](TASK-bzmux-in-rust.md) | registro datado da fase 1 (o experimento) |
+
+## Instalar
+
+```sh
+./install.sh                 # compila e instala em ~/.local/bin/bzmux
+./install.sh --check         # confere binário, libs e menu
+./install.sh --uninstall     # remove comando, entrada e ícone
+```
+
+O bzmux é um binário só (libc/libm + driver da GPU). Detalhes, `--prefix`,
+`--from-release` e a convivência com o bzmux Python (`tortty-python`): `docs/INSTALL.md`.
 
 ## Rodar
 
