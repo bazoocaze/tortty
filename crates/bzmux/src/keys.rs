@@ -123,6 +123,23 @@ pub fn encode(ev: &KeyEvent, mods: ModifiersState, app_cursor: bool) -> Option<V
     if ev.state != ElementState::Pressed {
         return None;
     }
+    match &ev.logical_key {
+        Key::Named(n) => encode_parts(Some(*n), None, None, mods, app_cursor),
+        Key::Character(s) => encode_parts(None, Some(s), ev.text.as_deref(), mods, app_cursor),
+        _ => None,
+    }
+}
+
+/// A tradução em si, sem depender de um `KeyEvent`: é o que o verbo `keys` do
+/// debug socket usa, para testar o **mesmo** caminho do teclado real (um
+/// encoder paralelo no socket já divergiu uma vez: F5 virava 1 byte).
+pub fn encode_parts(
+    named: Option<NamedKey>,
+    character: Option<&str>,
+    text: Option<&str>,
+    mods: ModifiersState,
+    app_cursor: bool,
+) -> Option<Vec<u8>> {
     let ctrl = mods.control_key();
     let alt = mods.alt_key();
     let shift = mods.shift_key();
@@ -131,14 +148,12 @@ pub fn encode(ev: &KeyEvent, mods: ModifiersState, app_cursor: bool) -> Option<V
         return None;
     }
 
-    if let Key::Named(n) = &ev.logical_key {
-        let base = named_base(*n, app_cursor)?;
+    if let Some(n) = named {
+        let base = named_base(n, app_cursor)?;
         return Some(with_mods(base, ctrl, alt, shift));
     }
 
-    let Key::Character(s) = &ev.logical_key else {
-        return None;
-    };
+    let s = character?;
     let first = s.chars().next()?;
 
     if ctrl {
@@ -163,8 +178,8 @@ pub fn encode(ev: &KeyEvent, mods: ModifiersState, app_cursor: bool) -> Option<V
     }
 
     // texto composto (dead keys já resolvidas pelo winit)
-    let text = ev.text.as_deref().unwrap_or("");
-    let body: &str = if text.is_empty() { s.as_str() } else { text };
+    let text = text.unwrap_or("");
+    let body: &str = if text.is_empty() { s } else { text };
     if body.is_empty() {
         return None;
     }

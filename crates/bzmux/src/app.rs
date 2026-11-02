@@ -8,7 +8,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
-use winit::keyboard::ModifiersState;
+use winit::keyboard::{ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
 use crate::cli::Options;
@@ -274,7 +274,7 @@ impl App {
             },
             "keys" => match req.get("data").and_then(|v| v.as_str()) {
                 Some(spec) => {
-                    let bytes = encode_spec(spec);
+                    let bytes = encode_spec(spec, self.term.app_cursor);
                     if let Some(pty) = self.pty.as_mut() {
                         pty.write(&bytes);
                     }
@@ -321,62 +321,67 @@ impl App {
 
 /// `ctrl+shift+n` -> bytes (versão mínima do `parse_key` do Python: o caminho
 /// completo de teclado é o do winit, este verbo serve para teste/automação).
-fn encode_spec(spec: &str) -> Vec<u8> {
-    let parts: Vec<&str> = spec.split('+').collect();
-    let key = parts.last().copied().unwrap_or("");
-    let mods: Vec<String> = parts[..parts.len().saturating_sub(1)]
-        .iter()
-        .map(|s| s.to_lowercase())
-        .collect();
-    let ctrl = mods.iter().any(|m| m == "ctrl");
-    let alt = mods.iter().any(|m| m == "alt");
-    let shift = mods.iter().any(|m| m == "shift");
-    let mut out = Vec::new();
-    let named = match key.to_lowercase().as_str() {
-        "enter" => Some("\r"),
-        "esc" | "escape" => Some("\x1b"),
-        "tab" => Some(if shift { "\x1b[Z" } else { "\t" }),
-        "bs" | "backspace" => Some("\x7f"),
-        "space" => Some(" "),
-        "up" => Some("\x1b[A"),
-        "down" => Some("\x1b[B"),
-        "right" => Some("\x1b[C"),
-        "left" => Some("\x1b[D"),
-        "home" => Some("\x1b[H"),
-        "end" => Some("\x1b[F"),
-        "pgup" => Some("\x1b[5~"),
-        "pgdn" => Some("\x1b[6~"),
-        "del" => Some("\x1b[3~"),
-        "ins" => Some("\x1b[2~"),
+/// `spec` do verbo `keys`: `ctrl+shift+t`, `alt+left`, `f5`, `a`.
+///
+/// Resolve modificadores e nome de tecla e entrega ao encoder real
+/// (`keys::encode_parts`) — não há tabela paralela aqui. Tecla que o encoder
+/// não conhece devolve vazio, e o socket responde `keys: [0]`.
+fn encode_spec(spec: &str, app_cursor: bool) -> Vec<u8> {
+    let parts: Vec<&str> = spec.split('+').filter(|p| !p.is_empty()).collect();
+    let Some((key, mods_spec)) = parts.split_last() else {
+        return Vec::new();
+    };
+    let mut mods = ModifiersState::empty();
+    for m in mods_spec {
+        match m.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => mods |= ModifiersState::CONTROL,
+            "alt" | "meta" => mods |= ModifiersState::ALT,
+            "shift" => mods |= ModifiersState::SHIFT,
+            "super" | "logo" => mods |= ModifiersState::SUPER,
+            _ => {},
+        }
+    }
+    // nome de tecla nomeada (setas, F1-F12, edição) ou texto de um caractere
+    let named = match key.to_ascii_lowercase().as_str() {
+        "enter" | "return" => Some(NamedKey::Enter),
+        "esc" | "escape" => Some(NamedKey::Escape),
+        "tab" => Some(NamedKey::Tab),
+        "bs" | "backspace" => Some(NamedKey::Backspace),
+        "space" => Some(NamedKey::Space),
+        "up" => Some(NamedKey::ArrowUp),
+        "down" => Some(NamedKey::ArrowDown),
+        "left" => Some(NamedKey::ArrowLeft),
+        "right" => Some(NamedKey::ArrowRight),
+        "home" => Some(NamedKey::Home),
+        "end" => Some(NamedKey::End),
+        "pgup" | "pageup" => Some(NamedKey::PageUp),
+        "pgdn" | "pagedown" => Some(NamedKey::PageDown),
+        "del" | "delete" => Some(NamedKey::Delete),
+        "ins" | "insert" => Some(NamedKey::Insert),
+        "f1" => Some(NamedKey::F1),
+        "f2" => Some(NamedKey::F2),
+        "f3" => Some(NamedKey::F3),
+        "f4" => Some(NamedKey::F4),
+        "f5" => Some(NamedKey::F5),
+        "f6" => Some(NamedKey::F6),
+        "f7" => Some(NamedKey::F7),
+        "f8" => Some(NamedKey::F8),
+        "f9" => Some(NamedKey::F9),
+        "f10" => Some(NamedKey::F10),
+        "f11" => Some(NamedKey::F11),
+        "f12" => Some(NamedKey::F12),
         _ => None,
     };
-    if let Some(seq) = named {
-        if alt && !seq.starts_with("\x1b[") {
-            out.push(0x1b);
-        }
-        out.extend_from_slice(seq.as_bytes());
-        return out;
+    if let Some(n) = named {
+        return crate::keys::encode_parts(Some(n), None, None, mods, app_cursor)
+            .unwrap_or_default();
     }
-    let ch = key.chars().next().unwrap_or(' ');
-    if ctrl {
-        if alt {
-            out.push(0x1b);
-        }
-        let low = ch.to_ascii_lowercase();
-        out.push(match low {
-            'a'..='z' => (low as u8) & 0x1f,
-            ' ' | '2' => 0,
-            '-' | '_' => 0x1f,
-            _ => ch as u8,
-        });
-        return out;
+    if key.chars().count() == 1 {
+        let ch = key.to_string();
+        return crate::keys::encode_parts(None, Some(&ch), Some(&ch), mods, app_cursor)
+            .unwrap_or_default();
     }
-    if alt {
-        out.push(0x1b);
-    }
-    let mut buf = [0u8; 4];
-    out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
-    out
+    Vec::new()
 }
 
 impl ApplicationHandler<UserEvent> for App {
