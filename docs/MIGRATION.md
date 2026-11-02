@@ -21,17 +21,17 @@ não por estimativa.
 | 4. Scrollback e visão do histórico | 9 | 0 | 2 | 0 | 11 |
 | 5. Entrada: teclado e protocolo do kitty | 8 | 0 | 12 | 0 | 20 |
 | 6. Entrada: mouse, seleção, clipboard, paste | 14 | 1 | 5 | 0 | 20 |
-| 7. Desenho: fonte, geometria, cores | 11 | 3 | 3 | 0 | 17 |
+| 7. Desenho: fonte, geometria, cores | 12 | 2 | 3 | 0 | 17 |
 | 8. Imagens do protocolo kitty | 0 | 0 | 16 | 3 | 19 |
-| 9. Janela: abas, workspaces, cromo | 0 | 3 | 17 | 0 | 20 |
+| 9. Janela: abas, workspaces, cromo | 1 | 3 | 16 | 0 | 20 |
 | 10. Janela: ciclo de vida, geometria, estado | 3 | 0 | 8 | 0 | 11 |
-| 11. Configuração e CLI | 15 | 3 | 3 | 0 | 21 |
+| 11. Configuração e CLI | 17 | 1 | 3 | 0 | 21 |
 | 12. Debug socket e instrumentação | 7 | 5 | 3 | 0 | 15 |
 | 13. Plataforma e distribuição | 5 | 0 | 5 | 0 | 10 |
 | 14. Testes e verificação | 3 | 2 | 4 | 0 | 9 |
-| **total** | **143** | **20** | **86** | **3** | **252** |
+| **total** | **147** | **17** | **85** | **3** | **252** |
 
-Equivalente pronto: **60.7%** (feito conta 1, parcial conta 0,5). O total serve para ver
+Equivalente pronto: **61.7%** (feito conta 1, parcial conta 0,5). O total serve para ver
 tendência; o que decide o que fazer agora é a linha e a seção 17.
 
 ## Regras deste documento
@@ -135,7 +135,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | C2 | SGR 30-37, 39, 40-47, 49, 90-97, 100-107 | `term.py:528-539` → `term.rs` | feito |
 | C3 | SGR 38;5 / 48;5 (256) e 38;2 / 48;2 (truecolor) | `term.py:540-576` → `term.rs` | feito |
 | C4 | Subparâmetros `:` (`38:2::r:g:b`) | `term.py:500-512,579-591` → `term.rs` | feito |
-| C5 | SGR 3 itálico, 2 faint, 5/6 blink, 9/29 riscado | não existem (`LIMITATIONS.md:44-53`) → `cell.rs`, `render.rs` | feito (pisca vira atributo; animar é da G12) |
+| C5 | SGR 3 itálico, 2 faint, 5/6 blink, 9/29 riscado | não existem (`LIMITATIONS.md:44-53`) → `cell.rs`, `render.rs` | feito (SGR 5 anima: fase de 500 ms em `Blink`) |
 | C6 | SGR 53/55 overline, 58/59 cor do sublinhado | não existem → `term.rs` | feito |
 | C7 | SGR 4:2/4:3/4:4/4:5 (estilos de sublinhado) | `4:x` colapsa em simples (`term.py:518-519`) → `render.rs` | feito (curvo é aproximação em 4 retângulos) |
 | C8 | Bold sem "bold as bright" | `view.py:992` → `render.rs` | feito (mesma semântica) |
@@ -232,7 +232,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | G9 | Padding da janela em px | `config.py` `window_padding_width` → shader (`origin`) | feito |
 | G10 | Fundo da sobra de célula até a borda (sem tarja preta) | `view.py:926-934` | feito (fundo pintado por instância de grade inteira) |
 | G11 | Paleta/tema configurável | não existe (`LIMITATIONS.md:133-140`) → `Theme` | feito (**melhoria**) |
-| G12 | Cursor: block/beam/underline + pisca | `view.py:1058-1079`, `828-838` → `render.rs` | parcial: formas sim; pisca falta |
+| G12 | Cursor: block/beam/underline + pisca | `view.py:1058-1079`, `828-838` → `render.rs`, `app.rs` | feito: `cursor_blink on` pisca a 500 ms, tecla/colagem reacende, `CSI 6 q` par vence; SGR 5 usa a mesma fase |
 | G13 | Sublinhado na largura do run | `view.py:1022-1025` → `render.rs` | feito |
 | G14 | Seleção desenhada como inversão | `view.py:943,953-973` → `render.rs` | feito (o default resolve pelo outro extremo) |
 | G15 | `?2026` segura o frame (teto 200 ms) | `view.py:296-324` | falta |
@@ -278,7 +278,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | I9 | Clique do meio fecha aba (no rótulo) e workspace (no cartão) | `window.py:208-212,307-309` | falta |
 | I10 | Arrastar aba para reordenar | `window.py:173` | falta |
 | I11 | Roda do mouse na barra de abas | `window.py:100` | falta |
-| I12 | Toast (erro/aviso) com fila e timeout | `window.py:411-465,677-740` | falta |
+| I12 | Toast (erro/aviso) com fila e timeout | `window.py:411-465,677-740` → `render.rs:toast` | feito: faixa invertida na 1ª linha, 3,5 s, mensagem igual seguida vira `(×N)` |
 | I13 | Bell visual: flash do rótulo por 800 ms (800 ms, `BELL_BG`) | `window.py:255-275` | falta |
 | I14 | Bell audível (`beep`) | `window.py:666-669` | falta |
 | I15 | Atalhos de aba/workspace (Ctrl+Shift+T/W/N/Q/F2, Alt+N, Super+N/Q) | `window.py:854-898` | falta |
@@ -313,14 +313,14 @@ Rust (sem linha, para não envelhecer a cada commit).
 | K3 | Erro por linha não derruba o arquivo; chave desconhecida é erro | `config.py:264-287` → `Config::Error` | feito |
 | K4 | `shell` (vazio = `$SHELL`; exporta o shell real ao filho) | `config.py:87-97` → `pty.rs` | feito |
 | K5 | `font_family`, `font_size` | `config.py:99-125` → `cli.rs` + renderer | feito (CLI vence o arquivo) |
-| K6 | `cursor_shape`, `cursor_blink` | `config.py:127-143` → `render.rs` | parcial: forma sim; **pisca** falta (G12) |
+| K6 | `cursor_shape`, `cursor_blink` | `config.py:127-143` → `render.rs` | feito (forma e pisca; reload a quente) |
 | K7 | `scrollback` | `config.py:149-151` → `cli.rs` | feito |
 | K8 | `window_padding_width` | `config.py:153-155` → shader + `cell_at` | feito |
 | K9 | `bell` (`none`/`visual`/`audible`) | `config.py:131-133` → `App::ring` | feito |
 | K10 | `copy_on_select` | `config.py:145-147` → `app.rs` | feito |
 | K11 | `debug_log` (path ou `off`) | `config.py:157-167` → `cli.rs` | feito |
 | K12 | Auto-reload com debounce de 250 ms | `config.py:307-329` → `App::check_config` | feito |
-| K13 | Erros de config viram toast (1º + contagem) | `config.py:331-345` | parcial: log com linha e chave; toast depende de I12 (F4) |
+| K13 | Erros de config viram toast (1º + contagem) | `config.py:331-345` | feito: arranque e reload mostram "config mantida — linha N: 'chave': motivo (+K)"; salvar certo mostra "config recarregada" |
 | K14 | `-c/--config`, `--cmd`, `--debug-socket`, `--debug-log` | `cli.py:31-41` → `cli.rs` | feito |
 | K15 | `--quit-after`, `--dump-to`, `--selftest`, `--install-shortcut` | `cli.py:35-96` | parcial: `--selftest` feito (atalho virou o `install.sh`); falta `--quit-after`/`--dump-to` |
 | K16 | `--version`, `--help`, código 2 para uso inválido | `cli.py:85-101` → `cli.rs` | feito |
@@ -391,15 +391,15 @@ Rust (sem linha, para não envelhecer a cada commit).
 | Scrollback e visão do histórico | 9 | 0 | 2 | 0 |
 | Entrada: teclado e protocolo do kitty | 8 | 0 | 12 | 0 |
 | Entrada: mouse, seleção, clipboard, paste | 14 | 1 | 5 | 0 |
-| Desenho: fonte, geometria, cores | 11 | 3 | 3 | 0 |
+| Desenho: fonte, geometria, cores | 12 | 2 | 3 | 0 |
 | Imagens do protocolo kitty | 0 | 0 | 16 | 3 |
-| Janela: abas, workspaces, cromo | 0 | 3 | 17 | 0 |
+| Janela: abas, workspaces, cromo | 1 | 3 | 16 | 0 |
 | Janela: ciclo de vida, geometria, estado | 3 | 0 | 8 | 0 |
-| Configuração e CLI | 15 | 3 | 3 | 0 |
+| Configuração e CLI | 17 | 1 | 3 | 0 |
 | Debug socket e instrumentação | 7 | 5 | 3 | 0 |
 | Plataforma e distribuição | 5 | 0 | 5 | 0 |
 | Testes e verificação | 3 | 2 | 4 | 0 |
-| **total** | **143** | **20** | **86** | **3** |
+| **total** | **147** | **17** | **85** | **3** |
 
 ## 16. Melhorias propostas
 

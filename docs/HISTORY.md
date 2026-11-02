@@ -237,3 +237,33 @@ tag errada (`v0.2.0` com `Cargo.toml` em `0.1.0`) sai com código 1.
 Falta para fechar M8 de verdade: `windows-latest` e `macos-14`/`macos-13` na
 matriz — dependem de M6 (ConPTY) e M7 (Metal), que estão em `PORTABILITY.md`.
 Licença MIT entrou junto (o pacote leva o arquivo).
+
+## 2026-11-02 — pisca do cursor e toast (G12, I12, K13)
+
+Duas coisas que faltavam para o terminal "não parecer quebrado":
+
+**Pisca (G12).** A fase não é estado acumulado: sai de `blink_epoch`
+(`Instant`) dividido por 500 ms, então não existe timer que possa atrasar ou
+desencontrar. `cursor_blink on` pisca, uma tecla ou colagem **reacende** na hora
+(cursor que some no instante em que você olha é pior que cursor fixo) e
+`CSI 6 q` com forma par (4/6) pede cursor fixo e vence. O `SGR 5` do texto usa a
+mesma fase — o atributo existia desde a F1 mas não animava.
+
+O loop só acorda no meio do período quando **há** algo piscando
+(`pisca_ativo`), e o "tem célula com SGR 5?" é recalculado no `feed`, não em
+cada tique. Verificado por A/B de capturas: com `on`, 432 px alternam entre
+frames a 260 ms; com `off` (recarregado a quente), as capturas são idênticas.
+
+**Toast (I12/K13).** O arquivo de config é editado num editor — que não mostra
+o nosso log. Agora o erro aparece na tela: `config mantida — linha 3:
+'afffont_size': chave desconhecida (+1)`, faixa invertida na primeira linha
+(embaixo está o prompt, e o aviso é do terminal, não do programa), 3,5 s e
+some sozinho. Mensagem igual seguida vira `(×N)` em vez de fila. Salvar certo
+depois de um erro mostra `config recarregada`.
+
+Dois detalhes que só apareceram testando: o primeiro tique reparseava o arquivo
+e o erro saía duas vezes (agora o `mtime` do arranque já vale) e a condição do
+"recarregada" olhava `config:` com dois-pontos, que a mensagem nova não tinha.
+
+Benchmark depois de tudo: 950–985 fps / 40,8–42,3 MB/s a 61x18 — dentro da
+faixa documentada, sem regressão.

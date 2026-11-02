@@ -25,7 +25,7 @@ sobrescrevem o arquivo.
 | `font_family` | `Monospace` | família da fonte; só monoespaçada (a célula é o avanço do "M") |
 | `font_size` | `12` | tamanho em **pontos** (4..96); o DPI converte para pixel |
 | `cursor_shape` | `block` | `block`, `beam` ou `underline`; `CSI 6 q` de um app vence enquanto durar |
-| `cursor_blink` | `off` | cursor piscando |
+| `cursor_blink` | `off` | cursor piscando (500 ms por fase); tecla ou colagem deixa o cursor aceso na hora. `CSI 6 q` com forma par (4/6) pede cursor fixo e vence enquanto o programa quiser |
 | `scrollback` | `10000` | linhas de histórico acima da tela (teto 100000) |
 | `window_padding_width` | `0` | margem em px em volta da grade (teto 200) |
 | `bell` | `none` | BEL: `none`, `visual` (marca a janela) ou `audible` |

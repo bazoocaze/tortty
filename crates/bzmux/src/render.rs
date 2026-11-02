@@ -340,6 +340,48 @@ impl Renderer {
 
     /// Selo de uma linha no canto superior direito (indicador de histórico).
     /// Desenhado por último: tem que ficar por cima do que estiver lá.
+    /// Toast (I12): uma faixa na primeira linha, com as cores invertidas.
+    ///
+    /// Fica em cima porque embaixo está o prompt (a linha em que a pessoa
+    /// está olhando) e o aviso é sobre o terminal, não sobre o programa. O
+    /// texto é cortado na largura da grade — quebra de linha num aviso
+    /// transitório só confunde.
+    fn toast(&mut self, text: &str, cols: usize) {
+        let cw = self.fonts.cw;
+        let chh = self.fonts.ch;
+        let ascent = self.fonts.ascent;
+        let bg = self.color(Color::Default, self.fg);
+        let fg = self.color(Color::Default, self.bg);
+        let n = cols.saturating_sub(2);
+        let curto: String = text.chars().take(n).collect();
+        let w = curto.chars().count();
+        if w == 0 {
+            return;
+        }
+        // margem de meia célula de cada lado para o texto não tocar a borda
+        self.push_rect(
+            0.0,
+            0.0,
+            (w + 2) as f32 * cw,
+            chh,
+            [bg[0], bg[1], bg[2], 1.0],
+        );
+        for (i, ch) in curto.chars().enumerate() {
+            if let Some(q) = self.glyph_quad(ch, false, false) {
+                self.instances.push(Instance {
+                    rect: [
+                        (i + 1) as f32 * cw + q.left as f32,
+                        ascent - q.top as f32,
+                        q.w as f32,
+                        q.h as f32,
+                    ],
+                    color: [fg[0], fg[1], fg[2], 1.0],
+                    uv: q.uv,
+                });
+            }
+        }
+    }
+
     fn badge(&mut self, text: &str, cols: usize) {
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
@@ -383,10 +425,7 @@ impl Renderer {
         let fg = if swap { cell.bg } else { cell.fg };
         let mut c = self.color(fg, if swap { self.bg } else { self.fg });
         // esmaecido: o mesmo tom com menos opacidade (Pango usava alpha 0.55)
-        let mut alpha = if cell.flags & FAINT != 0 { 0.55 } else { 1.0 };
-        if cell.flags & bzmux_core::cell::BLINK != 0 {
-            alpha *= 1.0; // pisca ainda não anima; o atributo é preservado
-        }
+        let alpha = if cell.flags & FAINT != 0 { 0.55 } else { 1.0 };
 
         if cell.ch != ' ' {
             let bold = cell.flags & BOLD != 0;
@@ -461,7 +500,14 @@ impl Renderer {
 
     /// Monta as instâncias do frame. Público para o teste de sanidade do formato.
     #[allow(clippy::too_many_lines)] // um laço por categoria, na ordem de blend
-    pub fn build(&mut self, term: &Term, view_off: usize, sel: Option<Span>) {
+    pub fn build(
+        &mut self,
+        term: &Term,
+        view_off: usize,
+        sel: Option<Span>,
+        blink: Blink,
+        toast: Option<&str>,
+    ) {
         self.instances.clear();
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
@@ -520,12 +566,22 @@ impl Renderer {
                 if cell.is_cont() {
                     continue;
                 }
+                // SGR 5: na fase apagada a célula não é desenhada — o fundo da
+                // linha já foi pintado, então "apagar" é só não escrever
+                if cell.flags & bzmux_core::cell::BLINK != 0 && !blink.fase {
+                    continue;
+                }
                 self.draw_cell(&cell, x, py, is_swap(&cell, sel, y, x));
             }
         }
 
         // 3) cursor (por cima; a ordem das instâncias é a ordem de blend)
-        if view_off == 0 && term.cursor_visible && term.cy < term.rows && term.cx < cols {
+        if blink.cursor
+            && view_off == 0
+            && term.cursor_visible
+            && term.cy < term.rows
+            && term.cx < cols
+        {
             let cx = term.cx as f32 * cw;
             let cy = term.cy as f32 * chh;
             let style = term.app_cursor_style.map_or_else(
@@ -557,9 +613,22 @@ impl Renderer {
             let txt = format!("↑{view_off}");
             self.badge(&txt, cols);
         }
+
+        // 5) toast (I12/K13): aviso do próprio terminal, por cima de tudo. Some
+        // sozinho; quem controla o tempo é o app.
+        if let Some(t) = toast {
+            self.toast(t, cols);
+        }
     }
 
-    pub fn render(&mut self, term: &Term, view_off: usize, sel: Option<Span>) -> FrameOutcome {
+    pub fn render(
+        &mut self,
+        term: &Term,
+        view_off: usize,
+        sel: Option<Span>,
+        blink: Blink,
+        toast: Option<&str>,
+    ) -> FrameOutcome {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
@@ -573,7 +642,7 @@ impl Renderer {
         };
 
         let t0 = std::time::Instant::now();
-        self.build(term, view_off, sel);
+        self.build(term, view_off, sel, blink, toast);
         self.atlas.flush(&self.queue);
 
         let needed = self.instances.len() * std::mem::size_of::<Instance>();
@@ -640,6 +709,16 @@ impl Renderer {
 
 /// O que fazer depois de um frame (o `get_current_texture` do wgpu 30 devolve
 /// um enum em vez de `Result`).
+/// Estado do pisca neste frame (G12).
+///
+/// `fase` alterna a cada 500 ms e vale para o texto com SGR 5; `cursor` já vem
+/// resolvido pelo app (config `cursor_blink` + `CSI 6 q` do programa).
+#[derive(Clone, Copy, Default)]
+pub struct Blink {
+    pub fase: bool,
+    pub cursor: bool,
+}
+
 pub enum FrameOutcome {
     Drawn,
     Skipped,

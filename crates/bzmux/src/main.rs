@@ -53,6 +53,7 @@ fn main() {
     event_loop.set_control_flow(ControlFlow::Wait);
     let proxy = event_loop.create_proxy();
     let mut app = App::new(opts, over, proxy);
+    app.startup_errors(cfg_errors);
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("bzmux: {e}");
         std::process::exit(1);

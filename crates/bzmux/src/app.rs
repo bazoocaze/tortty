@@ -30,6 +30,34 @@ pub enum UserEvent {
     Debug(String, Sender<String>),
 }
 
+/// Aviso transitório do próprio terminal (I12): "config: 3 erros — ...".
+struct Toast {
+    texto: String,
+    desde: std::time::Instant,
+    /// Quantas mensagens iguais chegaram seguidas (o toast soma, não empilha).
+    vezes: u32,
+}
+
+/// Quanto tempo o toast fica na tela.
+const TOAST_DUR: Duration = Duration::from_millis(3500);
+
+/// Texto do aviso de configuração (K13). Cabe em ~60 colunas de propósito: o
+/// toast é cortado na largura da grade, e "linha e chave" é o que se precisa
+/// ver, não a contagem escrita por extenso.
+fn aviso_config(errs: &[bzmux_core::config::Error]) -> String {
+    let Some(primeiro) = errs.first() else {
+        return String::new();
+    };
+    if errs.len() > 1 {
+        format!("config mantida — {primeiro} (+{})", errs.len() - 1)
+    } else {
+        format!("config mantida — {primeiro}")
+    }
+}
+
+/// Período do pisca (cursor e SGR 5). Metade "aceso", metade "apagado".
+const BLINK_MS: u64 = 500;
+
 /// Bytes em hex (o `keys` do socket devolve isso para conferir o encoder).
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
@@ -100,6 +128,19 @@ pub struct App {
     cfg_checked: std::time::Instant,
     /// BELLs já tratados (o `Term` conta; o app decide o que tocar).
     bells_seen: u32,
+    /// Instante em que o pisca foi zerado (última tecla/colagem). A fase sai
+    /// daí por aritmética: sem acumular estado, sem `sleep`.
+    blink_epoch: std::time::Instant,
+    /// Fase atual do pisca, para só redesenhar quando ela vira.
+    blink_fase: bool,
+    /// Há célula com SGR 5 na tela. Recalculado a cada `feed`: perguntar isso
+    /// ao grid em cada tique custaria uma varredura por evento.
+    blink_text: bool,
+    /// Aviso na tela (erro de config etc.). Um por vez, some sozinho.
+    toast: Option<Toast>,
+    /// Erros do arquivo no arranque, que só podem virar toast quando a janela
+    /// existir (no terminal, `stderr` some; numa sessão gráfica, idem).
+    startup_errs: Vec<bzmux_core::config::Error>,
     debug: Option<DebugServer>,
     /// Grid pedido pelo verbo `resize`; o WM pode arredondar em pixels, então
     /// `apply_size` corrige em passos até bater (como um terminal de verdade).
@@ -118,6 +159,13 @@ impl App {
         let mut term = Term::new(opts.cols, opts.rows);
         term.scrollback_limit = opts.scrollback;
         term.theme = opts.cfg.theme();
+        // o `mtime` do arranque já vale: sem isso o primeiro tique reparseia o
+        // mesmo arquivo e um erro de config sairia duas vezes em tela
+        let cfg_mtime = opts
+            .cfg_path
+            .as_deref()
+            .and_then(|p| std::fs::metadata(p).ok())
+            .and_then(|m| m.modified().ok());
         App {
             opts,
             over,
@@ -138,9 +186,14 @@ impl App {
             wake: None,
             spawned: false,
             scroll_frac: 0.0,
-            cfg_mtime: None,
+            cfg_mtime,
             cfg_checked: std::time::Instant::now(),
             bells_seen: 0,
+            blink_epoch: std::time::Instant::now(),
+            blink_fase: true,
+            blink_text: false,
+            toast: None,
+            startup_errs: Vec::new(),
             debug: None,
             want: None,
             adjust_left: 0,
@@ -225,6 +278,7 @@ impl App {
     /// Tecla: atalhos da janela primeiro (o filho nunca vê Ctrl+Shift+C/V),
     /// depois o encoder. Qualquer tecla de verdade volta ao vivo.
     fn on_key(&mut self, event: &winit::event::KeyEvent) {
+        self.blink_reset();
         let ctrl = self.mods.control_key();
         let shift = self.mods.shift_key();
         let named = match &event.logical_key {
@@ -320,6 +374,9 @@ impl App {
         let Some(btn) = crate::mouse::from_winit(button) else {
             return;
         };
+        if state == ElementState::Pressed {
+            self.blink_reset();
+        }
         if self.term.mouse_mode == 0 {
             self.select_input(state, button);
             return;
@@ -458,6 +515,7 @@ impl App {
     /// Ctrl+Shift+V: cola do CLIPBOARD.
     fn paste(&mut self) {
         if let Some(txt) = self.clip.text() {
+            self.blink_reset();
             self.view_off = 0;
             self.write_paste(&txt);
         }
@@ -519,6 +577,11 @@ impl App {
                 self.bells_seen = self.bells_seen.wrapping_add(1);
                 self.ring();
             }
+            self.blink_text = self.term.grid.iter().any(|r| {
+                r.cells
+                    .iter()
+                    .any(|c| c.flags & bzmux_core::cell::BLINK != 0)
+            });
             if self.view_off > 0 {
                 self.view_off = self.term.view_after_output(self.view_off, sc, hist);
                 // `CSI 3J` (ou um reflow) pode ter esvaziado o histórico: sem
@@ -533,6 +596,86 @@ impl App {
                 pty.write(&out);
             }
         }
+    }
+
+    /// Erros do arquivo lidos no arranque: viram toast no primeiro tique.
+    pub fn startup_errors(&mut self, errs: Vec<bzmux_core::config::Error>) {
+        self.startup_errs = errs;
+    }
+
+    /// Zera o pisca: logo depois de uma tecla o cursor tem que estar aceso.
+    /// Sem isto o cursor pode "sumir" no exato instante em que a pessoa olha.
+    fn blink_reset(&mut self) {
+        self.blink_epoch = std::time::Instant::now();
+        if !self.blink_fase {
+            self.blink_fase = true;
+            if let Some(w) = self.window.as_ref() {
+                w.request_redraw();
+            }
+        }
+    }
+
+    /// Estado do pisca deste frame (G12).
+    ///
+    /// O cursor pisca se a config deixa **e** o programa não pediu cursor fixo
+    /// por `CSI 6 q` (4/6 = fixo). O texto com SGR 5 pisca sempre — é o
+    /// programa que pediu, não a config.
+    fn blink(&self) -> crate::render::Blink {
+        let fase = self.blink_fase;
+        crate::render::Blink {
+            fase,
+            cursor: !self.cursor_pisca() || fase,
+        }
+    }
+
+    /// O cursor deve piscar? A config manda, mas `CSI 6 q` com forma par (4/6)
+    /// pede cursor fixo e vence enquanto o programa quiser.
+    fn cursor_pisca(&self) -> bool {
+        self.opts.cfg.cursor_blink && self.term.app_cursor_style.is_none_or(|(_, pisca)| pisca)
+    }
+
+    /// Tem alguma coisa piscando na tela (cursor ou texto com SGR 5)? Só nesse
+    /// caso o loop precisa acordar no meio do período.
+    fn pisca_ativo(&self) -> bool {
+        (self.cursor_pisca() && self.term.cursor_visible) || self.tem_texto_piscando()
+    }
+
+    /// Há célula com SGR 5 na tela? Sem isto o loop não teria por que acordar
+    /// no meio do período do pisca quando o cursor está fixo.
+    fn tem_texto_piscando(&self) -> bool {
+        self.blink_text
+    }
+
+    /// Mostra um aviso na tela. Mensagem igual seguida vira contagem ("×3"),
+    /// não uma fila — quem salva o arquivo dez vezes não quer dez avisos.
+    #[allow(clippy::needless_pass_by_value)] // quem chama monta o texto na hora
+    fn toast(&mut self, texto: String) {
+        let vezes = match self.toast.take() {
+            Some(t) if t.texto == texto => t.vezes + 1,
+            _ => 1,
+        };
+        self.toast = Some(Toast {
+            texto: texto.clone(),
+            desde: std::time::Instant::now(),
+            vezes,
+        });
+        logln(&format!("toast: {texto}"));
+        if let Some(w) = self.window.as_ref() {
+            w.request_redraw();
+        }
+    }
+
+    /// Texto do toast para o renderer (com a contagem quando houve repetição).
+    fn toast_texto(&self) -> Option<String> {
+        let t = self.toast.as_ref()?;
+        if t.desde.elapsed() > TOAST_DUR {
+            return None;
+        }
+        Some(if t.vezes > 1 {
+            format!("{} (×{})", t.texto, t.vezes)
+        } else {
+            t.texto.clone()
+        })
     }
 
     /// BEL: o app pede (a contagem está no `Term`), a configuração decide o
@@ -584,9 +727,21 @@ impl App {
                 errs.len(),
                 errs[0]
             ));
+            // K13: o arquivo é editado num editor, que não mostra o nosso log —
+            // o aviso tem que aparecer na tela, com a primeira linha e a conta.
+            self.toast(aviso_config(&errs));
             return;
         }
         logln(&format!("config: {} recarregada", path.display()));
+        // só avisa na tela se havia um erro aparecendo: recarregar deu certo e
+        // quem salvou precisa saber que voltou a valer
+        if self
+            .toast
+            .as_ref()
+            .is_some_and(|t| t.texto.starts_with("config"))
+        {
+            self.toast("config recarregada".to_string());
+        }
         self.apply_options(novo, &text);
     }
 
@@ -657,10 +812,12 @@ impl App {
 
     fn redraw(&mut self) {
         self.drain();
+        let blink = self.blink();
+        let toast = self.toast_texto();
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
-        match renderer.render(&self.term, self.view_off, self.sel) {
+        match renderer.render(&self.term, self.view_off, self.sel, blink, toast.as_deref()) {
             crate::render::FrameOutcome::Reconfigure => {
                 let (w, h) = (renderer.config.width, renderer.config.height);
                 renderer.resize(w, h);
@@ -1079,10 +1236,43 @@ impl ApplicationHandler<UserEvent> for App {
             return;
         }
         self.check_config();
+        if !self.startup_errs.is_empty() {
+            let errs = std::mem::take(&mut self.startup_errs);
+            self.toast(aviso_config(&errs));
+        }
+
+        let agora = std::time::Instant::now();
         // o reload precisa de um tique mesmo sem evento nenhum
-        event_loop.set_control_flow(ControlFlow::WaitUntil(
-            std::time::Instant::now() + Duration::from_millis(250),
-        ));
+        let mut quando = agora + Duration::from_millis(250);
+
+        // toast vencido sai da tela (ninguém mais o tiraria)
+        if self
+            .toast
+            .as_ref()
+            .is_some_and(|t| t.desde.elapsed() > TOAST_DUR)
+        {
+            self.toast = None;
+            if let Some(w) = self.window.as_ref() {
+                w.request_redraw();
+            }
+        }
+
+        // pisca: acorda na virada seguinte da fase; redesenha só quando ela
+        // vira de verdade (um redesenho a cada 500 ms, não a cada tique)
+        if self.pisca_ativo() {
+            let e = self.blink_epoch.elapsed().as_millis() as u64;
+            let proxima = (e / BLINK_MS + 1) * BLINK_MS;
+            quando = quando.min(self.blink_epoch + Duration::from_millis(proxima));
+            let fase = (e / BLINK_MS).is_multiple_of(2);
+            if fase != self.blink_fase {
+                self.blink_fase = fase;
+                if let Some(w) = self.window.as_ref() {
+                    w.request_redraw();
+                }
+            }
+        }
+
+        event_loop.set_control_flow(ControlFlow::WaitUntil(quando));
         // filho saiu: fecha a janela (fase 1 = uma sessão por janela)
         let exited = self.pty.as_mut().is_some_and(super::pty::Pty::child_exited);
         if exited {
