@@ -678,3 +678,40 @@ mesmo caminho, de propósito: os dois terminais leem o estado um do outro — o 
 muda é só a formatação de quem gravou por último (o Python escreve com espaços,
 o Rust em JSON compacto). O `~/.local/state/bzmux/window.json` desta máquina, por
 exemplo, foi escrito pelo tortty-python e é lido pelo Rust sem conversão.
+
+## 2026-11-02 — Onda 5: as imagens do kitty (H1–H13)
+
+O último bloco grande de funcionalidade visível. `crates/bzmux-core/src/graphics.rs`
+é o análogo do `graphics.py` de lá: APC, base64, zlib, PNG (só o IHDR, o
+decodificador fica no app), `a=t/T/p/d/q`, `m=1`, `C=1`, `q=`, `c/r/X/Y`,
+colocações em linha de tela e o ciclo de vida (rolagem, reflow, `ED 3`). Doze
+testes no módulo + seis no `Term` + um check no `--selftest`, tudo sem display.
+
+No app: uma textura por imagem (cache por `versao`, que muda a cada
+transmissão — o app pode reusar o `i=`), pipeline próprio amostrando RGB em vez
+da máscara do atlas, e o desenho **entre** o texto da grade e o cromo/cursor,
+que é a ordem do kitty. As imagens são desenhadas com `linha + view_off`, então
+acompanham o histórico.
+
+**Dois defeitos que só apareceram quando tentei usar de verdade.** Implementar
+o protocolo e ver o `kitten icat` funcionar exigiu consertar duas coisas que não
+eram do protocolo:
+
+- o pty mandava `ws_xpixel`/`ws_ypixel` = **0**. É daí (via `TIOCGWINSZ`, não de
+  `CSI`) que o `icat` tira a resolução: com zero ele desiste com *"terminal does
+  not support reporting screen sizes in pixels"*. Agora o `PtySize` leva
+  `cols*cw` × `rows*ch`;
+- o parser ficava com o `cell_size` **padrão 10×19** — o app nunca passava o
+  tamanho real da célula. Isso errava o `c=`/`r=` default (imagem de 48 px saía
+  5×3 células em vez de 4×2) e as respostas de `CSI 14/16 t`. De brinde, `CSI
+  14 t` passou a ser respondido: o Python também não responde, e sem ele o
+  `icat` de outra forma desiste. Os dois estão anotados na linha do H9 e do H2.
+
+**Verificação ao vivo** (X11 + `xdotool` + screenshot): `kitten icat` de um PNG
+desenha; dois `icat` na mesma tela usam duas texturas; uma imagem empurrada para
+o histórico (31 linhas) aparece na posição certa ao subir com `Shift+PgUp`
+(MARCA_ANTES / imagem / MARCA_DEPOIS, com `view_off=7`); `printf '\e[3J'` limpa
+imagens e histórico, `ED 2` não limpa.
+
+Também instrumentei o `state` do socket com `images` e `placements`: sem isso a
+única forma de conferir a colocação era olhar a tela.

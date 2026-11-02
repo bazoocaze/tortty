@@ -22,16 +22,16 @@ não por estimativa.
 | 5. Entrada: teclado e protocolo do kitty | 16 | 0 | 0 | 0 | 16 |
 | 6. Entrada: mouse, seleção, clipboard, paste | 14 | 0 | 0 | 0 | 14 |
 | 7. Desenho: fonte, geometria, cores | 13 | 1 | 2 | 0 | 16 |
-| 8. Imagens do protocolo kitty | 0 | 0 | 13 | 3 | 16 |
+| 8. Imagens do protocolo kitty | 13 | 0 | 0 | 3 | 16 |
 | 9. Janela: abas, workspaces, cromo | 18 | 0 | 0 | 0 | 18 |
 | 10. Janela: ciclo de vida, geometria, estado | 10 | 0 | 0 | 0 | 10 |
 | 11. Configuração e CLI | 18 | 0 | 0 | 0 | 18 |
 | 12. Debug socket e instrumentação | 14 | 0 | 0 | 0 | 14 |
 | 13. Plataforma e distribuição | 5 | 0 | 5 | 0 | 10 |
 | 14. Testes e verificação | 7 | 2 | 0 | 0 | 9 |
-| **total** | **181** | **3** | **21** | **3** | **208** |
+| **total** | **194** | **3** | **8** | **3** | **208** |
 
-Equivalente pronto: **87.7%** (feito conta 1, parcial conta 0,5). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
+Equivalente pronto: **94.0%** (feito conta 1, parcial conta 0,5). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
 tendência; o que decide o que fazer agora é a linha e a seção 16.
 
 ## Regras deste documento
@@ -211,19 +211,19 @@ Rust (sem linha, para não envelhecer a cada commit).
 
 | # | funcionalidade | ref (Python → Rust) | estado |
 |---|---|---|---|
-| H1 | APC `ESC _ G … ST` roteado para o subsistema | `term.py:944-953` | falta |
-| H2 | `a=t` transmitir / `a=T` transmitir+exibir | `graphics.py:188-212` | falta |
-| H3 | `a=p` exibir imagem já transmitida | `graphics.py:184-192` | falta |
-| H4 | `a=d` apagar (por id e tudo) | `graphics.py:175-183` | falta |
-| H5 | `a=q` query de capacidade | `graphics.py:173-181` | falta |
-| H6 | Chunking `m=1` | `graphics.py:146-155` | falta |
-| H7 | `f=24/32` (RGB/RGBA cru) e `f=100` (PNG) | `graphics.py:190-196` | falta |
-| H8 | `o=z` (zlib) | `graphics.py:161-168` | falta |
-| H9 | `s=`/`v=`, `i=` automático, `c=`/`r=` default, `X=`/`Y=` offset px | `graphics.py:100-106,193-207` | falta |
-| H10 | `C=1` não move o cursor; senão desce `rows` | `graphics.py:184-187` | falta |
-| H11 | `q=` silencia resposta | `graphics.py:170` | falta |
-| H12 | Imagem acompanha a rolagem e é podada do histórico | `graphics.py:74-96` | falta |
-| H13 | `ED 3` limpa imagens | `term.py:481-485` | falta |
+| H1 | APC `ESC _ G … ST` roteado para o subsistema | `term.py:944-953` | feito: `State::Str` ganhou o buffer de APC (`é só o APC`: DCS/PM/SOS seguem descartados) e o ST entrega o corpo ao `graphics::handle` |
+| H2 | `a=t` transmitir / `a=T` transmitir+exibir | `graphics.py:188-212` | feito: `a=t` guarda a imagem, `a=T` guarda e coloca. Verificado com `kitten icat` de verdade (`blueman.png` e dois `icat` na mesma tela) |
+| H3 | `a=p` exibir imagem já transmitida | `graphics.py:184-192` | feito: coloca a imagem por id; id inexistente responde `ENOENT` (como o Python) |
+| H4 | `a=d` apagar (por id e tudo) | `graphics.py:175-183` | feito: `d=i` remove a imagem e as colocações dela, `d=a` limpa tudo (e o app solta a textura no frame seguinte) |
+| H5 | `a=q` query de capacidade | `graphics.py:173-181` | feito: responde `OK` para `t=d` com `f=24/32/100` e `EINVAL` para transmissão por arquivo/memória — é essa resposta que faz o `icat` seguir em vez de desistir |
+| H6 | Chunking `m=1` | `graphics.py:146-155` | feito: o control data do **primeiro** pedaço vale para a transmissão e o `m` não acumula (era o bug do Python documentado lá); teto de 64 MiB para pedaço que nunca fecha |
+| H7 | `f=24/32` (RGB/RGBA cru) e `f=100` (PNG) | `graphics.py:190-196` | feito: os três no core; o PNG é decodificado no app (`png` crate) e o magic do arquivo vence o `f=` mentiroso |
+| H8 | `o=z` (zlib) | `graphics.py:161-168` | feito: `flate2` (zlib, não gzip); zlib torto responde `EINVAL:zlib` em vez de derrubar o parser |
+| H9 | `s=`/`v=`, `i=` automático, `c=`/`r=` default, `X=`/`Y=` offset px | `graphics.py:100-106,193-207` | feito: `c`/`r` default = `ceil(largura/célula)`; sem `i=` o id sai de um contador. **Corrigido no caminho:** o app nunca passava o tamanho real da célula ao parser (ficava no padrão 10×19), então a imagem saía 5×3 onde cabiam 4×2 |
+| H10 | `C=1` não move o cursor; senão desce `rows` | `graphics.py:184-187` | feito: `Saida.mover`/`linhas` e o `apc_done` desce o cursor às linhas da imagem; `C=1` deixa onde está |
+| H11 | `q=` silencia resposta | `graphics.py:170` | feito: qualquer `q` diferente de 0 cala a resposta (o `icat` manda `q=2`) |
+| H12 | Imagem acompanha a rolagem e é podada do histórico | `graphics.py:74-96` | feito: a colocação vive em linha de tela (negativa = histórico); `scroll_up` desce todo mundo, rolagem de região descarta, teto do scrollback e reflow podam o inalcançável. No desenho a linha na tela é `linha + view_off` — verificado com screenshot: a imagem volta no lugar certo ao subir no histórico |
+| H13 | `ED 3` limpa imagens | `term.py:481-485` | feito: `CSI 3 J` limpa imagens e colocações junto com o histórico; `ED 2` **não** limpa (verificado nos dois sentidos) |
 | H17 | `t=f`/`t=t`/`t=s` (arquivo, temp, shm) | não existem (`LIMITATIONS.md:99-108`) | não (decisão: só base64) |
 | H18 | Animação (`a=f`/`a=a`) | ignorado de propósito | não |
 | H19 | Sixel / iTerm2 inline | não existem | não |
