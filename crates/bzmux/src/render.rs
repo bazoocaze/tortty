@@ -16,7 +16,7 @@ use swash::scale::ScaleContext;
 use winit::window::Window;
 
 use crate::atlas::{bind_atlas, globals_buffer, globals_layout, Atlas};
-use crate::glyph::Fonts;
+use crate::glyph::{self, Fonts};
 use crate::prof;
 
 /// Fundo e frente usados quando a configuração não diz nada (os mesmos do
@@ -81,6 +81,12 @@ pub struct Renderer {
     pub fonts: Fonts,
     scale_ctx: ScaleContext,
     cache: HashMap<(u8, char), Option<GlyphQuad>>,
+    /// Cache do mesmo glifo resolvido por (face, gid) — é o que o shaping usa.
+    cache_gid: HashMap<(u8, u16), Option<GlyphQuad>>,
+    /// Shaping por trecho de linha (ligaduras e o que mais a fonte fizer).
+    shaper: crate::shape::Shaper,
+    /// Modo de ligadura vindo da configuração.
+    ligatures: bzmux_core::config::Ligatures,
     instances: Vec<Instance>,
     pub palette: Vec<(u8, u8, u8)>,
     /// Tema efetivo (config + defaults); o `build` resolve célula por célula.
@@ -441,6 +447,9 @@ impl Renderer {
             fonts,
             scale_ctx: ScaleContext::new(),
             cache: HashMap::new(),
+            cache_gid: HashMap::new(),
+            shaper: crate::shape::Shaper::new(),
+            ligatures: bzmux_core::config::Ligatures::default(),
             instances: Vec::with_capacity(4096),
             palette: cfg.palette256(),
             fg: tema(cfg, cfg.fg, FG),
@@ -484,10 +493,18 @@ impl Renderer {
         self.write_globals();
     }
 
-    /// O que não é cor: forma do cursor e margem (só muda por arquivo).
+    /// O que não é cor: forma do cursor, margem e ligaduras (só muda por
+    /// arquivo).
     pub fn apply_layout(&mut self, cfg: &Config) {
         self.cursor_shape = cfg.cursor_shape;
         self.pad = cfg.padding as f32;
+        if self.ligatures != cfg.ligatures {
+            // plano shapeado é por modo: trocar o modo invalida o cache
+            self.ligatures = cfg.ligatures;
+            self.shaper = crate::shape::Shaper::new();
+            // o dano compara `tema_gen`: mexer nele força remontar a grade
+            self.tema_gen = self.tema_gen.wrapping_add(1);
+        }
         self.write_globals();
     }
 
@@ -552,6 +569,39 @@ impl Renderer {
         ]
     }
 
+    /// Quad a partir do bitmap, no atlas certo (RGBA para emoji, máscara para
+    /// o resto). É o único lugar que escreve nos dois atlas.
+    fn quad_of(&mut self, b: &glyph::GlyphBitmap, color: bool) -> Option<GlyphQuad> {
+        let uv = if color {
+            self.emoji.add(b.w, b.h, &b.data)
+        } else {
+            self.atlas.add(b.w, b.h, &b.data)
+        }?;
+        Some(GlyphQuad {
+            left: b.left,
+            top: b.top,
+            w: b.w,
+            h: b.h,
+            uv,
+            color,
+        })
+    }
+
+    /// Quad de um glifo **já resolvido** pelo shaping. Cache por (face, gid): o
+    /// mesmo glifo pode vir de caracteres diferentes e de trechos diferentes.
+    fn quad_gid(&mut self, face: usize, gid: u16) -> Option<GlyphQuad> {
+        let key = (face as u8, gid);
+        if let Some(v) = self.cache_gid.get(&key) {
+            return *v;
+        }
+        let bitmap = self.fonts.bitmap_for(&mut self.scale_ctx, face, gid);
+        let quad = bitmap.and_then(|(b, color)| self.quad_of(&b, color));
+        self.cache_gid.insert(key, quad);
+        quad
+    }
+
+    /// Quad resolvendo o caractere pela cadeia de fontes (caminho sem shaping:
+    /// trecho de uma célula, ou glifo que o shaping não desenhou).
     fn glyph_quad(&mut self, ch: char, bold: bool, italic: bool) -> Option<GlyphQuad> {
         // a chave é o estilo pedido, não a face escolhida: quem decide a face é
         // a cadeia de fontes, e o resultado já vem resolvido
@@ -562,23 +612,10 @@ impl Renderer {
         let bitmap = self
             .fonts
             .glyph_bitmap(&mut self.scale_ctx, ch, bold, italic);
-        let quad = bitmap.and_then(|(b, color)| {
-            // emoji vai para o atlas RGBA (desenhado pela pipeline de imagem);
-            // máscara vai para o atlas de cobertura
-            let uv = if color {
-                self.emoji.add(b.w, b.h, &b.data)
-            } else {
-                self.atlas.add(b.w, b.h, &b.data)
-            };
-            uv.map(|uv| GlyphQuad {
-                left: b.left,
-                top: b.top,
-                w: b.w,
-                h: b.h,
-                uv,
-                color,
-            })
-        });
+        let quad = match bitmap {
+            Some((b, color, _, _)) => self.quad_of(&b, color),
+            None => None,
+        };
         self.cache.insert(key, quad);
         quad
     }
@@ -801,7 +838,18 @@ impl Renderer {
 
     /// Glifo + decoração de uma célula. A ordem aqui é a ordem de blend:
     /// tudo do texto sai antes do cursor.
-    fn draw_cell(&mut self, cell: &Cell, x: usize, py: f32, swap: bool) {
+    /// `glifo` = glifo já resolvido pelo shaping (`face`, `gid`, deslocamento em
+    /// px). `None` manda resolver o caractere pela cadeia — é o caminho de
+    /// trecho de uma célula. Glifo do shaping que não desenha (face que mapeia e
+    /// não tem bitmap) também cai na cadeia.
+    fn draw_cell(
+        &mut self,
+        cell: &Cell,
+        x: usize,
+        py: f32,
+        swap: bool,
+        glifo: Option<(usize, u16, f32)>,
+    ) {
         use bzmux_core::cell::{
             BOLD, FAINT, ITALIC, OVERLINE, STRIKE, UL_CURLY, UL_DASHED, UL_DOTTED, UL_DOUBLE,
         };
@@ -816,8 +864,12 @@ impl Renderer {
         if cell.ch != ' ' {
             let bold = cell.flags & BOLD != 0;
             let italic = cell.flags & ITALIC != 0;
-            if let Some(q) = self.glyph_quad(cell.ch, bold, italic) {
-                let gx = x as f32 * cw + q.left as f32;
+            let quad = glifo
+                .and_then(|(face, gid, _)| self.quad_gid(face, gid))
+                .or_else(|| self.glyph_quad(cell.ch, bold, italic));
+            let desloc = glifo.map_or(0.0, |(_, _, dx)| dx);
+            if let Some(q) = quad {
+                let gx = x as f32 * cw + desloc + q.left as f32;
                 let gy = py + ascent - q.top as f32;
                 // emoji colorido não recebe tingimento: só o alfa da célula
                 let (cor, alvo) = if q.color {
@@ -1077,6 +1129,12 @@ impl Renderer {
         // retângulo da seleção na visão (preso à tela); fora dela nada muda
         let sel = sel.and_then(|s| s.visible(term, view_off));
         let rows = term.visible_rows(view_off);
+        let ctx = RowCtx {
+            cols,
+            sel,
+            blink,
+            cursor: quebra_no_cursor(term, view_off, rows.len()),
+        };
 
         // A17/G17: quais linhas remontar. `blink` só entra na assinatura se
         // houver célula com SGR 5 à vista — o pisca do cursor não mora aqui.
@@ -1124,7 +1182,7 @@ impl Renderer {
             self.assinatura = assinatura;
             self.por_linha = vec![RowQuads::default(); rows.len()];
             for (y, row) in rows.iter().enumerate() {
-                self.por_linha[y] = self.linha(row, cols, sel, blink);
+                self.por_linha[y] = self.linha(row, y, ctx);
             }
         } else {
             let shift = if term.scroll_conflict {
@@ -1132,28 +1190,10 @@ impl Renderer {
             } else {
                 term.scroll_shift
             };
-            self.rebuild_rows(&dano, &rows, cols, sel, blink, shift);
+            self.rebuild_rows(&dano, &rows, ctx, shift);
         }
 
-        // lista final na ordem de blend: grade (por linha) → imagens → cromo
-        // → cursor → badge → toast
-        self.instances.clear();
-        self.emoji_instances.clear();
-        let chh = self.fonts.ch;
-        for (y, linha) in self.por_linha.iter().enumerate() {
-            #[allow(clippy::cast_precision_loss)]
-            let dy = y as f32 * chh;
-            for inst in &linha.mask {
-                let mut copia = *inst;
-                copia.rect[1] += dy;
-                self.instances.push(copia);
-            }
-            for inst in &linha.emoji {
-                let mut copia = *inst;
-                copia.rect[1] += dy;
-                self.emoji_instances.push(copia);
-            }
-        }
+        self.concat_linhas();
 
         // aqui acaba o texto da grade: as imagens (H1–H13) entram por cima
         // dele e abaixo do cromo/cursor, que é a ordem do kitty
@@ -1187,6 +1227,29 @@ impl Renderer {
         }
     }
 
+    /// Lista final na ordem de blend: grade (por linha) → imagens → cromo →
+    /// cursor → badge → toast. As linhas prontas estão em y = 0; a posição
+    /// vertical entra aqui, e é isso que deixa a rolagem só deslocar linha.
+    fn concat_linhas(&mut self) {
+        self.instances.clear();
+        self.emoji_instances.clear();
+        let chh = self.fonts.ch;
+        for (y, linha) in self.por_linha.iter().enumerate() {
+            #[allow(clippy::cast_precision_loss)]
+            let dy = y as f32 * chh;
+            for inst in &linha.mask {
+                let mut copia = *inst;
+                copia.rect[1] += dy;
+                self.instances.push(copia);
+            }
+            for inst in &linha.emoji {
+                let mut copia = *inst;
+                copia.rect[1] += dy;
+                self.emoji_instances.push(copia);
+            }
+        }
+    }
+
     /// `true` se alguma célula visível tem SGR 5 (só aí a fase do pisca obriga
     /// a remontar a grade).
     fn tem_blink(rows: &[&bzmux_core::grid::Row]) -> bool {
@@ -1204,14 +1267,12 @@ impl Renderer {
         &mut self,
         dano: &crate::damage::Damage,
         rows: &[&bzmux_core::grid::Row],
-        cols: usize,
-        sel: Option<(usize, usize, usize, usize)>,
-        blink: Blink,
+        ctx: RowCtx,
         shift: isize,
     ) {
         let crate::damage::Damage::Rows(linhas) = dano else {
             for (y, row) in rows.iter().enumerate() {
-                self.por_linha[y] = self.linha(row, cols, sel, blink);
+                self.por_linha[y] = self.linha(row, y, ctx);
             }
             return;
         };
@@ -1236,7 +1297,7 @@ impl Renderer {
         rebuild.dedup();
         for y in rebuild {
             if let Some(row) = rows.get(y) {
-                self.por_linha[y] = self.linha(row, cols, sel, blink);
+                self.por_linha[y] = self.linha(row, y, ctx);
             }
         }
     }
@@ -1244,33 +1305,96 @@ impl Renderer {
     /// Monta uma linha **relativa ao topo da grade** (y = 0). A posição
     /// vertical entra na concatenação, e é isso que permite rolar a tela
     /// deslocando a linha pronta em vez de remontar o glifo.
-    fn linha(
-        &mut self,
-        row: &bzmux_core::grid::Row,
-        cols: usize,
-        sel: Option<(usize, usize, usize, usize)>,
-        blink: Blink,
-    ) -> RowQuads {
+    fn linha(&mut self, row: &bzmux_core::grid::Row, y: usize, ctx: RowCtx) -> RowQuads {
         let guardado = std::mem::take(&mut self.instances);
         let guardado_cor = std::mem::take(&mut self.emoji_row);
         self.instances.clear();
         self.emoji_row.clear();
-        self.pinta_linha(row, 0, cols, sel, blink);
+        self.pinta_linha(row, y, ctx);
         RowQuads {
             mask: std::mem::replace(&mut self.instances, guardado),
             emoji: std::mem::replace(&mut self.emoji_row, guardado_cor),
         }
     }
 
+    /// Glifos e decoração de uma linha, agrupados em **trechos** de mesma face
+    /// e estilo: é o contexto do trecho que faz a fonte trocar o glifo de cada
+    /// célula pela peça da ligadura (`calt`). Trecho de uma célula não tem
+    /// contexto e vai direto pela cadeia de fontes — é o caso de quem pinta
+    /// célula a célula (doom-fire: 2400 trechos de 1).
+    fn pinta_glifos(&mut self, row: &bzmux_core::grid::Row, y: usize, ctx: RowCtx) {
+        let RowCtx {
+            cols,
+            sel,
+            blink,
+            cursor,
+        } = ctx;
+        let py = y as f32 * self.fonts.ch;
+        let limite = cols.min(row.cells.len());
+        let mut x = 0usize;
+        while x < limite {
+            let cell = row.cells[x];
+            if cell.is_cont() || (cell.flags & bzmux_core::cell::BLINK != 0 && !blink.fase) {
+                x += 1;
+                continue;
+            }
+            let (face, bold, italic, swap) = self.estilo(&cell, sel, y, x);
+            let mut cells = vec![x];
+            let mut text = String::new();
+            text.push(cell.ch);
+            let mut fim = x + 1;
+            while fim < limite {
+                let c2 = row.cells[fim];
+                if c2.is_cont() {
+                    // a metade de um caractere largo pertence ao caractere
+                    fim += 1;
+                    continue;
+                }
+                if c2.flags & bzmux_core::cell::BLINK != 0 && !blink.fase {
+                    break;
+                }
+                // o cursor quebra o trecho (ver `cursor` no build)
+                if cursor == Some((fim, y)) || cursor == Some((fim.wrapping_sub(1), y)) {
+                    break;
+                }
+                if self.estilo(&c2, sel, y, fim) != (face, bold, italic, swap) {
+                    break;
+                }
+                cells.push(fim);
+                text.push(c2.ch);
+                fim += 1;
+            }
+            let glifos = match face {
+                Some(face) if cells.len() > 1 => {
+                    let cw = self.fonts.cw;
+                    let px = self.fonts.px;
+                    let plano = self.shaper.plan(
+                        self.fonts.face(face),
+                        &text,
+                        &cells,
+                        self.ligatures,
+                        cw,
+                        px,
+                    );
+                    plano.map(|p| (face, p))
+                },
+                _ => None,
+            };
+            for (i, &cx) in cells.iter().enumerate() {
+                let c = row.cells[cx];
+                let glifo = match &glifos {
+                    Some((face, plano)) => plano.piece_at(i).map(|p| (*face, p.gid, p.x)),
+                    None => None,
+                };
+                self.draw_cell(&c, cx, py, is_swap(&c, sel, y, cx), glifo);
+            }
+            x = fim;
+        }
+    }
+
     /// Desenha **uma** linha da grade (A17/G17: só roda para as linhas sujas).
-    fn pinta_linha(
-        &mut self,
-        row: &bzmux_core::grid::Row,
-        y: usize,
-        cols: usize,
-        sel: Option<(usize, usize, usize, usize)>,
-        blink: Blink,
-    ) {
+    fn pinta_linha(&mut self, row: &bzmux_core::grid::Row, y: usize, ctx: RowCtx) {
+        let RowCtx { cols, sel, .. } = ctx;
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
         let py = y as f32 * chh;
@@ -1312,23 +1436,29 @@ impl Renderer {
             x = end;
         }
 
-        // 2) glifos e decoração (segunda passada: nada de alternar fundo e
-        // texto). O sublinhado é por célula porque o estilo de 4:x é desenhado
-        // no pedaço, não na largura do run.
-        for x in 0..cols.min(row.cells.len()) {
-            let cell = row.cells[x];
-            if cell.is_cont() {
-                continue;
-            }
-            // SGR 5: na fase apagada a célula não é desenhada — o fundo da
-            // linha já foi pintado, então "apagar" é só não escrever
-            if cell.flags & bzmux_core::cell::BLINK != 0 && !blink.fase {
-                continue;
-            }
-            self.draw_cell(&cell, x, py, is_swap(&cell, sel, y, x));
-        }
+        self.pinta_glifos(row, y, ctx);
         self.linhas_remontadas = self.linhas_remontadas.saturating_add(1);
         self.celulas_remontadas = self.celulas_remontadas.saturating_add(cols as u64);
+    }
+
+    /// Face e atributos que definem um trecho de shaping, mais a inversão
+    /// (seleção/SGR 7), que troca a cor e por isso separa trechos.
+    #[allow(clippy::type_complexity)]
+    fn estilo(
+        &self,
+        cell: &bzmux_core::cell::Cell,
+        sel: Option<(usize, usize, usize, usize)>,
+        y: usize,
+        x: usize,
+    ) -> (Option<usize>, bool, bool, bool) {
+        let bold = cell.flags & bzmux_core::cell::BOLD != 0;
+        let italic = cell.flags & bzmux_core::cell::ITALIC != 0;
+        (
+            self.fonts.face_of(cell.ch, bold, italic),
+            bold,
+            italic,
+            is_swap(cell, sel, y, x),
+        )
     }
 
     /// Sobe os dois buffers de instância (máscara e emoji). Crescem dobrando:
@@ -1533,6 +1663,24 @@ fn decodifica(img: &bzmux_core::graphics::Image) -> Option<(u32, u32, Vec<u8>)> 
 /// um enum em vez de `Result`).
 /// Estado do pisca neste frame (G12).
 ///
+/// O que o desenho de **uma linha** precisa saber do frame. Existe para não
+/// arrastar cinco parâmetros por `build` → `rebuild_rows` → `linha`.
+#[derive(Clone, Copy)]
+struct RowCtx {
+    cols: usize,
+    sel: Option<(usize, usize, usize, usize)>,
+    blink: Blink,
+    /// Célula do cursor, quando ele está nesta visão (quebra ligadura).
+    cursor: Option<(usize, usize)>,
+}
+
+/// O cursor quebra a ligadura: a célula dele é shapeada sozinha, senão ele pinta
+/// no meio de um glifo que cobre mais de uma célula — é o
+/// `disable_ligatures=cursor` do kitty. Fora da visão (rolado) não há cursor.
+fn quebra_no_cursor(term: &Term, view_off: usize, rows: usize) -> Option<(usize, usize)> {
+    (view_off == 0 && term.cursor_visible && term.cy < rows).then_some((term.cx, term.cy))
+}
+
 /// `fase` alterna a cada 500 ms e vale para o texto com SGR 5; `cursor` já vem
 /// resolvido pelo app (config `cursor_blink` + `CSI 6 q` do programa).
 #[derive(Clone, Copy, Default)]

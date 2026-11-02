@@ -92,7 +92,7 @@ pub enum Bell {
 /// `Off` desliga **as ligaduras**, não o shaping: árabe e devanágari dependem do
 /// shaping para serem legíveis e continuam sendo shapeados (é o que o Pango
 /// fazia no Python).
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Ligatures {
     Off,
     #[default]

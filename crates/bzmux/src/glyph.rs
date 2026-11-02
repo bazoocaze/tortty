@@ -168,14 +168,9 @@ impl Fonts {
     /// usa `glyph_bitmap`, que decide pela bitmap, não pelo cmap.
     #[cfg(test)]
     pub fn origem(&self, ch: char) -> (usize, u16) {
-        for idx in self.candidates(false, false) {
-            if let Some(g) = self.face(idx).font().map(|ft| ft.charmap().map(ch)) {
-                if g != 0 {
-                    return (idx, g);
-                }
-            }
-        }
-        (FACE_PRIMARY, 0)
+        let idx = self.face_of(ch, false, false).unwrap_or(FACE_PRIMARY);
+        let gid = self.face(idx).font().map_or(0, |ft| ft.charmap().map(ch));
+        (idx, gid)
     }
 
     /// Bitmap do glifo, com a informação de se ele é colorido.
@@ -190,7 +185,7 @@ impl Fonts {
         ch: char,
         bold: bool,
         italic: bool,
-    ) -> Option<(GlyphBitmap, bool)> {
+    ) -> Option<(GlyphBitmap, bool, usize, u16)> {
         let faces = self.candidates(bold, italic);
         let gids: Vec<(usize, u16)> = faces
             .iter()
@@ -201,12 +196,42 @@ impl Fonts {
             .collect();
         for &(idx, gid) in &gids {
             if let Some(b) = rasterize_color(ctx, self.face(idx), self.px, gid) {
-                return Some((b, true));
+                return Some((b, true, idx, gid));
             }
         }
         gids.iter().find_map(|&(idx, gid)| {
-            rasterize(ctx, self.face(idx), self.px, gid).map(|b| (b, false))
+            rasterize(ctx, self.face(idx), self.px, gid).map(|b| (b, false, idx, gid))
         })
+    }
+
+    /// Bitmap de um glifo **já resolvido** (face + gid do shaping): cor primeiro,
+    /// máscara depois. Não passa pela cadeia — a face já foi escolhida.
+    pub fn bitmap_for(
+        &self,
+        ctx: &mut ScaleContext,
+        face: usize,
+        gid: u16,
+    ) -> Option<(GlyphBitmap, bool)> {
+        let f = self.face(face);
+        if let Some(b) = rasterize_color(ctx, f, self.px, gid) {
+            return Some((b, true));
+        }
+        rasterize(ctx, f, self.px, gid).map(|b| (b, false))
+    }
+
+    /// Primeira face da cadeia que tem o caractere no cmap — é o que agrupa as
+    /// células em trechos de shaping. Diz quem **mapeia** o caractere, não quem
+    /// sabe desenhá-lo: o desenho confere e, se não houver bitmap, cai na
+    /// cadeia inteira.
+    pub fn face_of(&self, ch: char, bold: bool, italic: bool) -> Option<usize> {
+        for idx in self.candidates(bold, italic) {
+            if let Some(g) = self.face(idx).font().map(|f| f.charmap().map(ch)) {
+                if g != 0 {
+                    return Some(idx);
+                }
+            }
+        }
+        None
     }
 }
 
@@ -379,7 +404,7 @@ mod tests {
         let f = fontes();
         let mut ctx = ScaleContext::new();
         for ch in ['\u{1F600}', '\u{1F525}', '\u{1F680}', '\u{1F44D}'] {
-            let (b, cor) = f
+            let (b, cor, _, _) = f
                 .glyph_bitmap(&mut ctx, ch, false, false)
                 .unwrap_or_else(|| panic!("{ch} sem bitmap"));
             assert!(cor, "{ch} saiu em máscara, devia ser cor");
