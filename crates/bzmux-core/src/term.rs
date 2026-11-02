@@ -13,6 +13,7 @@ use crate::cell::{
 };
 use crate::charset::dec_graphics;
 use crate::color::Color;
+use crate::config::Theme;
 use crate::grid::Row;
 
 const REPLACEMENT: char = '\u{FFFD}';
@@ -114,6 +115,10 @@ pub struct Term {
     /// Respostas ao filho (DA, CPR, DECRQM...). O app drena e escreve no pty.
     pub child_out: Vec<u8>,
     pub title: String,
+    /// Cores do tema: o desenho usa e `OSC 4/10/11/12` consulta/altera.
+    pub theme: Theme,
+    /// Alguém mexeu nas cores por OSC: o app tem que reenviar ao renderer.
+    pub theme_dirty: bool,
     pub cell_size: (u32, u32),
     pub bells: u32,
     pub respond_size: bool,
@@ -175,6 +180,8 @@ impl Term {
             saved: SavedCursor::default(),
             child_out: Vec::new(),
             title: String::from("bzmux"),
+            theme: Theme::default(),
+            theme_dirty: false,
             cell_size: (10, 19),
             bells: 0,
             respond_size: false,
@@ -1184,8 +1191,100 @@ impl Term {
             0 | 2 if !arg.is_empty() => {
                 self.title = String::from_utf8_lossy(arg).to_string();
             },
+            // 4;índice;cor define a paleta, 4;índice;? consulta
+            4 => self.osc_palette(arg),
+            10 => self.osc_color(10, arg),
+            11 => self.osc_color(11, arg),
+            12 => self.osc_color(12, arg),
+            104 => self.osc_reset_palette(arg),
+            110 => self.reset_color(10),
+            111 => self.reset_color(11),
+            112 => self.reset_color(12),
             _ => {},
         }
+    }
+
+    /// `OSC 4;índice;cor` (define) ou `OSC 4;índice;?` (consulta).
+    fn osc_palette(&mut self, arg: &[u8]) {
+        let mut it = arg.splitn(2, |&b| b == b';');
+        let Some(idx) = it.next().and_then(parse_u32_full) else {
+            return;
+        };
+        let Some(spec) = it.next() else { return };
+        let idx = idx as usize;
+        if idx >= 16 {
+            return;
+        }
+        if spec == b"?" {
+            let (r, g, b) = self.theme.rgb(self.theme.palette[idx], (0, 0, 0));
+            self.reply_color(4, Some(idx), r, g, b);
+            return;
+        }
+        if let Some(c) = parse_osc_color(spec) {
+            self.theme.palette[idx] = c;
+            self.theme_dirty = true;
+        }
+    }
+
+    /// `OSC 10/11/12`: cor de texto, fundo e cursor — consulta (`?`) ou define.
+    fn osc_color(&mut self, which: u32, arg: &[u8]) {
+        let atual = match which {
+            10 => self.theme.fg,
+            11 => self.theme.bg,
+            _ => self.theme.cursor,
+        };
+        if arg == b"?" {
+            let (r, g, b) = self.theme.rgb(atual, (0, 0, 0));
+            self.reply_color(which, None, r, g, b);
+            return;
+        }
+        let Some(c) = parse_osc_color(arg) else {
+            return;
+        };
+        match which {
+            10 => self.theme.fg = c,
+            11 => self.theme.bg = c,
+            _ => self.theme.cursor = c,
+        }
+        self.theme_dirty = true;
+    }
+
+    /// Resposta de cor: `OSC 4;i;rgb:…` ou `OSC 1x;rgb:…` (4 dígitos, como o
+    /// xterm; o `rgb:rr/gg/bb` de 2 também é aceito pelo lado de lá).
+    fn reply_color(&mut self, which: u32, idx: Option<usize>, r: u8, g: u8, b: u8) {
+        let corpo = match idx {
+            Some(i) => format!("4;{i};rgb:{r:02x}{r:02x}/{g:02x}{g:02x}/{b:02x}{b:02x}"),
+            None => format!("{which};rgb:{r:02x}{r:02x}/{g:02x}{g:02x}/{b:02x}{b:02x}"),
+        };
+        self.child_out
+            .extend_from_slice(format!("\x1b]{corpo}\x1b\\").as_bytes());
+    }
+
+    /// `OSC 104` (paleta inteira ou índices listados) volta ao padrão.
+    fn osc_reset_palette(&mut self, arg: &[u8]) {
+        let idxs: Vec<usize> = if arg.is_empty() {
+            (0..16).collect()
+        } else {
+            arg.split(|&b| b == b';')
+                .filter_map(parse_u32_full)
+                .map(|i| i as usize)
+                .filter(|i| *i < 16)
+                .collect()
+        };
+        for i in idxs {
+            self.theme.palette[i] = Color::Idx(i as u8);
+        }
+        self.theme_dirty = true;
+    }
+
+    fn reset_color(&mut self, which: u32) {
+        let d = Theme::default();
+        match which {
+            10 => self.theme.fg = d.fg,
+            11 => self.theme.bg = d.bg,
+            _ => self.theme.cursor = d.cursor,
+        }
+        self.theme_dirty = true;
     }
 
     // ---------------------------------------------------------------- parser
@@ -1561,6 +1660,44 @@ impl<'a> Toks<'a> {
 }
 
 #[inline]
+/// Cor de `OSC 4/10/11/12`: `rgb:RR/GG/BB`, `rgb:RRRR/GGGG/BBBB` ou `#RRGGBB`.
+fn parse_osc_color(spec: &[u8]) -> Option<Color> {
+    let s = std::str::from_utf8(spec).ok()?.trim();
+    if let Some(hex) = s.strip_prefix('#') {
+        if hex.len() == 6 {
+            return Some(Color::rgb(
+                u32::from_str_radix(&hex[0..2], 16).ok()?,
+                u32::from_str_radix(&hex[2..4], 16).ok()?,
+                u32::from_str_radix(&hex[4..6], 16).ok()?,
+            ));
+        }
+        return None;
+    }
+    let resto = s.strip_prefix("rgb:")?;
+    let mut it = resto.split('/');
+    let mut canal = || -> Option<u32> {
+        let v = it.next()?;
+        match v.len() {
+            // xterm manda 4 dígitos e o valor é o byte duplicado (rrrr)
+            4 => u32::from_str_radix(&v[0..2], 16).ok(),
+            2 | 1 => u32::from_str_radix(v, 16).ok(),
+            _ => None,
+        }
+    };
+    let (r, g, b) = (canal()?, canal()?, canal()?);
+    Some(Color::rgb(r, g, b))
+}
+
+/// Como `parse_u32`, mas `None` quando o texto não é só dígitos (o `OSC 4`
+/// precisa distinguir "sem índice" de "índice 0").
+fn parse_u32_full(t: &[u8]) -> Option<u32> {
+    let s = std::str::from_utf8(t).ok()?;
+    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    s.parse().ok()
+}
+
 fn parse_u32(t: &[u8]) -> u32 {
     let mut v: u32 = 0;
     for &c in t {
@@ -1910,6 +2047,29 @@ mod tests {
         let mut t = term();
         t.feed(b"\x1b[2;3H\x1b7\x1b[4;1H\x1b8X");
         assert_eq!(t.grid[1].cells[2].ch, 'X');
+    }
+
+    #[test]
+    fn osc_consulta_e_define_cores() {
+        let mut t = term();
+        t.theme.fg = Color::Rgb(0x11, 0x22, 0x33);
+        t.theme.palette[3] = Color::Rgb(0xff, 0x80, 0x00);
+        // consulta de fg (OSC 10), bg (OSC 11) e paleta (OSC 4;3)
+        t.feed(b"\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]4;3;?\x1b\\");
+        let out = String::from_utf8_lossy(&t.take_child_out()).to_string();
+        assert!(out.contains("]10;rgb:1111/2222/3333"), "{out}");
+        assert!(out.contains("]11;rgb:1616/1818/1d1d"), "{out}");
+        assert!(out.contains("]4;3;rgb:ffff/8080/0000"), "{out}");
+        // define a paleta e o fundo, e marca sujo para o renderer
+        assert!(!t.theme_dirty);
+        t.feed(b"\x1b]4;1;rgb:12/34/56\x1b\\\x1b]11;#000000\x1b\\");
+        assert_eq!(t.theme.palette[1], Color::Rgb(0x12, 0x34, 0x56));
+        assert_eq!(t.theme.bg, Color::Rgb(0, 0, 0));
+        assert!(t.theme_dirty);
+        // 104 volta a paleta ao padrão; 111 volta o fundo
+        t.feed(b"\x1b]104;1\x1b\\\x1b]111\x1b\\");
+        assert_eq!(t.theme.palette[1], Color::Idx(1));
+        assert_eq!(t.theme.bg, Theme::default().bg);
     }
 
     #[test]

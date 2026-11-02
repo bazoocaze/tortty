@@ -5,7 +5,8 @@
 
 struct Globals {
     screen: vec2<f32>,
-    _pad: vec2<f32>,
+    // margem em px (`window_padding_width`): a grade é desenhada a partir daqui
+    origin: vec2<f32>,
 };
 
 @group(0) @binding(0) var<uniform> g: Globals;
@@ -35,7 +36,7 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: Inst) -> VOut {
         vec2<f32>(0.0, 1.0),
     );
     let k = corners[vi];
-    let p = inst.rect.xy + k * inst.rect.zw;
+    let p = g.origin + inst.rect.xy + k * inst.rect.zw;
     var o: VOut;
     o.pos = vec4<f32>(
         p.x / g.screen.x * 2.0 - 1.0,

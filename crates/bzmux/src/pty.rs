@@ -24,6 +24,7 @@ pub struct Pty {
 impl Pty {
     pub fn spawn(
         cmd: Option<&str>,
+        configured_shell: Option<&str>,
         cols: u16,
         rows: u16,
         tx: Sender<Vec<u8>>,
@@ -39,7 +40,11 @@ impl Pty {
             })
             .map_err(|e| format!("openpty: {e}"))?;
 
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        // `shell` do arquivo de config vence o $SHELL do ambiente
+        let shell = configured_shell
+            .map(str::to_string)
+            .or_else(|| std::env::var("SHELL").ok())
+            .unwrap_or_else(|| "/bin/sh".to_string());
         let mut cb = match cmd {
             // o `--cmd` do Python passa por `sh -c`: mantém a mesma semântica
             Some(c) => {

@@ -1,15 +1,18 @@
 //! O app: janela, pty, teclado, desenho e o socket de introspecção.
 
+use std::io::Write as _;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use bzmux_core::config::Bell;
 use bzmux_core::{Anchor, Span, Term};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
-use winit::window::{Window, WindowId};
+use winit::window::{UserAttentionType, Window, WindowId};
 
 use crate::cli::Options;
 use crate::clip::Clip;
@@ -18,7 +21,7 @@ use crate::glyph::Fonts;
 use crate::keys;
 use crate::prof;
 use crate::pty::Pty;
-use crate::render::{Renderer, BG};
+use crate::render::Renderer;
 
 pub enum UserEvent {
     /// Acorda o loop (dado novo no canal do pty).
@@ -89,6 +92,14 @@ pub struct App {
     spawned: bool,
     /// Fração de linha acumulada da roda (trackpad manda fração).
     scroll_frac: f32,
+    /// O que veio da linha de comando: o reload reconstrói as Options com ele
+    /// para o CLI continuar vencendo o arquivo.
+    over: crate::cli::Overrides,
+    /// `mtime` da última leitura do arquivo de configuração (auto-reload).
+    cfg_mtime: Option<std::time::SystemTime>,
+    cfg_checked: std::time::Instant,
+    /// BELLs já tratados (o `Term` conta; o app decide o que tocar).
+    bells_seen: u32,
     debug: Option<DebugServer>,
     /// Grid pedido pelo verbo `resize`; o WM pode arredondar em pixels, então
     /// `apply_size` corrige em passos até bater (como um terminal de verdade).
@@ -99,11 +110,17 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(opts: Options, proxy: EventLoopProxy<UserEvent>) -> App {
+    pub fn new(
+        opts: Options,
+        over: crate::cli::Overrides,
+        proxy: EventLoopProxy<UserEvent>,
+    ) -> App {
         let mut term = Term::new(opts.cols, opts.rows);
         term.scrollback_limit = opts.scrollback;
+        term.theme = opts.cfg.theme();
         App {
             opts,
+            over,
             proxy,
             window: None,
             renderer: None,
@@ -121,6 +138,9 @@ impl App {
             wake: None,
             spawned: false,
             scroll_frac: 0.0,
+            cfg_mtime: None,
+            cfg_checked: std::time::Instant::now(),
+            bells_seen: 0,
             debug: None,
             want: None,
             adjust_left: 0,
@@ -135,22 +155,30 @@ impl App {
 
     fn grid_from_px(&self, w: u32, h: u32) -> (usize, usize) {
         match &self.renderer {
-            Some(r) => (
-                ((w as f32 / r.fonts.cw + 1e-3).floor() as usize).max(1),
-                ((h as f32 / r.fonts.ch + 1e-3).floor() as usize).max(1),
-            ),
+            Some(r) => {
+                // a margem (`window_padding_width`) não é grade
+                let (iw, ih) = (
+                    (w as f32 - 2.0 * r.pad).max(r.fonts.cw),
+                    (h as f32 - 2.0 * r.pad).max(r.fonts.ch),
+                );
+                (
+                    ((iw / r.fonts.cw + 1e-3).floor() as usize).max(1),
+                    ((ih / r.fonts.ch + 1e-3).floor() as usize).max(1),
+                )
+            },
             None => (self.opts.cols, self.opts.rows),
         }
     }
 
     /// Pixel -> (col, row) 0-based, preso à grade (sem padding: G9 ainda falta).
     fn cell_at(&self, px: f64, py: f64) -> (usize, usize) {
-        let (cw, ch) = self
+        let (cw, ch, pad) = self
             .renderer
             .as_ref()
-            .map_or((10.0, 19.0), |r| (r.fonts.cw, r.fonts.ch));
-        let col = (px / f64::from(cw)) as usize;
-        let row = (py / f64::from(ch)) as usize;
+            .map_or((10.0, 19.0, 0.0), |r| (r.fonts.cw, r.fonts.ch, r.pad));
+        // descontar a origem: com margem, o (0,0) da grade não é o (0,0) da janela
+        let col = ((px - f64::from(pad)) / f64::from(cw)).max(0.0) as usize;
+        let row = ((py - f64::from(pad)) / f64::from(ch)).max(0.0) as usize;
         (
             col.min(self.term.cols.saturating_sub(1)),
             row.min(self.term.rows.saturating_sub(1)),
@@ -367,12 +395,15 @@ impl App {
                 self.dragging = false;
                 self.press = None;
                 if self.sel.is_some_and(|s| s.a != s.b) {
-                    // PRIMARY é a convenção do X11; o CLIPBOARD também, para
-                    // colar em app que só olha o CLIPBOARD (`copy_on_select`
-                    // vira opção na F3)
+                    // PRIMARY é a convenção do X11 (botão do meio cola dali).
+                    // O CLIPBOARD só entra se `copy_on_select` mandar: em app
+                    // que só olha o CLIPBOARD é conveniência, mas pisar nele a
+                    // cada arrasto atrapalha mais do que ajuda.
                     if let Some(txt) = self.selection_text() {
                         self.clip.set_primary(&txt);
-                        self.clip.set(&txt);
+                        if self.opts.cfg.copy_on_select {
+                            self.clip.set(&txt);
+                        }
                     }
                 } else {
                     self.sel = None;
@@ -475,6 +506,19 @@ impl App {
             if prof::enabled() {
                 prof::add_parse(t0.elapsed().as_nanos() as u64, bytes.len());
             }
+            // `OSC 4/10/11/12` mexeu nas cores: o renderer tem que saber
+            if self.term.theme_dirty {
+                self.term.theme_dirty = false;
+                let tema = self.term.theme.clone();
+                if let Some(r) = self.renderer.as_mut() {
+                    r.apply_theme(&tema);
+                }
+            }
+            let bells = self.term.bells;
+            while self.bells_seen != bells {
+                self.bells_seen = self.bells_seen.wrapping_add(1);
+                self.ring();
+            }
             if self.view_off > 0 {
                 self.view_off = self.term.view_after_output(self.view_off, sc, hist);
                 // `CSI 3J` (ou um reflow) pode ter esvaziado o histórico: sem
@@ -489,6 +533,126 @@ impl App {
                 pty.write(&out);
             }
         }
+    }
+
+    /// BEL: o app pede (a contagem está no `Term`), a configuração decide o
+    /// que acontece. `audible` escreve o BEL no nosso stdout (um terminal de
+    /// verdade apita; numa sessão gráfica é o que sobra sem lib de áudio).
+    fn ring(&mut self) {
+        match self.opts.cfg.bell {
+            Bell::None => {},
+            Bell::Visual => {
+                if let Some(w) = self.window.as_ref() {
+                    w.request_user_attention(Some(UserAttentionType::Informational));
+                }
+            },
+            Bell::Audible => {
+                let mut out = std::io::stdout();
+                let _ = out.write_all(b"\x07");
+                let _ = out.flush();
+            },
+        }
+    }
+
+    /// Auto-reload do arquivo de configuração (K12): a cada 250 ms confere o
+    /// `mtime`; mudou, reparseia. **Qualquer** erro mantém a configuração que
+    /// já estava valendo — meia configuração é pior que nenhuma.
+    fn check_config(&mut self) {
+        const INTERVALO: Duration = Duration::from_millis(250);
+        if self.cfg_checked.elapsed() < INTERVALO {
+            return;
+        }
+        self.cfg_checked = std::time::Instant::now();
+        let Some(path) = self.opts.cfg_path.clone() else {
+            return;
+        };
+        let Ok(mtime) = std::fs::metadata(&path).and_then(|m| m.modified()) else {
+            return;
+        };
+        if self.cfg_mtime == Some(mtime) {
+            return;
+        }
+        self.cfg_mtime = Some(mtime);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        let (novo, errs) = crate::cli::Options::build(self.over.clone());
+        if !errs.is_empty() {
+            logln(&format!(
+                "config: {} mantida; {} erro(s), o primeiro em {}",
+                path.display(),
+                errs.len(),
+                errs[0]
+            ));
+            return;
+        }
+        logln(&format!("config: {} recarregada", path.display()));
+        self.apply_options(novo, &text);
+    }
+
+    /// Aplica configuração nova no que já está rodando.
+    fn apply_options(&mut self, novo: Options, text: &str) {
+        let fonte_mudou = novo.font_family != self.opts.font_family
+            || (novo.font_size_pt - self.opts.font_size_pt).abs() > f32::EPSILON
+            || (novo.dpi - self.opts.dpi).abs() > f32::EPSILON;
+        let log_mudou = novo.debug_log != self.opts.debug_log;
+        self.term.scrollback_limit = novo.scrollback;
+        while self.term.scrollback.len() > self.term.scrollback_limit {
+            self.term.scrollback.pop_front();
+        }
+        self.opts.cfg = novo.cfg.clone();
+        self.opts.scrollback = novo.scrollback;
+        self.term.theme = novo.cfg.theme();
+        if let Some(r) = self.renderer.as_mut() {
+            r.apply_theme(&self.term.theme);
+            r.apply_layout(&novo.cfg);
+        }
+        if let Some(path) = novo.debug_log.as_deref() {
+            set_log(path);
+        }
+        let _ = text;
+        if fonte_mudou {
+            self.opts.font_family = novo.font_family;
+            self.opts.font_size_pt = novo.font_size_pt;
+            self.opts.dpi = novo.dpi;
+            self.rebuild_renderer();
+        }
+        if log_mudou && novo.debug_log.is_none() {
+            set_log("");
+        }
+        // a margem mudou: o grid é outro, então pede o tamanho de novo
+        if let (Some(win), Some(r)) = (self.window.as_ref(), self.renderer.as_ref()) {
+            let (cols, rows) = self.grid_from_px(r.config.width, r.config.height);
+            if cols != self.term.cols || rows != self.term.rows {
+                let size = win.inner_size();
+                self.apply_size(size.width, size.height);
+            }
+        }
+        self.redraw();
+    }
+
+    /// Fonte mudou: o atlas é outro, então refaz fonte + renderer (a janela e
+    /// o pty continuam os mesmos).
+    fn rebuild_renderer(&mut self) {
+        let (Some(window), Some(velho)) = (self.window.clone(), self.renderer.take()) else {
+            return;
+        };
+        let scale = window.scale_factor();
+        let fonts = match Fonts::new(&self.opts.font_family, self.font_px(scale)) {
+            Ok(f) => f,
+            Err(e) => {
+                logln(&format!("fonte: {e}"));
+                self.renderer = Some(velho);
+                return;
+            },
+        };
+        drop(velho);
+        match Renderer::new(&window, fonts, self.opts.vsync, &self.opts.cfg) {
+            Ok(r) => self.renderer = Some(r),
+            Err(e) => logln(&format!("GPU ao trocar de fonte: {e}")),
+        }
+        let size = window.inner_size();
+        self.apply_size(size.width, size.height);
     }
 
     fn redraw(&mut self) {
@@ -681,7 +845,14 @@ impl App {
 
     fn spawn_shell(&mut self, cols: usize, rows: usize, wake: Arc<dyn Fn() + Send + Sync>) {
         let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
-        match Pty::spawn(self.opts.cmd.as_deref(), cols as u16, rows as u16, tx, wake) {
+        match Pty::spawn(
+            self.opts.cmd.as_deref(),
+            self.opts.cfg.shell.as_deref(),
+            cols as u16,
+            rows as u16,
+            tx,
+            wake,
+        ) {
             Ok(p) => {
                 self.pty = Some(p);
                 self.rx = Some(rx);
@@ -777,8 +948,10 @@ impl ApplicationHandler<UserEvent> for App {
         };
         // `ceil`: pedir `round` dá pixels a menos que o grid precisa e a
         // janela nasce com uma coluna/linha de menos (o WM não devolve)
-        let w = (self.opts.cols as f32 * fonts.cw).ceil() as u32;
-        let h = (self.opts.rows as f32 * fonts.ch).ceil() as u32;
+        // a margem entra no pedido: a grade é `cols*cw` e o resto é padding
+        let pad = 2.0 * self.opts.cfg.padding as f32;
+        let w = (self.opts.cols as f32 * fonts.cw + pad).ceil() as u32;
+        let h = (self.opts.rows as f32 * fonts.ch + pad).ceil() as u32;
         let attrs = Window::default_attributes()
             .with_title("bzmux")
             .with_inner_size(PhysicalSize::new(w.max(1), h.max(1)));
@@ -790,7 +963,7 @@ impl ApplicationHandler<UserEvent> for App {
                 return;
             },
         };
-        let renderer = match Renderer::new(&window, fonts, self.opts.vsync) {
+        let renderer = match Renderer::new(&window, fonts, self.opts.vsync, &self.opts.cfg) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("bzmux: GPU: {e}");
@@ -905,6 +1078,11 @@ impl ApplicationHandler<UserEvent> for App {
             event_loop.exit();
             return;
         }
+        self.check_config();
+        // o reload precisa de um tique mesmo sem evento nenhum
+        event_loop.set_control_flow(ControlFlow::WaitUntil(
+            std::time::Instant::now() + Duration::from_millis(250),
+        ));
         // filho saiu: fecha a janela (fase 1 = uma sessão por janela)
         let exited = self.pty.as_mut().is_some_and(super::pty::Pty::child_exited);
         if exited {
@@ -924,6 +1102,5 @@ impl ApplicationHandler<UserEvent> for App {
             pty.kill();
         }
         self.debug = None;
-        let _ = BG;
     }
 }

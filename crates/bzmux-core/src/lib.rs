@@ -7,6 +7,7 @@
 pub mod cell;
 pub mod charset;
 pub mod color;
+pub mod config;
 pub mod grid;
 pub mod select;
 pub mod term;

@@ -180,10 +180,10 @@ pub fn bind_atlas(
 }
 
 /// Buffer de globals (tamanho da tela em pixels).
-pub fn globals_buffer(device: &wgpu::Device, w: f32, h: f32) -> wgpu::Buffer {
+pub fn globals_buffer(device: &wgpu::Device, w: f32, h: f32, pad: f32) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("globals"),
-        contents: bytemuck::cast_slice(&[w, h, 0.0f32, 0.0f32]),
+        contents: bytemuck::cast_slice(&[w, h, pad, pad]),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     })
 }

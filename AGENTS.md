@@ -30,6 +30,8 @@ só o README.md é para humano.
 - `docs/BENCHMARKS.md` — **o único lugar com número** de vazão, parse, desenho
   e pegada (com data, governor e condição). Os outros docs citam o fato em uma
   frase e linkam.
+- `docs/CONFIG.md` — o arquivo de configuração, chave por chave. Um teste
+  cobra que toda chave de `DEFAULT_CONF` apareça lá (a doc não envelhece).
 - `docs/INSTALL.md` — instalar/desinstalar o comando `bzmux` (e o que sai em
   cada prefixo). É o único lugar que descreve o instalador.
 - `docs/DEBUG.md` — manual operacional: como subir/matar sem derrubar a sessão,

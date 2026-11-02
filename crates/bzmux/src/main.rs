@@ -18,7 +18,7 @@ use app::{App, UserEvent};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let opts = match cli::parse(args) {
+    let over = match cli::parse(args) {
         Ok(o) => o,
         Err(msg) => {
             println!("{msg}");
@@ -31,6 +31,11 @@ fn main() {
             std::process::exit(code);
         },
     };
+    // CLI vence o arquivo; o arquivo vence os padrões embutidos
+    let (opts, cfg_errors) = cli::Options::build(over.clone());
+    for e in &cfg_errors {
+        eprintln!("bzmux: config: {e}");
+    }
     if opts.prof {
         prof::set_on(true);
     }
@@ -44,7 +49,7 @@ fn main() {
     };
     event_loop.set_control_flow(ControlFlow::Wait);
     let proxy = event_loop.create_proxy();
-    let mut app = App::new(opts, proxy);
+    let mut app = App::new(opts, over, proxy);
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("bzmux: {e}");
         std::process::exit(1);

@@ -19,6 +19,7 @@ ainda não.
 |---|---|
 | [`docs/MIGRATION.md`](docs/MIGRATION.md) | o checklist da migração: funcionalidade, estado, o que falta |
 | [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | o único lugar com número (vazão, parse, desenho, pegada) |
+| [`docs/CONFIG.md`](docs/CONFIG.md) | o arquivo de configuração: chaves, padrões e o que é erro |
 | [`docs/INSTALL.md`](docs/INSTALL.md) | instalar, desinstalar, verificar e publicar binário |
 | [`docs/DEBUG.md`](docs/DEBUG.md) | ferramentas, debug socket e armadilhas — ler antes de rodar GUI |
 | [`docs/PORTABILITY.md`](docs/PORTABILITY.md) | Linux/Windows/macOS: o que funciona, o que bloqueia, distribuição |

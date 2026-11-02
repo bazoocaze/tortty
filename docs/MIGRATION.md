@@ -17,21 +17,21 @@ não por estimativa.
 |---|---|---|---|---|---|
 | 1. Núcleo: célula, cores, grade | 22 | 0 | 2 | 0 | 24 |
 | 2. Parser: controles, CSI, modos | 32 | 3 | 1 | 0 | 36 |
-| 3. Parser: SGR e OSC | 11 | 0 | 8 | 0 | 19 |
-| 4. Scrollback e visão do histórico | 8 | 1 | 2 | 0 | 11 |
+| 3. Parser: SGR e OSC | 14 | 0 | 5 | 0 | 19 |
+| 4. Scrollback e visão do histórico | 9 | 0 | 2 | 0 | 11 |
 | 5. Entrada: teclado e protocolo do kitty | 8 | 0 | 12 | 0 | 20 |
 | 6. Entrada: mouse, seleção, clipboard, paste | 14 | 1 | 5 | 0 | 20 |
-| 7. Desenho: fonte, geometria, cores | 9 | 3 | 5 | 0 | 17 |
+| 7. Desenho: fonte, geometria, cores | 11 | 3 | 3 | 0 | 17 |
 | 8. Imagens do protocolo kitty | 0 | 0 | 16 | 3 | 19 |
 | 9. Janela: abas, workspaces, cromo | 0 | 3 | 17 | 0 | 20 |
 | 10. Janela: ciclo de vida, geometria, estado | 3 | 0 | 8 | 0 | 11 |
-| 11. Configuração e CLI | 3 | 5 | 13 | 0 | 21 |
+| 11. Configuração e CLI | 15 | 2 | 4 | 0 | 21 |
 | 12. Debug socket e instrumentação | 7 | 5 | 3 | 0 | 15 |
 | 13. Plataforma e distribuição | 4 | 0 | 6 | 0 | 10 |
 | 14. Testes e verificação | 2 | 2 | 5 | 0 | 9 |
-| **total** | **123** | **23** | **103** | **3** | **252** |
+| **total** | **141** | **19** | **89** | **3** | **252** |
 
-Equivalente pronto: **53.4%** (feito conta 1, parcial conta 0,5). O total serve para ver
+Equivalente pronto: **59.7%** (feito conta 1, parcial conta 0,5). O total serve para ver
 tendência; o que decide o que fazer agora é a linha e a seção 17.
 
 ## Regras deste documento
@@ -141,9 +141,9 @@ Rust (sem linha, para não envelhecer a cada commit).
 | C8 | Bold sem "bold as bright" | `view.py:992` → `render.rs` | feito (mesma semântica) |
 | C9 | OSC 0/2 título | `term.py:959-960` → `term.rs` | feito |
 | C10 | OSC 1 (título de ícone) | ignorado no Python | feito (ignorado, igual) |
-| C11 | OSC 10/11 query de cor default | `term.py:961-965` | falta |
-| C12 | OSC 4 query de paleta | `term.py:966-980` | falta |
-| C13 | OSC 4/104/110/111/112 **set** (redefinir cor em runtime) | não existe (`LIMITATIONS.md:66-68`) | falta (**melhoria**) |
+| C11 | OSC 10/11 query de cor default | `term.py:961-965` → `Term::osc_color` | feito |
+| C12 | OSC 4 query de paleta | `term.py:966-980` → `Term::osc_palette` | feito |
+| C13 | OSC 4/104/110/111/112 **set** (redefinir cor em runtime) | não existe (`LIMITATIONS.md:66-68`) → `Term::theme`/`theme_dirty` | feito (**melhoria**) |
 | C14 | OSC 8 hyperlink (guardar por célula + clique) | consumido e descartado (`LIMITATIONS.md:73-75`) | falta (**melhoria**) |
 | C15 | OSC 52 clipboard (com trava de config) | não existe | falta (**melhoria**) |
 | C16 | OSC 7 cwd do shell | não existe | falta (**melhoria**) |
@@ -229,9 +229,9 @@ Rust (sem linha, para não envelhecer a cada commit).
 | G6 | Fallback de glifos por lista de preferência | Pango/fontconfig automático → `glyph.rs` | feito |
 | G7 | Fallback para emoji/CJK | `HISTORY.md` P10 | parcial: usa fallback do `fontdb`; sem emoji colorido |
 | G8 | Ligaduras/shaping | Pango (P9) | falta: `swash` sem shaping complexo |
-| G9 | Padding da janela em px | `config.py` `window_padding_width` → `render.rs` | falta |
+| G9 | Padding da janela em px | `config.py` `window_padding_width` → shader (`origin`) | feito |
 | G10 | Fundo da sobra de célula até a borda (sem tarja preta) | `view.py:926-934` | feito (fundo pintado por instância de grade inteira) |
-| G11 | Paleta/tema configurável | não existe (`LIMITATIONS.md:133-140`) | falta (**melhoria**) |
+| G11 | Paleta/tema configurável | não existe (`LIMITATIONS.md:133-140`) → `Theme` | feito (**melhoria**) |
 | G12 | Cursor: block/beam/underline + pisca | `view.py:1058-1079`, `828-838` → `render.rs` | parcial: formas sim; pisca falta |
 | G13 | Sublinhado na largura do run | `view.py:1022-1025` → `render.rs` | feito |
 | G14 | Seleção desenhada como inversão | `view.py:943,953-973` → `render.rs` | feito (o default resolve pelo outro extremo) |
@@ -308,27 +308,27 @@ Rust (sem linha, para não envelhecer a cada commit).
 
 | # | funcionalidade | ref (Python → Rust) | estado |
 |---|---|---|---|
-| K1 | Formato kitty (`chave valor`, `#` comenta, repetida vence a última) | `config.py:66-85,264-287` | falta |
-| K2 | Merge com config default embarcada | `config.py:289-305` | falta |
-| K3 | Erro por linha não derruba o arquivo; chave desconhecida é erro | `config.py:264-287` | falta |
-| K4 | `shell` (vazio = `$SHELL`; exporta o shell real ao filho) | `config.py:87-97` → `pty.rs` | parcial: usa `$SHELL`, sem config |
-| K5 | `font_family`, `font_size` | `config.py:99-125` → `cli.rs` | parcial: só por CLI |
-| K6 | `cursor_shape`, `cursor_blink` | `config.py:127-143` | parcial: forma via DECSCUSR só |
-| K7 | `scrollback` | `config.py:149-151` → `cli.rs` | parcial: só por CLI |
-| K8 | `window_padding_width` | `config.py:153-155` | falta |
-| K9 | `bell` (`none`/`visual`/`audible`) | `config.py:131-133` | falta |
-| K10 | `copy_on_select` | `config.py:145-147` | falta |
-| K11 | `debug_log` (path ou `off`) | `config.py:157-167` → `cli.rs` | parcial: só `--debug-log` |
-| K12 | Auto-reload com debounce de 250 ms | `config.py:307-329` | falta |
-| K13 | Erros de config viram toast (1º + contagem) | `config.py:331-345` | falta |
+| K1 | Formato kitty (`chave valor`, `#` comenta, repetida vence a última) | `config.py:66-85,264-287` → `config.rs` | feito |
+| K2 | Merge com config default embarcada | `config.py:289-305` → `DEFAULT_CONF` | feito |
+| K3 | Erro por linha não derruba o arquivo; chave desconhecida é erro | `config.py:264-287` → `Config::Error` | feito |
+| K4 | `shell` (vazio = `$SHELL`; exporta o shell real ao filho) | `config.py:87-97` → `pty.rs` | feito |
+| K5 | `font_family`, `font_size` | `config.py:99-125` → `cli.rs` + renderer | feito (CLI vence o arquivo) |
+| K6 | `cursor_shape`, `cursor_blink` | `config.py:127-143` → `render.rs` | parcial: forma sim; **pisca** falta (G12) |
+| K7 | `scrollback` | `config.py:149-151` → `cli.rs` | feito |
+| K8 | `window_padding_width` | `config.py:153-155` → shader + `cell_at` | feito |
+| K9 | `bell` (`none`/`visual`/`audible`) | `config.py:131-133` → `App::ring` | feito |
+| K10 | `copy_on_select` | `config.py:145-147` → `app.rs` | feito |
+| K11 | `debug_log` (path ou `off`) | `config.py:157-167` → `cli.rs` | feito |
+| K12 | Auto-reload com debounce de 250 ms | `config.py:307-329` → `App::check_config` | feito |
+| K13 | Erros de config viram toast (1º + contagem) | `config.py:331-345` | parcial: log com linha e chave; toast depende de I12 (F4) |
 | K14 | `-c/--config`, `--cmd`, `--debug-socket`, `--debug-log` | `cli.py:31-41` → `cli.rs` | feito |
 | K15 | `--quit-after`, `--dump-to`, `--selftest`, `--install-shortcut` | `cli.py:35-96` | falta |
 | K16 | `--version`, `--help`, código 2 para uso inválido | `cli.py:85-101` → `cli.rs` | feito |
 | K17 | `--cols`/`--rows`/`--dpi`/`--no-vsync`/`--prof` | não existem no Python → `cli.rs` | feito (**melhoria**) |
 | K18 | `.desktop` + ícone (`--install-shortcut`) | `shortcut.py:34-136` | falta |
 | K19 | WM_CLASS estável (`StartupWMClass`) | `cli.py:130-131` | falta |
-| K20 | Remapeamento de atalhos | não existe | falta (**melhoria**) |
-| K21 | Paleta no arquivo de config (`color0..15`, fg/bg/cursor) | não existe (`LIMITATIONS.md:133-140`) | falta (**melhoria**) |
+| K20 | Remapeamento de atalhos | não existe | falta (**melhoria**, precisa de atalhos locais — F4) |
+| K21 | Paleta no arquivo de config (`color0..15`, fg/bg/cursor) | não existe (`LIMITATIONS.md:133-140`) → `config.rs` | feito (**melhoria**) |
 
 ## 12. Debug socket e instrumentação
 
@@ -387,19 +387,19 @@ Rust (sem linha, para não envelhecer a cada commit).
 |---|---|---|---|---|
 | Núcleo: célula, cores, grade | 22 | 0 | 2 | 0 |
 | Parser: controles, CSI, modos | 32 | 3 | 1 | 0 |
-| Parser: SGR e OSC | 11 | 0 | 8 | 0 |
-| Scrollback e visão do histórico | 8 | 1 | 2 | 0 |
+| Parser: SGR e OSC | 14 | 0 | 5 | 0 |
+| Scrollback e visão do histórico | 9 | 0 | 2 | 0 |
 | Entrada: teclado e protocolo do kitty | 8 | 0 | 12 | 0 |
 | Entrada: mouse, seleção, clipboard, paste | 14 | 1 | 5 | 0 |
-| Desenho: fonte, geometria, cores | 9 | 3 | 5 | 0 |
+| Desenho: fonte, geometria, cores | 11 | 3 | 3 | 0 |
 | Imagens do protocolo kitty | 0 | 0 | 16 | 3 |
 | Janela: abas, workspaces, cromo | 0 | 3 | 17 | 0 |
 | Janela: ciclo de vida, geometria, estado | 3 | 0 | 8 | 0 |
-| Configuração e CLI | 3 | 5 | 13 | 0 |
+| Configuração e CLI | 15 | 2 | 4 | 0 |
 | Debug socket e instrumentação | 7 | 5 | 3 | 0 |
 | Plataforma e distribuição | 4 | 0 | 6 | 0 |
 | Testes e verificação | 2 | 2 | 5 | 0 |
-| **total** | **123** | **23** | **103** | **3** |
+| **total** | **141** | **19** | **89** | **3** |
 
 ## 16. Melhorias propostas
 
@@ -449,10 +449,14 @@ Pronto quando: `vim` com mouse, `mc` com mouse, copiar/colar entre apps,
 Pronto quando: estreitar a janela com histórico longo preserva o parágrafo e a
 seleção acompanha; `CSI 3J` não pula a visão.
 
-**F3 — Configuração (K1-K13, K18-K19, C11-C13, G11, K21).**
-Parser do formato kitty já existe no Python como referência; paleta e padding
-entram junto. Pronto quando: `bzmux.conf` muda fonte, cores, padding, bell,
-scrollback e o reload por edição de arquivo funciona com toast de erro.
+**F3 — Configuração (K1-K13, K18-K19, C11-C13, G11, K21). FEITA em
+2026-11-02** — critério conferido: `bzmux.conf` muda fonte (14→16 pt ao vivo),
+cores (fundo verde→roxo), padding (8→4 px, clique continua na célula certa),
+bell, scrollback e `copy_on_select` (on copia PRIMARY+CLIPBOARD, off só
+PRIMARY); o auto-reload aplica em ~250 ms e, com linha inválida, **mantém** a
+configuração anterior (`linha 3: 'afffont_size': chave desconhecida` no log).
+Desvios: erro de config ainda vai para o log, não para toast (K13 depende do
+toast da F4); o **pisca** do cursor da config não anima ainda (G12).
 
 **F4 — Abas e workspaces (I1-I17).** O motivo do projeto existir.
 Pronto quando: Ctrl+Shift+T/W/N/Q, Alt+N, Super+N/Q, sidebar com cartões,

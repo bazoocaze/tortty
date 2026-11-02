@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
 use bzmux_core::cell::{Cell, INV};
+use bzmux_core::config::{Config, CursorShape, Theme};
 use bzmux_core::{Color, Span, Term};
 use swash::scale::ScaleContext;
 use winit::window::Window;
@@ -18,7 +19,8 @@ use crate::atlas::{bind_atlas, globals_buffer, globals_layout, Atlas};
 use crate::glyph::{self, Fonts};
 use crate::prof;
 
-/// Fundo e frente default do bzmux Python (`BG_DEFAULT`/`FG_DEFAULT`).
+/// Fundo e frente usados quando a configuração não diz nada (os mesmos do
+/// bzmux Python, `BG_DEFAULT`/`FG_DEFAULT`).
 pub const BG: (u8, u8, u8) = (0, 0, 0);
 pub const FG: (u8, u8, u8) = (214, 214, 214);
 
@@ -71,11 +73,23 @@ pub struct Renderer {
     cache: HashMap<(u8, char), Option<GlyphQuad>>,
     instances: Vec<Instance>,
     pub palette: Vec<(u8, u8, u8)>,
+    /// Tema efetivo (config + defaults); o `build` resolve célula por célula.
+    pub fg: (u8, u8, u8),
+    pub bg: (u8, u8, u8),
+    pub cursor: (u8, u8, u8),
+    /// Margem em px em volta da grade (`window_padding_width`).
+    pub pad: f32,
+    pub cursor_shape: CursorShape,
 }
 
 impl Renderer {
     #[allow(clippy::too_many_lines)] // setup de GPU é uma sequência única, partir não ajuda
-    pub fn new(window: &Arc<Window>, fonts: Fonts, vsync: bool) -> Result<Renderer, String> {
+    pub fn new(
+        window: &Arc<Window>,
+        fonts: Fonts,
+        vsync: bool,
+        cfg: &Config,
+    ) -> Result<Renderer, String> {
         let size = window.inner_size();
         let (w, h) = (size.width.max(1), size.height.max(1));
 
@@ -136,7 +150,8 @@ impl Renderer {
         let atlas = Atlas::new(&device);
         let (atlas_layout, atlas_bind) = bind_atlas(&device, &atlas);
         let gl = globals_layout(&device);
-        let globals = globals_buffer(&device, w as f32, h as f32);
+        let pad = cfg.padding as f32;
+        let globals = globals_buffer(&device, w as f32, h as f32, pad);
         let globals_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("globals-bind"),
             layout: &gl,
@@ -223,8 +238,42 @@ impl Renderer {
             scale_ctx: ScaleContext::new(),
             cache: HashMap::new(),
             instances: Vec::with_capacity(4096),
-            palette: bzmux_core::color::palette256(),
+            palette: cfg.palette256(),
+            fg: tema(cfg, cfg.fg, FG),
+            bg: tema(cfg, cfg.bg, BG),
+            cursor: tema(cfg, cfg.cursor, FG),
+            pad: cfg.padding as f32,
+            cursor_shape: cfg.cursor_shape,
         })
+    }
+
+    /// Tema novo sem recriar a GPU (auto-reload e `OSC 4/10/11/12`).
+    pub fn apply_theme(&mut self, t: &Theme) {
+        self.palette = t.palette256();
+        self.fg = t.rgb(t.fg, FG);
+        self.bg = t.rgb(t.bg, BG);
+        self.cursor = t.rgb(t.cursor, FG);
+        self.write_globals();
+    }
+
+    /// O que não é cor: forma do cursor e margem (só muda por arquivo).
+    pub fn apply_layout(&mut self, cfg: &Config) {
+        self.cursor_shape = cfg.cursor_shape;
+        self.pad = cfg.padding as f32;
+        self.write_globals();
+    }
+
+    fn write_globals(&self) {
+        self.queue.write_buffer(
+            &self.globals,
+            0,
+            bytemuck::cast_slice(&[
+                self.config.width as f32,
+                self.config.height as f32,
+                self.pad,
+                self.pad,
+            ]),
+        );
     }
 
     pub fn resize(&mut self, w: u32, h: u32) {
@@ -237,7 +286,7 @@ impl Renderer {
         self.queue.write_buffer(
             &self.globals,
             0,
-            bytemuck::cast_slice(&[w as f32, h as f32, 0.0f32, 0.0f32]),
+            bytemuck::cast_slice(&[w as f32, h as f32, self.pad, self.pad]),
         );
     }
 
@@ -297,8 +346,8 @@ impl Renderer {
         let ascent = self.fonts.ascent;
         let n = text.chars().count();
         let x0 = cols.saturating_sub(n + 1);
-        let bg = self.color(Color::Default, FG);
-        let fg = self.color(Color::Default, BG);
+        let bg = self.color(Color::Default, self.fg);
+        let fg = self.color(Color::Default, self.bg);
         self.push_rect(
             x0 as f32 * cw,
             0.0,
@@ -332,7 +381,7 @@ impl Renderer {
         let chh = self.fonts.ch;
         let ascent = self.fonts.ascent;
         let fg = if swap { cell.bg } else { cell.fg };
-        let mut c = self.color(fg, if swap { BG } else { FG });
+        let mut c = self.color(fg, if swap { self.bg } else { self.fg });
         // esmaecido: o mesmo tom com menos opacidade (Pango usava alpha 0.55)
         let mut alpha = if cell.flags & FAINT != 0 { 0.55 } else { 1.0 };
         if cell.flags & bzmux_core::cell::BLINK != 0 {
@@ -355,7 +404,7 @@ impl Renderer {
 
         // cor da decoração: a do texto, salvo SGR 58 (que não inverte)
         if cell.ul_color != Color::Default {
-            c = self.color(cell.ul_color, FG);
+            c = self.color(cell.ul_color, self.fg);
         }
         if cell.ul != bzmux_core::cell::UL_NONE {
             let base = py + ascent + 1.0;
@@ -451,7 +500,7 @@ impl Renderer {
                     end += 1;
                 }
                 if swap || bg != Color::Default {
-                    let c = self.color(bg, if swap { FG } else { BG });
+                    let c = self.color(bg, if swap { self.fg } else { self.bg });
                     self.push_rect(
                         x as f32 * cw,
                         py,
@@ -479,8 +528,15 @@ impl Renderer {
         if view_off == 0 && term.cursor_visible && term.cy < term.rows && term.cx < cols {
             let cx = term.cx as f32 * cw;
             let cy = term.cy as f32 * chh;
-            let style = term.app_cursor_style.map_or(0, |(f, _)| f);
-            let c = self.color(Color::Default, FG);
+            let style = term.app_cursor_style.map_or_else(
+                || match self.cursor_shape {
+                    CursorShape::Block => 0,
+                    CursorShape::Underline => 1,
+                    CursorShape::Beam => 2,
+                },
+                |(f, _)| f,
+            );
+            let c = self.color(Color::Default, self.cursor);
             match style {
                 1 | 2 => {
                     // sublinhado / barra
@@ -538,7 +594,7 @@ impl Renderer {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let (r, g, b) = BG;
+        let (r, g, b) = self.bg;
         let mut enc = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -589,4 +645,13 @@ pub enum FrameOutcome {
     Skipped,
     Reconfigure,
     Fatal,
+}
+
+/// Cor do tema: `Default` cai no padrão do programa, o resto resolve pela
+/// paleta (as 16 primeiras podem vir do arquivo de configuração).
+fn tema(cfg: &Config, c: Color, padrao: (u8, u8, u8)) -> (u8, u8, u8) {
+    match c {
+        Color::Default => padrao,
+        outro => bzmux_core::color::resolve(outro, &cfg.palette256(), padrao),
+    }
 }
