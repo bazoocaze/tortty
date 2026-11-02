@@ -477,6 +477,10 @@ impl App {
             }
             if self.view_off > 0 {
                 self.view_off = self.term.view_after_output(self.view_off, sc, hist);
+                // `CSI 3J` (ou um reflow) pode ter esvaziado o histórico: sem
+                // isto a visão aponta para linhas que não existem mais e a tela
+                // mostra lixo (ou o "pulo" que o F2 tinha que evitar)
+                self.view_off = self.view_off.min(self.term.scrollback.len());
             }
         }
         let out = self.term.take_child_out();

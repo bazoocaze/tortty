@@ -193,3 +193,14 @@ conta, a visão andaria para o vazio.
 Verificado no app: `view_off` 27 → 29 → 31 com dois `echo` chegando, e a
 primeira linha visível continuou "echo linha-12". Dois testes no núcleo
 (inclusive com `scrollback_limit = 3`).
+
+### F2 fechada
+
+Um detalhe que faltava: `CSI 3J` esvaziava o histórico mas a `view_off`
+continuava no valor antigo, então a tela mostrava linha que não existe (ou
+linha errada). Agora `drain` prende `view_off` ao tamanho do histórico depois de
+cada `feed`. Verificado com o app: `view_off` 29 → 0 e histórico vazio.
+
+Fica registrado o desvio: o reflow mata a seleção em vez de remapear a âncora
+(mesmo comportamento do Python). Remapear é a melhoria M-P, porque o `reflow`
+já sabe o `(parágrafo, offset)` de cada linha velha.
