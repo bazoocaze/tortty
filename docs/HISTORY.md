@@ -297,3 +297,31 @@ regressão.
 
 Falta para fechar F4: workspaces e sidebar (F4b: I5-I11), arrastar para
 reordenar (I10) e roda na barra (I11).
+
+## 2026-11-02 — F4 fechada: workspaces e o resto do cromo (I5-I11, I15, I20)
+
+**Workspaces**: `parked` guarda os outros conjuntos inteiros (pty vivo, grade
+própria) e trocar é swap de conteúdo — não há cópia de termo nem processo
+morto. A ordem lógica é remontada na troca: trocar `parked[slot]` no lugar
+embaralhava os cartões quando o corrente ia para uma posição mais alta (visto
+no `state`, com os nomes trocados de lugar). A sidebar aparece com 2+
+workspaces e come 18 colunas da grade; a barra de abas continua de ponta a
+ponta, por cima dela.
+
+Atalhos: Ctrl+Shift+T/W (aba), N/Q (workspace), Ctrl+Shift+F2 (config no
+editor, em aba nova — P33), Ctrl+Shift+1..9, Alt+1..9 e Super+N/Q/1..9. Clique
+esquerdo no cartão troca, **meio fecha** (no Python só o cartão tinha isso),
+duplo clique renomeia no lugar (`|` é o cursor, 1ª tecla substitui o nome
+antigo como o `Gtk.Entry` selecionado, Enter grava, Esc descarta).
+
+Três armadilhas só apareceram testando:
+
+| sintoma | causa | correção |
+|---|---|---|
+| barra de abas na linha 2 | desenhada em `y=0` com a origem já em `pad+bar` | desenha em `y=-bar`, a faixa reservada |
+| clique na barra errava a aba | `tab_at` descontava a sidebar, que empurra a **grade**, não a barra | a barra começa na borda da janela |
+| roda na barra não trocava nada | o X11 manda **dois** eventos por entalhe (press e release) com o mesmo sentido, e o segundo desfazia a troca | par deduplicado em 10 ms |
+
+Verificação: `state` com `tabs/ws/ws_names` conferido a cada passo (ordem dos
+workspaces estável ao trocar e ao fechar), captura da sidebar com e sem barra,
+e a roda/arrasto conferidos com o mouse de verdade.
