@@ -136,6 +136,13 @@ pub struct Renderer {
     /// Resultado do último frame ("drawn"/"skipped"/"occluded"...): a primeira
     /// pergunta quando a janela não atualiza é se o frame saiu.
     pub ultimo: &'static str,
+    /// Quantos frames foram recusados pela superfície (`Timeout`/`Occluded`) e
+    /// quantos saíram: separa "o app não desenhou" de "o app desenhou e a
+    /// superfície não apresentou" — o sintoma de ambiente confinado (M-AA).
+    pub skips: u64,
+    pub drawn: u64,
+    /// Já avisou no stderr que a superfície não está apresentando.
+    avisou_skip: bool,
     /// Decisão do dano no último frame (`all`/`rows: N`): responde na hora por
     /// que `rows_built` cresce demais.
     pub last_damage: String,
@@ -472,6 +479,9 @@ impl Renderer {
             tema_gen: 0,
             draws: 0,
             ultimo: "nenhum",
+            skips: 0,
+            drawn: 0,
+            avisou_skip: false,
             last_damage: String::new(),
             frames_all: 0,
             rows_max: 0,
@@ -1492,13 +1502,29 @@ impl Renderer {
         }
     }
 
+    /// A superfície não entregou textura: conta em `skips` e avisa **uma vez**
+    /// no stderr. É o único sinal que o app pode dar de que o problema não é o
+    /// desenho (a grade segue viva no pty e no socket) e sim a apresentação —
+    /// o sintoma de ambiente confinado/sem compositor (`M-AA`).
+    fn recusa(&mut self) -> FrameOutcome {
+        self.ultimo = "skipped (timeout/occluded)";
+        self.skips = self.skips.saturating_add(1);
+        if !self.avisou_skip {
+            self.avisou_skip = true;
+            eprintln!(
+                "bzmux: a superfície não apresenta (timeout/occluded) — o desenho funciona, \
+                 a janela é que não recebe frame; ver docs/DEBUG.md (ambiente confinado)"
+            );
+        }
+        FrameOutcome::Skipped
+    }
+
     pub fn render(&mut self, f: &Frame<'_>) -> FrameOutcome {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                self.ultimo = "skipped (timeout/occluded)";
-                return FrameOutcome::Skipped;
+                return self.recusa();
             },
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.ultimo = "reconfigure";
@@ -1512,6 +1538,7 @@ impl Renderer {
 
         let t0 = std::time::Instant::now();
         self.draws = self.draws.saturating_add(1);
+        self.drawn = self.drawn.saturating_add(1);
         self.ultimo = "drawn";
         self.build(f);
         self.atlas.flush(&self.queue);

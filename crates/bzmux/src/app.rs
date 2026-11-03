@@ -1721,6 +1721,8 @@ impl App {
                     // funciona — sem depender de olhar a tela.
                     "draws": self.renderer.as_ref().map_or(0, |r| r.draws),
                     "last_frame": self.renderer.as_ref().map_or("", |r| r.ultimo),
+                    "drawn": self.renderer.as_ref().map_or(0, |r| r.drawn),
+                    "skips": self.renderer.as_ref().map_or(0, |r| r.skips),
                     "last_damage": self.renderer.as_ref().map_or("", |r| r.last_damage.as_str()),
                     "frames_all": self.renderer.as_ref().map_or(0, |r| r.frames_all),
                     "rows_max": self.renderer.as_ref().map_or(0, |r| r.rows_max),
