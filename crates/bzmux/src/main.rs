@@ -4,6 +4,7 @@
 
 mod app;
 mod atlas;
+mod checks_app;
 mod cli;
 mod clip;
 mod damage;
@@ -63,8 +64,12 @@ fn main() {
 /// `--selftest`: um comando que responde "o emulador ainda está inteiro?" sem
 /// display, sem GPU e sem pty. É o que o `checks.py` do Python fazia à parte.
 fn selftest() -> i32 {
+    let todos: Vec<_> = bzmux_core::checks::all()
+        .into_iter()
+        .chain(checks_app::all())
+        .collect();
     let mut falhas = 0;
-    for c in bzmux_core::checks::all() {
+    for c in &todos {
         match (c.run)() {
             Ok(()) => println!("ok    {}", c.name),
             Err(e) => {
@@ -73,7 +78,7 @@ fn selftest() -> i32 {
             },
         }
     }
-    let total = bzmux_core::checks::all().len();
+    let total = todos.len();
     println!();
     if falhas == 0 {
         println!("selftest: {total}/{total} ok");
