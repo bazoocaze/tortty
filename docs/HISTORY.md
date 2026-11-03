@@ -935,3 +935,64 @@ Verificação visual **sem janela na sessão do dono**: `Xvfb :77` +
 `DISPLAY=:77` + `import -window <id>` (receita em [`DEBUG.md`](DEBUG.md)).
 JetBrains Mono na tela: `->` vira seta, `!=` vira ≠, `fi`/`ffi`/`fl` ligados, e o
 cursor no meio de `fi` desfaz o par.
+
+## 2026-11-02 — N1, N7 e M-AA: teste que não abre janela, teste que abre sozinho
+
+Três pendências que pareciam depender de display. Nenhuma dependia.
+
+**N1 — os checks do lado do app.** O `--selftest` rodava só o núcleo, que não
+conhece `cli.rs`, `keys.rs`, `mouse.rs`, `state.rs` nem `debugsock.rs`; seis
+checks do `checks.py` ficavam fora de alcance (`argv_parsing`,
+`kitty_keyboard`, `mouse_modes_and_sgr`, `window_state`, `debug_socket`,
+`desktop_shortcut`). Agora existe `crates/bzmux/src/checks_app.rs` com os seis, e
+o `--selftest` roda **31** (25 + 6). O `cargo test` roda a mesma lista
+(`checks_do_app_passam`), então check novo não fica só no binário.
+
+Dois deles custaram uma correção de expectativa, que é o ponto do check existir:
+
+- o `?1005` soma 33 e codifica em UTF-8: coluna 300 vira `c5 8d` (U+014D), e o
+  protocolo antigo satura em 222 (`ff`). Minha primeira asserção olhava o byte
+  errado;
+- o `desktop_shortcut` cobra o contrato do `install.sh` (Exec/TryExec/Icon/
+  Categories/terminal e a remoção no `--uninstall`) e o SVG embutido — o
+  `install.sh` e o ícone entram no binário por `include_str!`, então o check vale
+  no binário instalado, longe do repositório.
+
+**N7 — verificação visual automática.** Captura com `import` e comparação eram
+na mão. Agora:
+
+- `tools/pixel.py` lê a captura pelo `convert` (PPM), sem `gi`, e **compara**:
+  `--diff` diz quantos pixels mudaram e a caixa, `--max` transforma em teste,
+  `--expect` cobra cor por ponto, `--scan`/`--row` amostram por célula;
+- `tools/visual.sh` sobe Xvfb próprio (se não houver um), `HOME` de mentira com
+  tema fixo, espera o primeiro frame pelo `state`, captura pelo `xid` que o
+  **nosso** `state` reporta, e cobra quatro coisas: conteúdo novo tem de mudar
+  pixel, SGR 41/42 tem de pintar `color1`/`color2` na célula, texto tem de cair
+  dentro da célula e duas capturas da mesma tela não podem diferir. Sai 0/1.
+
+O `xid` vindo da busca por classe era o bug do próprio teste: num display com
+mais de uma instância a captura pegava a janela errada e saía preta (aconteceu
+duas vezes antes de eu olhar a imagem em vez do código).
+
+**M-AA — rodar confinado.** O que se pode fazer sem reproduzir o ambiente do
+dono: o `state` passou a separar **`drawn`** de **`skips`** (antes só
+`last_frame`, que não distinguia "não desenhou" de "desenhou e a superfície
+recusou"), e o app avisa **uma vez** no stderr quando a superfície recusa o
+frame, apontando o `DEBUG.md`. O gate de pixel agora pega o caso pelo lado de
+fora: conteúdo novo que não muda pixel = não apresentou.
+
+Ficou de fora, de propósito: **failover de backend** (recriar o renderer em GL
+quando nenhum frame apresentar). Não dá para escrever isso às cegas — o `Xvfb`
+nem sobe dentro do `sandbox` (segfault em `InitFonts`), então não há como reproduzir
+a superfície recusando aqui. O item continua no `BACKLOG` com o gatilho do
+failover escrito (`skips > N` com `drawn == 0`) e o resto do que ele pedia
+(estado degradado com aviso, instalador explicando alvo bloqueado, clipboard sem
+travar o start, caminho sem pixel) já feito.
+
+**Dívida de doc paga no mesmo passo:** o painel ganhou o estado `transferida`
+(`M4` → `M-AB` e `G17` → `M-AC`, decisão do dono em 2026-11-02, para item sem
+ambiente e item caro não trancarem a conta), o `§16.2` deixou de listar 27 checks
+"ainda sem equivalente" que já existiam com outro nome (agora diz onde os checks
+moram: 25 no núcleo, 6 no app) e a costura de 1 px do box drawing entrou no
+`BACKLOG` como `M-AD` — ela nunca estava registrada, apesar de o `HISTORY` de
+ontem dizer que estava.

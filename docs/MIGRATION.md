@@ -13,25 +13,27 @@ não por estimativa.
 - Registro datado do que já foi fechado: [`HISTORY.md`](HISTORY.md).
 
 ## Painel
-| área | feito | parcial | falta | não | impedida | total |
-|---|---|---|---|---|---|---|
-| 1. Núcleo: célula, cores, grade | 18 | 0 | 0 | 0 | 0 | 18 |
-| 2. Parser: controles, CSI, modos | 28 | 0 | 0 | 0 | 0 | 28 |
-| 3. Parser: SGR e OSC | 13 | 0 | 0 | 0 | 0 | 13 |
-| 4. Scrollback e visão do histórico | 8 | 0 | 0 | 0 | 0 | 8 |
-| 5. Entrada: teclado e protocolo do kitty | 16 | 0 | 0 | 0 | 0 | 16 |
-| 6. Entrada: mouse, seleção, clipboard, paste | 14 | 0 | 0 | 0 | 0 | 14 |
-| 7. Desenho: fonte, geometria, cores | 15 | 1 | 0 | 0 | 0 | 16 |
-| 8. Imagens do protocolo kitty | 13 | 0 | 0 | 3 | 0 | 16 |
-| 9. Janela: abas, workspaces, cromo | 18 | 0 | 0 | 0 | 0 | 18 |
-| 10. Janela: ciclo de vida, geometria, estado | 10 | 0 | 0 | 0 | 0 | 10 |
-| 11. Configuração e CLI | 18 | 0 | 0 | 0 | 0 | 18 |
-| 12. Debug socket e instrumentação | 14 | 0 | 0 | 0 | 0 | 14 |
-| 13. Plataforma e distribuição | 6 | 0 | 0 | 0 | 1 | 7 |
-| 14. Testes e verificação | 7 | 2 | 0 | 0 | 0 | 9 |
-| **total** | **198** | **3** | **0** | **3** | **1** | **205** |
+| área | feito | parcial | falta | não | impedida | transferida | total |
+|---|---|---|---|---|---|---|---|
+| 1. Núcleo: célula, cores, grade | 18 | 0 | 0 | 0 | 0 | 0 | 18 |
+| 2. Parser: controles, CSI, modos | 28 | 0 | 0 | 0 | 0 | 0 | 28 |
+| 3. Parser: SGR e OSC | 13 | 0 | 0 | 0 | 0 | 0 | 13 |
+| 4. Scrollback e visão do histórico | 8 | 0 | 0 | 0 | 0 | 0 | 8 |
+| 5. Entrada: teclado e protocolo do kitty | 16 | 0 | 0 | 0 | 0 | 0 | 16 |
+| 6. Entrada: mouse, seleção, clipboard, paste | 14 | 0 | 0 | 0 | 0 | 0 | 14 |
+| 7. Desenho: fonte, geometria, cores | 15 | 0 | 0 | 0 | 0 | 1 | 16 |
+| 8. Imagens do protocolo kitty | 13 | 0 | 0 | 3 | 0 | 0 | 16 |
+| 9. Janela: abas, workspaces, cromo | 18 | 0 | 0 | 0 | 0 | 0 | 18 |
+| 10. Janela: ciclo de vida, geometria, estado | 10 | 0 | 0 | 0 | 0 | 0 | 10 |
+| 11. Configuração e CLI | 18 | 0 | 0 | 0 | 0 | 0 | 18 |
+| 12. Debug socket e instrumentação | 14 | 0 | 0 | 0 | 0 | 0 | 14 |
+| 13. Plataforma e distribuição | 6 | 0 | 0 | 0 | 0 | 1 | 7 |
+| 14. Testes e verificação | 9 | 0 | 0 | 0 | 0 | 0 | 9 |
+| **total** | **200** | **0** | **0** | **3** | **0** | **2** | **205** |
 
-Equivalente pronto: **97.3%** (feito conta 1, parcial conta 0,5; `impedida` conta como `falta`). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
+Equivalente pronto: **98.5%** (feito conta 1, parcial conta 0,5; `impedida` conta como `falta`; `transferida` sai dos dois lados — nem pronto, nem pendente no painel). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
+
+`transferida` é paridade que o dono **tirou do painel** por decisão de sequência (2026-11-02: `M4` e `G17`), e que continua registrada aqui só como ponteiro para o id no [`BACKLOG`](BACKLOG.md), onde o trabalho passa a morar. A linha fica porque a referência do Python continua sendo do Python — o que saiu do painel não é "não faremos".
 tendência; o que decide o que fazer agora é a linha e a seção 16.
 
 ## Regras deste documento
@@ -207,7 +209,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | G14 | Seleção desenhada como inversão | `view.py:943,953-973` → `render.rs` | feito (o default resolve pelo outro extremo) |
 | G15 | `?2026` segura o frame (teto 200 ms) | `view.py:296-324` | feito: `frame::Gate` (`SYNC_MS = 200`), testado sem display (transação aberta, fecho imediato, app que nunca fecha não desenha a cada leitura) |
 | G16 | Frame coalescido (~16 ms), não um desenho por leitura | `view.py:286-320` | feito: `frame::Gate` (`FRAME_MS = 16`), alimentado no `Wake` **depois** do `drain` (o `?2026` só é visível após parsear). 900 frames: 1499–1585 desenhos → **63–74**, mesmo fps (`BENCHMARKS.md`) |
-| G17 | Dano por região (`queue_draw_area`) | `view.py:330-364` | parcial: o dano já vale por linha na montagem das instâncias, mas a **draw** continua tela inteira — a swapchain não garante preservar o conteúdo do frame anterior, e desenhar só a faixa exigiria alvo próprio (textura de cena + blit). Custo disso anotado em `BACKLOG.md`? Não: é a mesma linha até fechar |
+| G17 | Dano por região (`queue_draw_area`) | `view.py:330-364` | transferida para `M-AC` (o dano por linha já está feito; o que falta é a *draw* por região, e o dono decidiu em 2026-11-02 que o custo não fica no caminho da migração) |
 
 ## 8. Imagens do protocolo kitty
 
@@ -317,7 +319,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | M1 | Um binário sem stack de sistema (sem GTK/Pango/fontconfig/Python) | impossível no Python | feito |
 | M2 | pty POSIX por uma API só (`PtySize`, `spawn`, `read`, `write`) | `pty.fork` (POSIX só) → `pty.rs` | feito |
 | M3 | Linux X11 + Vulkan | ambiente de dev | feito |
-| M4 | Linux Wayland | n/a | impedida: as features já estão compiladas (`winit` wayland + CSD adwaita); falta um compositor para exercitar, e instalar pacote é vetado aqui |
+| M4 | Linux Wayland | `view.py` (GTK roda em Wayland) | transferida para `M-AB`: as features estão compiladas (`winit` wayland + CSD adwaita) e o que falta é **exercitar** num compositor, que não existe nesta máquina e cujo `apt` é vetado |
 | M5 | Linux backend GL (`WGPU_BACKEND=gl`) | n/a | feito: `WGPU_BACKEND=gl` desenha com GPU real (`Gl AMD Radeon Graphics (radeonsi …)`, `last_frame: drawn`, texto e cursor na captura). Três consertos que só aparecem no GL: display handle na instância (sem ele o EGL responde `gl not compatible with provided surface`), `CompositeAlphaMode::Opaque` (o default dava janela translúcida) e escolha de adaptador preferindo hardware |
 | M8 | CI matriz de build + release por tag | não existe → `.github/workflows/release.yml` + `tools/release.sh` | feito para Linux x86_64/aarch64 (os alvos macOS/Windows são `M-X`/`M-Y` do [`BACKLOG`](BACKLOG.md)) |
 | M10 | Instalador: comando `bzmux`, menu, ícone, `--uninstall`, `--check` | `install.sh` (pipx + deps de sistema) → `install.sh` (copia 1 binário) | feito |
@@ -326,13 +328,13 @@ Rust (sem linha, para não envelhecer a cada commit).
 
 | # | funcionalidade | ref (Python → Rust) | estado |
 |---|---|---|---|
-| N1 | Suíte de checks do núcleo sem display (`checks.py`, 27 checks) | `checks.py:820-838` → `checks.rs` + `#[test]` | parcial: 24 checks de fumaça no `--selftest` (e no `cargo test`, via `selftest_completo`) + 93 testes; o que falta é o que depende de janela/GPU |
+| N1 | Suíte de checks do núcleo sem display (`checks.py`, 27 checks) | `checks.py:820-838` → `checks.rs`/`checks_n2.rs`/`checks_n5.rs` + `checks_app.rs` | feito: **31 checks** no `--selftest` (25 do núcleo + 6 do lado do app: `argv_parsing`, `kitty_keyboard`, `mouse_modes_and_sgr`, `window_state`, `debug_socket`, `desktop_shortcut`), e o `cargo test` roda a mesma lista (`selftest_completo`/`checks_do_app_passam`) |
 | N2 | Checks de config/CLI | `checks.py:125-287` | feito: `config_file`, `config_options` e `scrollback_and_bell` no `--selftest` (formato do kitty, merge com padrões, erro por linha com motivo, teto de histórico, RIS não é dono da config, BEL só conta) + 7 testes de argv e do merge CLI > arquivo > padrão em `cli.rs` |
 | N3 | Checks de teclado/mouse | `checks.py:325-343,554-562` | feito: 6 testes de kitty keyboard (push/pop/set/query, flags 1/2/8/16, `:2`/`:3`, DECCKM, texto da flag 16) e 3 de mouse (modos 1000/1002/1003/1005/1006, SGR vs X10, roda e modificadores) |
 | N4 | Checks de socket | `checks.py:702-810` | feito: `DebugServer` aceita um `Sink` (o `EventLoopProxy` no app, um canal no teste), então 8 testes rodam sem janela: framing de uma linha JSON, `ok`/`err`, vários pedidos na mesma conexão e num `write` só, `0600`, órfão vs socket vivo vs arquivo que não é socket, `resolve("auto")` |
 | N5 | Checks de reflow/seleção/âncora | `checks.py:380-520` | feito: `history`, `scroll_anchor`, `redraw_keeps_history_position`, `draw_damage`, `selection`, `truecolor` e `style_contrast` no `--selftest` (`paste_markers` e `selection_follows_history` já existiam) |
 | N6 | `--selftest` no binário (roda N1..N5 sem display) | `cli.py:92` → `checks.rs` | feito: `bzmux --selftest` (14 checks), no `check.sh` e no CI |
-| N7 | Verificação visual automatizada (captura + comparação) | `tools/pixel.py`, `xtest.py` → `tools/` | parcial: captura manual (`xwd`) |
+| N7 | Verificação visual automatizada (captura + comparação) | `tools/pixel.py`, `xtest.py` → `tools/pixel.py`, `tools/visual.sh` | feito: `tools/visual.sh` abre a janela num `Xvfb` próprio, espera o primeiro frame, captura e **compara** — conteúdo novo tem de mudar pixel, SGR 41/42 tem de pintar `color1`/`color2`, texto tem de cair dentro da célula e tela parada não pode repintar diferente. Sai 0/1, então serve de gate |
 | N8 | Benchmark reprodutível com grade travada | `tools/benchrun.py` → `tools/benchrun.py` | feito |
 | N9 | Escada Rust x Python | `bench.sh` → `tools/bench.sh` | feito |
 
@@ -396,9 +398,11 @@ cursor (feito). Scrollbar (`M-M`), busca (`M-D`), seleção por palavra (`M-E`),
 IME (`M-F`), OSC 7/133/52 (`M-R`) e notificação (`M-K`) são atividade nova e
 moram no [`BACKLOG`](BACKLOG.md) — não são fatia de migração.
 
-**F8 — Portas Linux (M4-M5).**
-Wayland e o backend GL são o que resta de paridade: o Python roda nos dois (GTK
-não depende de Vulkan). Windows e macOS **saíram do painel** em 2026-11-02: o
+**F8 — Portas Linux (M4-M5).** `M5` (backend GL) está feito. `M4` (Wayland)
+**saiu do painel em 2026-11-02** a pedido do dono: o que falta é exercitar num
+compositor, e não há compositor nesta máquina — virou `M-AB` no
+[`BACKLOG`](BACKLOG.md), junto com a decisão de não deixar item sem ambiente
+trancando a conta da migração. Windows e macOS **saíram do painel** em 2026-11-02: o
 Python nunca rodou lá, então portar não é paridade — é `M-X` e `M-Y` no
 [`BACKLOG`](BACKLOG.md), com a assinatura em `M-Z` e o socket do Windows em
 `M-N`.
@@ -415,14 +419,15 @@ Python nunca rodou lá, então portar não é paridade — é `M-X` e `M-Y` no
 - Toda funcionalidade migrada traz o teste equivalente do `checks.py` quando
   existe; quando não existe, o roteiro manual vai escrito na linha.
 
-### 16.2 Checks do Python ainda sem equivalente aqui
+### 16.2 Checks: onde moram e o que falta
 
-`parser_text_and_cursor` (parcial), `sgr_and_erasing` (parcial),
-`alt_screen_and_scroll` (parcial), `charset_and_replies` (parcial),
-`csi_with_intermediate`, `argv_parsing`, `config_file`, `config_options`,
-`scrollback_and_bell`, `kitty_keyboard`, `graphics_image_and_offset`,
-`graphics_follow_history`, `wrap_and_control`, `reflow`, `history`,
-`scroll_anchor`, `redraw_keeps_history_position`, `selection_follows_history`,
-`draw_damage`, `mouse_modes_and_sgr`, `selection`, `paste_markers`,
-`truecolor`, `style_contrast`, `desktop_shortcut`, `window_state`,
-`debug_socket`.
+Os checks de fumaça rodam no `--selftest` (e no `cargo test`, pela mesma lista):
+**25 no núcleo** (`checks.rs`, `checks_n2.rs`, `checks_n5.rs` — parser, grade,
+scrollback, seleção, dano, config, gráficos) e **6 no lado do app**
+(`checks_app.rs` — `argv_parsing`, `kitty_keyboard`, `mouse_modes_and_sgr`,
+`window_state`, `debug_socket`, `desktop_shortcut`). O núcleo não conhece
+`cli.rs`/`keys.rs`/`mouse.rs`/`state.rs`/`debugsock.rs`, e é por isso que existem
+os dois donos: o `checks.py` do Python cobria os 31 num arquivo só.
+
+Check novo entra na lista e **compara com o esperado** — "não panicou" não é
+check. O que exige janela não é check: é [`tools/visual.sh`](../tools/visual.sh).

@@ -37,29 +37,36 @@ duas instâncias disputando o mesmo socket).
 | `WGPU_ADAPTER_NAME=…` | escolhe adaptador (útil para testar llvmpipe) |
 | `SHELL=…` | shell padrão quando não há `--cmd` |
 
-## Verificação visual sem roubar a tela do dono (Xvfb)
+## Verificação visual sem roubar a tela do dono
 
 Abrir a janela na sessão gráfica de quem está trabalhando atrapalha: ela sobe por
-cima e, com `xdotool`, rouba o foco. Para captura e teclado/mouse use um display
+cima e, com `xdotool`, rouba o foco. A verificação visual daqui roda num display
 próprio — a janela existe, mas não na tela de ninguém:
 
 ```sh
-Xvfb :77 -screen 0 1280x800x24 &
-HOME=/tmp/bzhome DISPLAY=:77 BZMUX_RS_PIDFILE=/tmp/bz-xvfb.pid \
-    ./tools/devrun.sh --cols 70 --rows 10 --debug-socket /tmp/bzx.sock
-WID=$(DISPLAY=:77 xdotool search --class bzmux | tail -1)
-DISPLAY=:77 import -window "$WID" /tmp/tela.png     # ou xwd -id "$WID"
-DISPLAY=:77 xdotool key --window "$WID" a            # teclado/mouse isolados
+./tools/visual.sh            # Xvfb + tema fixo + captura + comparação; sai 0/1
+./tools/visual.sh --keep     # guarda as capturas em /tmp/bzmux-visual
 ```
 
-O `HOME` de mentira é o que instala uma fonte de teste ou uma configuração sem
-tocar no `~/.config` real; o PID file separado evita que o `devkill` derrube a
-instância que o dono esteja usando. `import -window`/`xwd` não precisam de foco —
-é `xdotool` que precisa, e no Xvfb ele manda para a janela do display isolado.
+O `tools/visual.sh` é o dono dessa receita (display, `HOME` de mentira com
+`bzmux.conf` de tema fixo, espera do primeiro frame, captura pelo `state`/`xid`, e
+as quatro checagens de pixel via [`tools/pixel.py`](../tools/pixel.py)). Para
+sondar à mão uma captura: `tools/pixel.py shot.png 100,50` (cor de um ponto),
+`--scan X`/`--row Y` (amostra por célula) e `--diff a.png b.png` (quantos pixels
+mudaram e onde).
 
-Custo: sem `/dev/dri`, o `wgpu` cai em llvmpipe. Serve para conferir **conteúdo e
-geometria** (texto, ligadura, cor, cursor) e para A/B; número de desempenho só
-vale na GPU, na sessão real.
+Detalhes que economizam tempo:
+
+- **O `xid` vem do `state`**, não de `xdotool search --class bzmux`: num display
+  com mais de uma instância a busca pega a janela errada e a captura sai vazia.
+- **`HOME` de mentira** é o que instala fonte de teste ou configuração sem tocar
+  no `~/.config` real; PID file separado evita que o `devkill` derrube a
+  instância que o dono esteja usando.
+- **`import -window`/`xwd` não precisam de foco** — é `xdotool` que precisa, e no
+  Xvfb ele manda para a janela do display isolado.
+- **Sem `/dev/dri` o `wgpu` cai em llvmpipe, e llvmpipe desenha** sob Xvfb (foi
+  assim que emoji, ligadura e dano foram conferidos em 2026-11-02). Serve para
+  conteúdo e geometria; número de desempenho só vale na GPU.
 
 ## Verificação com janela (sem depender de olho)
 
@@ -87,7 +94,7 @@ o `tools/benchrun.py` roda nos dois.
 
 | verbo | entrada | resposta |
 |---|---|---|
-| `state` | — | `ok` + `cols`, `rows`, `cursor` `[row,col]`, `title`, `view_off`, `scrolled`, `scrollback`, `alt`, `sync`, `cell` `[w,h]`, `font`, `font_px`, `tabs`, `workspaces`, `errors` |
+| `state` | — | `ok` + `cols`, `rows`, `cursor` `[row,col]`, `title`, `view_off`, `scrolled`, `scrollback`, `alt`, `sync`, `cell` `[w,h]`, `font`, `font_px`, `tabs`, `workspaces`, `errors`, `draws`, **`drawn`**, **`skips`**, **`last_frame`**, `last_damage`, `frames_all`, `rows_max`, `all_reason`, `xid` |
 | `text` | `where` (`view`\|`history`\|`screen`), `start`, `count` | `lines` (strings) |
 | `write` | `data` (string) | `ok` (escreve no pty) |
 | `keys` | `data` (spec tipo `ctrl+shift+t`, `f5`, `alt+left`) | `keys: [n]` bytes escritos no pty |
@@ -299,17 +306,27 @@ bzmux: GPU: Vulkan llvmpipe (LLVM 20.1.2, 256 bits) (driver llvmpipe)
 ## Sandbox degradado: janela que não pinta nada
 
 **Antes de investigar desenho, confira `/dev/dri` com `ls -la /dev/dri`.** Sem
-os nós de device o `wgpu` só tem llvmpipe e, neste container, nem ele pinta —
-foi o que aconteceu em 2026-11-02. A cura é rodar sob o perfil de GPU do sandbox
-(`sandbox @gpu,dev -- …`): com `/dev/dri` visível o log mostra `GPU: Vulkan AMD
-Radeon Graphics (RADV RENOIR)` (ou `Gl … radeonsi`) e os frames saem.
+os nós de device o `wgpu` fica só com llvmpipe. Sob um display próprio (Xvfb)
+llvmpipe **desenha** — `tools/visual.sh` passa sem `/dev/dri`. Na sessão real do
+dono, em 2026-11-02, o container sem `/dev/dri` fez o pty e o socket
+funcionarem com a janela **sem receber frame**.
 
-Neste máquina de desenvolvimento, em 2026-11-02, com o container **sem
-`/dev/dri`**, o desenho parou de aparecer **nos dois backends**: o `wgpu` escolhe llvmpipe,
-inicializa, o socket responde `state`, mas nenhum pixel chega na janela —
-`import -window <id>` e a captura da raiz mostram o que está atrás.
+O primeiro campo a olhar é o par que separa as duas causas:
 
-Sinais no log, nessa ordem:
+| `drawn` | `skips` | `last_frame` | leitura |
+|---|---|---|---|
+| > 0 | 0 | `drawn` | desenhou e apresentou |
+| 0 | > 0 | `skipped (timeout/occluded)` | o desenho roda, a **superfície** recusa: ambiente (compositor/WM/sandbox), não o app |
+| 0 | 0 | `nenhum` | o app nem chegou a desenhar: veja o log (`bzmux: GPU:`), pty e config |
+
+Quando a superfície recusa o frame, o app escreve **uma vez** no stderr:
+
+```
+bzmux: a superfície não apresenta (timeout/occluded) — o desenho funciona, a
+janela é que não recebe frame; ver docs/DEBUG.md (ambiente confinado)
+```
+
+Sinais no log, nessa ordem, quando é o sandbox:
 
 ```
 _amdgpu_device_initialize: amdgpu_get_auth (1) failed (-1)
@@ -317,19 +334,11 @@ libEGL warning: egl: failed to create dri2 screen
 MESA: error: Failed to attach to x11 shm
 ```
 
-Nesse estado o `wgpu` responde `Occluded` em todo frame, e é isso que o `state`
-mostra (campo `last_frame`), sem `skipped` nenhum chegar na tela. A pergunta
-"por que a janela não atualiza?" começa por aí:
-
-```
-state -> {"draws": 3, "last_frame": "skipped (timeout/occluded)", ...}
-```
-
-Consequência prática: **verificação visual não é confiável nesse estado**. O que
-continua valendo é o que não depende de pixel: `state` do socket (grade, cursor,
-imagens, `draws`/`rows_built`/`cells_built`, `last_frame`), `--selftest`,
-`cargo test` e `parsebench`. Antes de concluir que o desenho quebrou, confira
-`/dev/dri` e a linha `bzmux: GPU:`.
+Consequência prática: **verificação visual não é confiável nesse estado**. Nesse
+caso o gate é outro: `tools/visual.sh` num Xvfb (prova pixel sem depender do
+display do dono), mais o que não depende de pixel — `state` (grade, cursor,
+imagens, `drawn`/`skips`/`rows_max`/`last_damage`), `--selftest`, `cargo test` e
+`parsebench`.
 
 No mesmo sandbox, o **cache do `cargo` já foi somente leitura**
 (`/home/user/.cargo/registry`): dependência nova falhava com `Read-only file

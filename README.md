@@ -64,6 +64,13 @@ cargo build --release
 
 Roda também no `pre-commit` (`git config core.hooksPath .githooks`) e no CI.
 
+Além disso, dois gates que não precisam da sua tela:
+
+```sh
+./target/release/bzmux --selftest   # 31 checks sem janela (paridade com o checks.py)
+./tools/visual.sh                   # Xvfb próprio: desenha, captura e compara pixels
+```
+
 ## Medir
 
 ```sh
