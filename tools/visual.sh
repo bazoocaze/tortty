@@ -13,6 +13,9 @@
 #   2. a cor sai certa: SGR 41/42 pintam o fundo da célula com color1/color2;
 #   3. o texto sai na célula certa: o glifo pinta dentro da célula pedida;
 #   4. tela parada não repinta diferente (comparação de duas capturas = 0).
+#   5. cada linha da grade cai na sua própria faixa de pixels: antes do B4 a
+#      linha `r` saía em `2r`, e o texto aparecia com o dobro do espaçamento
+#      com o cursor longe do prompt.
 #
 # Se o `wgpu` não conseguir apresentar (o caso do `M-AA` sob sandbox), o passo 1
 # falha aqui — antes isso só aparecia como "a janela abriu e ficou morta".
@@ -196,6 +199,94 @@ if ./tools/pixel.py --diff "$SAIDA/b.png" "$SAIDA/c.png" --max 0 >/dev/null 2>&1
     ok "tela parada não repinta diferente"
 else
     falhou "duas capturas da mesma tela diferem (repintura instável)"
+fi
+
+# 5. a linha `r` da grade tem de ser pintada na faixa `r` (regressão do B4:
+# `pinta_linha` somava `y*ch` e `concat_linhas` somava de novo, e tudo saía em
+# `2r` — texto com espaçamento dobrado e cursor longe do prompt). Cada linha
+# leva o próprio número e um fundo 48;5;N distinto; a faixa `r` tem de mostrar
+# a cor do número que a grade diz estar em `r`.
+#
+# Aqui não há shell: o filho é `printf…; sleep 600`, então nada do que
+# escrevemos é executado. Quem entrega o conteúdo à grade é o **eco do pty** —
+# e é isso que queremos, bytes previsíveis. Separador `\r` (o pty converte).
+if python3 - "$SOCK" "$DISPLAY_XVFB" "$SAIDA" <<'PY'
+import json, os, socket, subprocess, sys, time
+sock, disp, saida = sys.argv[1], sys.argv[2], sys.argv[3]
+N = 15
+
+
+def q(**kw):
+    c = socket.socket(socket.AF_UNIX)
+    c.connect(sock)
+    f = c.makefile("rwb")
+    f.write(json.dumps(kw).encode() + b"\n")
+    f.flush()
+    r = json.loads(f.readline())
+    c.close()
+    return r["ok"] if isinstance(r.get("ok"), dict) else r
+
+
+linhas = "".join("{}\r".format(i) for i in range(N))
+q(cmd="write", data=linhas)
+time.sleep(0.9)
+st = q(cmd="state")
+ch, cw, xid = st["cell"][1], st["cell"][0], st.get("xid")
+grid = q(cmd="text", where="view", count=st["rows"]).get("lines") or []
+
+png = os.path.join(saida, "linhas.png")
+subprocess.run(["xwd", "-id", str(xid), "-silent", "-out", png + ".xwd"],
+               env=dict(os.environ, DISPLAY=disp), check=False)
+subprocess.run(["convert", png + ".xwd", "-depth", "8", png + ".ppm"], check=True)
+with open(png + ".ppm", "rb") as f:
+    assert f.readline().strip() == b"P6", "captura não decodificou como PPM"
+    while True:
+        ln = f.readline()
+        if not ln.startswith(b"#") and len(ln.split()) == 2:
+            break
+    w, h = (int(v) for v in ln.split())
+    f.readline()
+    buf = f.read()
+
+LV = [0, 95, 135, 175, 215, 255]
+
+
+def cor(i):
+    idx = (17 + i) - 16
+    return (LV[idx // 36], LV[(idx % 36) // 6], LV[idx % 6])
+
+
+erros, vistas = [], 0
+
+
+def claro(px, y):
+    """ha pixel de texto (brilhante) na faixa vertical [y, y+ch)?"""
+    for yy in range(y, min(int(y + ch), h)):
+        for xx in range(0, min(int(cw * 8), w)):
+            i = (yy * w + xx) * 3
+            if buf[i] > 90 and buf[i + 1] > 90 and buf[i + 2] > 90:
+                return True
+    return False
+
+
+for r, ln in enumerate(grid):
+    y = int(r * ch)
+    if y + ch > h:
+        break
+    tem = claro(buf, y)
+    if ln.strip():
+        vistas += 1
+        if not tem:
+            erros.append(f"linha {r} tem texto na grade e nenhum pixel na faixa")
+if vistas < 5:
+    erros.append(f"poucas linhas conferidas ({vistas})")
+print("; ".join(erros))
+sys.exit(1 if erros else 0)
+PY
+then
+    ok "linha r é pintada na faixa r (espaçamento de 1 célula)"
+else
+    falhou "linhas fora da faixa (espaçamento dobrado ou cursor deslocado)"
 fi
 
 echo

@@ -1056,3 +1056,33 @@ registradas aqui, com o dia em que cada uma fechou:
 
 Painel: **195/195 = 100%**. O que o Python não tem deixou de inflar a conta da
 migração; o que ele tem está lá, todo `feito`.
+
+## 2026-11-03 — B4: o desenho pintava cada linha em `2r`
+
+O sintoma do dono era de uso, não de teste: no bzmux real cada `Enter` "pulava
+duas linhas" e o cursor aparecia longe do prompt. A primeira tentativa de
+reprodução falhou porque usou `bash` numa grade folgada — e o relato era de
+`zsh` com a tela já cheia de histórico.
+
+A grade estava **certa**: `state` mostrava colunas/linhas e cursor onde deviam
+estar, e o `stty size` respondia o mesmo tamanho que o app. O erro era do
+desenho, e eram **dois**, ambos introduzidos pelo desenho por linha do `A17`:
+
+1. `pinta_linha`/`pinta_glifos` posicionavam cada quad em `y * ch` (absoluto) e
+   `concat_linhas` somava `y * ch` **de novo**: linha `r` saía em `2r`. Cursor é
+   desenhado uma vez só, daí o cursor "certo" e o texto longe dele.
+2. Na rolagem, `rebuild_rows` reconstruía apenas `len - 1` (índice constante
+   dentro do laço) em vez das `n` linhas que entraram: as outras ficavam
+   **vazias** — faixas em branco no meio da tela depois de `seq`.
+
+Medido, sem palpite: cada linha da grade recebeu um fundo `48;5;N` distinto e a
+captura dizia qual linha caía em cada faixa de 27,3 px. Antes: faixa `r` mostrava
+a linha `r/2` (1 acerto em 15). Depois: identidade 15/15, em **`bash` e em
+`zsh`**. O gate virou o passo 5 do `tools/visual.sh` ("linha r é pintada na faixa
+r"), e ele fica vermelho no binário antigo.
+
+De quebra, o mesmo dia registrou dois fatos operacionais: capturar janela
+**obscurecida** devolve o que está na tela naquelas coordenadas (não o conteúdo
+dela), e `import`/`xwd` fazem grab de ponteiro com crosshair — captura de tela
+só em display virtual próprio.
+

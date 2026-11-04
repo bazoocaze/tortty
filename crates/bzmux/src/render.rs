@@ -1293,13 +1293,19 @@ impl Renderer {
                 if shift > 0 {
                     self.por_linha.remove(0);
                     self.por_linha.push(RowQuads::default());
-                    rebuild.push(self.por_linha.len() - 1);
                 } else {
                     self.por_linha.pop();
                     self.por_linha.insert(0, RowQuads::default());
                 }
             }
-            if shift < 0 {
+            // rotacionadas `n` linhas, as `n` que entraram precisam de glifo
+            // novo. Antes era `rebuild.push(len - 1)` **dentro** do laço: o
+            // índice era o mesmo sempre e só a última linha era remontada —
+            // as outras ficavam vazias (faixas em branco no meio da tela)
+            let fim = self.por_linha.len();
+            if shift > 0 {
+                rebuild.extend(fim - n..fim);
+            } else {
                 rebuild.extend(0..n);
             }
         }
@@ -1339,7 +1345,10 @@ impl Renderer {
             blink,
             cursor,
         } = ctx;
-        let py = y as f32 * self.fonts.ch;
+        // `y` aqui é índice da grade (seleção e cursor), **não** pixel: a
+        // posição vertical entra em `concat_linhas`. Somar `y * ch` nos dois
+        // lugares pintava a linha `r` em `2r` (A17 pós-cache por linha)
+        let py = 0.0;
         let limite = cols.min(row.cells.len());
         let mut x = 0usize;
         while x < limite {
@@ -1407,7 +1416,8 @@ impl Renderer {
         let RowCtx { cols, sel, .. } = ctx;
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
-        let py = y as f32 * chh;
+        // relativo ao topo da grade: quem soma `y * ch` é `concat_linhas`
+        let py = 0.0;
 
         // 1) fundos, agrupados por cor (uma instância por trecho). O inverso
         // (SGR 7) e a seleção usam a mesma regra: troca fg/bg e resolve o

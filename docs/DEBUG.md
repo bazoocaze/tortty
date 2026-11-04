@@ -363,3 +363,15 @@ Duas conclusões que economizam horas: (1) o sandbox **não** impede desenhar �
 mata é a winit abortando num erro X que não é dela, enquanto a GLFW (kitty,
 ghostty) registra e segue; (2) o erro vem do WSI do **Vulkan/lavapipe**: com GL
 ele não aparece. Ver `B5` no [`BACKLOG.md`](BACKLOG.md).
+
+### Captura de tela não é neutra
+
+- **Janela obscurecida**: `xwd`/`import` de uma janela coberta devolvem o que
+  está **na tela** naquelas coordenadas — o conteúdo de outra janela. Se a
+  captura "não bate com o app", primeiro pergunte se ele está visível.
+- **Grab de ponteiro**: `import`/`xwd` pegam o ponteiro e mostram crosshair (o
+  "modo mira"); se o processo morre no meio, o ponteiro pode ficar preso até o
+  cliente X sumir.
+- Consequência: captura só em display virtual próprio (`tools/visual.sh`);
+  nunca no display de quem está trabalhando.
+
