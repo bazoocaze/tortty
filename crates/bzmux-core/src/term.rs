@@ -635,6 +635,19 @@ impl Term {
             }
             self.scrolled += 1;
         }
+        // o dano anda junto com o conteúdo: a linha suja de antes da rolagem
+        // agora é outra, e o desenho gira o cache com a mesma conta. Sem isto
+        // a linha que recebeu texto ainda não desenhado (escrita e `\n` no
+        // mesmo chunk, o caso do `time sleep 1`) girava com o cache velho e
+        // ficava em branco até um rebuild inteiro (B6).
+        if full && !self.scroll_conflict {
+            for _ in 0..n {
+                self.dirty.rotate_left(1);
+                if let Some(d) = self.dirty.last_mut() {
+                    *d = true;
+                }
+            }
+        }
         // a região pode ter encolhido (linhas fora dela não se movem)
         while self.grid.len() > self.rows {
             self.grid.pop();
@@ -665,6 +678,15 @@ impl Term {
             }
             while self.grid.len() > self.rows {
                 self.grid.pop();
+            }
+        }
+        // espelho da rolagem para cima: o dano desce com o conteúdo
+        if full && !self.scroll_conflict {
+            for _ in 0..n {
+                self.dirty.rotate_right(1);
+                if let Some(d) = self.dirty.first_mut() {
+                    *d = true;
+                }
             }
         }
     }
@@ -2059,6 +2081,28 @@ mod scroll_shift_tests {
         assert_eq!(t.scroll_shift, 3);
         t.clear_damage();
         assert_eq!(t.scroll_shift, 0, "consumir o dano zera o deslocamento");
+    }
+
+    /// O dano tem de rolar junto com o conteúdo: escrita que ainda não foi
+    /// desenhada e rola no mesmo chunk cairia na linha errada (B6).
+    #[test]
+    fn dano_anda_junto_com_o_conteudo_ao_rolar() {
+        let mut t = Term::new(10, 4);
+        t.feed(b"\x1b[4;1H");
+        t.clear_damage();
+        t.feed(b"abc"); // texto na última linha, ainda não desenhado
+        assert!(t.dirty[3]);
+        t.feed(b"\r\n"); // rola uma: "abc" foi para a linha 2
+        assert_eq!(t.scroll_shift, 1);
+        assert!(t.dirty[2], "a linha que recebeu o texto rola suja junto");
+        assert!(t.dirty[3], "a linha nova embaixo também nasce suja");
+        assert!(!t.dirty[0], "o resto continua pronto para deslocar");
+        // e para baixo, o espelho
+        t.clear_damage();
+        t.feed(b"\x1b[1;1Hxyz");
+        assert!(t.dirty[0]);
+        t.feed(b"\x1bM"); // RI no topo desce uma
+        assert!(t.dirty[1], "descer: o dano da linha 0 vai para a 1");
     }
 
     /// Rolar para cima e depois para baixo não é deslocamento zero: a linha que

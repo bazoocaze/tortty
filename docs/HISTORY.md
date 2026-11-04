@@ -1097,3 +1097,41 @@ De quebra, o mesmo dia registrou dois fatos operacionais: capturar janela
 **obscurecida** devolve o que está na tela naquelas coordenadas (não o conteúdo
 dela), e `import`/`xwd` fazem grab de ponteiro com crosshair — captura de tela
 só em display virtual próprio.
+
+## 2026-11-03 — B6: escrita e rolagem no mesmo chunk, dano não rolava junto
+
+Sintoma do dono no uso real: `time sleep 1` às vezes deixava a linha do tempo
+**em branco**, e arrastar o mouse fazia o texto aparecer. Que o arrastar
+resolvesse já dizia onde olhar: o texto estava na grade, quem ficava velho era
+o **cache por linha** do desenho — arrastar muda a assinatura (seleção) e força
+remontagem inteira.
+
+Reprodução determinística: 20 tentativas de `time sleep 1` numa grade de 40
+linhas. As 19 primeiras passam; na **20ª**, com a tela cheia e a rolagem
+começando, duas linhas com texto na grade não tinham pixel. Instrumentando o
+frame (`shift`, dano, linhas com cache vazio) e os bytes do pty intercalados, o
+mecanismo ficou explícito:
+
+```
+TRACE in  cy=39 sleep 1  0,00s user ... total<0d><0a>   <- texto + LF no mesmo chunk
+TRACE frame shift=1 dano=rows:1 cy=39 vazias=[38]
+```
+
+O `time` escreve a linha do tempo na última linha e o `\r\n` rola a tela **no
+mesmo chunk**. O renderer gira o cache (`cache[38] ← cache[39]`), mas o **mask
+de dano não girava junto**: a linha 38 recebia o conteúdo que ainda não tinha
+sido desenhado, com o cache da linha 39 (o eco do comando, ou vazio), e nada a
+remontava — branco até o próximo rebuild inteiro.
+
+Correção no núcleo, nas duas direções: ao rolar com deslocamento aproveitável,
+o `dirty` **gira com o conteúdo** (`rotate_left`/`rotate_right`, a linha nova
+marcada). E o `scroll_conflict` (subiu e desceu no mesmo frame) passou a forçar
+dano de tela inteira — antes ele só desligava a rotação do cache, o que deixava
+as linhas giradas velhas do mesmo jeito.
+
+Medido depois: 40 tentativas (o dobro do que precisou para estourar) sem
+nenhuma divergência, e `last_damage=rows: 2` por frame — a otimização do `A17`
+continua valendo (2 linhas por frame, não a tela inteira). Gate novo: passo 7
+do `tools/visual.sh` escreve **uma linha por vez** até passar de duas telas e
+compara grade × pixel linha a linha; vermelho no binário anterior, verde aqui.
+

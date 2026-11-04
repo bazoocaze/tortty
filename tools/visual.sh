@@ -352,6 +352,82 @@ else
     falhou "cursor/conteúdo desceu de linha ao redimensionar (maximizar/restaurar)"
 fi
 
+# 7. rolar a tela não pode deixar linha com texto e sem pixel. Era o B6: a
+# escrita que ainda não foi desenhada (`time sleep 1`) rolava no mesmo chunk e
+# o dano não girava junto com o conteúdo, então a linha girava com o cache
+# velho e ficava em branco até um rebuild inteiro. Enche a tela e passa dela.
+if python3 - "$SOCK2" "$DISPLAY_XVFB" "$SAIDA" <<'PY'
+import json, os, socket, subprocess, sys, time
+
+sock, disp, saida = sys.argv[1], sys.argv[2], sys.argv[3]
+
+
+def q(**kw):
+    c = socket.socket(socket.AF_UNIX)
+    c.connect(sock)
+    f = c.makefile("rwb")
+    f.write(json.dumps(kw).encode() + b"\n")
+    f.flush()
+    r = json.loads(f.readline())
+    c.close()
+    return r["ok"] if isinstance(r.get("ok"), dict) else r
+
+
+st = q(cmd="state")
+rows = st["rows"]
+# uma linha por vez, com frame no meio: é assim que o dano pendente encontra
+# a rolagem de 1 linha (o caso do `time sleep 1`). Em bloco só, o `shift`
+# passa do tamanho da tela e a remontagem acaba sendo a tela inteira.
+for i in range(rows * 2 + 4):
+    q(cmd="write", data="{}\r".format(i))
+    time.sleep(0.04)
+time.sleep(0.8)
+st = q(cmd="state")
+ch, cw = st["cell"][1], st["cell"][0]
+grid = q(cmd="text", where="view", count=st["rows"]).get("lines") or []
+
+png = os.path.join(saida, "rolagem")
+subprocess.run(["xwd", "-id", str(st["xid"]), "-silent", "-out", png + ".xwd"],
+               env=dict(os.environ, DISPLAY=disp), check=False)
+subprocess.run(["convert", png + ".xwd", "-depth", "8", png + ".ppm"], check=True)
+with open(png + ".ppm", "rb") as f:
+    assert f.readline().strip() == b"P6", "captura não decodificou como PPM"
+    while True:
+        ln = f.readline()
+        if not ln.startswith(b"#") and len(ln.split()) == 2:
+            break
+    w, h = (int(v) for v in ln.split())
+    f.readline()
+    buf = f.read()
+
+erros, vistas = [], 0
+for r, ln in enumerate(grid):
+    y0, y1 = int(r * ch), min(int((r + 1) * ch), h)
+    if y0 >= h:
+        break
+    if not ln.strip():
+        continue
+    vistas += 1
+    achou = any(
+        buf[(y * w + x) * 3] > 90
+        and buf[(y * w + x) * 3 + 1] > 90
+        and buf[(y * w + x) * 3 + 2] > 90
+        for y in range(y0, y1)
+        for x in range(0, min(int(cw * len(ln)), w))
+    )
+    if not achou:
+        erros.append(f"linha {r} tem texto na grade e nenhum pixel: {ln.strip()[:20]!r}")
+if vistas < 5:
+    erros.append(f"poucas linhas conferidas ({vistas})")
+print("; ".join(erros))
+sys.exit(1 if erros else 0)
+PY
+then
+    ok "rolagem não deixa linha com texto e sem pixel"
+else
+    falhou "linha da grade ficou sem pixel depois de rolar (B6)"
+fi
+
 echo
 if [ "$falhas" -eq 0 ]; then
     echo "visual: tudo ok (capturas em $SAIDA)"

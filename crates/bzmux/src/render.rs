@@ -1163,7 +1163,10 @@ impl Renderer {
         let dano = crate::damage::decide(
             &assinatura,
             &mut self.assinatura,
-            term.dirty_all,
+            // o conflito de rolagem (subiu e desceu no mesmo frame) não pode
+            // girar o cache: a linha que saiu não volta, então só a tela
+            // inteira resolve (B6)
+            term.dirty_all || term.scroll_conflict,
             &term.dirty,
             rows.len(),
         );
