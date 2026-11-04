@@ -6,7 +6,8 @@ não por estimativa.
 
 - **O Python foi a especificação observável** (`~/tortty-python`):
   cada linha guarda o `arquivo:linha` de onde a funcionalidade veio.
-- **A migração está fechada** (2026-11-02): **200 linhas, todas `feito`**. Enquanto
+- **A migração está fechada** (2026-11-02): **195 linhas, todas `feito`** — o
+  fecho está registrado logo abaixo do painel. Enquanto
   ela corria, o que existia lá e não existia aqui era `falta`, não limite; hoje
   o que falta aqui é **atividade nova** e mora no [`BACKLOG.md`](BACKLOG.md), com
   id `B<numero>` (os antigos continuam `M-*`). O que é decisão de **não** fazer
@@ -19,7 +20,7 @@ não por estimativa.
 |---|---|---|---|---|---|---|
 | 1. Núcleo: célula, cores, grade | 18 | 0 | 0 | 0 | 0 | 18 |
 | 2. Parser: controles, CSI, modos | 28 | 0 | 0 | 0 | 0 | 28 |
-| 3. Parser: SGR e OSC | 13 | 0 | 0 | 0 | 0 | 13 |
+| 3. Parser: SGR e OSC | 11 | 0 | 0 | 0 | 0 | 11 |
 | 4. Scrollback e visão do histórico | 8 | 0 | 0 | 0 | 0 | 8 |
 | 5. Entrada: teclado e protocolo do kitty | 16 | 0 | 0 | 0 | 0 | 16 |
 | 6. Entrada: mouse, seleção, clipboard, paste | 14 | 0 | 0 | 0 | 0 | 14 |
@@ -29,14 +30,44 @@ não por estimativa.
 | 10. Janela: ciclo de vida, geometria, estado | 10 | 0 | 0 | 0 | 0 | 10 |
 | 11. Configuração e CLI | 18 | 0 | 0 | 0 | 0 | 18 |
 | 12. Debug socket e instrumentação | 14 | 0 | 0 | 0 | 0 | 14 |
-| 13. Plataforma e distribuição | 6 | 0 | 0 | 0 | 0 | 6 |
+| 13. Plataforma e distribuição | 3 | 0 | 0 | 0 | 0 | 3 |
 | 14. Testes e verificação | 9 | 0 | 0 | 0 | 0 | 9 |
-| **total** | **200** | **0** | **0** | **0** | **0** | **200** |
+| **total** | **195** | **0** | **0** | **0** | **0** | **195** |
 
-Equivalente pronto: **100%** (200 de 200 linhas de paridade `feito`; `parcial`
+Equivalente pronto: **100%** (195 de 195 linhas de paridade `feito`; `parcial`
 conta 0,5 e `impedida` conta como `falta` — nenhuma das duas existe mais). O total
 aqui é só paridade: melhoria que o Python não tem mora no
 [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
+
+## Fechamento da migração (2026-11-02)
+
+**A migração do bzmux Python para o bzmux Rust está concluída.** O painel acima é
+a prova: 195 linhas de paridade, nenhuma `falta`, nenhuma `parcial`, nenhuma
+`impedida`. O que o Python faz, este repositório faz.
+
+O que fechou, na ordem em que fechou (a seção 16 tem o critério de cada fatia):
+
+- as últimas linhas de paridade foram o dano por linha no desenho (`A17`), o
+  emoji/CJK (`G7`) e as ligaduras com `rustybuzz` (`G8`);
+- depois vieram os checks sem display (`N1` — 31 no `--selftest`), a verificação
+  visual automática (`N7` — `tools/visual.sh`) e o diagnóstico de frame
+  recusado (`M-AA`, fechado como melhoria e por isso no `BACKLOG`);
+- e então a arrumação: `M4` e `G17` saíram para o `BACKLOG` (2026-11-02) e as
+  linhas que **não eram paridade** — as três recusas de imagem (`B1`–`B3` hoje) e
+  cinco melhorias nossas que estavam contadas como se fossem do Python — saíram
+  do painel, com registro datado em [`HISTORY.md`](HISTORY.md).
+
+## Fecho: o que este arquivo passa a ser
+
+- **Não é fila.** Item novo nasce no [`BACKLOG.md`](BACKLOG.md), com id
+  `B<numero>`. Aqui só entra linha que o Python entrega.
+- **Não é pendência.** "Falta" deixou de ser o vocabulário do projeto: o que não
+  existe aqui é atividade nova.
+- **O Python passou a histórico.** Serve para responder "como o app se comportava"
+  e para julgar regressão — não para dizer o que fazer em seguida.
+- **A verificação do fecho**: `./tools/check.sh` verde (fmt, `clippy -D warnings`,
+  testes, `build --release`, `--selftest` 31/31, `parsebench`), `tools/visual.sh`
+  verde, e a versão **1.0.0** instalada e exercitada.
 
 O que veio depois da migração — e a ordem em que ela foi feita — está na seção 16.
 
@@ -131,8 +162,6 @@ Rust (sem linha, para não envelhecer a cada commit).
 | C2 | SGR 30-37, 39, 40-47, 49, 90-97, 100-107 | `term.py:528-539` → `term.rs` | feito |
 | C3 | SGR 38;5 / 48;5 (256) e 38;2 / 48;2 (truecolor) | `term.py:540-576` → `term.rs` | feito |
 | C4 | Subparâmetros `:` (`38:2::r:g:b`) | `term.py:500-512,579-591` → `term.rs` | feito |
-| C5 | SGR 3 itálico, 2 faint, 5/6 blink, 9/29 riscado | não existem (`LIMITATIONS.md`) → `cell.rs`, `render.rs` | feito (SGR 5 anima: fase de 500 ms em `Blink`) |
-| C6 | SGR 53/55 overline, 58/59 cor do sublinhado | não existem → `term.rs` | feito |
 | C7 | SGR 4:2/4:3/4:4/4:5 (estilos de sublinhado) | `4:x` colapsa em simples (`term.py:518-519`) → `render.rs` | feito (curvo é aproximação em 4 retângulos) |
 | C8 | Bold sem "bold as bright" | `view.py:992` → `render.rs` | feito (mesma semântica) |
 | C9 | OSC 0/2 título | `term.py:959-960` → `term.rs` | feito |
@@ -316,11 +345,8 @@ Rust (sem linha, para não envelhecer a cada commit).
 
 | # | funcionalidade | ref (Python → Rust) | estado |
 |---|---|---|---|
-| M1 | Um binário sem stack de sistema (sem GTK/Pango/fontconfig/Python) | impossível no Python | feito |
 | M2 | pty POSIX por uma API só (`PtySize`, `spawn`, `read`, `write`) | `pty.fork` (POSIX só) → `pty.rs` | feito |
 | M3 | Linux X11 + Vulkan | ambiente de dev | feito |
-| M5 | Linux backend GL (`WGPU_BACKEND=gl`) | n/a | feito: `WGPU_BACKEND=gl` desenha com GPU real (`Gl AMD Radeon Graphics (radeonsi …)`, `last_frame: drawn`, texto e cursor na captura). Três consertos que só aparecem no GL: display handle na instância (sem ele o EGL responde `gl not compatible with provided surface`), `CompositeAlphaMode::Opaque` (o default dava janela translúcida) e escolha de adaptador preferindo hardware |
-| M8 | CI matriz de build + release por tag | não existe → `.github/workflows/release.yml` + `tools/release.sh` | feito para Linux x86_64/aarch64 (os alvos macOS/Windows são `M-X`/`M-Y` do [`BACKLOG`](BACKLOG.md)) |
 | M10 | Instalador: comando `bzmux`, menu, ícone, `--uninstall`, `--check` | `install.sh` (pipx + deps de sistema) → `install.sh` (copia 1 binário) | feito |
 
 ## 14. Testes e verificação
@@ -359,7 +385,7 @@ dependência. Fechou assim, cada fatia com o critério que a fechou:
 | F5 | protocolos de entrada (kitty keyboard) | flags 1/2/8/16 conferidas no pty, não no papel |
 | F6 | imagens do kitty | `icat` desenha, rola junto e é podada do histórico |
 | F7 | pisca de cursor (o resto virou atividade nova) | A/B de frame com o cursor piscando e com SGR 5 |
-| F8 | portas Linux | `WGPU_BACKEND=gl` desenha com GPU real (`radeonsi`) |
+| F8 | portas Linux | X11 + Vulkan desenha com GPU real; de graça, o backend GL também (`WGPU_BACKEND=gl`) |
 | F9 | splits | não é paridade: foi para o `BACKLOG` antes de começar |
 
 **Daqui para frente a fila é o [`BACKLOG.md`](BACKLOG.md)**, e ela é de atividade

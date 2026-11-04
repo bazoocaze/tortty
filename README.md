@@ -8,7 +8,7 @@ os números e as decisões estão em [`TASK-bzmux-in-rust.md`](TASK-bzmux-in-rus
 Estado: **migração concluída** (2026-11-02). O experimento de viabilidade
 fechou com 8–9,5x o Python em vazão ([`docs/BENCHMARKS.md`](docs/BENCHMARKS.md))
 e a decisão foi migrar; o painel de [`docs/MIGRATION.md`](docs/MIGRATION.md)
-fechou em **200 de 200** linhas de paridade. Está aqui, funcionando: parser VT,
+fechou em **195 de 195** linhas de paridade. Está aqui, funcionando: parser VT,
 grade, pty, GPU (Vulkan, GL e CPU), teclado (protocolo do kitty incluso), mouse,
 seleção/clipboard, abas e workspaces, imagens do kitty, configuração em arquivo
 com recarga a quente, reflow, ligaduras, emoji/CJK, busca não. O que vem agora é

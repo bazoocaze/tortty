@@ -26,7 +26,7 @@ só o README.md é para humano.
 - `docs/MIGRATION.md` — **o registro da migração**: inventário completo das
   funcionalidades do bzmux Python, o estado final de cada uma aqui
   (`feito`/`parcial`/`falta`/`não`) e a ordem em que ela foi feita. Fechado em
-  200/200; **não é fila**. **Só escopo de migração**: ideia que o Python não tem
+  195/195; **não é fila**. **Só escopo de migração**: ideia que o Python não tem
   não entra aqui.
 - `docs/BACKLOG.md` — a fila: atividade que o Python não tem (id `B<numero>`,
   os antigos `M-*`, cada uma com gatilho e custo) e as regras da fila. Se o Python

@@ -998,7 +998,7 @@ moram: 25 no núcleo, 6 no app) e a costura de 1 px do box drawing entrou no
 `BACKLOG` como `M-AD` — ela nunca estava registrada, apesar de o `HISTORY` de
 ontem dizer que estava.
 
-## 2026-11-02 — Migração fechada em 200/200 (e a papelada do fecho)
+## 2026-11-02 — Migração fechada (e a papelada do fecho)
 
 O painel chegou a zero pendência de paridade. O que sobrou não era trabalho de
 migração, era arrumação — e é isso que este dia fechou.
@@ -1013,7 +1013,8 @@ custo escritos, porque a decisão deixou de ser "não faremos para sempre" e vir
 o fato que continua valendo (imagem embutida no escape, base64) e a frase de que
 trafegar por arquivo/SHM, animar e falar sixel são fila, não limite.
 
-**Painel: 200 de 200 = 100%.** Área 8 fechou em 13, ninguém ficou `parcial`.
+**Painel: 200 de 200 = 100%** naquele momento (195/195 depois que as cinco
+melhorias saíram, no fim do dia). Área 8 fechou em 13, ninguém ficou `parcial`.
 
 **A papelada do fecho**, que é o que impede o documento de continuar falando no
 futuro:
@@ -1036,6 +1037,22 @@ futuro:
   "mais um item", e a convenção de patch não tinha como exprimi-lo.
 
 **Continua aberto, e não é paridade:** `M-AB` (exercitar Wayland num compositor)
-e `M-AC` (desenho por região), ambos no `BACKLOG` por decisão de 2026-11-02, mais
-a pergunta ainda sem resposta sobre as 5 linhas `feito` do painel cuja `ref`
-também diz que o Python não tem (`C5`, `C6`, `M1`, `M5`, `M8`).
+e `M-AC` (desenho por região), ambos no `BACKLOG` por decisão de 2026-11-02.
+
+### As cinco linhas `feito` que não eram paridade
+
+Mesma régua dos `não`, aplicada ao que estava do outro lado: cinco linhas estavam
+`feito` com a coluna `ref` dizendo que o Python **não entrega aquilo**. Trabalho
+feito de verdade, mas melhoria nossa, não paridade — saíram do painel e ficam
+registradas aqui, com o dia em que cada uma fechou:
+
+| linha | o que era | fechou em | verificado por |
+|---|---|---|---|
+| `C5` | SGR 3 itálico, 2 faint, 5/6 pisca, 9/29 riscado | 2026-11-02 | `SGR completo (C5, C6, C7)` — `bat`/`git diff` na tela; SGR 5 anima com a mesma fase do cursor |
+| `C6` | SGR 53/55 overline, 58/59 cor do sublinhado | 2026-11-02 | idem: sublinhado colorido e overline desenhados em `render.rs` |
+| `M1` | um binário só, sem GTK/Pango/fontconfig/Python | 2026-11-01 | 10,1 MB, deps `libc`/`libm`/`libgcc_s`, start em 0,18 s (`BENCHMARKS.md`) |
+| `M5` | backend GL (`WGPU_BACKEND=gl`) | 2026-11-02 | `M5 fechado: o backend GL desenha com GPU de verdade` — `Gl AMD Radeon Graphics (radeonsi)` |
+| `M8` | CI matriz de build + release por tag | 2026-11-02 | `release por tag (M8)` — Linux x86_64/aarch64; macOS/Windows seguem no `BACKLOG` |
+
+Painel: **195/195 = 100%**. O que o Python não tem deixou de inflar a conta da
+migração; o que ele tem está lá, todo `feito`.
