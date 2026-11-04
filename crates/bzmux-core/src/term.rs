@@ -2023,6 +2023,18 @@ fn reflow(all: Vec<Row>, cols: usize, cur_abs: usize, cur_col: usize) -> Reflowe
             }
         }
     }
+    // o que está DEPOIS do cursor é área em branco: não vale empurrar linha
+    // vazia para o histórico só porque a tela mudou de tamanho (o Python faz
+    // o mesmo laço em `_reflow`). Sem isto, maximizar de 36 para 48 linhas
+    // empurrava as 12 vazias de baixo para o histórico e elas voltavam como
+    // 12 linhas acima do prompt — o conteúdo "começava no meio da tela".
+    while rows.len() > cur_row + 1
+        && rows
+            .last()
+            .is_some_and(|r| r.cells.iter().all(Cell::is_blank))
+    {
+        rows.pop();
+    }
     Reflowed {
         rows,
         cur_row,
@@ -2574,11 +2586,12 @@ mod tests {
         t.feed(b"abcdefghijklmnopqrstuvwxy"); // 25 células
         assert_eq!(screen(&t)[..3], ["abcdefghij", "klmnopqrst", "uvwxy"]);
         t.resize(5, 4);
-        // 6 linhas re-quebradas: as 2 primeiras vão para o histórico (a tela
-        // guarda o fim do parágrafo, como qualquer terminal)
-        assert_eq!(tudo(&t), "abcde\nfghij\nklmno\npqrst\nuvwxy\n");
-        assert_eq!(t.scrollback.len(), 2);
-        assert_eq!(t.row_text(2), "uvwxy");
+        // 25 células viram 5 linhas de 5: só a primeira vai para o histórico
+        // (a tela guarda o fim do parágrafo, como qualquer terminal). O cursor
+        // está na última linha, então nada em branco desce para o histórico.
+        assert_eq!(tudo(&t), "abcde\nfghij\nklmno\npqrst\nuvwxy");
+        assert_eq!(t.scrollback.len(), 1);
+        assert_eq!(t.row_text(3), "uvwxy");
         // volta: re-quebra de novo na largura original
         t.resize(10, 4);
         assert_eq!(screen(&t)[..3], ["abcdefghij", "klmnopqrst", "uvwxy"]);
@@ -2590,14 +2603,14 @@ mod tests {
         t.feed(b"abcdefghijklmno"); // 15 células → cy=1, cx=5
         assert_eq!((t.cy, t.cx), (1, 5));
         t.resize(5, 4);
-        // 15 células: 3 linhas de 5. A tela guarda as 4 últimas (2 de conteúdo
-        // + as 2 em branco de baixo), então o cursor fica na 2ª linha visível,
-        // na última coluna, com a quebra pendente.
-        assert_eq!((t.cy, t.cx), (1, 4));
+        // 15 células: 3 linhas de 5, cursor no fim da terceira (quebra
+        // pendente). As 3 linhas cabem na tela, então não há histórico e o
+        // cursor fica na linha 2.
+        assert_eq!((t.cy, t.cx), (2, 4));
         assert!(t.wrap_pending);
         t.feed(b"!");
-        assert_eq!(t.row_text(1), "klmno");
-        assert_eq!(t.row_text(2), "!", "a quebra pendente tem que valer");
+        assert_eq!(t.row_text(2), "klmno");
+        assert_eq!(t.row_text(3), "!", "a quebra pendente tem que valer");
     }
 
     #[test]
@@ -2680,6 +2693,34 @@ mod tests {
         assert_eq!(t.row_text(0), "l4");
         assert_eq!(t.row_text(1), "l5");
         assert_eq!(t.row_text(2), "");
+    }
+
+    /// Encolher e crescer de volta (é o que o WM faz ao maximizar) não pode
+    /// mover o conteúdo: a linha do prompt continua sendo a primeira.
+    #[test]
+    fn crescer_depois_de_encolher_nao_leva_o_prompt_para_o_meio() {
+        let mut t = Term::new(20, 12);
+        t.feed(b"prompt");
+        for (c, r) in [(20, 16), (20, 12), (20, 16)] {
+            t.resize(c, r);
+            assert_eq!(t.row_text(0), "prompt", "{c}x{r}: o texto desceu");
+            assert_eq!(t.cy, 0, "{c}x{r}: o cursor desceu");
+        }
+        assert!(
+            t.scrollback.is_empty(),
+            "linha vazia abaixo do cursor não vai para o histórico: {:?}",
+            t.scrollback.len()
+        );
+        // e o texto com conteúdo ACIMA do cursor continua indo, como antes
+        let mut u = Term::new(20, 12);
+        for i in 0..14 {
+            u.feed(format!("l{i}\r\n").as_bytes());
+        }
+        u.resize(20, 6);
+        assert!(
+            !u.scrollback.is_empty(),
+            "o que sai pelo topo tem de ir para o histórico"
+        );
     }
 
     #[test]

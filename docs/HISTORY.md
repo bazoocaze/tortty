@@ -1081,8 +1081,19 @@ a linha `r/2` (1 acerto em 15). Depois: identidade 15/15, em **`bash` e em
 `zsh`**. O gate virou o passo 5 do `tools/visual.sh` ("linha r é pintada na faixa
 r"), e ele fica vermelho no binário antigo.
 
+Um **terceiro** erro apareceu depois, e só quando o dono reclamou de novo: o
+conteúdo começava no meio da tela. A grade e o pixel concordavam (linha 12 dos
+dois lados), então o desenho estava certo — o errado era o `resize`. O estado
+salvo é `max: true`: a janela nasce com 36 linhas, o shell escreve o prompt na
+linha 0 e só então o WM maximiza para 48. Encolher/crescer empurrava as 12
+linhas **vazias de baixo** para o histórico e as devolvia como 12 linhas acima
+do prompt (cursor ia de 0 para 12). O Python já tinha a regra em `_reflow` —
+"o que está depois do cursor é área em branco, não vale empurrar linha vazia
+para o histórico" — e o Rust não. Regra trazida, com teste de unidade, e o
+passo 6 do `tools/visual.sh` (ciclo encolher/crescer em instância própria)
+pega a volta: vermelho no binário anterior, verde no corrigido.
+
 De quebra, o mesmo dia registrou dois fatos operacionais: capturar janela
 **obscurecida** devolve o que está na tela naquelas coordenadas (não o conteúdo
 dela), e `import`/`xwd` fazem grab de ponteiro com crosshair — captura de tela
 só em display virtual próprio.
-

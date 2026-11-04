@@ -49,11 +49,14 @@ mkdir -p "$SAIDA"
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/bzmux-visual.XXXXXX")
 XVFB_PID=
 APP_PID=
+APP2_PID=
 
 limpar() {
+    [ -n "$APP2_PID" ] && kill "$APP2_PID" 2>/dev/null
     [ -n "$APP_PID" ] && kill "$APP_PID" 2>/dev/null
     # espera o app sair: sem isso o Xvfb pode cair com cliente conectado
     [ -n "$APP_PID" ] && wait "$APP_PID" 2>/dev/null
+    [ -n "$APP2_PID" ] && wait "$APP2_PID" 2>/dev/null
     [ -n "$XVFB_PID" ] && kill "$XVFB_PID" 2>/dev/null
     rm -f "$SOCK"
     [ "$MANTER" -eq 1 ] || rm -rf "$TMP"
@@ -287,6 +290,66 @@ then
     ok "linha r é pintada na faixa r (espaçamento de 1 célula)"
 else
     falhou "linhas fora da faixa (espaçamento dobrado ou cursor deslocado)"
+fi
+
+# 6. encolher e crescer (é o que o WM faz ao maximizar/restaurar) não pode
+# mover o cursor nem o conteúdo. Era o terceiro erro: com o prompt na linha 0
+# e o resto da tela vazio, encolher 48→36 empurrava as 12 linhas de baixo para
+# o histórico; ao crescer de volta elas voltavam como 12 linhas acima do
+# prompt — o shell então escrevia na linha 12. Instância própria, com só um
+# marcador na linha 0: reaproveitar a do teste contaminaria a medida.
+SOCK2="$TMP/ciclo.sock"
+DISPLAY=$DISPLAY_XVFB HOME=$TMP/home "$APP" \
+    --cols 40 --rows 8 --debug-socket "$SOCK2" \
+    --cmd 'printf "MARCA"; sleep 600' >"$TMP/app2.log" 2>&1 &
+APP2_PID=$!
+i=0
+while [ ! -S "$SOCK2" ]; do
+    i=$((i + 1))
+    [ "$i" -gt 100 ] && { echo "2a instância não abriu o socket" >&2; break; }
+    sleep 0.1
+done
+if python3 - "$SOCK2" <<'PY'
+import json, socket, sys, time
+
+sock = sys.argv[1]
+
+
+def q(**kw):
+    c = socket.socket(socket.AF_UNIX)
+    c.connect(sock)
+    f = c.makefile("rwb")
+    f.write(json.dumps(kw).encode() + b"\n")
+    f.flush()
+    r = json.loads(f.readline())
+    c.close()
+    return r["ok"] if isinstance(r.get("ok"), dict) else r
+
+
+def estado():
+    st = q(cmd="state")
+    g = q(cmd="text", where="view", count=st["rows"]).get("lines") or []
+    com = [i for i, l in enumerate(g) if l.strip()]
+    return (com[0] if com else None), st["cursor"][0], st
+
+
+time.sleep(0.6)
+antes, cy_antes, st = estado()
+cols, rows = st["cols"], st["rows"]
+for r in (rows + 12, rows, rows + 12):
+    q(cmd="resize", cols=cols, rows=r)
+    time.sleep(0.5)
+depois, cy_depois, st = estado()
+print(
+    f"grade {st['cols']}x{st['rows']} texto antes={antes} depois={depois} "
+    f"cursor antes={cy_antes} depois={cy_depois}"
+)
+sys.exit(0 if (antes, cy_antes) == (0, 0) == (depois, cy_depois) else 1)
+PY
+then
+    ok "cursor e conteúdo ficam na linha 1 ao encolher e crescer"
+else
+    falhou "cursor/conteúdo desceu de linha ao redimensionar (maximizar/restaurar)"
 fi
 
 echo
