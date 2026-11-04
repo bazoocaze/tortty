@@ -5,7 +5,7 @@ A regra é uma só, e é de **natureza**, não de gosto:
 | o Python faz? | onde mora | o que é |
 |---|---|---|
 | **faz** | [`MIGRATION.md`](MIGRATION.md) | paridade: linha com `feito`/`parcial`/`falta`/`não` e o `arquivo:linha` de referência |
-| **não faz** | **este arquivo** | atividade nova, com id `M-*`, um gatilho e um custo |
+| **não faz** | **este arquivo** | atividade nova, com id `B<numero>`, um gatilho e um custo |
 
 Um trabalho tem **um dono**. Item que o Python faz nunca aparece aqui; item que
 ele não faz nunca aparece lá. Foi a falta dessa regra que encheu os dois
@@ -13,6 +13,12 @@ documentos com o mesmo trabalho em 2026-11-02 (ver `HISTORY.md`).
 
 ## Regras da fila (as mesmas do bzmux Python)
 
+- **Id: `B<numero>`, exclusivo.** Item novo recebe o próximo número livre —
+  `B1`, `B2`, … — e o número **nunca volta** a ser usado, nem depois que o item
+  fecha: id é identidade, não posição na fila. Os itens já registrados como
+  `M-*` ficam com o id que têm: renumerar não paga o diff e quebra as
+  referências que [`CONFIG.md`](CONFIG.md), [`LIMITATIONS.md`](LIMITATIONS.md) e
+  [`MIGRATION.md`](MIGRATION.md) já fazem.
 - **Registrar é só registrar.** A investigação (ler código, medir, reproduzir)
   acontece quando o item for executado, não quando é anotado. Na anotação vai o
   sintoma, o gatilho e o que vier de graça no caminho; nada de diagnóstico
@@ -55,5 +61,5 @@ documentos com o mesmo trabalho em 2026-11-02 (ver `HISTORY.md`).
 | M-Y | **Alvo macOS** (Metal, arm64 e x86_64) | mesmo caso do `M-X`: o Python não roda lá, e é justamente o alvo que a rota `winit`+`wgpu` torna barato | quando houver um Mac à mão (runner macOS no CI é pago por minuto) | médio-alto: `~/Library/Application Support`, Menlo/SF Mono, universal binary com `lipo`, runner macOS |
 | M-Z | Assinatura (Windows) e notarização (macOS) | sem elas o SmartScreen e o Gatekeeper pedem confirmação manual a cada download; o Python não tem nada disso | depois de `M-X`/`M-Y`: no primeiro download público | baixo em código (passos em [`PORTABILITY.md`](PORTABILITY.md)), com custo em dinheiro: developer id Apple a US$ 99/ano |
 | M-AB | **Exercitar o Linux Wayland** (verificação, não implementação) | as features já compilam (`winit` wayland + CSD adwaita) e nunca rodaram num compositor, então "funciona em Wayland" hoje é afirmação sobre compilação. O Python roda lá (GTK), então exercitar é paridade que só compilação não cobre | primeira sessão com compositor à mão (weston, sway, GNOME) | baixo: uma sessão de verificação (CSD, foco, `x/y` que o Wayland não entrega, clipboard por `wl-clipboard`) |
-| M-AC | **Desenho por região** (o `queue_draw_area` de verdade) | o Python faz (`view.py:330-364`); o dano por linha já vale na montagem das instâncias, mas a `draw` é tela inteira porque a swapchain não garante o conteúdo do frame anterior. Fechar exige alvo próprio (textura de cena + blit da faixa). custo alto para o ganho atual | quando o desenho por frame passar a incomodar em tela grande — medir antes (`draw` hoje em ~0,7 ms/call, [`BENCHMARKS`](BENCHMARKS.md)) | médio-alto: textura de cena do tamanho da janela, recriação no resize, blit da faixa e o dano em coordenada de pixel |
+| M-AC | **Desenho por região** (o `queue_draw_area` de verdade) | o Python faz (`view.py:330-364`); o dano por linha já vale na montagem das instâncias, mas a `draw` é tela inteira porque a swapchain não garante o conteúdo do frame anterior. Fechar exige alvo próprio (textura de cena + blit da faixa), e o custo não paga o ganho atual | quando o desenho por frame passar a incomodar em tela grande — medir antes (`draw` hoje em ~0,7 ms/call, [`BENCHMARKS`](BENCHMARKS.md)) | médio-alto: textura de cena do tamanho da janela, recriação no resize, blit da faixa e o dano em coordenada de pixel |
 | M-AD | **Costura de 1 px no box drawing** | em largura de célula fracionária (16,3 px) a haste horizontal de `─ ┬ ┴ ┼` deixa um furo de antialias na emenda entre células: aparece na moldura do `mc` e em `vim` com `listchars`. Já existe hoje (não veio do emoji nem da ligadura); o arredondar da origem da célula reduziu, não fechou | já ocorreu na moldura do `mc` numa célula fracionária | baixo: arredondar para pixel inteiro e/ou esticar a haste em 1 px, com A/B pelo `tools/pixel.py --diff` (a emenda fechou ou não) |
