@@ -1,17 +1,18 @@
 # bzmux (Rust)
 
 Terminal VT em Rust: pty + parser VT + grade próprios, desenho na GPU com
-`wgpu`. É a continuação do bzmux Python/GTK (`~/tortty-python`), que
-fica no papel de **referência de comportamento** até a migração terminar:
-[`docs/MIGRATION.md`](docs/MIGRATION.md) é o checklist do que falta, item por
-item, com o estado de cada um.
+`wgpu`. É a continuação do bzmux Python/GTK (`~/tortty-python`). A
+migração está **fechada** (2026-11-02): [`docs/MIGRATION.md`](docs/MIGRATION.md)
+é o registro dela, uma linha por funcionalidade do Python com o estado final e a
+referência `arquivo:linha`.
 
-Regra de convivência entre os dois repositórios: o Python é a **especificação
-observável** (o que o app faz hoje), este é o destino. Funcionalidade do Python
-que ainda não existe aqui é **pendência** (`docs/MIGRATION.md`), não limite. Só
-entra em [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) o que for decisão de não
-fazer — hoje: wide char (que aqui funciona e lá não, de propósito) e o que o
-próprio `LIMITATIONS.md` lista.
+Regra de convivência entre os dois repositórios: o Python **foi** a
+especificação observável enquanto a migração corria; hoje ele é histórico —
+serve para responder "como o app se comportava" e para julgar se algo aqui é
+regressão. O que ainda falta aqui **não é paridade**: é atividade nova, e mora
+no [`docs/BACKLOG.md`](docs/BACKLOG.md). Só entra em
+[`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) o que for decisão de não fazer (o
+que ele próprio lista); pendência de migração não existe mais.
 
 ## Documentação
 
@@ -22,13 +23,13 @@ só o README.md é para humano.
 - `TASK-bzmux-in-rust.md` — registro datado da fase 1 (o experimento de
   viabilidade): perguntas, decisões, o que foi medido naquele dia. Não é leitura
   corrente; o que continua valendo foi promovido para os docs abaixo.
-- `docs/MIGRATION.md` — **o painel de controle da migração**: inventário
-  completo de funcionalidades do bzmux Python, o estado de cada uma aqui
-  (`feito`/`parcial`/`falta`/`não faremos`) e a ordem de execução. Uma linha por
-  funcionalidade; é por ele que se responde "quanto falta". **Só escopo de
-  migração**: ideia que o Python não tem não entra aqui.
-- `docs/BACKLOG.md` — o que fica fora do escopo da migração: melhoria além da
-  paridade (ids `M-*`, cada uma com gatilho) e as regras da fila. Se o Python
+- `docs/MIGRATION.md` — **o registro da migração**: inventário completo das
+  funcionalidades do bzmux Python, o estado final de cada uma aqui
+  (`feito`/`parcial`/`falta`/`não`) e a ordem em que ela foi feita. Fechado em
+  200/200; **não é fila**. **Só escopo de migração**: ideia que o Python não tem
+  não entra aqui.
+- `docs/BACKLOG.md` — a fila: atividade que o Python não tem (id `B<numero>`,
+  os antigos `M-*`, cada uma com gatilho e custo) e as regras da fila. Se o Python
   não faz, não é paridade: é backlog.
 - `docs/BENCHMARKS.md` — **o único lugar com número** de vazão, parse, desenho
   e pegada (com data, governor e condição). Os outros docs citam o fato em uma

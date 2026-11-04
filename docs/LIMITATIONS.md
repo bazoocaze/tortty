@@ -12,9 +12,9 @@ existir, sai daqui e vira item concluído em [`HISTORY.md`](HISTORY.md).
 - **Um terminal, não um ambiente de janelas.** Sem splits nesta fase
   (`BACKLOG.md` M-J), sem gerenciador de layout; abas e workspaces existem,
   mas não sobrevivem ao fechar (`BACKLOG.md` M-I).
-- **Só o protocolo de imagem do kitty.** Sem sixel, sem iTerm2 inline, sem
-  `t=f`/`t=t`/`t=s` (arquivo, temp, memória compartilhada) e sem animação
-  (`a=f`/`a=a`). A imagem tem que vir no escape base64.
+- **Imagem embutida no escape (base64), protocolo do kitty.** A imagem precisa
+  chegar dentro do próprio escape; trafegar por arquivo/temp/SHM, animar quadros
+  e falar sixel/iTerm2 não são limite aceito: são fila do [`BACKLOG.md`](BACKLOG.md).
 - **`TERM=xterm-256color`.** Não inventamos entrada de terminfo própria: o
   objetivo é que `vim`, `mc`, `less` e `dmesg` funcionem com o que já existe.
 
@@ -48,7 +48,7 @@ existir, sai daqui e vira item concluído em [`HISTORY.md`](HISTORY.md).
 - **Sem `IRM`/`LNM`** (insert mode, newline mode) e sem `CSI ? 3` (80/132):
   raros a ponto de não pagar o teste. Ficam registrados no parser como
   pendência conhecida.
-- **Sem sixel/DECDL/DECDHL** e sem double-height: nem o Python tem.
+- **Sem DECDL/DECDHL** e sem double-height: nem o Python tem.
 
 ### Teclado
 

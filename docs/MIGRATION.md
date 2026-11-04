@@ -4,11 +4,13 @@ Painel de controle da migração. Uma linha por funcionalidade do bzmux Python,
 com o estado dela aqui. É por este arquivo que se responde "quanto falta" — e
 não por estimativa.
 
-- **O Python é a especificação observável** (`~/tortty-python`): o que
-  o app faz hoje, com `arquivo:linha` em cada linha das tabelas abaixo.
-- **O Rust é o destino.** Tudo que existe lá e não existe aqui é `falta`, não
-  limite. O que for decisão de **não** fazer mora em
-  [`LIMITATIONS.md`](LIMITATIONS.md) e aqui aparece como `não`.
+- **O Python foi a especificação observável** (`~/tortty-python`):
+  cada linha guarda o `arquivo:linha` de onde a funcionalidade veio.
+- **A migração está fechada** (2026-11-02): **200 linhas, todas `feito`**. Enquanto
+  ela corria, o que existia lá e não existia aqui era `falta`, não limite; hoje
+  o que falta aqui é **atividade nova** e mora no [`BACKLOG.md`](BACKLOG.md), com
+  id `B<numero>` (os antigos continuam `M-*`). O que é decisão de **não** fazer
+  mora em [`LIMITATIONS.md`](LIMITATIONS.md) e aqui apareceria como `não`.
 - Número de desempenho não entra aqui: [`BENCHMARKS.md`](BENCHMARKS.md).
 - Registro datado do que já foi fechado: [`HISTORY.md`](HISTORY.md).
 
@@ -22,20 +24,21 @@ não por estimativa.
 | 5. Entrada: teclado e protocolo do kitty | 16 | 0 | 0 | 0 | 0 | 16 |
 | 6. Entrada: mouse, seleção, clipboard, paste | 14 | 0 | 0 | 0 | 0 | 14 |
 | 7. Desenho: fonte, geometria, cores | 15 | 0 | 0 | 0 | 0 | 15 |
-| 8. Imagens do protocolo kitty | 13 | 0 | 0 | 3 | 0 | 16 |
+| 8. Imagens do protocolo kitty | 13 | 0 | 0 | 0 | 0 | 13 |
 | 9. Janela: abas, workspaces, cromo | 18 | 0 | 0 | 0 | 0 | 18 |
 | 10. Janela: ciclo de vida, geometria, estado | 10 | 0 | 0 | 0 | 0 | 10 |
 | 11. Configuração e CLI | 18 | 0 | 0 | 0 | 0 | 18 |
 | 12. Debug socket e instrumentação | 14 | 0 | 0 | 0 | 0 | 14 |
 | 13. Plataforma e distribuição | 6 | 0 | 0 | 0 | 0 | 6 |
 | 14. Testes e verificação | 9 | 0 | 0 | 0 | 0 | 9 |
-| **total** | **200** | **0** | **0** | **3** | **0** | **203** |
+| **total** | **200** | **0** | **0** | **0** | **0** | **200** |
 
-Equivalente pronto: **98,5%** (feito conta 1, parcial conta 0,5; `impedida` conta
-como `falta`). O total aqui é só paridade: melhoria que o Python não tem mora no
+Equivalente pronto: **100%** (200 de 200 linhas de paridade `feito`; `parcial`
+conta 0,5 e `impedida` conta como `falta` — nenhuma das duas existe mais). O total
+aqui é só paridade: melhoria que o Python não tem mora no
 [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
 
-O que decide o que fazer agora é a seção 16.
+O que veio depois da migração — e a ordem em que ela foi feita — está na seção 16.
 
 ## Regras deste documento
 
@@ -128,7 +131,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | C2 | SGR 30-37, 39, 40-47, 49, 90-97, 100-107 | `term.py:528-539` → `term.rs` | feito |
 | C3 | SGR 38;5 / 48;5 (256) e 38;2 / 48;2 (truecolor) | `term.py:540-576` → `term.rs` | feito |
 | C4 | Subparâmetros `:` (`38:2::r:g:b`) | `term.py:500-512,579-591` → `term.rs` | feito |
-| C5 | SGR 3 itálico, 2 faint, 5/6 blink, 9/29 riscado | não existem (`LIMITATIONS.md:44-53`) → `cell.rs`, `render.rs` | feito (SGR 5 anima: fase de 500 ms em `Blink`) |
+| C5 | SGR 3 itálico, 2 faint, 5/6 blink, 9/29 riscado | não existem (`LIMITATIONS.md`) → `cell.rs`, `render.rs` | feito (SGR 5 anima: fase de 500 ms em `Blink`) |
 | C6 | SGR 53/55 overline, 58/59 cor do sublinhado | não existem → `term.rs` | feito |
 | C7 | SGR 4:2/4:3/4:4/4:5 (estilos de sublinhado) | `4:x` colapsa em simples (`term.py:518-519`) → `render.rs` | feito (curvo é aproximação em 4 retângulos) |
 | C8 | Bold sem "bold as bright" | `view.py:992` → `render.rs` | feito (mesma semântica) |
@@ -228,9 +231,6 @@ Rust (sem linha, para não envelhecer a cada commit).
 | H11 | `q=` silencia resposta | `graphics.py:170` | feito: qualquer `q` diferente de 0 cala a resposta (o `icat` manda `q=2`) |
 | H12 | Imagem acompanha a rolagem e é podada do histórico | `graphics.py:74-96` | feito: a colocação vive em linha de tela (negativa = histórico); `scroll_up` desce todo mundo, rolagem de região descarta, teto do scrollback e reflow podam o inalcançável. No desenho a linha na tela é `linha + view_off` — verificado com screenshot: a imagem volta no lugar certo ao subir no histórico |
 | H13 | `ED 3` limpa imagens | `term.py:481-485` | feito: `CSI 3 J` limpa imagens e colocações junto com o histórico; `ED 2` **não** limpa (verificado nos dois sentidos) |
-| H17 | `t=f`/`t=t`/`t=s` (arquivo, temp, shm) | não existem (`LIMITATIONS.md:99-108`) | não (decisão: só base64) |
-| H18 | Animação (`a=f`/`a=a`) | ignorado de propósito | não |
-| H19 | Sixel / iTerm2 inline | não existem | não |
 
 ## 9. Janela: abas, workspaces, cromo
 
@@ -344,75 +344,34 @@ Rust (sem linha, para não envelhecer a cada commit).
 Não existe tabela aqui: o painel no topo deste arquivo é a **única** contagem.
 Uma segunda cópia envelhece calada (esta existiu e ficou 9 itens atrás).
 
-## 16. Ordem de execução
+## 16. A ordem que a migração seguiu
 
-A ordem não é a das tabelas: é por **o que destrava uso diário** e por
-dependência. Cada fatia termina com `cargo test` verde, `mc`/`vim`/`dmesg`
-funcionando e uma linha em `HISTORY.md`.
+A ordem não foi a das tabelas: foi por **o que destrava uso diário** e por
+dependência. Fechou assim, cada fatia com o critério que a fechou:
 
-**F0 — Higiene (feito, 2026-11-01).** `cargo fmt` + `clippy` (`all`,
-`correctness`, `suspicious`, `pedantic`) sem warning, `unsafe_code = deny` com
-allow local, um comando único (`tools/check.sh`) no pre-commit e no CI.
-Pronto quando: `./tools/check.sh` verde do zero.
+| fatia | o que era | o critério que valeu |
+|---|---|---|
+| F0 | higiene: `fmt`, `clippy`, um comando só no hook e no CI | `./tools/check.sh` verde do zero |
+| F1 | terminal utilizável antes de qualquer cromo | `vim` e `mc` com mouse, cópia entre duas instâncias, `bat` com itálico/negrito, `dmesg` navegável por teclado |
+| F2 | reflow e âncoras | estreitar a janela com histórico longo preserva o parágrafo e a seleção; `CSI 3J` não pula a visão |
+| F3 | configuração em arquivo, com recarga a quente | fonte/cor/padding/bell/scrollback mudam ao vivo; linha inválida **mantém** a config anterior |
+| F4 | abas, workspaces e cromo | atalhos, cartões, renomear, arrastar para reordenar, roda na barra, título por OSC, flash de bell |
+| F5 | protocolos de entrada (kitty keyboard) | flags 1/2/8/16 conferidas no pty, não no papel |
+| F6 | imagens do kitty | `icat` desenha, rola junto e é podada do histórico |
+| F7 | pisca de cursor (o resto virou atividade nova) | A/B de frame com o cursor piscando e com SGR 5 |
+| F8 | portas Linux | `WGPU_BACKEND=gl` desenha com GPU real (`radeonsi`) |
+| F9 | splits | não é paridade: foi para o `BACKLOG` antes de começar |
 
-**F1 — Terminal utilizável de verdade (antes de qualquer cromo). FEITA em
-2026-11-02** — critério conferido: `vim` e `mc` com mouse, cópia/cola entre
-duas instâncias, `bat` com itálico/negrito e `dmesg` navegável por teclado.
-F8-F9 (seleção), F12-F15 (clipboard/paste), E4-E6 (Ctrl/Alt/Shift+Tab),
-E9 (dead keys), F1-F6 (mouse reporting), D6-D8 (scroll por teclado + indicador),
-B27 (?2004 payload), C5-C7 (SGR completo), D4-D5 (roda com delta).
-Pronto quando: `vim` com mouse, `mc` com mouse, copiar/colar entre apps,
-`bat`/`git diff` com riscado, `dmesg` com histórico navegável por teclado.
+**Daqui para frente a fila é o [`BACKLOG.md`](BACKLOG.md)**, e ela é de atividade
+nova: paridade pendente não existe mais.
 
-**F2 — Reflow e âncoras (A21-A23, D10, F9).**
-Pronto quando: estreitar a janela com histórico longo preserva o parágrafo e a
-seleção acompanha; `CSI 3J` não pula a visão.
+### 16.1 Regras que valeram no caminho
 
-**F3 — Configuração (K1-K13, K18-K19, C11-C13, G11, K21). FEITA em
-2026-11-02** — critério conferido: `bzmux.conf` muda fonte (14→16 pt ao vivo),
-cores (fundo verde→roxo), padding (8→4 px, clique continua na célula certa),
-bell, scrollback e `copy_on_select` (on copia PRIMARY+CLIPBOARD, off só
-PRIMARY); o auto-reload aplica em ~250 ms e, com linha inválida, **mantém** a
-configuração anterior (`linha 3: 'afffont_size': chave desconhecida` no log).
-Desvios: erro de config ainda vai para o log, não para toast (K13 depende do
-toast da F4); o **pisca** do cursor da config não anima ainda (G12).
-
-**F4 — Abas e workspaces (I1-I17). FEITA em 2026-11-02** — critério
-conferido: Ctrl+Shift+T/W (aba) e N/Q (workspace), Ctrl+Shift+1..9 e Alt+1..9 e
-Super+N/Q/1..9, sidebar com cartões (some com um workspace só), duplo clique
-renomeia, clique esquerdo troca e meio fecha, arrastar reordena, roda na barra
-circula, flash de bell e título por OSC 0/2. Persistência de layout e splits
-não são paridade (o Python não tem): viraram `M-I` e `M-J` no
-[`BACKLOG`](BACKLOG.md).
-
-**F5 — Protocolos de entrada completos (E12-E15, E17-E19).**
-Kitty keyboard (push/pop/query, flags 1/2/8/16). Mouse em pixels (`M-T`) e
-hyperlink clicável (`M-C`) são atividade nova: ficam no [`BACKLOG`](BACKLOG.md).
-
-**F6 — Imagens do kitty (H1-H13).**
-Pronto quando `icat` e `kitten icat` desenham, rolam junto e são podadas.
-
-**F7 — Qualidade de vida (G12).** Sobrou só o que é paridade: o pisca do
-cursor (feito). Scrollbar (`M-M`), busca (`M-D`), seleção por palavra (`M-E`),
-IME (`M-F`), OSC 7/133/52 (`M-R`) e notificação (`M-K`) são atividade nova e
-moram no [`BACKLOG`](BACKLOG.md) — não são fatia de migração.
-
-**F8 — Portas Linux.** O que resta é o backend GL (`M5`), feito. Windows e macOS **saíram do painel** em 2026-11-02: o
-Python nunca rodou lá, então portar não é paridade — é `M-X` e `M-Y` no
-[`BACKLOG`](BACKLOG.md), com a assinatura em `M-Z` e o socket do Windows em
-`M-N`.
-
-**F9 — Splits.** Fora da migração: é `M-J` no [`BACKLOG`](BACKLOG.md).
-
-### 16.1 Regras de avanço
-
-- Fatia só começa quando a anterior está com `cargo test` verde e os roteiros
-  manuais dela passando. Exceção: item isolado que destrava outro (registrar na
-  linha).
-- Nada de "aproveitar para refatorar" dentro da fatia: refatoração que não é
-  requisito é melhoria: vai para o `BACKLOG.md` e não entra aqui.
-- Toda funcionalidade migrada traz o teste equivalente do `checks.py` quando
-  existe; quando não existe, o roteiro manual vai escrito na linha.
+Ficam registradas porque explicam o formato das linhas deste arquivo: fatia só
+começava com `cargo test` verde e os roteiros manuais dela passando; refatoração
+que não era requisito virava `BACKLOG`, não entrava na fatia; e toda
+funcionalidade migrada trazia o teste equivalente do `checks.py` — quando não
+havia equivalente, o roteiro manual ficava escrito na própria linha.
 
 ### 16.2 Checks: onde moram e o que falta
 
@@ -423,6 +382,13 @@ scrollback, seleção, dano, config, gráficos) e **6 no lado do app**
 `window_state`, `debug_socket`, `desktop_shortcut`). O núcleo não conhece
 `cli.rs`/`keys.rs`/`mouse.rs`/`state.rs`/`debugsock.rs`, e é por isso que existem
 os dois donos: o `checks.py` do Python cobria os 31 num arquivo só.
+
+Três checks do Python não têm nome igual aqui, porque a cobertura é a mesma com
+outro recorte: `graphics_image_and_offset` + `graphics_follow_history` viraram
+`graphics_kitty` (offset e histórico num teste só, sobre as mesmas imagens), e
+`shortcut_remove_only_own_name` virou `desktop_shortcut` (instala, confere o
+`.desktop`/ícone e remove no `--uninstall` — o "só apaga o que é seu" do Python
+é a metade da remoção).
 
 Check novo entra na lista e **compara com o esperado** — "não panicou" não é
 check. O que exige janela não é check: é [`tools/visual.sh`](../tools/visual.sh).

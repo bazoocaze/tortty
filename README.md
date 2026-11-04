@@ -5,19 +5,20 @@ desenho na GPU (`wgpu`) por instâncias. É o experimento da pergunta "reescreve
 o bzmux (Python/GTK) em Rust resolve distribuição e desempenho?" — o andamento,
 os números e as decisões estão em [`TASK-bzmux-in-rust.md`](TASK-bzmux-in-rust.md).
 
-Estado: **migração em andamento**. O experimento de viabilidade fechou com
-8–9,5x o Python em vazão ([`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)) e a decisão
-foi migrar. O que já veio e o que falta de cada funcionalidade do bzmux Python
-está item por item em [`docs/MIGRATION.md`](docs/MIGRATION.md) — hoje: parser VT,
-grade, pty, GPU, teclado, mouse, seleção/clipboard, debug socket e scrollback
-funcionam; abas/workspaces, imagens do kitty, config em arquivo, reflow e busca
-ainda não.
+Estado: **migração concluída** (2026-11-02). O experimento de viabilidade
+fechou com 8–9,5x o Python em vazão ([`docs/BENCHMARKS.md`](docs/BENCHMARKS.md))
+e a decisão foi migrar; o painel de [`docs/MIGRATION.md`](docs/MIGRATION.md)
+fechou em **200 de 200** linhas de paridade. Está aqui, funcionando: parser VT,
+grade, pty, GPU (Vulkan, GL e CPU), teclado (protocolo do kitty incluso), mouse,
+seleção/clipboard, abas e workspaces, imagens do kitty, configuração em arquivo
+com recarga a quente, reflow, ligaduras, emoji/CJK, busca não. O que vem agora é
+atividade nova, na fila de [`docs/BACKLOG.md`](docs/BACKLOG.md).
 
 ## Documentação
 
 | arquivo | para que serve |
 |---|---|
-| [`docs/MIGRATION.md`](docs/MIGRATION.md) | o checklist da migração: funcionalidade, estado, o que falta |
+| [`docs/MIGRATION.md`](docs/MIGRATION.md) | o registro da migração: funcionalidade, estado final, origem no Python |
 | [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | o único lugar com número (vazão, parse, desenho, pegada) |
 | [`docs/CONFIG.md`](docs/CONFIG.md) | o arquivo de configuração: chaves, padrões e o que é erro |
 | [`docs/INSTALL.md`](docs/INSTALL.md) | instalar, desinstalar, verificar e publicar binário |

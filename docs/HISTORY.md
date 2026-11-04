@@ -997,3 +997,45 @@ da origem: o painel ficou com 203 linhas (200 feito / 3 não). O `§16.2` deixou
 moram: 25 no núcleo, 6 no app) e a costura de 1 px do box drawing entrou no
 `BACKLOG` como `M-AD` — ela nunca estava registrada, apesar de o `HISTORY` de
 ontem dizer que estava.
+
+## 2026-11-02 — Migração fechada em 200/200 (e a papelada do fecho)
+
+O painel chegou a zero pendência de paridade. O que sobrou não era trabalho de
+migração, era arrumação — e é isso que este dia fechou.
+
+**As três linhas de imagem não eram paridade.** `H17` (`t=f`/`t=t`/`t=s`),
+`H18` (animação `a=f`/`a=a`) e `H19` (sixel/iTerm2) estavam marcadas `não`, com a
+coluna `ref` dizendo "não existem" — ou seja, o Python também não tem as três.
+Pela regra do próprio painel (se o Python não faz, não é paridade) elas não
+podiam estar ali. Saíram: hoje são `B1`, `B2` e `B3` no `BACKLOG`, com gatilho e
+custo escritos, porque a decisão deixou de ser "não faremos para sempre" e virou
+"quando alguém precisar". O `LIMITATIONS.md` deixou de reivindicá-las: ficou só
+o fato que continua valendo (imagem embutida no escape, base64) e a frase de que
+trafegar por arquivo/SHM, animar e falar sixel são fila, não limite.
+
+**Painel: 200 de 200 = 100%.** Área 8 fechou em 13, ninguém ficou `parcial`.
+
+**A papelada do fecho**, que é o que impede o documento de continuar falando no
+futuro:
+
+- `§16` deixou de ser plano ("pronto quando…") e virou registro da ordem que a
+  migração seguiu, com o critério que fechou cada fatia; a fila passou a ser o
+  `BACKLOG`, dito na seção. `§16.1` virou "regras que valeram no caminho" — são
+  elas que explicam o formato das linhas.
+- `§16.2` ganhou o mapa dos três checks que mudaram de nome (`graphics_kitty`
+  cobre `graphics_image_and_offset` + `graphics_follow_history`;
+  `desktop_shortcut` cobre `shortcut_remove_only_own_name`), para ninguém
+  "descobrir" cobertura faltando onde não falta.
+- `AGENTS.md`: a regra de convivência com o Python mudou de tempo verbal — ele
+  **foi** a especificação observável e hoje é histórico; o que falta aqui é
+  atividade nova, não paridade. Também entrou a fila com id `B<numero>`.
+- `README.md` e o cabeçalho do `MIGRATION` deixaram de dizer "em andamento", e a
+  lista de "ainda não" do README estava velha havia dias (dizia que abas,
+  imagens, config e reflow faltavam).
+- versão **1.0.0**: fechar a migração é o único marco deste projeto que não é
+  "mais um item", e a convenção de patch não tinha como exprimi-lo.
+
+**Continua aberto, e não é paridade:** `M-AB` (exercitar Wayland num compositor)
+e `M-AC` (desenho por região), ambos no `BACKLOG` por decisão de 2026-11-02, mais
+a pergunta ainda sem resposta sobre as 5 linhas `feito` do painel cuja `ref`
+também diz que o Python não tem (`C5`, `C6`, `M1`, `M5`, `M8`).
