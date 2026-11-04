@@ -38,6 +38,14 @@ A entrada do menu leva `StartupWMClass=bzmux` — o winit põe `WM_CLASS` igual 
 nome do binário (`"bzmux", "bzmux"`), então o agrupador de janelas do ambiente
 associa o atalho à janela certa.
 
+E leva `StartupNotify=false`, porque o app não responde o contrato de
+notificação de início (`DESKTOP_STARTUP_ID` → `_NET_STARTUP_INFO`): com
+`true`, o painel abre uma entrada fantasma "Starting bzmux", deixa o ponteiro
+em modo ocupado e só a remove no timeout dele → [`BACKLOG.md: B7`](BACKLOG.md).
+O aviso de "abrindo" que se perde com isso dependia dessa resposta, que nunca
+houve; quando (e se) o app completar a notificação, a chave volta a `true` junto
+com o código que a sustenta.
+
 ## Conviver com o bzmux Python
 
 O bzmux Python instala pelo pipx com o nome `bzmux`. Com o Python passando a

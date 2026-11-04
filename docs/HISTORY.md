@@ -1135,3 +1135,21 @@ continua valendo (2 linhas por frame, não a tela inteira). Gate novo: passo 7
 do `tools/visual.sh` escreve **uma linha por vez** até passar de duas telas e
 compara grade × pixel linha a linha; vermelho no binário anterior, verde aqui.
 
+## 2026-11-03 — B7: `StartupNotify=false` no atalho
+
+Abrindo pelo atalho do sistema apareciam **duas** entradas na barra de tarefas
+— o `bzmux` e uma **"Starting bzmux"** — com o ponteiro em modo ocupado por
+muitos segundos, até a fantasma sumir sozinha. A entrada do menu pedia
+`StartupNotify=true`: quem lança abre a notificação de início e espera o app
+avisar que terminou (`DESKTOP_STARTUP_ID` + `_NET_STARTUP_INFO`). O bzmux nunca
+avisou, então o painel mantinha a entrada e o cursor ocupado até o timeout — o
+que explica exatamente o "muitos segundos" e o fato de o sintoma não existir
+quando se roda pelo terminal.
+
+Decisão do dono: a saída mais simples. O `.desktop` passa a levar
+`StartupNotify=false`, então nada é aberto esperando resposta. O aviso de
+"abrindo" que se perderia com isso dependia dessa mesma resposta, ou seja,
+nunca funcionou. Se um dia o app completar a notificação (o `winit` tem
+`read_token_from_env` + `with_activation_token`, e o X11 dele manda o `remove`
+ao criar a janela), a chave volta a `true` junto com o código.
+

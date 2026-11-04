@@ -213,7 +213,8 @@ StartupWMClass=$APP
 Terminal=false
 Categories=System;TerminalEmulator;
 Keywords=terminal;shell;console;
-StartupNotify=true
+# sem notificacao de inicio: o app nao responde o contrato (B7)
+StartupNotify=false
 EOF
             $SUDO command install -m 644 "$tmpd" "$DESKTOP"
             rm -f "$tmpd"
