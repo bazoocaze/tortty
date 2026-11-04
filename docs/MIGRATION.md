@@ -13,28 +13,28 @@ não por estimativa.
 - Registro datado do que já foi fechado: [`HISTORY.md`](HISTORY.md).
 
 ## Painel
-| área | feito | parcial | falta | não | impedida | transferida | total |
-|---|---|---|---|---|---|---|---|
-| 1. Núcleo: célula, cores, grade | 18 | 0 | 0 | 0 | 0 | 0 | 18 |
-| 2. Parser: controles, CSI, modos | 28 | 0 | 0 | 0 | 0 | 0 | 28 |
-| 3. Parser: SGR e OSC | 13 | 0 | 0 | 0 | 0 | 0 | 13 |
-| 4. Scrollback e visão do histórico | 8 | 0 | 0 | 0 | 0 | 0 | 8 |
-| 5. Entrada: teclado e protocolo do kitty | 16 | 0 | 0 | 0 | 0 | 0 | 16 |
-| 6. Entrada: mouse, seleção, clipboard, paste | 14 | 0 | 0 | 0 | 0 | 0 | 14 |
-| 7. Desenho: fonte, geometria, cores | 15 | 0 | 0 | 0 | 0 | 1 | 16 |
-| 8. Imagens do protocolo kitty | 13 | 0 | 0 | 3 | 0 | 0 | 16 |
-| 9. Janela: abas, workspaces, cromo | 18 | 0 | 0 | 0 | 0 | 0 | 18 |
-| 10. Janela: ciclo de vida, geometria, estado | 10 | 0 | 0 | 0 | 0 | 0 | 10 |
-| 11. Configuração e CLI | 18 | 0 | 0 | 0 | 0 | 0 | 18 |
-| 12. Debug socket e instrumentação | 14 | 0 | 0 | 0 | 0 | 0 | 14 |
-| 13. Plataforma e distribuição | 6 | 0 | 0 | 0 | 0 | 1 | 7 |
-| 14. Testes e verificação | 9 | 0 | 0 | 0 | 0 | 0 | 9 |
-| **total** | **200** | **0** | **0** | **3** | **0** | **2** | **205** |
+| área | feito | parcial | falta | não | impedida | total |
+|---|---|---|---|---|---|---|
+| 1. Núcleo: célula, cores, grade | 18 | 0 | 0 | 0 | 0 | 18 |
+| 2. Parser: controles, CSI, modos | 28 | 0 | 0 | 0 | 0 | 28 |
+| 3. Parser: SGR e OSC | 13 | 0 | 0 | 0 | 0 | 13 |
+| 4. Scrollback e visão do histórico | 8 | 0 | 0 | 0 | 0 | 8 |
+| 5. Entrada: teclado e protocolo do kitty | 16 | 0 | 0 | 0 | 0 | 16 |
+| 6. Entrada: mouse, seleção, clipboard, paste | 14 | 0 | 0 | 0 | 0 | 14 |
+| 7. Desenho: fonte, geometria, cores | 15 | 0 | 0 | 0 | 0 | 15 |
+| 8. Imagens do protocolo kitty | 13 | 0 | 0 | 3 | 0 | 16 |
+| 9. Janela: abas, workspaces, cromo | 18 | 0 | 0 | 0 | 0 | 18 |
+| 10. Janela: ciclo de vida, geometria, estado | 10 | 0 | 0 | 0 | 0 | 10 |
+| 11. Configuração e CLI | 18 | 0 | 0 | 0 | 0 | 18 |
+| 12. Debug socket e instrumentação | 14 | 0 | 0 | 0 | 0 | 14 |
+| 13. Plataforma e distribuição | 6 | 0 | 0 | 0 | 0 | 6 |
+| 14. Testes e verificação | 9 | 0 | 0 | 0 | 0 | 9 |
+| **total** | **200** | **0** | **0** | **3** | **0** | **203** |
 
-Equivalente pronto: **98.5%** (feito conta 1, parcial conta 0,5; `impedida` conta como `falta`; `transferida` sai dos dois lados — nem pronto, nem pendente no painel). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
+Equivalente pronto: **98,5%** (feito conta 1, parcial conta 0,5; `impedida` conta
+como `falta`). O total aqui é só paridade: melhoria que o Python não tem mora no
+[`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
 
-`transferida` é paridade que o dono **tirou do painel** por decisão de sequência (2026-11-02: `M4` e `G17`), e que continua registrada aqui só como ponteiro para o id no [[`BACKLOG`](BACKLOG.md), onde o trabalho passa a morar. A linha fica porque a
-referência continua sendo do Python — o que saiu do painel não é "não faremos".
 O que decide o que fazer agora é a seção 16.
 
 ## Regras deste documento
@@ -42,11 +42,9 @@ O que decide o que fazer agora é a seção 16.
 1. **Uma linha, uma funcionalidade.** Se a linha precisa de "e" para descrever,
    são duas linhas.
 2. **Estado sempre preenchido** com um destes: `feito`, `parcial`, `falta`,
-   `não`, `impedida`, `transferida`. `parcial` exige dizer **o que falta** na própria linha;
+   `não`, `impedida`. `parcial` exige dizer **o que falta** na própria linha;
    `impedida` exige dizer **o que impede** (ambiente que não existe aqui), e não
-   é o mesmo que `não`: `não` é decisão, `impedida` é falta de condição;
-   `transferida` é paridade que o dono tirou do painel e mandou para o
-   [`BACKLOG.md`](BACKLOG.md) (leva o id de lá, ex.: `M-AB`). **Melhoria
+   é o mesmo que `não`: `não` é decisão, `impedida` é falta de condição. **Melhoria
    não tem estado aqui**: se o Python não faz, não é paridade — vira item do
    [`BACKLOG.md`](BACKLOG.md) e não ganha linha neste arquivo.
 3. **Fechar item** = mudar o estado, rodar a verificação da coluna
@@ -212,7 +210,6 @@ Rust (sem linha, para não envelhecer a cada commit).
 | G14 | Seleção desenhada como inversão | `view.py:943,953-973` → `render.rs` | feito (o default resolve pelo outro extremo) |
 | G15 | `?2026` segura o frame (teto 200 ms) | `view.py:296-324` | feito: `frame::Gate` (`SYNC_MS = 200`), testado sem display (transação aberta, fecho imediato, app que nunca fecha não desenha a cada leitura) |
 | G16 | Frame coalescido (~16 ms), não um desenho por leitura | `view.py:286-320` | feito: `frame::Gate` (`FRAME_MS = 16`), alimentado no `Wake` **depois** do `drain` (o `?2026` só é visível após parsear). 900 frames: 1499–1585 desenhos → **63–74**, mesmo fps (`BENCHMARKS.md`) |
-| G17 | Dano por região (`queue_draw_area`) | `view.py:330-364` | transferida para `M-AC` (o dano por linha já está feito; o que falta é a *draw* por região, e o dono decidiu em 2026-11-02 que o custo não fica no caminho da migração) |
 
 ## 8. Imagens do protocolo kitty
 
@@ -322,7 +319,6 @@ Rust (sem linha, para não envelhecer a cada commit).
 | M1 | Um binário sem stack de sistema (sem GTK/Pango/fontconfig/Python) | impossível no Python | feito |
 | M2 | pty POSIX por uma API só (`PtySize`, `spawn`, `read`, `write`) | `pty.fork` (POSIX só) → `pty.rs` | feito |
 | M3 | Linux X11 + Vulkan | ambiente de dev | feito |
-| M4 | Linux Wayland | `view.py` (GTK roda em Wayland) | transferida para `M-AB`: as features estão compiladas (`winit` wayland + CSD adwaita) e o que falta é **exercitar** num compositor, que não existe nesta máquina e cujo `apt` é vetado |
 | M5 | Linux backend GL (`WGPU_BACKEND=gl`) | n/a | feito: `WGPU_BACKEND=gl` desenha com GPU real (`Gl AMD Radeon Graphics (radeonsi …)`, `last_frame: drawn`, texto e cursor na captura). Três consertos que só aparecem no GL: display handle na instância (sem ele o EGL responde `gl not compatible with provided surface`), `CompositeAlphaMode::Opaque` (o default dava janela translúcida) e escolha de adaptador preferindo hardware |
 | M8 | CI matriz de build + release por tag | não existe → `.github/workflows/release.yml` + `tools/release.sh` | feito para Linux x86_64/aarch64 (os alvos macOS/Windows são `M-X`/`M-Y` do [`BACKLOG`](BACKLOG.md)) |
 | M10 | Instalador: comando `bzmux`, menu, ícone, `--uninstall`, `--check` | `install.sh` (pipx + deps de sistema) → `install.sh` (copia 1 binário) | feito |
@@ -401,11 +397,7 @@ cursor (feito). Scrollbar (`M-M`), busca (`M-D`), seleção por palavra (`M-E`),
 IME (`M-F`), OSC 7/133/52 (`M-R`) e notificação (`M-K`) são atividade nova e
 moram no [`BACKLOG`](BACKLOG.md) — não são fatia de migração.
 
-**F8 — Portas Linux (M4-M5).** `M5` (backend GL) está feito. `M4` (Wayland)
-**saiu do painel em 2026-11-02** a pedido do dono: o que falta é exercitar num
-compositor, e não há compositor nesta máquina — virou `M-AB` no
-[`BACKLOG`](BACKLOG.md), junto com a decisão de não deixar item sem ambiente
-trancando a conta da migração. Windows e macOS **saíram do painel** em 2026-11-02: o
+**F8 — Portas Linux.** O que resta é o backend GL (`M5`), feito. Windows e macOS **saíram do painel** em 2026-11-02: o
 Python nunca rodou lá, então portar não é paridade — é `M-X` e `M-Y` no
 [`BACKLOG`](BACKLOG.md), com a assinatura em `M-Z` e o socket do Windows em
 `M-N`.

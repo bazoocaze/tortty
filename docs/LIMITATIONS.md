@@ -20,7 +20,7 @@ existir, sai daqui e vira item concluído em [`HISTORY.md`](HISTORY.md).
 
 ## Plataforma
 
-- **Linux X11 é o alvo testado.** Wayland é paridade pendente (`M4` no painel);
+- **Linux X11 é o alvo testado.** Wayland não é exercitado aqui (`M-AB` no BACKLOG);
   Windows e macOS **não são paridade** (o Python nunca rodou lá) e estão na fila
   como `M-X`/`M-Y` do [`BACKLOG`](BACKLOG.md), com o que cada um exige em
   [`PORTABILITY.md`](PORTABILITY.md). Até passarem por CI, "funciona lá" é

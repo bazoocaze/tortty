@@ -989,9 +989,10 @@ failover escrito (`skips > N` com `drawn == 0`) e o resto do que ele pedia
 (estado degradado com aviso, instalador explicando alvo bloqueado, clipboard sem
 travar o start, caminho sem pixel) já feito.
 
-**Dívida de doc paga no mesmo passo:** o painel ganhou o estado `transferida`
-(`M4` → `M-AB` e `G17` → `M-AC`, decisão do dono em 2026-11-02, para item sem
-ambiente e item caro não trancarem a conta), o `§16.2` deixou de listar 27 checks
+**Dívida de doc paga no mesmo passo:** `M4` e `G17` **saíram do painel** a pedido
+do dono (2026-11-02) e passaram a existir só no `BACKLOG`, como `M-AB` e `M-AC` —
+item sem ambiente e item caro não trancam a conta da migração, e mover é remover
+da origem: o painel ficou com 203 linhas (200 feito / 3 não). O `§16.2` deixou de listar 27 checks
 "ainda sem equivalente" que já existiam com outro nome (agora diz onde os checks
 moram: 25 no núcleo, 6 no app) e a costura de 1 px do box drawing entrou no
 `BACKLOG` como `M-AD` — ela nunca estava registrada, apesar de o `HISTORY` de
