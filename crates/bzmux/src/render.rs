@@ -1525,8 +1525,9 @@ impl Renderer {
         if !self.avisou_skip {
             self.avisou_skip = true;
             eprintln!(
-                "bzmux: a superfície não apresenta (timeout/occluded) — o desenho funciona, \
-                 a janela é que não recebe frame; ver docs/DEBUG.md (ambiente confinado)"
+                "bzmux: a superfície não apresenta (timeout/occluded) — o app desenha, mas o \
+                 frame não chega à tela. Ambiente confinado sem GPU visível costuma ser isso: \
+                 confira /dev/dri e, no sandbox, use `sandbox @gpu`; ver docs/DEBUG.md"
             );
         }
         FrameOutcome::Skipped

@@ -319,11 +319,24 @@ O primeiro campo a olhar é o par que separa as duas causas:
 | 0 | > 0 | `skipped (timeout/occluded)` | o desenho roda, a **superfície** recusa: ambiente (compositor/WM/sandbox), não o app |
 | 0 | 0 | `nenhum` | o app nem chegou a desenhar: veja o log (`bzmux: GPU:`), pty e config |
 
+**`drawn > 0` não prova que a tela desenhou.** Medido em 2026-11-03 no `sandbox` sem
+GPU: com `WGPU_BACKEND=gl` o contador subia (`drawn 5`, `skips 0`) e o pixmap da
+própria janela **não mudava um byte** — present que retorna sucesso e não pinta.
+O teste que não mente é comparar a janela com ela mesma:
+
+```sh
+xwd -id <xid> -silent -out /tmp/a.xwd      # xid vem do `state` do socket
+# ... manda o app pintar algo (verbo `write`) ...
+xwd -id <xid> -silent -out /tmp/b.xwd
+cmp -s /tmp/a.xwd /tmp/b.xwd && echo "não pinta" || echo "pinta"
+```
+
 Quando a superfície recusa o frame, o app escreve **uma vez** no stderr:
 
 ```
-bzmux: a superfície não apresenta (timeout/occluded) — o desenho funciona, a
-janela é que não recebe frame; ver docs/DEBUG.md (ambiente confinado)
+bzmux: a superfície não apresenta (timeout/occluded) — o app desenha, mas o
+frame não chega à tela. Ambiente confinado sem GPU visível costuma ser isso:
+confira /dev/dri e, no sandbox, use `sandbox @gpu`; ver docs/DEBUG.md
 ```
 
 Sinais no log, nessa ordem, quando é o sandbox:
@@ -355,14 +368,37 @@ política de erro, não capacidade do ambiente:
 |---|---|---|
 | `kitty 0.48.2` | **abre e desenha**; só reclama do DBus | `xdotool` acha a janela; o log só tem `glfw error 65544` (DBus) |
 | `ghostty 1.3.1` | abre a janela, mas o GL degrada: `MESA: error: Failed to attach to x11 shm` em série | não sai; a janela existe e o log repete o erro de SHM |
-| `bzmux` (Vulkan/lavapipe) | **aborta** (134) no `set_window_title`: `BadDrawable`, `request_code 149` | panic da winit em `x11/window.rs:1028` |
-| `bzmux` com `BZMUX_NO_TITLE=1` | **funciona**: `state` → `drawn > 0`, `skips 0` | socket de debug |
-| `bzmux` com `WGPU_BACKEND=gl` | também funciona: não aborta e fica vivo | log sem panic |
+| `bzmux` (Vulkan/lavapipe), até 1.0.4 | **abortava** (134) no `set_window_title` | panic da winit em `x11/window.rs:1028` |
+| `bzmux` desde 1.0.5 | **não aborta**: o erro X que não é nosso é registrado e o app segue (hook abaixo) | `sandbox bzmux` vivo por 12 s, respondendo no socket |
+| `bzmux` com `WGPU_BACKEND=gl` | também não aborta, mas **não pinta** (present no-op silencioso) | `xwd` da janela idêntico antes/depois |
+| `sandbox @gpu bzmux` | **pinta de verdade** (`RADV RENOIR`, pixmap muda) | `xwd` antes/depois diferente |
 
-Duas conclusões que economizam horas: (1) o sandbox **não** impede desenhar — quem
-mata é a winit abortando num erro X que não é dela, enquanto a GLFW (kitty,
-ghostty) registra e segue; (2) o erro vem do WSI do **Vulkan/lavapipe**: com GL
-ele não aparece. Ver `B5` no [`BACKLOG.md`](BACKLOG.md).
+Ou seja: sem `/dev/dri` este X server não apresenta superfície de GPU — nem por
+Vulkan nem por GL. A saída é o perfil `@gpu` do sandbox, não um backend
+diferente; o app avisa isso em uma linha no stderr.
+
+### Erro X do WSI não pode matar o app
+
+O `winit` guarda o último erro X da conexão e o `expect()`a na próxima chamada
+que faz flush (`x11/window.rs:1028`, em `set_window_title`). Erro que **não é
+nosso** — o WSI do Mesa deixa pendente ao criar/destruir pixmap — matava o
+processo. `crates/bzmux/src/xguard.rs` registra o hook público do winit
+(`platform::x11::register_xlib_error_hook`) e engole, registrando no stderr:
+
+| código | onde | por quê |
+|---|---|---|
+| `BadDrawable` (9), `BadWindow` (3), `BadMatch` (8) | qualquer requisição | desenho: o WSI mexe em pixmap/janela, inclusive por requisição do núcleo |
+| `BadAccess` (10) | só extensão (`request_code >= 128`) | é o `DRI3Open` negado no sandbox — **era este o que matava** |
+
+Com `BZMUX_XERR=1` o hook imprime **todo** erro X que vê, com código,
+requisição e se engoliu — foi assim que o `BadAccess` na `DRI3` apareceu:
+
+```
+XERR codigo=10 requisicao=130 menor=1 recurso=0x4000002 engolir=false
+```
+
+`BZMUX_NO_TITLE=1` continua existindo como sonda (não mexe no título), mas desde
+o hook não é mais necessária para o app sobreviver.
 
 ### Captura de tela não é neutra
 

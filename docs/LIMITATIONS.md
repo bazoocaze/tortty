@@ -30,6 +30,10 @@ existir, sai daqui e vira item concluído em [`HISTORY.md`](HISTORY.md).
   são guardados. Não é falta de código, é o protocolo.
 - **Sem backend de software próprio.** Se não houver Vulkan/Metal/D3D12/GL
   utilizável, o app sai com mensagem. Rasterizar por CPU é um renderer inteiro.
+  Pior: **llvmpipe não é saída de emergência** — medido em 2026-11-03 dentro do
+  `sandbox` sem `/dev/dri`, o present ou estoura timeout (Vulkan) ou retorna sucesso
+  sem pintar um pixel (GL). Quem roda confinado usa `sandbox @gpu`, que apresenta de
+  verdade; o app avisa isso no stderr, uma vez (ver [`DEBUG.md`](DEBUG.md)).
 - **Sem assinatura/notarização por enquanto.** macOS 15+ exige "Abrir Mesmo
   Assim" para binário baixado pela rede. Está em `M-Z` do
   [`BACKLOG`](BACKLOG.md) (o custo é a conta de developer, US$ 99/ano), atrás de

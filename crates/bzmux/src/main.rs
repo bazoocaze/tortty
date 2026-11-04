@@ -18,6 +18,7 @@ mod pty;
 mod render;
 mod shape;
 mod state;
+mod xguard;
 
 use winit::event_loop::{ControlFlow, EventLoop};
 
@@ -44,6 +45,8 @@ fn main() {
         prof::set_on(true);
     }
 
+    // antes de qualquer janela: erro X do WSI da GPU não pode derrubar o app
+    xguard::instalar();
     let event_loop = match EventLoop::<UserEvent>::with_user_event().build() {
         Ok(e) => e,
         Err(e) => {

@@ -1153,3 +1153,43 @@ nunca funcionou. Se um dia o app completar a notificação (o `winit` tem
 `read_token_from_env` + `with_activation_token`, e o X11 dele manda o `remove`
 ao criar a janela), a chave volta a `true` junto com o código.
 
+## 2026-11-03 — B5: erro X do WSI não mata mais o app
+
+`sandbox bzmux` saía com **134** no `set_window_title` e, passando disso, a janela
+ficava preta. O B5 estava anotado com dois estágios e um custo; hoje os dois
+foram medidos e um deles fechado.
+
+**Onde o processo morria.** `winit` guarda o último erro X da conexão e o
+`expect()`a na chamada seguinte que faz flush (`x11/window.rs:1028`, no próprio
+`set_window_title`). Com `BZMUX_XERR=1` (sonda nova) o hook imprimiu o que o
+WSI do Mesa deixa pendente no sandbox sem GPU:
+
+```
+XERR codigo=9  requisicao=149 (Present)     -> BadDrawable
+XERR codigo=10 requisicao=130 (DRI3Open)    -> BadAccess
+```
+
+O `BadAccess` da `DRI3` era **o** que matava — a primeira versão da política
+engolia só os códigos de desenho em requisição de extensão e o processo ainda
+abortava. `crates/bzmux/src/xguard.rs` registra o hook público do winit
+(`register_xlib_error_hook`) e engole `BadDrawable`/`BadWindow`/`BadMatch` em
+qualquer requisição e `BadAccess` só em extensão; tudo vai para o stderr
+(três primeiras ocorrências e depois esparso). Medido: `sandbox bzmux` sem GPU
+**fica vivo** 12 s, responde no socket e continua desenhando.
+
+**O estágio 2 é ambiente, não código.** Medido no mesmo dia, com o teste que não
+depende de contador nenhum — `xwd` da própria janela antes e depois de mandar o
+app pintar, comparado byte a byte:
+
+| ambiente | backend | resultado |
+|---|---|---|
+| `sandbox @gpu` (RADV) | Vulkan hardware | pixmap muda: **apresenta** |
+| `sandbox` sem GPU | Vulkan lavapipe | `skips` crescem, janela preta |
+| `sandbox` sem GPU | GL llvmpipe | `drawn` sobe, `skips 0` e o pixmap **não muda** (no-op silencioso) |
+
+Ou seja: sem `/dev/dri` este X server não apresenta superfície de GPU por
+backend nenhum, e `drawn > 0` não prova tela desenhada. A mensagem do app passou
+a dizer isso em uma linha, com a saída (`/dev/dri`, `sandbox @gpu`), e o `DEBUG.md`
+ganhou a tabela, a sonda e o método do `xwd`. Decisão registrada em
+[`LIMITATIONS.md`](LIMITATIONS.md): não há backend de software próprio.
+
