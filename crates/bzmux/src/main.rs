@@ -64,6 +64,16 @@ fn main() {
 /// `--selftest`: um comando que responde "o emulador ainda está inteiro?" sem
 /// display, sem GPU e sem pty. É o que o `checks.py` do Python fazia à parte.
 fn selftest() -> i32 {
+    // `bzmux --selftest | head` fecha o pipe no meio da lista: com o SIGPIPE
+    // ignorado (o padrão do Rust) o `println!` seguinte vira panic. Aqui volta
+    // ao padrão do Unix só neste caminho — o app em si escreve BEL no stdout e
+    // não deve morrer por causa de pipe fechado.
+    #[allow(unsafe_code)]
+    // SAFETY: `signal` com `SIG_DFL` não instala handler nem lê memória; é o
+    // único jeito de restaurar a disposição padrão do SIGPIPE.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     let todos: Vec<_> = bzmux_core::checks::all()
         .into_iter()
         .chain(checks_app::all())
