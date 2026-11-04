@@ -33,17 +33,20 @@ não por estimativa.
 
 Equivalente pronto: **98.5%** (feito conta 1, parcial conta 0,5; `impedida` conta como `falta`; `transferida` sai dos dois lados — nem pronto, nem pendente no painel). O total aqui é só paridade: melhoria que o Python não tem mora no [`BACKLOG.md`](BACKLOG.md) e não entra nesta conta.
 
-`transferida` é paridade que o dono **tirou do painel** por decisão de sequência (2026-11-02: `M4` e `G17`), e que continua registrada aqui só como ponteiro para o id no [`BACKLOG`](BACKLOG.md), onde o trabalho passa a morar. A linha fica porque a referência do Python continua sendo do Python — o que saiu do painel não é "não faremos".
-tendência; o que decide o que fazer agora é a linha e a seção 16.
+`transferida` é paridade que o dono **tirou do painel** por decisão de sequência (2026-11-02: `M4` e `G17`), e que continua registrada aqui só como ponteiro para o id no [[`BACKLOG`](BACKLOG.md), onde o trabalho passa a morar. A linha fica porque a
+referência continua sendo do Python — o que saiu do painel não é "não faremos".
+O que decide o que fazer agora é a seção 16.
 
 ## Regras deste documento
 
 1. **Uma linha, uma funcionalidade.** Se a linha precisa de "e" para descrever,
    são duas linhas.
 2. **Estado sempre preenchido** com um destes: `feito`, `parcial`, `falta`,
-   `não`, `impedida`. `parcial` exige dizer **o que falta** na própria linha;
+   `não`, `impedida`, `transferida`. `parcial` exige dizer **o que falta** na própria linha;
    `impedida` exige dizer **o que impede** (ambiente que não existe aqui), e não
-   é o mesmo que `não`: `não` é decisão, `impedida` é falta de condição. **Melhoria
+   é o mesmo que `não`: `não` é decisão, `impedida` é falta de condição;
+   `transferida` é paridade que o dono tirou do painel e mandou para o
+   [`BACKLOG.md`](BACKLOG.md) (leva o id de lá, ex.: `M-AB`). **Melhoria
    não tem estado aqui**: se o Python não faz, não é paridade — vira item do
    [`BACKLOG.md`](BACKLOG.md) e não ganha linha neste arquivo.
 3. **Fechar item** = mudar o estado, rodar a verificação da coluna
@@ -333,7 +336,7 @@ Rust (sem linha, para não envelhecer a cada commit).
 | N3 | Checks de teclado/mouse | `checks.py:325-343,554-562` | feito: 6 testes de kitty keyboard (push/pop/set/query, flags 1/2/8/16, `:2`/`:3`, DECCKM, texto da flag 16) e 3 de mouse (modos 1000/1002/1003/1005/1006, SGR vs X10, roda e modificadores) |
 | N4 | Checks de socket | `checks.py:702-810` | feito: `DebugServer` aceita um `Sink` (o `EventLoopProxy` no app, um canal no teste), então 8 testes rodam sem janela: framing de uma linha JSON, `ok`/`err`, vários pedidos na mesma conexão e num `write` só, `0600`, órfão vs socket vivo vs arquivo que não é socket, `resolve("auto")` |
 | N5 | Checks de reflow/seleção/âncora | `checks.py:380-520` | feito: `history`, `scroll_anchor`, `redraw_keeps_history_position`, `draw_damage`, `selection`, `truecolor` e `style_contrast` no `--selftest` (`paste_markers` e `selection_follows_history` já existiam) |
-| N6 | `--selftest` no binário (roda N1..N5 sem display) | `cli.py:92` → `checks.rs` | feito: `bzmux --selftest` (14 checks), no `check.sh` e no CI |
+| N6 | `--selftest` no binário (roda N1..N5 sem display) | `cli.py:92` → `checks.rs` + `checks_app.rs` | feito: `bzmux --selftest` (**31 checks**), no `check.sh` e no CI |
 | N7 | Verificação visual automatizada (captura + comparação) | `tools/pixel.py`, `xtest.py` → `tools/pixel.py`, `tools/visual.sh` | feito: `tools/visual.sh` abre a janela num `Xvfb` próprio, espera o primeiro frame, captura e **compara** — conteúdo novo tem de mudar pixel, SGR 41/42 tem de pintar `color1`/`color2`, texto tem de cair dentro da célula e tela parada não pode repintar diferente. Sai 0/1, então serve de gate |
 | N8 | Benchmark reprodutível com grade travada | `tools/benchrun.py` → `tools/benchrun.py` | feito |
 | N9 | Escada Rust x Python | `bench.sh` → `tools/bench.sh` | feito |
