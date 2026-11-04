@@ -125,6 +125,10 @@ Hook e CI que discordam não servem para nada.
   `/proc/<pid>/exe`. `pkill -f bzmux` mata o shell que chamou (o padrão está na
   linha de comando) e `pkill -x bzmux` mata o `bzmux` do pipx, que tem o mesmo
   nome do binário. Já aconteceu; não use.
+- `./tools/visual.sh` — verificação visual **sem aparecer na tela do dono**:
+  Xvfb próprio, tema fixo, captura e comparação de pixel (`tools/pixel.py`).
+  Sai 0/1, então serve de gate. `./tools/pixel.py shot.png --diff a.png b.png`
+  diz quantos pixels mudaram e onde.
 - `./tools/bench.sh` — escada Rust x Python nas duas grades.
 - `cargo run --release -p bzmux-core --bin parsebench -- --file /tmp/dmesg.txt`
   — parse de carga real, sem display.
