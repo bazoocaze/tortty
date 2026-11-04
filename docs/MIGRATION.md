@@ -1,17 +1,17 @@
 # Migração: bzmux Python → bzmux Rust
 
-Painel de controle da migração. Uma linha por funcionalidade do bzmux Python,
-com o estado dela aqui. É por este arquivo que se responde "quanto falta" — e
-não por estimativa.
+Registro da migração do bzmux Python para o Rust: uma linha por funcionalidade
+do Python, com o estado dela aqui e o `arquivo:linha` de origem. Enquanto ela
+corria, era por este arquivo que se respondia "quanto falta" — não por
+estimativa. Hoje ele responde "o que o Python fazia, e onde isso está aqui".
 
 - **O Python foi a especificação observável** (`~/tortty-python`):
   cada linha guarda o `arquivo:linha` de onde a funcionalidade veio.
 - **A migração está fechada** (2026-11-02): **195 linhas, todas `feito`** — o
-  fecho está registrado logo abaixo do painel. Enquanto
-  ela corria, o que existia lá e não existia aqui era `falta`, não limite; hoje
-  o que falta aqui é **atividade nova** e mora no [`BACKLOG.md`](BACKLOG.md), com
-  id `B<numero>` (os antigos continuam `M-*`). O que é decisão de **não** fazer
-  mora em [`LIMITATIONS.md`](LIMITATIONS.md) e aqui apareceria como `não`.
+  fecho está registrado logo abaixo do painel. O que ainda falta aqui não é
+  paridade: é **atividade nova**, e mora no [`BACKLOG.md`](BACKLOG.md), com id
+  `B<numero>` (os antigos continuam `M-*`). O que é decisão de **não** fazer mora
+  em [`LIMITATIONS.md`](LIMITATIONS.md) e aqui apareceria como `não`.
 - Número de desempenho não entra aqui: [`BENCHMARKS.md`](BENCHMARKS.md).
 - Registro datado do que já foi fechado: [`HISTORY.md`](HISTORY.md).
 
@@ -399,7 +399,7 @@ que não era requisito virava `BACKLOG`, não entrava na fatia; e toda
 funcionalidade migrada trazia o teste equivalente do `checks.py` — quando não
 havia equivalente, o roteiro manual ficava escrito na própria linha.
 
-### 16.2 Checks: onde moram e o que falta
+### 16.2 Checks: onde moram
 
 Os checks de fumaça rodam no `--selftest` (e no `cargo test`, pela mesma lista):
 **25 no núcleo** (`checks.rs`, `checks_n2.rs`, `checks_n5.rs` — parser, grade,
