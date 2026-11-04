@@ -345,3 +345,21 @@ No mesmo sandbox, o **cache do `cargo` já foi somente leitura**
 system (os error 30)`. Hoje o perfil `@dev` do sandbox libera a escrita nesse
 diretório (`sandbox @dev -- cargo build`), e sem ele o contorno é
 `CARGO_HOME=/tmp/cargohome` (cópia do `~/.cargo` em tmpfs).
+
+### Os três terminais dentro do `sandbox` (medido em 2026-11-02)
+
+Mesmo sandbox, sem `/dev/dri`, tudo em llvmpipe. A diferença entre eles é
+política de erro, não capacidade do ambiente:
+
+| terminal | o que acontece | como se soube |
+|---|---|---|
+| `kitty 0.48.2` | **abre e desenha**; só reclama do DBus | `xdotool` acha a janela; o log só tem `glfw error 65544` (DBus) |
+| `ghostty 1.3.1` | abre a janela, mas o GL degrada: `MESA: error: Failed to attach to x11 shm` em série | não sai; a janela existe e o log repete o erro de SHM |
+| `bzmux` (Vulkan/lavapipe) | **aborta** (134) no `set_window_title`: `BadDrawable`, `request_code 149` | panic da winit em `x11/window.rs:1028` |
+| `bzmux` com `BZMUX_NO_TITLE=1` | **funciona**: `state` → `drawn > 0`, `skips 0` | socket de debug |
+| `bzmux` com `WGPU_BACKEND=gl` | também funciona: não aborta e fica vivo | log sem panic |
+
+Duas conclusões que economizam horas: (1) o sandbox **não** impede desenhar — quem
+mata é a winit abortando num erro X que não é dela, enquanto a GLFW (kitty,
+ghostty) registra e segue; (2) o erro vem do WSI do **Vulkan/lavapipe**: com GL
+ele não aparece. Ver `B5` no [`BACKLOG.md`](BACKLOG.md).
