@@ -85,6 +85,7 @@ per category, in order).
   it (`version.workspace = true`) and `--version` shows it
   (`env!("CARGO_PKG_VERSION")`, compiled at build).
 - Comment and message explain **why**; no comment narrates the obvious.
+- Commit message in English, concise, one line maximum.
 - File names and symbols (variable, field, etc) in English.
 - For what is already in Portuguese, the fix is on demand, during the edit, in
   the commit that already touches the file.
