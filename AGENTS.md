@@ -85,6 +85,8 @@ per category, in order).
   it (`version.workspace = true`) and `--version` shows it
   (`env!("CARGO_PKG_VERSION")`, compiled at build).
 - Comment and message explain **why**; no comment narrates the obvious.
+- Use Conventional Commits (`<type>(<scope>): <description>`; types: feat, fix, chore, docs, style,
+  refactor, perf, test, build, ci, revert.
 - Commit message in English, concise, three lines maximum.
 - File names and symbols (variable, field, etc) in English.
 - For what is already in Portuguese, the fix is on demand, during the edit, in
