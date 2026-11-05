@@ -1,13 +1,13 @@
 name: release
 
-# Por tag `v*`: empacota e publica o binário que o `install.sh --from-release`
-# sabe baixar (`bzmux-<versão>-<triple>.tar.gz`). O empacotamento é o
-# `tools/release.sh` — o mesmo que roda na máquina de quem desenvolve, então o
-# que sai daqui não é um caminho separado.
+# Per `v*` tag: packages and publishes the binary that `install.sh --from-release`
+# knows how to download (`bzmux-<version>-<triple>.tar.gz`). The packaging is
+# `tools/release.sh` — the same one that runs on the developer's machine, so what
+# comes out of here is not a separate path.
 #
-# Cobertura hoje: Linux x86_64 e aarch64. macOS (M7) e Windows (M6) ainda não
-# compilam de ponta a ponta (ConPTY/assinatura); quando compilarem, entram como
-# mais duas linhas da matriz e o resto é igual.
+# Coverage today: Linux x86_64 and aarch64. macOS (M7) and Windows (M6) do not yet
+# compile end to end (ConPTY/signing); when they do, they come in as two more matrix
+# rows and the rest stays the same.
 
 on:
   push:
@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: deps de build
+      - name: build deps
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -52,9 +52,9 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: empacota
+      - name: package
         env:
-          # o linker cruzado que o cargo não adivinha
+          # the cross linker that cargo does not guess
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
         run: ./tools/release.sh --target "${{ matrix.target }}" --check-version "$GITHUB_REF_NAME"
@@ -72,8 +72,8 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      # um único arquivo de somas: é o que o usuário confere depois de baixar
-      - name: somas
+      # a single checksum file: it is what the user verifies after downloading
+      - name: checksums
         run: |
           cd dist
           sha256sum *.tar.gz | tee SHA256SUMS

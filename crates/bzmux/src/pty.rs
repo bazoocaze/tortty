@@ -1,9 +1,9 @@
-//! pty do filho: spawn, leitura em thread própria e resize.
+//! Child pty: spawn, read on its own thread and resize.
 //!
-//! `portable-pty` em vez de `openpty` cru: é o que dá ConPTY no Windows no dia
-//! em que essa plataforma entrar (decisão registrada no TASK). A thread leitora
-//! empurra os bytes por canal e acorda o loop com o `proxy` — a mesma topologia
-//! do watch do GLib no Python.
+//! `portable-pty` instead of raw `openpty`: it is what gives ConPTY on Windows the
+//! day that platform comes in (decision recorded in the TASK). The reader thread
+//! pushes the bytes through a channel and wakes the loop with the `proxy` — the
+//! same topology as the GLib watch in Python.
 
 use std::io::{Read, Write};
 use std::sync::mpsc::Sender;
@@ -14,8 +14,8 @@ use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize}
 
 use crate::prof;
 
-/// `PtySize` com o tamanho em pixels derivado da célula (é o que o kernel
-/// reporta em `ws_xpixel`/`ws_ypixel`).
+/// `PtySize` with the pixel size derived from the cell (what the kernel
+/// reports in `ws_xpixel`/`ws_ypixel`).
 fn pixels(cols: u16, rows: u16, cell: (f32, f32)) -> PtySize {
     let w = (f32::from(cols) * cell.0).round();
     let h = (f32::from(rows) * cell.1).round();
@@ -34,12 +34,12 @@ pub struct Pty {
     size: (u16, u16),
 }
 
-/// SHELL do filho, **sempre caminho**: config (vazio herda o ambiente) →
-/// `$SHELL` → `/bin/bash`. Valor que não existe no PATH cai em `/bin/bash`,
-/// como o `shutil.which(value or $SHELL or "/bin/bash") or "/bin/bash"` do
-/// Python. Antes pegávamos o `$SHELL` cru: um `$SHELL` velho apontando para
-/// caminho morto fazia o filho morrer na hora, e o padrão era `/bin/sh` (dash
-/// no Debian) onde o Python usa `/bin/bash`.
+/// SHELL of the child, **always a path**: config (empty inherits the environment)
+/// → `$SHELL` → `/bin/bash`. A value that does not exist in PATH falls back to
+/// `/bin/bash`, like `shutil.which(value or $SHELL or "/bin/bash") or "/bin/bash"`
+/// in Python. We used to take the raw `$SHELL`: a stale `$SHELL` pointing at a
+/// dead path made the child die on the spot, and the default was `/bin/sh` (dash
+/// on Debian) where Python uses `/bin/bash`.
 #[must_use]
 pub fn effective_shell(configured: Option<&str>, env_shell: Option<&str>) -> String {
     let cand = configured
@@ -54,8 +54,8 @@ pub fn effective_shell(configured: Option<&str>, env_shell: Option<&str>) -> Str
     })
 }
 
-/// Caminho de um executável: absoluto/relativo é conferido direto, nome solto
-/// é procurado no PATH (mesma ideia do `shutil::which`).
+/// Path of an executable: absolute/relative is checked directly, a bare name is
+/// looked up in PATH (same idea as `shutil::which`).
 fn which(name: &str) -> Option<String> {
     if name.contains('/') {
         return std::path::Path::new(name)
@@ -69,16 +69,16 @@ fn which(name: &str) -> Option<String> {
 }
 
 impl Pty {
-    #[allow(clippy::too_many_arguments)] // assinatura do spawn do pty: todos são dados, não estado
+    #[allow(clippy::too_many_arguments)] // pty spawn signature: all of them are data, not state
     pub fn spawn(
         cmd: Option<&str>,
         configured_shell: Option<&str>,
         cwd: Option<&std::path::Path>,
         cols: u16,
         rows: u16,
-        // tamanho da célula em px: vira `ws_xpixel`/`ws_ypixel`, de onde o
-        // `kitten icat` tira a resolução (`TIOCGWINSZ`); com zero ele desiste
-        // com "terminal does not support reporting screen sizes"
+        // cell size in px: becomes `ws_xpixel`/`ws_ypixel`, from where
+        // `kitten icat` takes the resolution (`TIOCGWINSZ`); at zero it gives up
+        // with "terminal does not support reporting screen sizes"
         cell: (f32, f32),
         tx: Sender<Vec<u8>>,
         wake: Arc<dyn Fn() + Send + Sync>,
@@ -90,7 +90,7 @@ impl Pty {
 
         let shell = effective_shell(configured_shell, std::env::var("SHELL").ok().as_deref());
         let mut cb = match cmd {
-            // o `--cmd` do Python passa por `sh -c`: mantém a mesma semântica
+            // the Python `--cmd` goes through `sh -c`: keeps the same semantics
             Some(c) => {
                 let mut cb = CommandBuilder::new("sh");
                 cb.arg("-c");
@@ -99,9 +99,9 @@ impl Pty {
             },
             None => CommandBuilder::new(&shell),
         };
-        // o portable-pty cai em $HOME quando não há cwd; o Python herda o cwd
-        // do processo (pty.fork), e é isso que o usuário espera. Aba nova passa
-        // o cwd da aba de onde nasceu (I2), não o do bzmux.
+        // portable-pty falls back to $HOME when there is no cwd; Python inherits
+        // the process cwd (pty.fork), and that is what the user expects. A new tab
+        // passes the cwd of the tab it was born from (I2), not the bzmux one.
         let dir = cwd
             .map(std::path::Path::to_path_buf)
             .or_else(|| std::env::current_dir().ok());
@@ -131,7 +131,7 @@ impl Pty {
         std::thread::Builder::new()
             .name("pty-read".into())
             .spawn(move || {
-                // 64 KB no heap: no stack estoura o frame da thread
+                // 64 KB on the heap: on the stack it blows the thread frame
                 let mut buf = vec![0u8; 65536];
                 loop {
                     let t0 = Instant::now();
@@ -150,8 +150,8 @@ impl Pty {
                         Err(_) => break,
                     }
                 }
-                // sentinela de EOF: o app decide (o Python usa waitpid, e aqui
-                // `Child::try_wait` faz o mesmo papel)
+                // EOF sentinel: the app decides (Python uses waitpid, and here
+                // `Child::try_wait` plays the same role)
                 let _ = tx.send(Vec::new());
                 wake();
             })
@@ -165,8 +165,9 @@ impl Pty {
         })
     }
 
-    /// Escreve no pty. Devolve `false` quando o kernel não aceitou tudo
-    /// (`EAGAIN` num pty não-bloqueante, ou erro): quem chama conta e repete.
+    /// Writes to the pty. Returns `false` when the kernel did not accept
+    /// everything (`EAGAIN` on a non-blocking pty, or an error): the caller
+    /// counts it and retries.
     pub fn write(&mut self, data: &[u8]) -> bool {
         if data.is_empty() {
             return true;
@@ -184,8 +185,8 @@ impl Pty {
         let _ = self.master.resize(pixels(cols, rows, cell));
     }
 
-    /// True quando o filho saiu (o shell fechou a aba).
-    /// PID do processo que roda no pty (base do `/proc/<pid>/cwd`).
+    /// True when the child exited (the shell closed the tab).
+    /// PID of the process running in the pty (base of `/proc/<pid>/cwd`).
     pub fn child_pid(&self) -> Option<u32> {
         self.child.process_id()
     }
@@ -205,26 +206,26 @@ mod checks_shell {
     use super::effective_shell;
 
     #[test]
-    fn shell_resolvido_e_um_path_que_existe() {
-        // config vence o ambiente
+    fn resolved_shell_is_a_path_that_exists() {
+        // config wins over the environment
         assert_eq!(
             effective_shell(Some("/bin/sh"), Some("/bin/bash")),
             "/bin/sh"
         );
-        // vazio na config herda o $SHELL
+        // empty in the config inherits $SHELL
         assert_eq!(effective_shell(Some(""), Some("/bin/bash")), "/bin/bash");
-        // nome solto é procurado no PATH (vira caminho)
+        // a bare name is looked up in PATH (becomes a path)
         assert!(
             effective_shell(Some("sh"), None).starts_with('/'),
-            "precisa sair em caminho, não no nome"
+            "must come out as a path, not as the name"
         );
-        // caminho morto na config, e $SHELL também morto: cai no /bin/bash
-        let hard = effective_shell(Some("nao-existe-xyz"), Some("/x"));
+        // dead path in the config, and $SHELL also dead: falls back to /bin/bash
+        let hard = effective_shell(Some("does-not-exist-xyz"), Some("/x"));
         assert!(hard == "/bin/bash" || hard == "/bin/sh", "{hard}");
-        // nada de nada: /bin/bash, não /bin/sh
-        let padrao = effective_shell(None, None);
+        // nothing at all: /bin/bash, not /bin/sh
+        let default = effective_shell(None, None);
         assert_eq!(
-            padrao,
+            default,
             if std::path::Path::new("/bin/bash").exists() {
                 "/bin/bash"
             } else {

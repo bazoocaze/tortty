@@ -1,119 +1,119 @@
-# Instalar
+# Install
 
-O bzmux é **um binário**. Não há passo de dependência de sistema: o `cargo
-build --release` liga só em `libc`/`libm`/`libgcc_s`, e o que sobra em tempo de
-execução é o driver da GPU (Vulkan/GL) e uma fonte mono do sistema. O bzmux
-Python precisava de `python3-gi`, `gir1.2-gtk-3.0`, cairo, Pango e pipx; aqui
-nada disso.
+bzmux is **one binary**. There is no system dependency step: `cargo build
+--release` links only against `libc`/`libm`/`libgcc_s`, and what is left at run
+time is the GPU driver (Vulkan/GL) and a system mono font. The Python bzmux
+needed `python3-gi`, `gir1.2-gtk-3.0`, cairo, Pango and pipx; here none of that.
 
-## Comando
-
-```sh
-./install.sh                 # compila (release) e instala em ~/.local/bin/bzmux
-./install.sh --prefix DIR    # outro prefixo: o comando fica em DIR/bin/bzmux
-./install.sh --binary ARQ    # instala um binário já compilado (não compila)
-./install.sh --from-release  # baixa o binário do GitHub Releases (sem cargo)
-./install.sh --local         # comando vira link para target/release/bzmux (dev)
-./install.sh --no-shortcut   # sem entrada no menu do sistema
-./install.sh --check         # confere a instalação existente
-./install.sh --uninstall     # remove comando, entrada e ícone
-./install.sh --dry-run       # mostra cada comando, não executa
-```
-
-O que ele faz, em ordem:
-
-1. obtém o binário (compila, copia `--binary` ou baixa `--from-release`);
-2. avisa se `bzmux` já existe no `PATH` e não é o desta instalação;
-3. instala em `$PREFIX/bin/bzmux` (`install`, copiando — trocar o binário no
-   `target/` não deixa a instalação apontando para o nada);
-4. sem `--no-shortcut`, grava `$PREFIX/share/applications/bzmux.desktop` e
-   `$PREFIX/share/icons/hicolor/scalable/apps/bzmux.svg`;
-5. verifica: roda `bzmux --version` e falha se `ldd` mostrar biblioteca
-   faltando;
-6. avisa se `$PREFIX/bin` está fora do `PATH`.
-
-`sudo` só entra quando o prefixo não é gravável (ex.: `--prefix /usr/local`).
-
-A entrada do menu leva `StartupWMClass=bzmux` — o winit põe `WM_CLASS` igual ao
-nome do binário (`"bzmux", "bzmux"`), então o agrupador de janelas do ambiente
-associa o atalho à janela certa.
-
-E leva `StartupNotify=false`, porque o app não responde o contrato de
-notificação de início (`DESKTOP_STARTUP_ID` → `_NET_STARTUP_INFO`): com
-`true`, o painel abre uma entrada fantasma "Starting bzmux", deixa o ponteiro
-em modo ocupado e só a remove no timeout dele → [`BACKLOG.md: B7`](BACKLOG.md).
-O aviso de "abrindo" que se perde com isso dependia dessa resposta, que nunca
-houve; quando (e se) o app completar a notificação, a chave volta a `true` junto
-com o código que a sustenta.
-
-## Conviver com o bzmux Python
-
-O bzmux Python instala pelo pipx com o nome `bzmux`. Com o Python passando a
-instalar como `tortty-python`, o nome curto fica livre para o Rust:
+## Command
 
 ```sh
-pipx uninstall bzmux          # remove o shim antigo (a venv some junto)
-./install.sh                  # agora `bzmux` é o Rust
-tortty-python                       # o Python, com o nome novo
+./install.sh                 # builds (release) and installs to ~/.local/bin/bzmux
+./install.sh --prefix DIR    # another prefix: the command lands in DIR/bin/bzmux
+./install.sh --binary FILE   # installs an already built binary (does not build)
+./install.sh --from-release  # downloads the binary from GitHub Releases (no cargo)
+./install.sh --local         # command becomes a link to target/release/bzmux (dev)
+./install.sh --no-shortcut   # without an entry in the system menu
+./install.sh --check         # checks the existing installation
+./install.sh --uninstall     # removes command, entry and icon
+./install.sh --dry-run       # shows every command, runs nothing
 ```
 
-Enquanto o Python ainda instalar como `bzmux`, o instalador avisa quando
-encontra o shim do pipx no caminho (o shim em `~/.local/bin` não tem "pipx" no
-nome; o alvo tem: `~/.local/share/pipx/venvs/bzmux/bin/bzmux`).
+What it does, in order:
 
-Quem manda em qual nome: o `tortty-python` instala e remove **só**
-`tortty-python.desktop`/`tortty-python.svg`; `bzmux.desktop`/`bzmux.svg` são desta
-instalação. Verificado com `tortty-python --install-shortcut` e `--remove-shortcut`
-sobre os arquivos reais (md5 igual antes e depois).
+1. obtains the binary (builds, copies `--binary` or downloads `--from-release`);
+2. warns if `bzmux` already exists in `PATH` and is not the one from this
+   installation;
+3. installs to `$PREFIX/bin/bzmux` (`install`, copying — swapping the binary in
+   `target/` does not leave the installation pointing at nothing);
+4. without `--no-shortcut`, writes `$PREFIX/share/applications/bzmux.desktop`
+   and `$PREFIX/share/icons/hicolor/scalable/apps/bzmux.svg`;
+5. verifies: runs `bzmux --version` and fails if `ldd` shows a missing library;
+6. warns if `$PREFIX/bin` is outside `PATH`.
 
-Versões do `tortty-python` anteriores a 2026-11-02 tratavam `bzmux` como "nome antigo"
-e apagavam a entrada daqui no `install()`; se a entrada do menu sumir depois de
-rodar aquele instalador, atualize o `tortty-python` (o caso tem regressão em
+`sudo` only comes in when the prefix is not writable (e.g. `--prefix /usr/local`).
+
+The menu entry carries `StartupWMClass=bzmux` — winit sets `WM_CLASS` to the
+binary name (`"bzmux", "bzmux"`), so the environment's window grouper associates
+the shortcut with the right window.
+
+And it carries `StartupNotify=false`, because the app does not answer the
+startup notification contract (`DESKTOP_STARTUP_ID` → `_NET_STARTUP_INFO`): with
+`true`, the panel opens a phantom "Starting bzmux" entry, leaves the pointer in
+busy mode and only removes it on its timeout → [`BACKLOG.md: B7`](BACKLOG.md).
+The "opening" notice lost with that depended on that answer, which never
+existed; when (and if) the app completes the notification, the key goes back to
+`true` together with the code that sustains it.
+
+## Coexisting with the Python bzmux
+
+The Python bzmux installs through pipx under the name `bzmux`. With Python
+installing as `tortty-python` instead, the short name is free for the Rust one:
+
+```sh
+pipx uninstall bzmux          # removes the old shim (the venv goes with it)
+./install.sh                  # now `bzmux` is the Rust one
+tortty-python                       # the Python one, under the new name
+```
+
+While Python still installs as `bzmux`, the installer warns when it finds the
+pipx shim in the path (the shim in `~/.local/bin` does not have "pipx" in the
+name; the target does: `~/.local/share/pipx/venvs/bzmux/bin/bzmux`).
+
+Who owns which name: `tortty-python` installs and removes **only**
+`tortty-python.desktop`/`tortty-python.svg`; `bzmux.desktop`/`bzmux.svg` belong to this
+installation. Verified with `tortty-python --install-shortcut` and
+`--remove-shortcut` over the real files (same md5 before and after).
+
+`tortty-python` versions before 2026-11-02 treated `bzmux` as an "old name" and
+deleted the entry from here in `install()`; if the menu entry disappears after
+running that installer, update `tortty-python` (the case has a regression in
 `bzmux/checks.py`).
 
-## Verificar
+## Verify
 
 ```sh
 ./install.sh --check
-# binário:  /home/USER/.local/bin/bzmux
-# versão:   bzmux 0.1.0
+# binary:   /home/USER/.local/bin/bzmux
+# version:  bzmux 0.1.0
 # link:     /home/USER/.local/bin/bzmux
-# libs:     5 entradas, faltando: 0
+# libs:     5 entries, missing: 0
 # menu:     .../applications/bzmux.desktop
 
 bzmux --version
-bzmux --cmd 'stty size' --cols 100 --rows 30   # tem que dizer 30 100
+bzmux --cmd 'stty size' --cols 100 --rows 30   # must say 30 100
 ```
 
-`--cols/--rows` são em células e o grid final é o que a janela conseguiu: se o
-WM entregar menos pixels, o bzmux ajusta a janela até bater (`docs/DEBUG.md`).
-O filho nasce depois desse ajuste, então `stty size` mostra o tamanho real.
+`--cols/--rows` are in cells and the final grid is what the window managed: if
+the WM gives fewer pixels, bzmux adjusts the window until it matches
+(`docs/DEBUG.md`). The child is born after that adjustment, so `stty size` shows
+the real size.
 
-## Publicar
+## Publish
 
-`--from-release` espera, no GitHub Releases da tag `v<versão>`:
+`--from-release` expects, in the GitHub Releases of tag `v<version>`:
 
 ```
-bzmux-<versão>-x86_64-unknown-linux-gnu.tar.gz    (binário `bzmux` + LICENSE + README)
-bzmux-<versão>-aarch64-unknown-linux-gnu.tar.gz
+bzmux-<version>-x86_64-unknown-linux-gnu.tar.gz    (binary `bzmux` + LICENSE + README)
+bzmux-<version>-aarch64-unknown-linux-gnu.tar.gz
 SHA256SUMS
 ```
 
-Quem gera isso é `.github/workflows/release.yml`, que só chama o
-`tools/release.sh` — o **mesmo** comando que se roda na máquina:
+What generates that is `.github/workflows/release.yml`, which only calls
+`tools/release.sh` — the **same** command that is run on the machine:
 
 ```sh
-./tools/release.sh                      # empacota o host em dist/
+./tools/release.sh                      # packages the host into dist/
 ./tools/release.sh --target aarch64-unknown-linux-gnu
-./tools/release.sh --check-version v0.1.0   # o CI usa: tag tem que casar
+./tools/release.sh --check-version v0.1.0   # CI uses it: the tag has to match
 ```
 
-O script confere a versão do `Cargo.toml` contra a tag, roda
-`bzmux --version` no binário empacotado (sob `qemu-user-static` quando é cross) e
-deixa o `.tar.gz` + `.sha256` em `dist/`.
+The script checks the `Cargo.toml` version against the tag, runs
+`bzmux --version` on the packaged binary (under `qemu-user-static` when it is a
+cross build) and leaves the `.tar.gz` + `.sha256` in `dist/`.
 
-Publicar é criar a tag: `git tag -a v0.1.0 -m ... && git push origin v0.1.0`.
-O repositório do download sai de `BZMUX_REPO` (default `bazoocaze/rust_term`).
-macOS e Windows ainda não entram na matriz: são alvos novos (`M-X`/`M-Y` do
-`docs/BACKLOG.md`, com a assinatura em `M-Z`), não paridade — o Python nunca
-rodou lá.
+Publishing is creating the tag:
+`git tag -a v0.1.0 -m ... && git push origin v0.1.0`. The download repository
+comes from `BZMUX_REPO` (default `bazoocaze/rust_term`). macOS and Windows are
+not in the matrix yet: they are new targets (`M-X`/`M-Y` of
+`docs/BACKLOG.md`, with signing in `M-Z`), not parity — Python never ran there.

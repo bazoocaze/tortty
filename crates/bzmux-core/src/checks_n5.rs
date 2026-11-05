@@ -1,11 +1,11 @@
-//! N5: histórico, âncora, dano e seleção (equivalente ao `checks.py:409-640`).
+//! N5: history, anchor, damage and selection (equivalent to `checks.py:409-640`).
 //!
-//! Um check monta o cenário, exercita e compara com o esperado. Nada aqui
-//! precisa de janela, GPU ou pty.
+//! A check builds the scenario, exercises it and compares against the expected
+//! value. Nothing here needs a window, GPU or pty.
 //!
-//! O que o Python já tem coberto por outro check daqui (`paste_markers`,
-//! `selection_follows_history`) não aparece de novo: o objetivo é cobrir o que
-//! falta, não duplicar nome nem asserção.
+//! What Python already covers through another check here (`paste_markers`,
+//! `selection_follows_history`) does not show up again: the goal is to cover what
+//! is missing, not to duplicate a name or an assertion.
 
 use crate::checks::Check;
 use crate::color::Color;
@@ -13,7 +13,7 @@ use crate::config::Theme;
 use crate::grid::Row;
 use crate::term::Term;
 
-/// Checks desta área, na ordem do relatório.
+/// Checks of this area, in report order.
 #[must_use]
 pub fn all() -> Vec<Check> {
     vec![
@@ -52,52 +52,50 @@ pub fn all() -> Vec<Check> {
     ]
 }
 
-// por valor de propósito: quem chama monta o esperado na hora (`linhas(&["a"])`)
+// by value on purpose: the caller builds the expected value on the spot (`linhas(&["a"])`)
 #[allow(clippy::needless_pass_by_value)]
-fn esperado<T: PartialEq + std::fmt::Debug>(
-    o_que: &str,
+fn expected<T: PartialEq + std::fmt::Debug>(
+    what: &str,
     obtained: T,
-    esperado: T,
+    expected: T,
 ) -> Result<(), String> {
-    if obtained == esperado {
+    if obtained == expected {
         Ok(())
     } else {
-        Err(format!(
-            "{o_que}: esperado {esperado:?}, obtido {obtained:?}"
-        ))
+        Err(format!("{what}: expected {expected:?}, got {obtained:?}"))
     }
 }
 
-fn linhas(v: &[&str]) -> Vec<String> {
+fn lines(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| (*s).to_string()).collect()
 }
 
-/// Texto das `rows` linhas da visão com `off` linhas de histórico.
-fn text_da_visao(t: &Term, off: usize) -> Vec<String> {
+/// Text of the `rows` lines of the view with `off` history lines.
+fn text_of_view(t: &Term, off: usize) -> Vec<String> {
     t.visible_rows(off).iter().map(|r| r.text()).collect()
 }
 
-/// `off` que mantém a linha absoluta `linha` no topo da visão.
+/// `off` that keeps the absolute line `linha` at the top of the view.
 ///
-/// É a conta do `anchored_view_off` do Python: `scrolled` é índice absoluto e
-/// nunca volta — nem quando o histórico bate no teto e descarta linha velha —
-/// então a conta absoluta não derrapa linha a linha como a diferença de
-/// tamanho derrapava. O clamp é no tamanho do histórico: se a linha morreu
-/// (CSI 3J) não há o que segurar e a visão volta para o vivo.
-fn off_da_ancora(t: &Term, line: i64) -> usize {
+/// This is Python's `anchored_view_off` arithmetic: `scrolled` is an absolute
+/// index and never goes back — not even when the history hits the ceiling and
+/// drops an old line — so the absolute arithmetic does not drift line by line the
+/// way the size difference did. The clamp is on the history length: if the line
+/// died (CSI 3J) there is nothing to hold and the view returns to the live end.
+fn off_of_anchor(t: &Term, line: i64) -> usize {
     (t.scrolled as i64 - line).clamp(0, t.scrollback.len() as i64) as usize
 }
 
-/// Dano no molde do Python: `None` = a grade inteira, `Some(linhas)` = só elas.
+/// Damage shaped like Python's: `None` = the whole grid, `Some(lines)` = only them.
 ///
-/// O núcleo guarda o dano como `dirty`/`dirty_all`; consumir é papel do draw,
-/// então a leitura que zera mora aqui (o app faz o mesmo em `app.rs`).
+/// The core keeps damage as `dirty`/`dirty_all`; consuming it is the draw's job,
+/// so the read that clears it lives here (the app does the same in `app.rs`).
 fn take_damage(t: &mut Term) -> Option<Vec<usize>> {
     if t.dirty_all {
         t.clear_damage();
         return None;
     }
-    let linhas: Vec<usize> = t
+    let lines: Vec<usize> = t
         .dirty
         .iter()
         .enumerate()
@@ -105,36 +103,32 @@ fn take_damage(t: &mut Term) -> Option<Vec<usize>> {
         .map(|(y, _)| y)
         .collect();
     t.clear_damage();
-    Some(linhas)
+    Some(lines)
 }
 
 fn history() -> Result<(), String> {
     let mut t = Term::new(10, 3);
     t.feed(b"a\r\nb\r\nc\r\nd\r\ne\r\n");
-    // a tela é uma janela: `off`=0 é o vivo, `off`>0 puxa o histórico para cima
-    esperado("vivo", text_da_visao(&t, 0), linhas(&["d", "e", ""]))?;
-    esperado(
-        "uma linha acima",
-        text_da_visao(&t, 1),
-        linhas(&["c", "d", "e"]),
-    )?;
-    esperado("três linhas fora do topo", t.scrolled, 3)?;
-    // a janela nunca passa de `rows` linhas (regressão: `off` > rows devolvia
-    // `off` linhas e o desenho ficava mais lento quanto mais se subia)
+    // the screen is a window: `off`=0 is the live end, `off`>0 pulls history up
+    expected("live", text_of_view(&t, 0), lines(&["d", "e", ""]))?;
+    expected("one line up", text_of_view(&t, 1), lines(&["c", "d", "e"]))?;
+    expected("three lines off the top", t.scrolled, 3)?;
+    // the window never exceeds `rows` lines (regression: `off` > rows returned
+    // `off` lines and drawing got slower the further up one went)
     for off in [0, 1, t.rows, t.rows + 1, t.scrollback.len()] {
-        esperado(
-            &format!("janela com off={off}"),
+        expected(
+            &format!("window with off={off}"),
             t.visible_rows(off).len(),
             t.rows,
         )?;
     }
-    // fundo do histórico: pedir demais clampa no mais antigo, não no vivo
-    esperado(
-        "fundo do histórico",
-        text_da_visao(&t, 99),
-        linhas(&["a", "b", "c"]),
+    // bottom of the history: asking too much clamps on the oldest, not the live
+    expected(
+        "bottom of the history",
+        text_of_view(&t, 99),
+        lines(&["a", "b", "c"]),
     )?;
-    esperado("histórico tem 3", t.scrollback.len(), 3)?;
+    expected("history has 3", t.scrollback.len(), 3)?;
     Ok(())
 }
 
@@ -143,62 +137,63 @@ fn scroll_anchor() -> Result<(), String> {
     for i in 0..10 {
         t.feed(format!("{i}\r\n").as_bytes());
     }
-    // o usuário subiu duas linhas e parou de ler: a âncora é a linha do topo
-    let ancora = t.scrolled as i64 - 2;
+    // the user went up two lines and stopped reading: the anchor is the top line
+    let anchor = t.scrolled as i64 - 2;
     let top = t.visible_rows(2)[0].text();
-    esperado("topo lido", top.clone(), "6".to_string())?;
+    expected("top line read", top.clone(), "6".to_string())?;
     let (antes_scrolled, antes_hist) = (t.scrolled, t.scrollback.len());
     for i in 10..15 {
         t.feed(format!("{i}\r\n").as_bytes());
     }
-    // o output não arranca a visão da linha que se lê
-    esperado(
-        "a visão acompanha o output",
-        t.visible_rows(off_da_ancora(&t, ancora))[0].text(),
+    // the output does not yank the view off the line being read
+    expected(
+        "the view follows the output",
+        t.visible_rows(off_of_anchor(&t, anchor))[0].text(),
         top.clone(),
     )?;
-    // e a conta incremental do app (D10) chega no mesmo offset
-    esperado(
+    // and the app's incremental arithmetic (D10) reaches the same offset
+    expected(
         "view_after_output",
         t.view_after_output(2, antes_scrolled, antes_hist),
-        off_da_ancora(&t, ancora),
+        off_of_anchor(&t, anchor),
     )?;
-    // no teto do histórico o `len()` para de crescer: a conta por diferença de
-    // tamanho deixaria o texto derrapar; a absoluta não
+    // at the history ceiling `len()` stops growing: the size-difference
+    // arithmetic would let the text drift; the absolute one does not
     for i in 15..1100 {
         t.feed(format!("{i}\r\n").as_bytes());
     }
-    esperado("histórico no teto", t.scrollback.len(), 1000)?;
-    let ancora = t.scrolled as i64 - 3;
+    expected("history at the ceiling", t.scrollback.len(), 1000)?;
+    let anchor = t.scrolled as i64 - 3;
     let top = t.visible_rows(3)[0].text();
     let (cap_scrolled, cap_hist) = (t.scrolled, t.scrollback.len());
     for i in 1100..1110 {
         t.feed(format!("{i}\r\n").as_bytes());
     }
-    let off = off_da_ancora(&t, ancora);
-    esperado("offset absoluto", off, 13)?;
-    // a conta incremental do app tem que dar o mesmo **no teto**: era aqui que
-    // ela subtraía as linhas descartadas e a visão derrapava — o leitor perdia
-    // uma linha de conteúdo por linha nova, o oposto do D10
-    esperado(
-        "view_after_output no teto",
+    let off = off_of_anchor(&t, anchor);
+    expected("absolute offset", off, 13)?;
+    // the app's incremental arithmetic must give the same **at the ceiling**: this
+    // is where it subtracted the dropped lines and the view drifted — the reader
+    // lost one line of content per new line, the opposite of D10
+    expected(
+        "view_after_output at the ceiling",
         t.view_after_output(3, cap_scrolled, cap_hist),
         off,
     )?;
-    esperado(
-        "mesma linha no topo",
+    expected(
+        "same line at the top",
         t.visible_rows(off)[0].text(),
         top.clone(),
     )?;
-    // a conta antiga (offset fixo em 3) mostraria outra linha: 10 de deriva
+    // the old arithmetic (fixed offset at 3) would show another line: 10 of drift
     if t.visible_rows(3)[0].text() == top {
         return Err(
-            "offset fixo em 3 devolveu a mesma linha: o teste não separa as contas".to_string(),
+            "fixed offset at 3 returned the same line: the test does not tell them apart"
+                .to_string(),
         );
     }
-    // limpar o histórico (CSI 3J) destrói a âncora: não há o que ler, vivo
+    // clearing the history (CSI 3J) destroys the anchor: nothing to read, live
     t.feed(b"\x1b[3J");
-    esperado("ED3 devolve o vivo", off_da_ancora(&t, ancora), 0)?;
+    expected("ED3 returns to live", off_of_anchor(&t, anchor), 0)?;
     Ok(())
 }
 
@@ -208,109 +203,110 @@ fn redraw_keeps_history_position() -> Result<(), String> {
     for i in 1..=40 {
         t.feed(format!("l{i:02}\r\n").as_bytes());
     }
-    let off = 12usize; // o usuário rolou 12 linhas para trás
-    let ancora = t.scrolled as i64 - off as i64;
-    let antes = t.visible_rows(off)[0].text();
-    esperado("linha lida", antes.clone(), "l26".to_string())?;
+    let off = 12usize; // the user scrolled 12 lines back
+    let anchor = t.scrolled as i64 - off as i64;
+    let before = t.visible_rows(off)[0].text();
+    expected("line read", before.clone(), "l26".to_string())?;
     let gen = t.hist_gen;
-    // exatamente o começo do fullRender(clear) do pi
+    // exactly the start of pi's fullRender(clear)
     t.feed(b"\x1b[?2026h\x1b[2J\x1b[H\x1b[3J");
     if !t.sync_output {
-        return Err("?2026 não entrou em modo de saída sincronizada".to_string());
+        return Err("?2026 did not enter synchronized output mode".to_string());
     }
-    esperado("geração do histórico", t.hist_gen, gen + 1)?;
-    esperado("3J esvazia o histórico", t.scrollback.len(), 0)?;
-    // a âncora absoluta morreu: sem o pin, o clamp devolveria o vivo e, com o
-    // buffer reescrito, a visão escoraria no topo (era o bug do B20)
-    esperado("âncora absoluta morre", off_da_ancora(&t, ancora), 0)?;
+    expected("history generation", t.hist_gen, gen + 1)?;
+    expected("3J empties the history", t.scrollback.len(), 0)?;
+    // the absolute anchor died: without the pin, the clamp would return the live
+    // end and, with the buffer rewritten, the view would slide to the top (the B20
+    // bug)
+    expected("absolute anchor dies", off_of_anchor(&t, anchor), 0)?;
     for i in 1..=40 {
         t.feed(format!("l{i:02}\r\n").as_bytes());
     }
     t.feed(b"\x1b[?2026l");
     if t.sync_output {
-        return Err("?2026l não desligou a saída sincronizada".to_string());
+        return Err("?2026l did not turn synchronized output off".to_string());
     }
     if t.scrollback.len() < off {
         return Err(format!(
-            "o app não reescreveu buffer suficiente: histórico com {}",
+            "the app did not rewrite enough buffer: history with {}",
             t.scrollback.len()
         ));
     }
-    // a distância do vivo sobrevive, mesmo com a âncora absoluta morta
+    // the distance from the live end survives, even with the absolute anchor dead
     let pin = off.min(t.scrollback.len());
-    esperado("distância preservada", pin, off)?;
-    esperado(
-        "a linha lida volta",
+    expected("distance preserved", pin, off)?;
+    expected(
+        "the line read comes back",
         t.visible_rows(pin)[0].text(),
-        antes.clone(),
+        before.clone(),
     )?;
-    // já a âncora absoluta dá o topo do histórico novo — era o bug
-    esperado(
-        "âncora absoluta no topo",
-        off_da_ancora(&t, ancora),
+    // the absolute anchor instead gives the top of the new history — that was the bug
+    expected(
+        "absolute anchor at the top",
+        off_of_anchor(&t, anchor),
         t.scrollback.len(),
     )?;
-    if t.visible_rows(t.scrollback.len())[0].text() == antes {
-        return Err("a âncora absoluta devolveu a linha lida".to_string());
+    if t.visible_rows(t.scrollback.len())[0].text() == before {
+        return Err("the absolute anchor returned the line read".to_string());
     }
     Ok(())
 }
 
 fn draw_damage() -> Result<(), String> {
     let mut t = Term::new(10, 5);
-    // o primeiro draw é sempre a grade inteira
+    // the first draw is always the whole grid
     if take_damage(&mut t).is_some() {
-        return Err("primeiro draw deveria ser a grade inteira".to_string());
+        return Err("the first draw should be the whole grid".to_string());
     }
-    esperado("dano consumido", take_damage(&mut t), Some(Vec::new()))?;
-    // um caractere numa linha: só ela
+    expected("damage consumed", take_damage(&mut t), Some(Vec::new()))?;
+    // one character on one line: only that line
     t.feed(b"\x1b[3;1Hx");
-    esperado("1 célula suja 1 linha", take_damage(&mut t), Some(vec![2]))?;
-    esperado("dano consumido", take_damage(&mut t), Some(Vec::new()))?;
-    // texto corrido em duas linhas
+    expected("1 dirty cell 1 line", take_damage(&mut t), Some(vec![2]))?;
+    expected("damage consumed", take_damage(&mut t), Some(Vec::new()))?;
+    // running text on two lines
     t.feed(b"\x1b[1;1Habcdefghij\x1b[2;1Hyz");
-    esperado("duas linhas", take_damage(&mut t), Some(vec![0, 1]))?;
-    // EL e ECH sujam só a linha corrente
+    expected("two lines", take_damage(&mut t), Some(vec![0, 1]))?;
+    // EL and ECH dirty only the current line
     t.feed(b"\x1b[2;3H\x1b[K");
-    esperado("EL", take_damage(&mut t), Some(vec![1]))?;
+    expected("EL", take_damage(&mut t), Some(vec![1]))?;
     t.feed(b"\x1b[2;1H\x1b[2X");
-    esperado("ECH", take_damage(&mut t), Some(vec![1]))?;
-    // ED2 muda a tela toda
+    expected("ECH", take_damage(&mut t), Some(vec![1]))?;
+    // ED2 changes the whole screen
     t.feed(b"\x1b[2J");
     if take_damage(&mut t).is_some() {
-        return Err("ED2 deveria sujar a tela toda".to_string());
+        return Err("ED2 should dirty the whole screen".to_string());
     }
-    // rolagem de tela cheia não suja a grade: reporta o deslocamento, e a
-    // linha que entra em branco é a única a remontar (o desenho desliza o resto)
+    // full-screen scroll does not dirty the grid: it reports the shift, and the
+    // line coming in blank is the only one to remount (drawing slides the rest)
     t.feed(b"\x1b[5;1H\n");
     if t.scroll_shift != 1 {
         return Err(format!(
-            "rolagem tinha que reportar deslocamento 1, veio {}",
+            "scroll had to report shift 1, got {}",
             t.scroll_shift
         ));
     }
     if t.dirty_all {
-        return Err("rolagem de tela cheia não pode sujar a grade toda".to_string());
+        return Err("full-screen scroll cannot dirty the whole grid".to_string());
     }
     if !t.dirty.get(t.rows - 1).copied().unwrap_or(false) {
-        return Err("a linha que entrou em branco tinha que estar suja".to_string());
+        return Err("the line that came in blank had to be dirty".to_string());
     }
-    // rolagem de região não tem deslocamento de tela inteira: dano global
+    // region scroll has no full-screen shift: global damage
     t.clear_damage();
-    t.feed(b"\x1b[2;3r"); // região 2..3
+    t.feed(b"\x1b[2;3r"); // region 2..3
     t.feed(b"\x1b[3;1H\n");
     if !t.dirty_all {
-        return Err("rolagem de região tinha que sujar a grade toda".to_string());
+        return Err("region scroll had to dirty the whole grid".to_string());
     }
     t.feed(b"\x1b[r");
     t.feed(b"\x1b[2J");
     t.resize(8, 4);
     if take_damage(&mut t).is_some() {
-        return Err("reflow move toda linha: dano tinha que ser a grade".to_string());
+        return Err("reflow moves every line: damage had to be the grid".to_string());
     }
     t.feed(b"\x1bc");
     if take_damage(&mut t).is_some() {
-        return Err("RIS recomeça a grade: dano tinha que ser a grade".to_string());
+        return Err("RIS restarts the grid: damage had to be the grid".to_string());
     }
     Ok(())
 }
@@ -319,36 +315,36 @@ fn selection() -> Result<(), String> {
     let mut t = Term::new(20, 5);
     t.feed(b"abc\r\ndef\r\nghi");
     let rows: Vec<&Row> = t.grid.iter().collect();
-    esperado(
-        "multi-linha",
+    expected(
+        "multi-line",
         t.selection_text((0, 1), (1, 1), &rows),
         "bc\nde".to_string(),
     )?;
-    esperado(
-        "uma linha só",
+    expected(
+        "single line",
         t.selection_text((0, 0), (0, 2), &rows),
         "abc".to_string(),
     )?;
-    // arrastar de baixo para cima é normal: a ordem é normalizada
-    esperado(
-        "ordem invertida",
+    // dragging bottom-up is normal: the order is normalized
+    expected(
+        "inverted order",
         t.selection_text((1, 1), (0, 1), &rows),
         "bc\nde".to_string(),
     )?;
-    // pontas inclusivas e a coluna final entra inteira
-    esperado(
-        "coluna final",
+    // inclusive ends and the final column comes in whole
+    expected(
+        "final column",
         t.selection_text((0, 2), (1, 0), &rows),
         "c\nd".to_string(),
     )?;
-    // espaço à direita de cada linha sai fora (é o que todo terminal copia)
-    esperado(
-        "sem espaço à direita",
+    // trailing space on each line is out (it is what every terminal copies)
+    expected(
+        "no trailing space",
         t.selection_text((0, 0), (0, 9), &rows),
         "abc".to_string(),
     )?;
-    esperado(
-        "uma célula",
+    expected(
+        "one cell",
         t.selection_text((2, 1), (2, 1), &rows),
         "h".to_string(),
     )?;
@@ -358,31 +354,31 @@ fn selection() -> Result<(), String> {
 fn truecolor() -> Result<(), String> {
     let mut t = Term::new(20, 5);
     t.feed(b"\x1b[38;2;18;52;86mA\x1b[48;2;250;128;114mB");
-    esperado(
-        "fg RGB na célula",
+    expected(
+        "fg RGB on the cell",
         t.grid[0].cells[0].fg,
         Color::Rgb(18, 52, 86),
     )?;
-    esperado(
-        "bg RGB na célula",
+    expected(
+        "bg RGB on the cell",
         t.grid[0].cells[1].bg,
         Color::Rgb(250, 128, 114),
     )?;
-    // a forma com ':' (subparâmetros) tem que dar o mesmo RGB
+    // the ':' form (subparameters) has to give the same RGB
     t.feed(b"\x1b[38:2::7:8:9mC");
-    esperado("forma com ':'", t.grid[0].cells[2].fg, Color::Rgb(7, 8, 9))?;
-    // 256 é índice, não RGB: o desenho resolve pela paleta do tema
+    expected("':' form", t.grid[0].cells[2].fg, Color::Rgb(7, 8, 9))?;
+    // 256 is an index, not RGB: drawing resolves it through the theme palette
     let mut t = Term::new(20, 5);
     t.feed(b"\x1b[38;5;196mA\x1b[0mB");
-    esperado("índice 196", t.grid[0].cells[0].fg, Color::Idx(196))?;
-    esperado("reset volta o fg", t.grid[0].cells[1].fg, Color::Default)?;
-    esperado("reset volta o bg", t.grid[0].cells[1].bg, Color::Default)?;
-    // a cor mora na célula: reflow não decodifica nem perde o RGB
+    expected("index 196", t.grid[0].cells[0].fg, Color::Idx(196))?;
+    expected("reset restores fg", t.grid[0].cells[1].fg, Color::Default)?;
+    expected("reset restores bg", t.grid[0].cells[1].bg, Color::Default)?;
+    // the color lives in the cell: reflow neither decodes nor loses the RGB
     let mut t = Term::new(4, 2);
     t.feed(b"\x1b[38;2;1;2;3mXYZW");
     t.resize(8, 2);
-    esperado(
-        "RGB sobrevive ao resize",
+    expected(
+        "RGB survives the resize",
         t.grid[0].cells[0].fg,
         Color::Rgb(1, 2, 3),
     )?;
@@ -390,9 +386,9 @@ fn truecolor() -> Result<(), String> {
 }
 
 fn style_contrast() -> Result<(), String> {
-    // Mesma conta do `style.contrast` do Python (WCAG 2.1): luminância
-    // relativa e razão (L1+0.05)/(L2+0.05). O cromo da GUI (cards, abas,
-    // toast) não existe no núcleo — o que existe aqui é o tema do terminal.
+    // Same arithmetic as Python's `style.contrast` (WCAG 2.1): relative luminance
+    // and ratio (L1+0.05)/(L2+0.05). The GUI chrome (cards, tabs, toast) does not
+    // exist in the core — what exists here is the terminal theme.
     fn channel(v: u8) -> f64 {
         let v = f64::from(v) / 255.0;
         if v <= 0.039_28 {
@@ -401,64 +397,68 @@ fn style_contrast() -> Result<(), String> {
             ((v + 0.055) / 1.055).powf(2.4)
         }
     }
-    fn luminancia((r, g, b): (u8, u8, u8)) -> f64 {
+    fn luminance((r, g, b): (u8, u8, u8)) -> f64 {
         0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
     }
     fn contrast(fg: (u8, u8, u8), bg: (u8, u8, u8)) -> f64 {
-        let (a, b) = (luminancia(fg), luminancia(bg));
+        let (a, b) = (luminance(fg), luminance(bg));
         let (light, dark) = if a > b { (a, b) } else { (b, a) };
         (light + 0.05) / (dark + 0.05)
     }
     let theme = Theme::default();
     let bg = theme.rgb(theme.bg, (0, 0, 0));
-    // texto normal pede 4.5:1; cursor é componente de UI (WCAG 1.4.11: 3:1)
+    // normal text asks for 4.5:1; the cursor is a UI component (WCAG 1.4.11: 3:1)
     let pairs = [
-        ("fg sobre o fundo", theme.fg, 4.5),
-        ("cursor sobre o fundo", theme.cursor, 3.0),
+        ("fg over the background", theme.fg, 4.5),
+        ("cursor over the background", theme.cursor, 3.0),
     ];
-    for (o_que, cor, minimo) in pairs {
-        let razao = contrast(theme.rgb(cor, bg), bg);
-        if razao < minimo {
+    for (what, cor, minimo) in pairs {
+        let ratio = contrast(theme.rgb(cor, bg), bg);
+        if ratio < minimo {
             return Err(format!(
-                "{o_que}: contraste {razao:.2} abaixo do mínimo {minimo:.1}"
+                "{what}: contrast {ratio:.2} below the minimum {minimo:.1}"
             ));
         }
     }
     Ok(())
 }
 
-/// Imagens do kitty de ponta a ponta no parser (H1–H13): APC, transmissão,
-/// colocação, resposta, rolagem junto com o texto e `ED 3`.
+/// kitty images end to end through the parser (H1–H13): APC, transmission,
+/// placement, reply, scrolling along with the text and `ED 3`.
 fn graphics_kitty() -> Result<(), String> {
     use base64::Engine as _;
     let mut t = Term::new(20, 4);
     t.cell_size = (10, 19);
     let rgba = base64::engine::general_purpose::STANDARD.encode([9, 8, 7, 255].repeat(4));
     t.feed(format!("\x1b_Ga=T,f=32,s=2,v=2,i=3;{rgba}\x1b\\").as_bytes());
-    esperado("imagem guardada", t.graphics.images().len(), 1)?;
-    esperado(
-        "resposta do APC",
+    expected("image stored", t.graphics.images().len(), 1)?;
+    expected(
+        "APC reply",
         t.take_child_out(),
         b"\x1b_Gi=3;OK\x1b\\".to_vec(),
     )?;
     let p = t.graphics.placements()[0];
-    esperado(
-        "colocação",
+    expected(
+        "placement",
         (p.image_id, p.col, p.line, p.cols, p.rows),
         (3, 0, 0, 1, 1),
     )?;
-    // H10: sem `C=1` o cursor desce as linhas da imagem
-    esperado("cursor desceu", t.cy, 1)?;
-    // H12: rolar leva a colocação para o histórico
+    // H10: without `C=1` the cursor moves down the image lines
+    expected("cursor moved down", t.cy, 1)?;
+    // H12: scrolling takes the placement into the history
     for _ in 0..6 {
         t.feed(b"\r\n");
     }
     let p = t.graphics.placements()[0];
     if p.line >= 0 {
-        return Err(format!("imagem devia estar no histórico: linha {}", p.line));
+        return Err(format!("image should be in the history: line {}", p.line));
     }
-    // H13: `ED 3` limpa imagem e histórico
+    // H13: `ED 3` clears image and history
     t.feed(b"\x1b[3J");
-    esperado("ED 3 limpa", t.graphics.images().len(), 0)?;
-    esperado("ED 3 limpa colocação", t.graphics.placements().len(), 0)
+    expected("ED 3 clears", t.graphics.images().len(), 0)?;
+    expected(
+        "ED 3 clears the placement",
+        t.graphics.placements().len(),
+        0,
+    )
 }

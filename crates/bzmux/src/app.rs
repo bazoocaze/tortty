@@ -1,4 +1,4 @@
-//! O app: janela, pty, teclado, desenho e o socket de introspecção.
+//! The app: window, pty, keyboard, drawing and the introspection socket.
 
 use std::io::Write as _;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
@@ -23,8 +23,8 @@ use crate::prof;
 use crate::pty::Pty;
 use crate::render::Renderer;
 
-/// Argumento para o shell: `'…'` com `'` virando `'\''` (o mesmo que o
-/// `shlex.quote` do Python faz para o caso comum).
+/// Shell argument: `'…'` with `'` becoming `'\''` (the same thing Python's
+/// `shlex.quote` does for the common case).
 fn shell_quote(s: &str) -> String {
     if s.chars()
         .all(|c| c.is_ascii_alphanumeric() || "/._-+:%=@,".contains(c))
@@ -34,21 +34,21 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// Super puro (sem Ctrl nem Alt): o alias de workspace do Python.
+/// Super alone (neither Ctrl nor Alt): the Python workspace alias.
 fn super_only(mods: ModifiersState) -> bool {
     mods.super_key() && !mods.control_key() && !mods.alt_key()
 }
 
-/// Alt puro (sem Ctrl nem Shift). `Alt+Shift+1` é do shell, não da barra.
+/// Alt alone (neither Ctrl nor Shift). `Alt+Shift+1` belongs to the shell, not the bar.
 fn alt_digit_only(mods: ModifiersState) -> bool {
     mods.alt_key() && !mods.control_key() && !mods.shift_key() && !mods.super_key()
 }
 
-/// Dígito da tecla **física** (0..=9), ignorando layout e Shift.
+/// Digit of the **physical** key (0..=9), ignoring layout and Shift.
 ///
-/// `Ctrl+Shift+1` chega como `!` e no ABNT2 o shiftado de cada dígito é outro
-/// (`2` → `@`, `6` → `¨`); traduzir o código físico dá o dígito em qualquer
-/// layout — mesma razão do `_digit_of` do Python (I16).
+/// `Ctrl+Shift+1` arrives as `!` and on ABNT2 each digit shifts to something
+/// else (`2` → `@`, `6` → `¨`); translating the physical code gives the digit
+/// in any layout — same reason as Python's `_digit_of` (I16).
 fn digit_of(event: &winit::event::KeyEvent) -> Option<usize> {
     let PhysicalKey::Code(code) = event.physical_key else {
         return None;
@@ -68,10 +68,10 @@ fn digit_of(event: &winit::event::KeyEvent) -> Option<usize> {
     })
 }
 
-/// PID do descendente mais fundo de `pid` (o programa que está no primeiro
-/// plano: o shell, ou o `vim`/`mc` que ele lançou). `/proc/<pid>/task/<pid>/
-/// children` lista os filhos diretos; descer até o fim é o que dá o processo
-/// que a pessoa está usando.
+/// PID of the deepest descendant of `pid` (the program in the foreground: the
+/// shell, or the `vim`/`mc` it launched). `/proc/<pid>/task/<pid>/children`
+/// lists the direct children; walking down to the end is what yields the
+/// process the person is actually using.
 fn descendant(pid: u32) -> u32 {
     let mut cur = pid;
     for _ in 0..8 {
@@ -88,44 +88,45 @@ fn descendant(pid: u32) -> u32 {
 }
 
 pub enum UserEvent {
-    /// Acorda o loop (dado novo no canal do pty).
+    /// Wakes the loop (new data on the pty channel).
     Wake,
-    /// Pedido do socket de debug: `(linha JSON, canal da resposta)`.
+    /// Request from the debug socket: `(JSON line, reply channel)`.
     Debug(String, Sender<String>),
 }
 
-/// Aviso transitório do próprio terminal (I12): "config: 3 erros — ...".
+/// Transient notice from the terminal itself (I12): "config: 3 errors — ...".
 struct Toast {
     text: String,
-    desde: std::time::Instant,
-    /// Quantas mensagens iguais chegaram seguidas (o toast soma, não empilha).
-    vezes: u32,
+    since: std::time::Instant,
+    /// How many equal messages arrived in a row (the toast adds up, it does not
+    /// stack).
+    times: u32,
 }
 
-/// Quanto tempo o toast fica na tela.
+/// How long the toast stays on screen.
 const TOAST_DUR: Duration = Duration::from_millis(3500);
 
-/// Texto do aviso de configuração (K13). Cabe em ~60 colunas de propósito: o
-/// toast é cortado na largura da grade, e "linha e chave" é o que se precisa
-/// ver, não a contagem escrita por extenso.
+/// Text of the configuration notice (K13). Deliberately fits in ~60 columns:
+/// the toast is cut at the width of the grid, and "line and key" is what one
+/// needs to see, not the count spelled out.
 fn notice_config(errs: &[bzmux_core::config::Error]) -> String {
     let Some(first) = errs.first() else {
         return String::new();
     };
     if errs.len() > 1 {
-        format!("config mantida — {first} (+{})", errs.len() - 1)
+        format!("config kept — {first} (+{})", errs.len() - 1)
     } else {
-        format!("config mantida — {first}")
+        format!("config kept — {first}")
     }
 }
 
-/// Período do pisca (cursor e SGR 5). Metade "aceso", metade "apagado".
+/// Blink period (cursor and SGR 5). Half "on", half "off".
 const BLINK_MS: u64 = 500;
 
-/// Quanto tempo o rótulo da aba fica destacado depois de um BEL (I13).
+/// How long the tab label stays highlighted after a BEL (I13).
 const FLASH_DUR: Duration = Duration::from_millis(800);
 
-/// Bytes em hex (o `keys` do socket devolve isso para conferir o encoder).
+/// Bytes in hex (the socket's `keys` verb returns this to check the encoder).
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     bytes
@@ -160,35 +161,35 @@ pub fn logln(msg: &str) {
     }
 }
 
-/// Uma aba: um terminal e o pty que o alimenta, mais o estado que só faz
-/// sentido enquanto ela está na frente (visão, seleção, arrasto do mouse).
+/// One tab: a terminal and the pty feeding it, plus the state that only makes
+/// sense while it is in front (view, selection, mouse drag).
 ///
-/// A separação importa por causa de F4: com N abas vivas ao mesmo tempo, o pty
-/// de cada uma continua lendo; só o que é "olhar" (rolagem, seleção) fica
-/// parado na aba que não está ativa.
+/// The split matters because of F4: with N live tabs at once, each pty keeps
+/// reading; only what is "looking" (scrolling, selection) stays frozen in the
+/// tab that is not active.
 pub struct Tab {
-    /// Identidade da aba, monotônica e única na execução. O dano por linha
-    /// (A17/G17) guarda instâncias por linha do `Renderer`, então trocar de aba
-    /// com a mesma geometria não pode reaproveitar linha nenhuma — e índice não
-    /// serve: fechar e abrir aba volta o índice, a identidade não.
+    /// Tab identity, monotonic and unique per run. The per-line damage
+    /// (A17/G17) stores per-line instances of the `Renderer`, so switching tabs
+    /// with the same geometry must not reuse any line — and an index will not
+    /// do: closing and opening a tab brings the index back, the identity not.
     pub id: u64,
     pub term: Term,
     pub pty: Option<Pty>,
     pub rx: Option<Receiver<Vec<u8>>>,
-    /// Linhas roladas para o histórico (0 = acompanhando o output).
+    /// Lines scrolled into the history (0 = following the output).
     pub view_off: usize,
-    /// Seleção de texto, em âncoras absolutas.
+    /// Text selection, in absolute anchors.
     pub sel: Option<Span>,
-    /// Âncora e pixel do press: o arrasto só nasce depois de 3 px.
+    /// Anchor and pixel of the press: the drag only starts after 3 px.
     pub press: Option<(Anchor, (f64, f64))>,
     pub dragging: bool,
-    /// Fração de linha acumulada da roda (trackpad manda fração).
+    /// Accumulated row fraction from the wheel (a trackpad sends fractions).
     pub scroll_frac: f32,
-    /// BELLs já tratados (o `Term` conta; o app decide o que tocar).
+    /// BELLs already handled (the `Term` counts them; the app decides what to play).
     pub bells_seen: u32,
-    /// Título pedido por OSC 0/2 (vazio = derivar do cwd).
+    /// Title requested by OSC 0/2 (empty = derive from the cwd).
     pub osc_title: String,
-    /// Último BEL, para o flash do rótulo (I13).
+    /// Last BEL, for the label flash (I13).
     pub bell_at: Option<std::time::Instant>,
 }
 
@@ -211,7 +212,7 @@ impl Tab {
         }
     }
 
-    /// Nome da aba: OSC 0/2 vence, senão o cwd do shell, senão o padrão.
+    /// Tab name: OSC 0/2 wins, else the shell cwd, else the default.
     fn title(&self) -> String {
         if !self.osc_title.is_empty() {
             return self.osc_title.clone();
@@ -222,7 +223,7 @@ impl Tab {
         }
     }
 
-    /// `basename` do cwd do processo filho (`/proc/<pid>/cwd`); sem isso, nada.
+    /// `basename` of the child process cwd (`/proc/<pid>/cwd`); nothing without it.
     fn cwd_name(&self) -> Option<String> {
         let cwd = self.cwd()?;
         let name = bzmux_core::term::sanitize_title(&cwd.file_name()?.to_string_lossy());
@@ -233,9 +234,9 @@ impl Tab {
         }
     }
 
-    /// cwd do que está rodando **na frente** do pty: o shell pode ter lançado
-    /// `vim`/`mc`, e é o cwd deles que a próxima aba deve herdar (é o que o
-    /// `fork` do Python fazia ao olhar o último descendente).
+    /// cwd of what is running **in front** of the pty: the shell may have
+    /// launched `vim`/`mc`, and their cwd is what the next tab should inherit
+    /// (that is what Python's `fork` did when it looked at the last descendant).
     fn cwd(&self) -> Option<std::path::PathBuf> {
         let pid = self.pty.as_ref()?.child_pid()?;
         let target = descendant(pid);
@@ -243,21 +244,21 @@ impl Tab {
     }
 }
 
-/// Nome em edição no cartão (I8).
+/// Name being edited on the card (I8).
 struct Rename {
-    /// Índice lógico do workspace.
+    /// Logical index of the workspace.
     ws: usize,
     text: String,
-    /// O nome antigo está inteiro no campo e ainda não foi tocado: a primeira
-    /// tecla o substitui, como o "selecionado" do `Gtk.Entry` do Python.
+    /// The old name is whole in the field and untouched so far: the first key
+    /// replaces it, like the "selected" text of Python's `Gtk.Entry`.
     replace: bool,
 }
 
-/// Um conjunto de abas com nome próprio (I5).
+/// A set of tabs with a name of its own (I5).
 ///
-/// O workspace da frente mora em [`App::tabs`]/[`App::active`]; os outros
-/// ficam inteiros aqui (pty vivo, grade própria), e trocar de workspace é
-/// `mem::swap` do conteúdo — nada de copiar termo nem matar processo.
+/// The workspace in front lives in [`App::tabs`]/[`App::active`]; the others
+/// stay whole here (live pty, grid of their own), and switching workspace is a
+/// `mem::swap` of the contents — no copying a term and no killing a process.
 struct Workspace {
     tabs: Vec<Tab>,
     active: usize,
@@ -265,7 +266,7 @@ struct Workspace {
 }
 
 impl Workspace {
-    /// Embrulha a sessão corrente para estacionar.
+    /// Wraps the current session to park it.
     fn take(app: &mut App) -> Workspace {
         Workspace {
             tabs: std::mem::take(&mut app.tabs),
@@ -274,7 +275,7 @@ impl Workspace {
         }
     }
 
-    /// Devolve o conteúdo para o lugar da sessão corrente.
+    /// Hands the contents back into the slot of the current session.
     fn into_current(self, app: &mut App) {
         app.tabs = self.tabs;
         app.active = self.active.min(app.tabs.len().saturating_sub(1));
@@ -282,97 +283,100 @@ impl Workspace {
     }
 }
 
-#[allow(clippy::struct_excessive_bools)] // estado do app é booleano por natureza
+#[allow(clippy::struct_excessive_bools)] // app state is boolean by nature
 pub struct App {
     opts: Options,
     proxy: EventLoopProxy<UserEvent>,
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
-    /// Abas vivas (cada uma com o pty rodando), e qual está na frente.
+    /// Live tabs (each with its pty running), and which one is in front.
     tabs: Vec<Tab>,
     active: usize,
-    /// Nome do workspace da frente (`workspace 1`, renomeável — I8).
+    /// Name of the workspace in front (`workspace 1`, renamable — I8).
     ws_name: String,
-    /// Os workspaces que não estão na frente. O da frente não mora aqui: ele
-    /// **é** `tabs`/`active`. Invariante: `parked.len() + 1 == ws_count()`,
-    /// com os índices lógicos em ordem (o da frente cai no meio).
+    /// The workspaces that are not in front. The one in front does not live
+    /// here: it **is** `tabs`/`active`. Invariant: `parked.len() + 1 ==
+    /// ws_count()`, with the logical indices in order (the one in front falls
+    /// in the middle).
     parked: Vec<Workspace>,
-    /// Índice lógico do workspace da frente em `0..ws_count()`.
+    /// Logical index of the workspace in front, in `0..ws_count()`.
     ws_idx: usize,
-    /// Aba apertada na barra, para arrastar e reordenar (I10): índice e o x
-    /// do press, para só começar o arrasto depois de andar de verdade.
+    /// Tab pressed on the bar, to drag and reorder (I10): index and the x of
+    /// the press, so the drag only starts after actually moving.
     bar_press: Option<(usize, f64)>,
-    /// Última tecla comida por um atalho local: a soltura dela não vai ao
-    /// filho (o protocolo do kitty relata soltura, e um atalho comido não pode
-    /// virar `CSI ...:3u`).
-    consumido: Option<winit::keyboard::PhysicalKey>,
-    /// Renomeando um workspace no cartão (I8). Enquanto é `Some`, o teclado é
-    /// do nome — o filho não vê as teclas.
+    /// Last key eaten by a local shortcut: its release does not go to the
+    /// child (the kitty protocol reports releases, and an eaten shortcut must
+    /// not become `CSI ...:3u`).
+    consumed: Option<winit::keyboard::PhysicalKey>,
+    /// Renaming a workspace on the card (I8). While it is `Some`, the keyboard
+    /// belongs to the name — the child does not see the keys.
     rename: Option<Rename>,
-    /// Instante do último clique no cartão, para o duplo clique (I8).
+    /// Instant of the last card click, for the double click (I8).
     card_click: Option<(usize, std::time::Instant)>,
-    /// Último giro tratado na barra (instante e sentido). O X11 manda
-    /// **dois** eventos por entalhe (press e release), e sem isto um entalhe
-    /// troca de aba e o segundo desfaz.
+    /// Last wheel turn handled on the bar (instant and direction). X11 sends
+    /// **two** events per notch (press and release), and without this one notch
+    /// switches tab and the second undoes it.
     bar_wheel: Option<(std::time::Instant, i8)>,
     mods: ModifiersState,
-    /// Última posição do mouse em pixels físicos (base do `cell_at`).
+    /// Last mouse position in physical pixels (the base of `cell_at`).
     cursor_px: (f64, f64),
-    /// Botão que está apertado, para reportar release/movimento com ele.
+    /// Button currently held, to report release/motion with it.
     held: Option<u8>,
     clip: Clip,
-    /// Acorda o loop quando chega dado do pty (o filho nasce depois da
-    /// janela, quando o grid já é o definitivo).
+    /// Wakes the loop when pty data arrives (the child is born after the
+    /// window, when the grid is already the final one).
     wake: Option<Arc<dyn Fn() + Send + Sync>>,
     spawned: bool,
-    /// O que veio da linha de comando: o reload reconstrói as Options com ele
-    /// para o CLI continuar vencendo o arquivo.
+    /// What came from the command line: the reload rebuilds the Options with it
+    /// so the CLI keeps beating the file.
     over: crate::cli::Overrides,
-    /// `mtime` da última leitura do arquivo de configuração (auto-reload).
+    /// `mtime` of the last read of the config file (auto-reload).
     cfg_mtime: Option<std::time::SystemTime>,
     cfg_checked: std::time::Instant,
-    /// Instante em que o pisca foi zerado (última tecla/colagem). A fase sai
-    /// daí por aritmética: sem acumular estado, sem `sleep`.
+    /// Instant the blink was reset (last key/paste). The phase comes out of it
+    /// by arithmetic: no accumulated state, no `sleep`.
     blink_epoch: std::time::Instant,
-    /// Fase atual do pisca, para só redesenhar quando ela vira.
+    /// Current blink phase, so we only redraw when it flips.
     blink_phase: bool,
-    /// Há célula com SGR 5 na tela. Recalculado a cada `feed`: perguntar isso
-    /// ao grid em cada tique custaria uma varredura por evento.
+    /// There is a cell with SGR 5 on screen. Recomputed on every `feed`: asking
+    /// the grid that on every tick would cost a scan per event.
     blink_text: bool,
-    /// Portão do desenho (G16/B28/G15): ritmo de ~16 ms e `?2026` segurado.
+    /// Draw gate (G16/B28/G15): ~16 ms pacing and `?2026` held back.
     gate: crate::frame::Gate,
-    /// Aviso na tela (erro de config etc.). Um por vez, some sozinho.
+    /// Notice on screen (config error etc.). One at a time, it goes away alone.
     toast: Option<Toast>,
-    /// Erros do arquivo no arranque, que só podem virar toast quando a janela
-    /// existir (no terminal, `stderr` some; numa sessão gráfica, idem).
+    /// File errors at startup, which can only become a toast once the window
+    /// exists (in the terminal `stderr` is gone; in a graphical session, same).
     startup_errs: Vec<bzmux_core::config::Error>,
-    /// Erros da config que estão valendo agora (o `errors` do `state`): o
-    /// arquivo recusado mantém a config anterior, mas o erro é fato.
+    /// Config errors in force right now (the `state` `errors` field): a refused
+    /// file keeps the previous config, but the error is a fact.
     cfg_errors: Vec<String>,
     debug: Option<DebugServer>,
-    /// Grid pedido pelo verbo `resize`; o WM pode arredondar em pixels, então
-    /// `apply_size` corrige em passos até bater (como um terminal de verdade).
+    /// Grid requested by the `resize` verb; the WM may round to pixels, so
+    /// `apply_size` corrects in steps until it matches (like a real terminal).
     want: Option<(usize, usize)>,
     adjust_left: u8,
     eof: bool,
-    /// Último título posto na janela (evita `set_title` por frame).
+    /// Last title put on the window (avoids a `set_title` per frame).
     last_title: String,
     exiting: bool,
-    /// `--quit-after`: instante em que fecha sozinho (automação).
+    /// `--quit-after`: instant it closes by itself (automation).
     deadline: Option<std::time::Instant>,
-    /// Um dump já foi escrito nesta execução (SIGUSR1 pode vir várias vezes).
-    dumpou: bool,
-    /// Tamanho normal da janela (J5: maximizado **não** sobrescreve este).
+    /// A dump was already written in this run (SIGUSR1 may come several times).
+    dumped: bool,
+    /// Normal window size (J5: maximized does **not** overwrite this).
     geom_normal: (u32, u32),
-    /// Última posição externa vista (moldura, como o `get_position()` do Python).
+    /// Last outer position seen (frame, like Python's `get_position()`).
     geom_pos: Option<(i32, i32)>,
-    /// O estado lembrado só vale se ninguém pediu grade na linha de comando.
+    /// The remembered state only counts if nobody asked for a grid on the
+    /// command line.
     remember_geom: bool,
 }
 
-/// O WM aqui é X11? É ele que aceita posição de janela; no Wayland ela não
-/// existe (J6). O `winit` não expõe qual backend escolheu, então a leitura é do
-/// ambiente — a mesma escolha dele: Wayland quando `WAYLAND_DISPLAY` existe.
+/// Is the WM here X11? It is the one that accepts a window position; on
+/// Wayland that does not exist (J6). `winit` does not expose which backend it
+/// picked, so the reading comes from the environment — the same choice it
+/// makes: Wayland when `WAYLAND_DISPLAY` exists.
 fn backend_x11() -> bool {
     std::env::var_os("WAYLAND_DISPLAY").is_none_or(|v| v.is_empty())
         && std::env::var_os("DISPLAY").is_some_and(|v| !v.is_empty())
@@ -387,8 +391,8 @@ impl App {
         let mut tab = Tab::new(opts.cols, opts.rows);
         tab.term.scrollback_limit = opts.scrollback;
         tab.term.theme = opts.cfg.theme();
-        // o `mtime` do arranque já vale: sem isso o primeiro tique reparseia o
-        // mesmo arquivo e um erro de config sairia duas vezes em tela
+        // the startup `mtime` already counts: without it the first tick
+        // reparses the same file and a config error would show twice on screen
         let cfg_mtime = opts
             .cfg_path
             .as_deref()
@@ -409,7 +413,7 @@ impl App {
             parked: Vec::new(),
             ws_idx: 0,
             bar_press: None,
-            consumido: None,
+            consumed: None,
             rename: None,
             card_click: None,
             bar_wheel: None,
@@ -435,57 +439,57 @@ impl App {
             last_title: String::new(),
             exiting: false,
             deadline,
-            dumpou: false,
-            geom_normal: crate::state::PADRAO,
+            dumped: false,
+            geom_normal: crate::state::DEFAULT,
             geom_pos: None,
             remember_geom: true,
         }
     }
 
-    /// Texto de todas as abas de todos os workspaces (o `dump` do Python):
-    /// scrollback (as últimas 40) e o viewport de cada sessão, com cabeçalho
-    /// quando há mais de uma.
+    /// Text of every tab of every workspace (Python's `dump`): scrollback (the
+    /// last 40) and the viewport of each session, with a header when there is
+    /// more than one.
     fn dump_text(&self) -> String {
-        let mut partes: Vec<String> = Vec::new();
+        let mut parts: Vec<String> = Vec::new();
         let mut multi_ws = self.ws_count() > 1;
         multi_ws = multi_ws || self.parked.len() > 1;
-        // a ordem lógica: os estacionados nas suas posições e o corrente no
-        // lugar dele (o `parked` guarda os outros inteiros, na ordem)
+        // the logical order: the parked ones in their positions and the current
+        // one in its own slot (`parked` keeps the others whole, in order)
         let mut i_ws = 0usize;
-        let mut empurra = |tabs: &[Tab], active: usize, name: &str, partes: &mut Vec<String>| {
+        let mut empurra = |tabs: &[Tab], active: usize, name: &str, parts: &mut Vec<String>| {
             if multi_ws {
-                partes.push(format!("=== workspace {}: {name} ===", i_ws + 1));
+                parts.push(format!("=== workspace {}: {name} ===", i_ws + 1));
             }
             let multi_tab = tabs.len() > 1;
             for (i, t) in tabs.iter().enumerate() {
                 if multi_tab {
-                    partes.push(format!("=== aba {}: {} ===", i + 1, t.title()));
+                    parts.push(format!("=== tab {}: {} ===", i + 1, t.title()));
                 }
-                partes.extend(dump_tab(t, i == active));
+                parts.extend(dump_tab(t, i == active));
             }
             i_ws += 1;
         };
-        // o corrente entra na posição dele: antes dele vêm os estacionados de
-        // índice menor
+        // the current one goes in its position: before it come the parked ones
+        // with a lower index
         let mut feitos = 0usize;
         for slot in 0..self.parked.len() {
             if feitos == self.ws_idx {
-                empurra(&self.tabs, self.active, &self.ws_name, &mut partes);
+                empurra(&self.tabs, self.active, &self.ws_name, &mut parts);
                 feitos += 1;
             }
             let w = &self.parked[slot];
-            empurra(&w.tabs, w.active, &w.name, &mut partes);
+            empurra(&w.tabs, w.active, &w.name, &mut parts);
             feitos += 1;
         }
         if feitos == self.ws_idx {
-            empurra(&self.tabs, self.active, &self.ws_name, &mut partes);
+            empurra(&self.tabs, self.active, &self.ws_name, &mut parts);
         }
-        let mut s = partes.join("\n");
+        let mut s = parts.join("\n");
         s.push('\n');
         s
     }
 
-    /// Escreve o dump onde o `--dump-to` mandou (senão /tmp/bzmux-dump.txt).
+    /// Writes the dump where `--dump-to` said (else /tmp/bzmux-dump.txt).
     fn dump(&mut self) {
         let path = self
             .opts
@@ -494,15 +498,15 @@ impl App {
             .unwrap_or_else(|| std::path::PathBuf::from("/tmp/bzmux-dump.txt"));
         match std::fs::write(&path, self.dump_text()) {
             Ok(()) => {
-                self.dumpou = true;
+                self.dumped = true;
                 logln(&format!("dump: {}", path.display()));
             },
-            Err(e) => eprintln!("dump falhou: {}: {e}", path.display()),
+            Err(e) => eprintln!("dump failed: {}: {e}", path.display()),
         }
     }
 
-    /// XID da janela no X11 (0 no Wayland): quem vai capturar pixel pergunta
-    /// ao app, não ao X (é o que o `benchrun.py` do Python faz).
+    /// Window XID on X11 (0 on Wayland): whoever is going to capture pixels
+    /// asks the app, not X (that is what Python's `benchrun.py` does).
     fn xid(&self) -> u64 {
         use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
         let Some(w) = self.window.as_ref() else {
@@ -515,7 +519,7 @@ impl App {
         }
     }
 
-    /// Escrita no pty com contador (`prof`): bytes e repetições por `EAGAIN`.
+    /// pty write with counters (`prof`): bytes and repeats per `EAGAIN`.
     fn pty_write(&mut self, bytes: &[u8]) {
         let Some(pty) = self.tabs[self.active].pty.as_mut() else {
             return;
@@ -530,8 +534,8 @@ impl App {
         self.opts.font_size_pt * self.opts.dpi / 72.0 * scale as f32
     }
 
-    /// Altura da barra de abas em px (0 com uma aba só). A barra só aparece
-    /// quando há escolha a fazer; com uma aba, ocupa espaço à toa.
+    /// Tab bar height in px (0 with a single tab). The bar only shows up when
+    /// there is a choice to make; with one tab it wastes space.
     fn bar_h(&self, ch: f32) -> f32 {
         if self.tabs.len() > 1 {
             ch
@@ -540,21 +544,21 @@ impl App {
         }
     }
 
-    /// Os cartões da sidebar (I6), em ordem lógica: os estacionados antes do
-    /// da frente e os depois, na posição correta.
+    /// The sidebar cards (I6), in logical order: the parked ones before the one
+    /// in front and the ones after, in the right position.
     fn wscards(&self) -> Vec<crate::render::WsCard> {
         let total = self.ws_count();
         let mut cards = Vec::with_capacity(total);
         for i in 0..total {
-            let em_edicao = self
+            let editing = self
                 .rename
                 .as_ref()
                 .filter(|r| r.ws == i)
                 .map(|r| format!("{}|", r.text));
             if i == self.ws_idx {
                 cards.push(crate::render::WsCard {
-                    name: em_edicao.unwrap_or_else(|| self.ws_name.clone()),
-                    titulo: self.tabs[self.active].title(),
+                    name: editing.unwrap_or_else(|| self.ws_name.clone()),
+                    title: self.tabs[self.active].title(),
                     n_tabs: self.tabs.len(),
                     ativa: true,
                 });
@@ -562,8 +566,8 @@ impl App {
                 let slot = if i < self.ws_idx { i } else { i - 1 };
                 let w = &self.parked[slot];
                 cards.push(crate::render::WsCard {
-                    name: em_edicao.unwrap_or_else(|| w.name.clone()),
-                    titulo: w.tabs[w.active].title(),
+                    name: editing.unwrap_or_else(|| w.name.clone()),
+                    title: w.tabs[w.active].title(),
                     n_tabs: w.tabs.len(),
                     ativa: false,
                 });
@@ -572,7 +576,7 @@ impl App {
         cards
     }
 
-    /// Largura da sidebar em px (0 com um workspace só — I7).
+    /// Sidebar width in px (0 with a single workspace — I7).
     fn side_w(&self, cw: f32) -> f32 {
         if self.ws_count() > 1 {
             cw * 18.0
@@ -581,14 +585,14 @@ impl App {
         }
     }
 
-    /// O que a barra mostra: número, título e alerta de BEL de cada aba.
+    /// What the bar shows: number, title and BEL alert of each tab.
     fn tabinfo(&self) -> Vec<crate::render::TabInfo> {
         let now = std::time::Instant::now();
         self.tabs
             .iter()
             .enumerate()
             .map(|(i, t)| crate::render::TabInfo {
-                titulo: t.title(),
+                title: t.title(),
                 ativa: i == self.active,
                 alert: t
                     .bell_at
@@ -600,7 +604,7 @@ impl App {
     fn grid_from_px(&self, w: u32, h: u32) -> (usize, usize) {
         match &self.renderer {
             Some(r) => {
-                // margem, barra de abas e sidebar não são grade
+                // padding, tab bar and sidebar are not grid
                 let bar = self.bar_h(r.fonts.ch);
                 let side = self.side_w(r.fonts.cw);
                 let (iw, ih) = (
@@ -616,14 +620,15 @@ impl App {
         }
     }
 
-    /// Pixel -> (col, row) 0-based, preso à grade (sem padding: G9 ainda falta).
+    /// Pixel -> (col, row) 0-based, clamped to the grid (no padding: G9 still
+    /// missing).
     fn cell_at(&self, px: f64, py: f64) -> (usize, usize) {
         let (cw, ch, pad) = self
             .renderer
             .as_ref()
             .map_or((10.0, 19.0, 0.0), |r| (r.fonts.cw, r.fonts.ch, r.pad));
-        // descontar a origem: com margem, barra de abas e sidebar, o (0,0)
-        // da grade não é o (0,0) da janela
+        // subtract the origin: with padding, tab bar and sidebar, the grid's
+        // (0,0) is not the window's (0,0)
         let bar = f64::from(self.bar_h(ch));
         let side = f64::from(self.side_w(cw));
         let col = ((px - f64::from(pad) - side) / f64::from(cw)).max(0.0) as usize;
@@ -634,7 +639,7 @@ impl App {
         )
     }
 
-    /// Índice da aba sob o cursor, se ele estiver na faixa da barra.
+    /// Index of the tab under the cursor, if it is in the bar strip.
     fn tab_at(&self, px: f64, py: f64) -> Option<usize> {
         let (cw, ch, pad) = self
             .renderer
@@ -645,12 +650,12 @@ impl App {
             return None;
         }
         let info = self.tabinfo();
-        // a barra começa onde a grade começa (à direita da sidebar): a linha 1
-        // é dividida entre o cartão do workspace e a barra de abas
+        // the bar starts where the grid starts (right of the sidebar): line 1
+        // is split between the workspace card and the tab bar
         let mut x = f64::from(pad) + f64::from(self.side_w(cw));
         for (i, t) in info.iter().enumerate() {
-            let rotulo = format!(" {} {} ", i + 1, t.titulo);
-            let width = rotulo.chars().count() as f64 * f64::from(cw);
+            let label = format!(" {} {} ", i + 1, t.title);
+            let width = label.chars().count() as f64 * f64::from(cw);
             if px >= x && px < x + width {
                 return Some(i);
             }
@@ -659,7 +664,7 @@ impl App {
         None
     }
 
-    /// Workspace sob o cursor, se ele estiver na sidebar (I9).
+    /// Workspace under the cursor, if it is on the sidebar (I9).
     fn card_at(&self, px: f64, py: f64) -> Option<usize> {
         let (cw, ch, pad) = self
             .renderer
@@ -669,7 +674,7 @@ impl App {
         if side <= 0.0 || px >= f64::from(pad) + side || px < f64::from(pad) {
             return None;
         }
-        // a sidebar começa na linha 1, ao lado da barra de abas (não abaixo)
+        // the sidebar starts on line 1, beside the tab bar (not below)
         let top = f64::from(pad);
         if py < top {
             return None;
@@ -697,8 +702,8 @@ impl App {
         m
     }
 
-    /// Manda um evento de mouse para o filho. Só é chamado quando o app pediu
-    /// (`?1000/1002/1003`); o resto do mouse é nosso (seleção).
+    /// Sends a mouse event to the child. Only called when the app asked for it
+    /// (`?1000/1002/1003`); the rest of the mouse is ours (selection).
     fn report_mouse(&mut self, button: u8, pressed: bool, motion: bool) {
         let (col, row) = self.cell_at(self.cursor_px.0, self.cursor_px.1);
         let bytes = crate::mouse::encode(
@@ -718,9 +723,9 @@ impl App {
         self.pty_write(&bytes);
     }
 
-    /// Atalhos Ctrl+Shift e Super de workspace/edidor: extraído de `on_key`,
-    /// que só manda o que sobrar para o encoder.
-    #[allow(clippy::too_many_lines)] // um braço por atalho
+    /// Ctrl+Shift and Super shortcuts for workspace/editor: pulled out of
+    /// `on_key`, which only sends whatever is left to the encoder.
+    #[allow(clippy::too_many_lines)] // one arm per shortcut
     fn shortcut_ws(&mut self, k: &KeyIn<'_>, named: Option<NamedKey>, ch: Option<char>) -> bool {
         let ctrl = k.mods.control_key();
         let shift = k.mods.shift_key();
@@ -745,22 +750,22 @@ impl App {
                 },
                 _ => {},
             }
-            // Ctrl+Shift+F2: o arquivo de configuração no editor, em aba nova
-            // (P33 do Python). Fica **antes** do encoding: o vim nunca vê a
-            // tecla, senão ele a interpreta como atalho próprio.
+            // Ctrl+Shift+F2: the config file in the editor, in a new tab
+            // (P33 of Python). It comes **before** encoding: vim never sees the
+            // key, otherwise it interprets it as a shortcut of its own.
             if named == Some(NamedKey::F2) {
                 self.open_config();
                 return true;
             }
-            // Ctrl+Shift+1..9 escolhe o workspace (0 = o décimo)
+            // Ctrl+Shift+1..9 picks the workspace (0 = the tenth)
             if let Some(n) = k.digit {
                 let i = if n == 0 { 9 } else { n - 1 };
                 self.select_workspace(i);
                 return true;
             }
         }
-        // Super+N/Q e Super+1..9: alias de workspace (o WM pode engolir, mas
-        // quando chega é o mesmo efeito — é o que o Python fazia)
+        // Super+N/Q and Super+1..9: workspace alias (the WM may swallow them,
+        // but when they arrive the effect is the same — what Python did)
         if super_only(self.mods) {
             match ch.map(|c| c.to_ascii_lowercase()) {
                 Some('n') => {
@@ -783,24 +788,24 @@ impl App {
         false
     }
 
-    /// Tecla: atalhos da janela primeiro (o filho nunca vê Ctrl+Shift+C/V),
-    /// depois o encoder. Qualquer tecla de verdade volta ao vivo.
+    /// Key: window shortcuts first (the child never sees Ctrl+Shift+C/V), then
+    /// the encoder. Any real key returns to live.
     fn on_key(&mut self, event: &winit::event::KeyEvent) {
         let press = event.state == ElementState::Pressed;
         if press {
             let mut k = KeyIn::from_event(event);
             k.mods = self.mods;
-            if self.press_locais(&k) {
-                // a tecla foi do app: a soltura dela também é (senão o release
-                // de Ctrl+Shift+1 virava `CSI 49;1:3u` no filho)
-                self.consumido = Some(event.physical_key);
+            if self.press_local_keys(&k) {
+                // the key belonged to the app: so does its release (otherwise
+                // the release of Ctrl+Shift+1 became `CSI 49;1:3u` in the child)
+                self.consumed = Some(event.physical_key);
                 return;
             }
-            self.consumido = None;
-        } else if self.consumido == Some(event.physical_key) {
-            // o X11 solta Shift/Ctrl **antes** da tecla: o marcador não pode
-            // ser consumido por elas (era o vazamento do `CSI 49;1:3u`)
-            self.consumido = None;
+            self.consumed = None;
+        } else if self.consumed == Some(event.physical_key) {
+            // X11 releases Shift/Ctrl **before** the key: the marker must not be
+            // consumed by them (that was the `CSI 49;1:3u` leak)
+            self.consumed = None;
             return;
         } else if self.tabs[self.active].term.kbd_flags & keys::F_EVENT_TYPES == 0 {
             return;
@@ -819,11 +824,12 @@ impl App {
         }
     }
 
-    /// Atalhos que comem a tecla antes do encoder. `true` = o filho não vê
-    /// nem o aperto nem a soltura.
-    fn press_locais(&mut self, k: &KeyIn<'_>) -> bool {
+    /// Shortcuts that eat the key before the encoder. `true` = the child sees
+    /// neither the press nor the release.
+    fn press_local_keys(&mut self, k: &KeyIn<'_>) -> bool {
         self.blink_reset();
-        // renomeando no cartão: o teclado é do nome, não do terminal (I8)
+        // renaming on the card: the keyboard belongs to the name, not to the
+        // terminal (I8)
         if self.rename_key(k) {
             return true;
         }
@@ -835,16 +841,17 @@ impl App {
         if self.shortcut_ws(k, named, ch) {
             return true;
         }
-        // Alt+1..9 escolhe a aba; Alt+0 é a décima (I15). O dígito não vaza
-        // para o filho — é o que o Python fazia.
+        // Alt+1..9 picks the tab; Alt+0 is the tenth (I15). The digit does not
+        // leak to the child — what Python did.
         if alt_digit_only(k.mods) {
             if let Some(n) = k.digit {
                 self.select_tab(if n == 0 { 9 } else { n - 1 });
                 return true;
             }
         }
-        // Ctrl+Shift+C/V são do terminal, não do app: sem isso o Ctrl+Shift+C
-        // vira o mesmo ^C de Ctrl+C e mata o processo (bug do P-bzmux)
+        // Ctrl+Shift+C/V belong to the terminal, not to the app: without this
+        // Ctrl+Shift+C becomes the same ^C as Ctrl+C and kills the process (a
+        // bug in the Python bzmux)
         if ctrl && shift {
             match ch.map(|c| c.to_ascii_lowercase()) {
                 Some('c') => {
@@ -858,7 +865,8 @@ impl App {
                 _ => {},
             }
         }
-        // Shift+PgUp/PgDn/Home/End olham o histórico sem falar com o app
+        // Shift+PgUp/PgDn/Home/End look at the history without talking to the
+        // app
         if shift && !ctrl {
             match named {
                 Some(NamedKey::PageUp) => {
@@ -880,8 +888,8 @@ impl App {
                 _ => {},
             }
         }
-        // tecla de verdade volta ao vivo; só modificador não (senão o Shift
-        // do Shift+PgUp já resetava a visão antes de rolar)
+        // a real key returns to live; a bare modifier does not (otherwise the
+        // Shift of Shift+PgUp already reset the view before scrolling)
         if self.tabs[self.active].view_off > 0
             && !matches!(
                 named,
@@ -893,10 +901,10 @@ impl App {
         false
     }
 
-    /// Movimento: só interessa ao app quando ele pediu `?1002`/`?1003`.
+    /// Motion: only matters to the app when it asked for `?1002`/`?1003`.
     fn on_cursor_moved(&mut self, x: f64, y: f64) {
         self.cursor_px = (x, y);
-        // arrasto sobre a barra reordena aba (I10); sobre a grade é seleção
+        // a drag on the bar reorders tabs (I10); on the grid it is selection
         if self.bar_press.is_some() {
             self.bar_drag();
             return;
@@ -906,20 +914,20 @@ impl App {
             return;
         }
         match self.tabs[self.active].term.mouse_mode {
-            // 1002: movimento só com botão apertado
+            // 1002: motion only with a button held
             2 if self.held.is_some() => {
                 if let Some(b) = self.held {
                     self.report_mouse(b, true, true);
                 }
             },
-            // 1003: movimento sem botão também (código 35 = 3 + 32)
+            // 1003: motion without a button too (code 35 = 3 + 32)
             3 => self.report_mouse(crate::mouse::RELEASE, true, true),
             _ => {},
         }
     }
 
-    /// Press/release de botão. Com `?1000/1002/1003` o evento vai para o
-    /// filho; sem eles o mouse é nosso (seleção/cópia).
+    /// Button press/release. With `?1000/1002/1003` the event goes to the
+    /// child; without them the mouse is ours (selection/copy).
     fn on_mouse_input(&mut self, state: ElementState, button: winit::event::MouseButton) {
         let Some(btn) = crate::mouse::from_winit(button) else {
             return;
@@ -933,7 +941,7 @@ impl App {
         }
         match state {
             ElementState::Pressed => {
-                // clique em cartão de workspace também não é do app
+                // a click on a workspace card does not go to the child either
                 if let Some(i) = self.card_at(self.cursor_px.0, self.cursor_px.1) {
                     self.select_workspace(i);
                     self.held = None;
@@ -942,7 +950,8 @@ impl App {
                     }
                     return;
                 }
-                // clique na barra não é do app (troca a aba, como na seleção)
+                // a click on the bar does not go to the child (it switches tab,
+                // as in the selection)
                 if let Some(i) = self.tab_at(self.cursor_px.0, self.cursor_px.1) {
                     self.select_tab(i);
                     self.held = None;
@@ -951,8 +960,8 @@ impl App {
                     }
                     return;
                 }
-                // F19: o app desenha o vivo; clique no histórico só faz
-                // sentido depois de voltar para ele
+                // F19: the app draws live; a click on the history only makes
+                // sense after going back to it
                 self.tabs[self.active].view_off = 0;
                 self.held = Some(btn);
                 self.report_mouse(btn, true, false);
@@ -967,23 +976,24 @@ impl App {
         }
     }
 
-    /// Roda: do app quando ele pediu mouse e estamos no vivo; senão é rolagem
-    /// do histórico (o wheel lendo histórico continua sendo nosso).
+    /// Wheel: the child's when it asked for mouse and we are live; otherwise it
+    /// is history rolling (the wheel reading history is still ours).
     fn on_wheel(&mut self, delta: MouseScrollDelta) {
-        // roda na barra de abas circula entre elas (I11); na grade é rolagem
+        // the wheel on the tab bar cycles through them (I11); on the grid it
+        // scrolls
         if self.tab_at(self.cursor_px.0, self.cursor_px.1).is_some() {
             let dir: f32 = match delta {
                 MouseScrollDelta::LineDelta(_, y) => y,
                 MouseScrollDelta::PixelDelta(p) => (p.y as f32).signum() * 3.0,
             };
-            // press e release do mesmo entalhe chegam quase juntos (1 ms) e
-            // têm o mesmo sentido; duas voltas de verdade ficam a >10 ms
+            // press and release of the same notch arrive almost together (1 ms)
+            // and have the same direction; two real turns are >10 ms apart
             let now = std::time::Instant::now();
             let direction: i8 = if dir > 0.0 { 1 } else { -1 };
-            let repetido = self.bar_wheel.is_some_and(|(when, previous)| {
+            let repeated = self.bar_wheel.is_some_and(|(when, previous)| {
                 previous == direction && now.duration_since(when).as_millis() < 10
             });
-            if repetido {
+            if repeated {
                 return;
             }
             self.bar_wheel = Some((now, direction));
@@ -996,8 +1006,8 @@ impl App {
             self.select_tab(at);
             return;
         }
-        // um entalhe vale 3 linhas (o mesmo do bzmux Python); trackpad manda
-        // pixel (ou fração) e o resto é acumulado em `scroll_frac`
+        // one notch is worth 3 lines (the same as the Python bzmux); a trackpad
+        // sends pixels (or fractions) and the rest accumulates in `scroll_frac`
         let (hx, lines) = match delta {
             MouseScrollDelta::LineDelta(x, y) => (x * 3.0, y * 3.0),
             MouseScrollDelta::PixelDelta(p) => {
@@ -1026,19 +1036,19 @@ impl App {
         let n = self.tabs[self.active].scroll_frac.trunc();
         self.tabs[self.active].scroll_frac -= n;
         if n != 0.0 {
-            // roda para cima (delta positivo) entra no histórico
+            // wheel up (positive delta) goes into the history
             self.scroll_view(n as i64);
         }
     }
 
-    /// Mouse do terminal: press fixa a âncora, arrasto vira seleção, release
-    /// copia. Um clique sozinho não pinta célula nem mexe no PRIMARY.
+    /// Terminal mouse: press sets the anchor, drag becomes selection, release
+    /// copies. A single click paints no cell and does not touch PRIMARY.
     fn select_input(&mut self, state: ElementState, button: winit::event::MouseButton) {
         use winit::event::MouseButton::{Left, Middle};
         match (state, button) {
             (ElementState::Pressed, Left) => {
-                // clique no cartão da sidebar troca de workspace (I9) e o
-                // duplo clique edita o nome no lugar (I8)
+                // a click on the sidebar card switches workspace (I9) and a
+                // double click edits the name in place (I8)
                 if let Some(i) = self.card_at(self.cursor_px.0, self.cursor_px.1) {
                     self.bar_press = None;
                     let double = self
@@ -1053,8 +1063,8 @@ impl App {
                     }
                     return;
                 }
-                // clique na barra de abas troca de aba (não seleciona texto);
-                // 'apertou' fica guardado para o arrasto (I10)
+                // a click on the tab bar switches tab (it does not select text);
+                // the "press" is kept for the drag (I10)
                 if let Some(i) = self.tab_at(self.cursor_px.0, self.cursor_px.1) {
                     self.bar_press = Some((i, self.cursor_px.0));
                     self.select_tab(i);
@@ -1064,8 +1074,8 @@ impl App {
                     return;
                 }
                 self.bar_press = None;
-                // clicar no histórico NÃO volta ao vivo: o arrasto é para
-                // justamente copiar dali
+                // clicking the history does NOT go back to live: the drag is
+                // exactly to copy from there
                 self.tabs[self.active].sel = None;
                 let (col, row) = self.cell_at(self.cursor_px.0, self.cursor_px.1);
                 self.tabs[self.active].press = Some((
@@ -1080,15 +1090,16 @@ impl App {
                 self.redraw();
             },
             (ElementState::Released, Left) => {
-                // soltar na barra encerra o arrasto de reordenação (I10)
+                // releasing on the bar ends the reorder drag (I10)
                 self.bar_press = None;
                 self.tabs[self.active].dragging = false;
                 self.tabs[self.active].press = None;
                 if self.tabs[self.active].sel.is_some_and(|s| s.a != s.b) {
-                    // PRIMARY é a convenção do X11 (botão do meio cola dali).
-                    // O CLIPBOARD só entra se `copy_on_select` mandar: em app
-                    // que só olha o CLIPBOARD é conveniência, mas pisar nele a
-                    // cada arrasto atrapalha mais do que ajuda.
+                    // PRIMARY is the X11 convention (the middle button pastes
+                    // from there). The CLIPBOARD only enters if
+                    // `copy_on_select` says so: for an app that only looks at
+                    // the CLIPBOARD it is convenience, but stepping on it on
+                    // every drag gets in the way more than it helps.
                     if let Some(txt) = self.selection_text() {
                         self.clip.set_primary(&txt);
                         if self.opts.cfg.copy_on_select {
@@ -1101,18 +1112,19 @@ impl App {
                 self.redraw();
             },
             (ElementState::Pressed, Middle) => {
-                // botão do meio no CARTÃO fecha o workspace (I9)
+                // middle button on the CARD closes the workspace (I9)
                 if let Some(i) = self.card_at(self.cursor_px.0, self.cursor_px.1) {
                     self.close_workspace(i);
                     return;
                 }
-                // botão do meio NA ABA fecha ela (I9); na grade cola o PRIMARY
+                // middle button ON THE TAB closes it (I9); on the grid it pastes
+                // PRIMARY
                 if let Some(i) = self.tab_at(self.cursor_px.0, self.cursor_px.1) {
                     self.bar_press = None;
                     self.close_tab_at(i);
                     return;
                 }
-                // colar fala com o app, então a visão vai para o vivo
+                // pasting talks to the app, so the view goes back to live
                 self.tabs[self.active].view_off = 0;
                 if let Some(txt) = self.clip.primary_text() {
                     self.write_paste(&txt);
@@ -1122,9 +1134,9 @@ impl App {
         }
     }
 
-    /// Arrasto de reordenação na barra (I10): andou uma aba de largura com o
-    /// botão apertado sobre a barra, a aba troca de lugar. Só anda de verdade
-    /// depois de passar da metade do próprio rótulo (senão balança).
+    /// Reorder drag on the bar (I10): moved one tab width with the button held
+    /// on the bar, the tab changes place. It only really moves after passing
+    /// half of its own label (otherwise it wobbles).
     fn bar_drag(&mut self) {
         let Some((i, x0)) = self.bar_press else {
             return;
@@ -1137,11 +1149,11 @@ impl App {
             return;
         };
         let info = self.tabinfo();
-        // onde o press começou e onde estamos: x pixel da aba i no arrasto
+        // where the press started and where we are: x pixel of tab i in the drag
         let mut x = f64::from(pad);
         let mut today = None;
         for (k, t) in info.iter().enumerate() {
-            let width = format!(" {} {} ", k + 1, t.titulo).chars().count() as f64 * f64::from(cw);
+            let width = format!(" {} {} ", k + 1, t.title).chars().count() as f64 * f64::from(cw);
             if k == i {
                 today = Some((x, width));
                 break;
@@ -1163,7 +1175,8 @@ impl App {
         self.redraw();
     }
 
-    /// Reordena (I10): remove de `i` e insere em `d`; a ativa segue a aba.
+    /// Reorders (I10): removes from `i` and inserts at `d`; the active one
+    /// follows the tab.
     fn move_tab(&mut self, i: usize, d: usize) {
         let d = d.min(self.tabs.len() - 1);
         if i == d || i >= self.tabs.len() {
@@ -1181,8 +1194,8 @@ impl App {
         self.redraw();
     }
 
-    /// Arrasto: a seleção só nasce depois de 3 px (tremer o mouse com o botão
-    /// apertado não pode pintar uma célula em reverso).
+    /// Drag: the selection only starts after 3 px (shaking the mouse with the
+    /// button held must not paint a cell in reverse).
     fn drag_select(&mut self, x: f64, y: f64) {
         let Some((anchor, (px, py))) = self.tabs[self.active].press else {
             return;
@@ -1209,7 +1222,7 @@ impl App {
             .and_then(|s| self.tabs[self.active].term.span_text(&s))
     }
 
-    /// Ctrl+Shift+C: a seleção ou, sem seleção, a viewport inteira.
+    /// Ctrl+Shift+C: the selection or, without one, the whole viewport.
     fn copy(&mut self) {
         let txt = self.selection_text().unwrap_or_else(|| {
             self.tabs[self.active]
@@ -1223,7 +1236,7 @@ impl App {
         self.clip.set_primary(&txt);
     }
 
-    /// Ctrl+Shift+V: cola do CLIPBOARD.
+    /// Ctrl+Shift+V: pastes from the CLIPBOARD.
     fn paste(&mut self) {
         if let Some(txt) = self.clip.text() {
             self.blink_reset();
@@ -1232,14 +1245,14 @@ impl App {
         }
     }
 
-    /// Escreve o texto no filho respeitando o bracketed paste (`?2004`).
+    /// Writes the text to the child honoring bracketed paste (`?2004`).
     fn write_paste(&mut self, txt: &str) {
         let payload = self.tabs[self.active].term.paste_payload(txt);
         self.pty_write(&payload);
         self.redraw();
     }
 
-    /// Rola a visão em `n` linhas (positivo = para o histórico).
+    /// Scrolls the view by `n` lines (positive = into the history).
     fn scroll_view(&mut self, n: i64) {
         let sb = self.tabs[self.active].term.scrollback.len() as i64;
         self.tabs[self.active].view_off =
@@ -1247,11 +1260,11 @@ impl App {
         self.redraw();
     }
 
-    /// Lê o que o pty de **todas** as abas produziu.
+    /// Reads what the pty of **every** tab produced.
     ///
-    /// Aba em segundo plano também precisa ser drenada: o canal não é
-    /// ilimitado, e um `yes` numa aba escondida encheria a memória. O que fica
-    /// reservado à aba ativa é só o que é "olhar" (pisca e visão).
+    /// A background tab has to be drained too: the channel is not unbounded,
+    /// and a `yes` in a hidden tab would fill memory. What is reserved to the
+    /// active tab is only what is "looking" (blink and view).
     fn drain(&mut self) {
         for i in 0..self.tabs.len() {
             self.drain_tab(i);
@@ -1277,8 +1290,8 @@ impl App {
             }
         }
         if !bytes.is_empty() {
-            // D10: quem está lendo o histórico não pode ser arrastado pelo
-            // output que chega — a visão anda junto com as linhas que saíram.
+            // D10: whoever is reading the history cannot be dragged by the
+            // output that arrives — the view moves along with the lines that left.
             let (sc, hist) = (
                 self.tabs[i].term.scrolled,
                 self.tabs[i].term.scrollback.len(),
@@ -1288,8 +1301,8 @@ impl App {
             if prof::enabled() {
                 prof::add_parse(t0.elapsed().as_nanos() as u64, bytes.len());
             }
-            // `OSC 4/10/11/12` mexeu nas cores: o renderer tem que saber. Vale
-            // para qualquer aba: o tema é do emulador, não da aba.
+            // `OSC 4/10/11/12` touched the colors: the renderer has to know. It
+            // holds for any tab: the theme belongs to the emulator, not the tab.
             if self.tabs[i].term.theme_dirty {
                 self.tabs[i].term.theme_dirty = false;
                 let theme = self.tabs[i].term.theme.clone();
@@ -1297,15 +1310,15 @@ impl App {
                     r.apply_theme(&theme);
                 }
             }
-            // I4: título por OSC 0/2 (o shell põe "~/projeto" e o `vim` o nome
-            // do arquivo); o `bzmux` é o padrão e não conta como pedido
-            let titulo = self.tabs[i].term.title.clone();
-            if titulo != self.tabs[i].osc_title {
+            // I4: title via OSC 0/2 (the shell puts "~/project" and `vim` the
+            // file name); `bzmux` is the default and does not count as a request
+            let title = self.tabs[i].term.title.clone();
+            if title != self.tabs[i].osc_title {
                 let was = i == self.active;
-                self.tabs[i].osc_title = if titulo == "bzmux" {
+                self.tabs[i].osc_title = if title == "bzmux" {
                     String::new()
                 } else {
-                    titulo
+                    title
                 };
                 if was {
                     self.sync_title();
@@ -1314,8 +1327,8 @@ impl App {
             let bells = self.tabs[i].term.bells;
             while self.tabs[i].bells_seen != bells {
                 self.tabs[i].bells_seen = self.tabs[i].bells_seen.wrapping_add(1);
-                // I13: o rótulo da aba pisca por 800 ms, mesmo que ela não
-                // esteja na frente (é o aviso de "aconteceu algo aqui")
+                // I13: the tab label flashes for 800 ms, even if it is not in
+                // front (it is the "something happened here" alert)
                 self.tabs[i].bell_at = Some(std::time::Instant::now());
                 self.ring();
             }
@@ -1329,9 +1342,9 @@ impl App {
             if self.tabs[i].view_off > 0 {
                 let off = self.tabs[i].view_off;
                 let off = self.tabs[i].term.view_after_output(off, sc, hist);
-                // `CSI 3J` (ou um reflow) pode ter esvaziado o histórico: sem
-                // isto a visão aponta para linhas que não existem mais e a tela
-                // mostra lixo (ou o "pulo" que o F2 tinha que evitar)
+                // `CSI 3J` (or a reflow) may have emptied the history: without
+                // this the view points at lines that no longer exist and the
+                // screen shows garbage (or the "jump" F2 had to avoid)
                 self.tabs[i].view_off = off.min(self.tabs[i].term.scrollback.len());
             }
         }
@@ -1346,14 +1359,14 @@ impl App {
         }
     }
 
-    /// Erros do arquivo lidos no arranque: viram toast no primeiro tique.
+    /// File errors read at startup: they become a toast on the first tick.
     pub fn startup_errors(&mut self, errs: Vec<bzmux_core::config::Error>) {
         self.cfg_errors = errs.iter().map(std::string::ToString::to_string).collect();
         self.startup_errs = errs;
     }
 
-    /// Zera o pisca: logo depois de uma tecla o cursor tem que estar aceso.
-    /// Sem isto o cursor pode "sumir" no exato instante em que a pessoa olha.
+    /// Resets the blink: right after a key the cursor must be lit. Without this
+    /// the cursor may "vanish" at the exact instant the person looks at it.
     fn blink_reset(&mut self) {
         self.blink_epoch = std::time::Instant::now();
         if !self.blink_phase {
@@ -1364,22 +1377,23 @@ impl App {
         }
     }
 
-    /// Estado do pisca deste frame (G12).
+    /// Blink state of this frame (G12).
     ///
-    /// O cursor pisca se a config deixa **e** o programa não pediu cursor fixo
-    /// por `CSI 6 q` (4/6 = fixo). O texto com SGR 5 pisca sempre — é o
-    /// programa que pediu, não a config.
+    /// The cursor blinks if the config allows it **and** the program did not ask
+    /// for a steady cursor via `CSI 6 q` (4/6 = steady). Text with SGR 5 always
+    /// blinks — the program asked for it, not the config.
     fn blink(&self) -> crate::render::Blink {
         let phase = self.blink_phase;
         crate::render::Blink {
             phase,
-            cursor: !self.cursor_pisca() || phase,
+            cursor: !self.cursor_blinks() || phase,
         }
     }
 
-    /// O cursor deve piscar? A config manda, mas `CSI 6 q` com forma par (4/6)
-    /// pede cursor fixo e vence enquanto o programa quiser.
-    fn cursor_pisca(&self) -> bool {
+    /// Should the cursor blink? The config rules, but `CSI 6 q` with an even
+    /// shape (4/6) asks for a steady cursor and wins for as long as the program
+    /// wants it.
+    fn cursor_blinks(&self) -> bool {
         self.opts.cfg.cursor_blink
             && self.tabs[self.active]
                 .term
@@ -1387,31 +1401,32 @@ impl App {
                 .is_none_or(|(_, pisca)| pisca)
     }
 
-    /// Tem alguma coisa piscando na tela (cursor ou texto com SGR 5)? Só nesse
-    /// caso o loop precisa acordar no meio do período.
-    fn pisca_active(&self) -> bool {
-        (self.cursor_pisca() && self.tabs[self.active].term.cursor_visible)
+    /// Is anything blinking on screen (cursor or text with SGR 5)? Only in that
+    /// case does the loop need to wake up in the middle of the period.
+    fn blink_active(&self) -> bool {
+        (self.cursor_blinks() && self.tabs[self.active].term.cursor_visible)
             || self.has_text_piscando()
     }
 
-    /// Há célula com SGR 5 na tela? Sem isto o loop não teria por que acordar
-    /// no meio do período do pisca quando o cursor está fixo.
+    /// Is there a cell with SGR 5 on screen? Without this the loop would have no
+    /// reason to wake up mid blink period when the cursor is steady.
     fn has_text_piscando(&self) -> bool {
         self.blink_text
     }
 
-    /// Mostra um aviso na tela. Mensagem igual seguida vira contagem ("×3"),
-    /// não uma fila — quem salva o arquivo dez vezes não quer dez avisos.
-    #[allow(clippy::needless_pass_by_value)] // quem chama monta o texto na hora
+    /// Shows a notice on screen. An equal message in a row becomes a count
+    /// ("×3"), not a queue — whoever saves the file ten times does not want ten
+    /// notices.
+    #[allow(clippy::needless_pass_by_value)] // the caller builds the text on the spot
     fn toast(&mut self, text: String) {
-        let vezes = match self.toast.take() {
-            Some(t) if t.text == text => t.vezes + 1,
+        let times = match self.toast.take() {
+            Some(t) if t.text == text => t.times + 1,
             _ => 1,
         };
         self.toast = Some(Toast {
             text: text.clone(),
-            desde: std::time::Instant::now(),
-            vezes,
+            since: std::time::Instant::now(),
+            times,
         });
         logln(&format!("toast: {text}"));
         if let Some(w) = self.window.as_ref() {
@@ -1419,22 +1434,23 @@ impl App {
         }
     }
 
-    /// Texto do toast para o renderer (com a contagem quando houve repetição).
+    /// Toast text for the renderer (with the count when there was a repeat).
     fn toast_text(&self) -> Option<String> {
         let t = self.toast.as_ref()?;
-        if t.desde.elapsed() > TOAST_DUR {
+        if t.since.elapsed() > TOAST_DUR {
             return None;
         }
-        Some(if t.vezes > 1 {
-            format!("{} (×{})", t.text, t.vezes)
+        Some(if t.times > 1 {
+            format!("{} (×{})", t.text, t.times)
         } else {
             t.text.clone()
         })
     }
 
-    /// BEL: o app pede (a contagem está no `Term`), a configuração decide o
-    /// que acontece. `audible` escreve o BEL no nosso stdout (um terminal de
-    /// verdade apita; numa sessão gráfica é o que sobra sem lib de áudio).
+    /// BEL: the app asks (the count lives in the `Term`), the configuration
+    /// decides what happens. `audible` writes the BEL to our stdout (a real
+    /// terminal beeps; in a graphical session that is what is left without an
+    /// audio library).
     fn ring(&mut self) {
         match self.opts.cfg.bell {
             Bell::None => {},
@@ -1451,9 +1467,9 @@ impl App {
         }
     }
 
-    /// Auto-reload do arquivo de configuração (K12): a cada 250 ms confere o
-    /// `mtime`; mudou, reparseia. **Qualquer** erro mantém a configuração que
-    /// já estava valendo — meia configuração é pior que nenhuma.
+    /// Config file auto-reload (K12): every 250 ms it checks the `mtime`;
+    /// changed, it reparses. **Any** error keeps the configuration already in
+    /// force — half a configuration is worse than none.
     fn check_config(&mut self) {
         const INTERVAL: Duration = Duration::from_millis(250);
         if self.cfg_checked.elapsed() < INTERVAL {
@@ -1477,35 +1493,36 @@ impl App {
         self.cfg_errors = errs.iter().map(std::string::ToString::to_string).collect();
         if !errs.is_empty() {
             logln(&format!(
-                "config: {} mantida; {} erro(s), o primeiro em {}",
+                "config: {} kept; {} error(s), the first at {}",
                 path.display(),
                 errs.len(),
                 errs[0]
             ));
-            // K13: o arquivo é editado num editor, que não mostra o nosso log —
-            // o aviso tem que aparecer na tela, com a primeira linha e a conta.
+            // K13: the file is edited in an editor, which does not show our log
+            // — the notice has to appear on screen, with the first line and the
+            // count.
             self.toast(notice_config(&errs));
             return;
         }
-        logln(&format!("config: {} recarregada", path.display()));
-        // só avisa na tela se havia um erro aparecendo: recarregar deu certo e
-        // quem salvou precisa saber que voltou a valer
+        logln(&format!("config: {} reloaded", path.display()));
+        // only warn on screen if there was an error showing: the reload worked
+        // and whoever saved needs to know it is in force again
         if self
             .toast
             .as_ref()
             .is_some_and(|t| t.text.starts_with("config"))
         {
-            self.toast("config recarregada".to_string());
+            self.toast("config reloaded".to_string());
         }
         self.apply_options(new, &text);
     }
 
-    /// Aplica configuração nova no que já está rodando.
+    /// Applies the new configuration to what is already running.
     fn apply_options(&mut self, new: Options, text: &str) {
-        let font_mudou = new.font_family != self.opts.font_family
+        let font_changed = new.font_family != self.opts.font_family
             || (new.font_size_pt - self.opts.font_size_pt).abs() > f32::EPSILON
             || (new.dpi - self.opts.dpi).abs() > f32::EPSILON;
-        let log_mudou = new.debug_log != self.opts.debug_log;
+        let log_changed = new.debug_log != self.opts.debug_log;
         self.tabs[self.active].term.scrollback_limit = new.scrollback;
         while self.tabs[self.active].term.scrollback.len()
             > self.tabs[self.active].term.scrollback_limit
@@ -1523,16 +1540,16 @@ impl App {
             set_log(path);
         }
         let _ = text;
-        if font_mudou {
+        if font_changed {
             self.opts.font_family = new.font_family;
             self.opts.font_size_pt = new.font_size_pt;
             self.opts.dpi = new.dpi;
             self.rebuild_renderer();
         }
-        if log_mudou && new.debug_log.is_none() {
+        if log_changed && new.debug_log.is_none() {
             set_log("");
         }
-        // a margem mudou: o grid é outro, então pede o tamanho de novo
+        // the padding changed: the grid is another one, so ask for the size again
         if let (Some(win), Some(r)) = (self.window.as_ref(), self.renderer.as_ref()) {
             let (cols, rows) = self.grid_from_px(r.config.width, r.config.height);
             if cols != self.tabs[self.active].term.cols || rows != self.tabs[self.active].term.rows
@@ -1544,8 +1561,8 @@ impl App {
         self.redraw();
     }
 
-    /// Fonte mudou: o atlas é outro, então refaz fonte + renderer (a janela e
-    /// o pty continuam os mesmos).
+    /// Font changed: the atlas is another one, so rebuild font + renderer (the
+    /// window and the pty stay the same).
     fn rebuild_renderer(&mut self) {
         let (Some(window), Some(old)) = (self.window.clone(), self.renderer.take()) else {
             return;
@@ -1554,7 +1571,7 @@ impl App {
         let fonts = match Fonts::new(&self.opts.font_family, self.font_px(scale)) {
             Ok(f) => f,
             Err(e) => {
-                logln(&format!("fonte: {e}"));
+                logln(&format!("font: {e}"));
                 self.renderer = Some(old);
                 return;
             },
@@ -1562,7 +1579,7 @@ impl App {
         drop(old);
         match Renderer::new(&window, fonts, self.opts.vsync, &self.opts.cfg) {
             Ok(r) => self.renderer = Some(r),
-            Err(e) => logln(&format!("GPU ao trocar de fonte: {e}")),
+            Err(e) => logln(&format!("GPU while switching the font: {e}")),
         }
         let size = window.inner_size();
         self.apply_size(size.width, size.height);
@@ -1593,7 +1610,7 @@ impl App {
             tabs: tabs.as_deref(),
             sidebar: sidebar.as_deref(),
         };
-        let desenhou = {
+        let drew = {
             let Some(renderer) = self.renderer.as_mut() else {
                 return;
             };
@@ -1611,17 +1628,17 @@ impl App {
                 crate::render::FrameOutcome::Skipped => false,
             }
         };
-        // dano consumido **só** quando o frame foi mesmo apresentado: um frame
-        // pulado (oclusão/timeout) não pode apagar a marca, senão a linha suja
-        // fica velha na tela para sempre (A17/G17)
-        if desenhou {
+        // damage consumed **only** when the frame was actually presented: a
+        // skipped frame (occlusion/timeout) must not clear the mark, otherwise
+        // the dirty line stays stale on screen forever (A17/G17)
+        if drew {
             self.tabs[self.active].term.clear_damage();
         }
     }
 
     fn apply_size(&mut self, w: u32, h: u32) {
-        // a barra entra na conta antes do grid: com N abas a grade é uma linha
-        // mais baixa, e todas as abas acompanham (o pty de cada uma é resizado)
+        // the bar enters the count before the grid: with N tabs the grid is one
+        // row shorter, and every tab follows (each pty is resized)
         let (ch, _cw, side) = self.renderer.as_ref().map_or((0.0, 0.0, 0.0), |r| {
             (r.fonts.ch, r.fonts.cw, self.side_w(r.fonts.cw))
         });
@@ -1633,10 +1650,9 @@ impl App {
         }
         let (cols, rows) = self.grid_from_px(w, h);
         let cell = self.cell_px();
-        // o parser precisa do mesmo tamanho de célula para responder
-        // `CSI 14/16 t` e para o `c=`/`r=` default das imagens (H9). Era o
-        // padrão 10x19 do core: a imagem saía 5x3 células em vez de 4x2 numa
-        // célula de 15x29.
+        // the parser needs the same cell size to answer `CSI 14/16 t` and for
+        // the default `c=`/`r=` of images (H9). It was the core's 10x19 default:
+        // the image came out 5x3 cells instead of 4x2 in a 15x29 cell.
         let cell_u = (cell.0.max(1.0) as u32, cell.1.max(1.0) as u32);
         for t in &mut self.tabs {
             t.term.cell_size = cell_u;
@@ -1654,8 +1670,8 @@ impl App {
                 self.spawn_shell(cols, rows, wake);
             }
         }
-        // o alvo do socket manda: se o WM entregou menos células, pede a
-        // diferença de volta (o `request_inner_size` é só uma sugestão)
+        // the socket target rules: if the WM delivered fewer cells, ask for the
+        // difference back (`request_inner_size` is only a suggestion)
         if let Some((wc, wr)) = self.want {
             if (cols, rows) == (wc, wr) {
                 self.want = None;
@@ -1672,11 +1688,11 @@ impl App {
         }
     }
 
-    #[allow(clippy::too_many_lines)] // um braço por verbo do protocolo
+    #[allow(clippy::too_many_lines)] // one arm per protocol verb
     fn debug_dispatch(&mut self, line: &str) -> String {
         let req: serde_json::Value = match serde_json::from_str(line) {
             Ok(v) => v,
-            Err(_) => return debugsock::err("json inválido"),
+            Err(_) => return debugsock::err("invalid json"),
         };
         let cmd = req.get("cmd").and_then(|c| c.as_str()).unwrap_or("");
         match cmd {
@@ -1715,9 +1731,9 @@ impl App {
                     "font": match &self.renderer { Some(r) => r.fonts.family.clone(), None => String::new() },
                     "font_px": match &self.renderer { Some(r) => r.fonts.px, None => 0.0 },
                     "tabs": self.tabs.len(),
-                    // dano (A17/G17): quantas linhas/células foram remontadas
-                    // desde o início. É a prova de que o desenho parcial
-                    // funciona — sem depender de olhar a tela.
+                    // damage (A17/G17): how many lines/cells were rebuilt since
+                    // the start. It is the proof that partial drawing works —
+                    // without depending on looking at the screen.
                     "draws": self.renderer.as_ref().map_or(0, |r| r.draw),
                     "last_frame": self.renderer.as_ref().map_or("", |r| r.last),
                     "drawn": self.renderer.as_ref().map_or(0, |r| r.drawn),
@@ -1732,8 +1748,8 @@ impl App {
                     "dirty_rows": self.tabs[self.active].term.dirty.iter().filter(|d| **d).count(),
                     "rows_built": self.renderer.as_ref().map_or(0, |r| r.linhas_remontadas),
                     "cells_built": self.renderer.as_ref().map_or(0, |r| r.celulas_remontadas),
-                    // imagens do kitty: sem isto não há como conferir a
-                    // colocação sem olhar a tela
+                    // kitty images: without this there is no way to check the
+                    // placement without looking at the screen
                     "images": self.tabs[self.active].term.graphics.images().len(),
                     "placements": self.tabs[self.active]
                         .term
@@ -1798,7 +1814,7 @@ impl App {
                     self.pty_write(data.as_bytes());
                     debugsock::ok(serde_json::json!({}))
                 },
-                None => debugsock::err("write precisa de data (string)"),
+                None => debugsock::err("write needs data (string)"),
             },
             "resize" => {
                 let cols = req
@@ -1810,7 +1826,7 @@ impl App {
                     .and_then(serde_json::Value::as_u64)
                     .unwrap_or(0) as usize;
                 if cols == 0 || rows == 0 {
-                    return debugsock::err("resize precisa de cols e rows > 0");
+                    return debugsock::err("resize needs cols and rows > 0");
                 }
                 self.want = Some((cols, rows));
                 self.adjust_left = 4;
@@ -1821,7 +1837,7 @@ impl App {
                 }
                 debugsock::ok(serde_json::json!({ "requested": [cols, rows] }))
             },
-            // abas por socket: o que o teclado faz, testável sem XTest
+            // tabs via socket: what the keyboard does, testable without XTest
             "tab" => {
                 let op = req.get("op").and_then(|v| v.as_str()).unwrap_or("state");
                 match op {
@@ -1835,7 +1851,7 @@ impl App {
                         self.select_tab(n);
                     },
                     "state" => {},
-                    other => return debugsock::err(format!("op de tab: {other:?}")),
+                    other => return debugsock::err(format!("tab op: {other:?}")),
                 }
                 debugsock::ok(serde_json::json!({
                     "tabs": self.tabs.len(),
@@ -1845,12 +1861,12 @@ impl App {
             },
             "keys" => match req.get("data").and_then(|v| v.as_str()) {
                 Some(spec) => {
-                    // mesmo caminho do teclado real: atalho local primeiro (que
-                    // pode comer a tecla), depois o encoder
+                    // same path as the real keyboard: local shortcut first (which
+                    // may eat the key), then the encoder
                     let Some(k) = key_from_spec(spec) else {
-                        return debugsock::err(format!("tecla desconhecida: {spec}"));
+                        return debugsock::err(format!("unknown key: {spec}"));
                     };
-                    if self.press_locais(&k) {
+                    if self.press_local_keys(&k) {
                         return debugsock::ok(serde_json::json!({
                             "keys": [0],
                             "hex": String::new(),
@@ -1874,7 +1890,7 @@ impl App {
                         "handled": false,
                     }))
                 },
-                None => debugsock::err("keys precisa de data"),
+                None => debugsock::err("keys needs data"),
             },
             "prof" => {
                 if let Some(on) = req.get("on").and_then(serde_json::Value::as_bool) {
@@ -1885,16 +1901,16 @@ impl App {
                 }
                 debugsock::ok(prof::fields())
             },
-            // Sonda dos OSC: os últimos payloads crus que o parser viu, da aba
-            // ativa e da mais nova para a mais velha. É o que responde "por que
-            // a barra de abas mostra lixo" sem recompilar nada.
+            // OSC probe: the last raw payloads the parser saw, from the active
+            // tab, newest to oldest. It is what answers "why does the tab bar
+            // show garbage" without recompiling anything.
             "osc" => {
                 let tab = req
                     .get("tab")
                     .and_then(serde_json::Value::as_u64)
                     .map_or(self.active, |n| n as usize);
                 let Some(t) = self.tabs.get(tab) else {
-                    return debugsock::err(format!("aba {tab} não existe"));
+                    return debugsock::err(format!("tab {tab} does not exist"));
                 };
                 let events: Vec<_> = t
                     .term
@@ -1917,7 +1933,7 @@ impl App {
                 }))
             },
             "log" => {
-                // liga/desliga/troca o caminho em execução; `off` desliga
+                // turns on/off/changes the path at runtime; `off` turns it off
                 let value = req.get("value").and_then(|v| v.as_str()).unwrap_or("off");
                 set_log(value);
                 self.opts.debug_log = if value.is_empty() || value == "off" {
@@ -1931,11 +1947,11 @@ impl App {
                 self.exiting = true;
                 debugsock::ok(serde_json::json!({}))
             },
-            _ => debugsock::err(format!("cmd desconhecido: {cmd:?}")),
+            _ => debugsock::err(format!("unknown cmd: {cmd:?}")),
         }
     }
 
-    /// A primeira aba: o `--cmd` quando dado, senão o shell da config.
+    /// The first tab: `--cmd` when given, else the shell from the config.
     fn spawn_shell(&mut self, cols: usize, rows: usize, wake: Arc<dyn Fn() + Send + Sync>) {
         let cmd = self.opts.cmd.clone();
         self.spawn_tab(self.active, cols, rows, wake, None, cmd.as_deref());
@@ -1973,15 +1989,16 @@ impl App {
         }
     }
 
-    /// Nova aba (I1): herda o cwd da aba corrente (I2) e vira a ativa.
+    /// New tab (I1): inherits the cwd of the current tab (I2) and becomes the
+    /// active one.
     ///
-    /// O `--cmd` vale só para a primeira: abrir outra aba com o comando de
-    /// depuração repetiria o teste, não abriria um shell.
+    /// `--cmd` only counts for the first: opening another tab with the debug
+    /// command would repeat the test, not open a shell.
     fn new_tab(&mut self) {
         self.new_tab_cmd(None);
     }
 
-    /// Aba nova, opcionalmente rodando `cmd` (o editor de config usa isto).
+    /// New tab, optionally running `cmd` (the config editor uses this).
     fn new_tab_cmd(&mut self, cmd: Option<&str>) {
         let Some(wake) = self.wake.clone() else {
             return;
@@ -1996,7 +2013,7 @@ impl App {
         tab.term.theme = self.tabs[self.active].term.theme.clone();
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
-        // a barra pode ter aparecido agora: a grade de todas encolhe uma linha
+        // the bar may have appeared now: the grid of every tab shrinks one row
         if let Some(w) = self.window.as_ref() {
             let s = w.inner_size();
             self.apply_size(s.width, s.height);
@@ -2005,28 +2022,28 @@ impl App {
             self.tabs[self.active].term.cols,
             self.tabs[self.active].term.rows,
         );
-        // `--cmd` só vale para a primeira aba: repetir o comando de depuração
-        // na segunda não abriria shell nenhum
+        // `--cmd` only counts for the first tab: repeating the debug command on
+        // the second would open no shell at all
         self.spawn_tab(self.active, cols, rows, wake, cwd.as_deref(), cmd);
         self.sync_title();
         self.redraw();
     }
 
-    /// Fecha a aba ativa (I3).
+    /// Closes the active tab (I3).
     fn close_tab(&mut self) {
         self.close_tab_at(self.active);
     }
 
-    /// Fecha uma aba (I3): mata o pty e escolhe a próxima. Fechar a última
-    /// fecha o app (I20) — é o que o `Ctrl+Shift+W` no último terminal faz.
+    /// Closes a tab (I3): kills the pty and picks the next one. Closing the last
+    /// one closes the app (I20) — what `Ctrl+Shift+W` in the last terminal does.
     fn close_tab_at(&mut self, i: usize) {
         if let Some(pty) = self.tabs[i].pty.as_mut() {
             pty.kill();
         }
         self.tabs.remove(i);
         if self.tabs.is_empty() {
-            // última aba do workspace: o workspace vai junto (I20), e só o
-            // último workspace fecha o app
+            // last tab of the workspace: the workspace goes with it (I20), and
+            // only the last workspace closes the app
             self.drop_empty_workspace();
             return;
         }
@@ -2039,35 +2056,36 @@ impl App {
         self.redraw();
     }
 
-    /// Tamanho da célula em px (largura, altura): vai para o `ws_xpixel` do pty
-    /// e para o `CSI 14 t`, é de onde os apps tiram a resolução.
+    /// Cell size in px (width, height): it goes into the pty `ws_xpixel` and
+    /// into `CSI 14 t`, it is where the apps get the resolution from.
     fn cell_px(&self) -> (f32, f32) {
         self.renderer
             .as_ref()
             .map_or((0.0, 0.0), |r| (r.fonts.cw, r.fonts.ch))
     }
 
-    /// Tamanho, posição e maximizado com que a janela nasce (J2–J6).
+    /// Size, position and maximized state the window is born with (J2–J6).
     ///
-    /// Ordem: grade pedida na linha de comando (é medição) desliga o lembrar;
-    /// sem ela decide o estado lembrado, se passar pelo `state::fit`; e o
-    /// último recurso é o tamanho relativo à grade pedida.
+    /// Order: a grid requested on the command line (it is a measurement) turns
+    /// the remembering off; without it the remembered state decides, if it
+    /// passes `state::fit`; and the last resort is the size relative to the
+    /// requested grid.
     fn geometry_initial(
         &mut self,
         event_loop: &ActiveEventLoop,
         fonts: &Fonts,
     ) -> (u32, u32, Option<(i32, i32)>, bool) {
         let pad = 2.0 * self.opts.cfg.padding as f32;
-        let padrao = (
+        let default = (
             ((self.opts.cols as f32 * fonts.cw + pad).ceil() as u32).max(1),
             ((self.opts.rows as f32 * fonts.ch + pad).ceil() as u32).max(1),
         );
-        self.geom_normal = padrao;
+        self.geom_normal = default;
         self.remember_geom = !self.opts.grid_explicito;
         if !self.remember_geom {
-            return (padrao.0, padrao.1, None, false);
+            return (default.0, default.1, None, false);
         }
-        let monitores: Vec<crate::state::Monitor> = event_loop
+        let monitors: Vec<crate::state::Monitor> = event_loop
             .available_monitors()
             .map(|m| {
                 let p = m.position();
@@ -2075,48 +2093,50 @@ impl App {
                 (p.x, p.y, s.width, s.height)
             })
             .collect();
-        let lembrada = crate::state::load();
-        let maximizado = lembrada.is_some_and(|g| g.maximizado);
-        // J2/J4: sem estado (ou com estado inválido: monitor desconectado,
-        // lixo no arquivo) abre no padrão 980x640 do Python, não do tamanho da
-        // grade — quem quer grade exata pede `--cols/--rows`, que desliga o
-        // lembrar. Geometria lembrada inválida volta a este mesmo padrão.
-        let geom = lembrada
-            .and_then(|g| crate::state::fit(g.x, g.y, g.w, g.h, &monitores))
+        let remembered = crate::state::load();
+        let maximized = remembered.is_some_and(|g| g.maximized);
+        // J2/J4: with no state (or invalid state: monitor unplugged, garbage in
+        // the file) it opens at Python's 980x640 default, not at the grid size —
+        // whoever wants an exact grid asks for `--cols/--rows`, which turns the
+        // remembering off. Invalid remembered geometry falls back to this same
+        // default.
+        let geom = remembered
+            .and_then(|g| crate::state::fit(g.x, g.y, g.w, g.h, &monitors))
             .unwrap_or_default();
         self.geom_normal = (geom.w.max(1), geom.h.max(1));
-        // J6: só o X11 aceita posição de janela; no Wayland ela não existe
+        // J6: only X11 accepts a window position; on Wayland it does not exist
         let pos = geom.x.zip(geom.y).filter(|_| backend_x11());
-        (geom.w.max(1), geom.h.max(1), pos, maximizado)
+        (geom.w.max(1), geom.h.max(1), pos, maximized)
     }
 
-    /// Grava posição, tamanho normal e maximizado (J2–J6). Falhar aqui não pode
-    /// atrapalhar o fechamento — o `state::save` já engole erro de I/O.
+    /// Saves position, normal size and maximized state (J2–J6). Failing here
+    /// cannot get in the way of closing — `state::save` already swallows I/O
+    /// errors.
     fn save_geometry(&mut self) {
         if !self.remember_geom {
-            return; // grade pedida na linha de comando: não lembra (é medição)
+            return; // grid requested on the command line: no remembering (a measurement)
         }
-        let maximizado = self.window.as_ref().is_some_and(|w| w.is_maximized());
+        let maximized = self.window.as_ref().is_some_and(|w| w.is_maximized());
         let (x, y) = match self.geom_pos.filter(|_| backend_x11()) {
             Some((x, y)) => (Some(x), Some(y)),
-            None => (None, None), // Wayland: sem posição para lembrar (J6)
+            None => (None, None), // Wayland: no position to remember (J6)
         };
         crate::state::save(&crate::state::Geometry {
             x,
             y,
             w: self.geom_normal.0,
             h: self.geom_normal.1,
-            maximizado,
+            maximized,
         });
     }
 
-    /// Quantos workspaces existem (o da frente + os estacionados).
+    /// How many workspaces exist (the one in front + the parked ones).
     fn ws_count(&self) -> usize {
         self.parked.len() + 1
     }
 
-    /// Workspace novo, herdando o cwd da aba corrente (I5). O novo já nasce
-    /// com uma aba, como no Python.
+    /// New workspace, inheriting the cwd of the current tab (I5). The new one is
+    /// born with a tab already, as in Python.
     fn new_workspace(&mut self) {
         let Some(wake) = self.wake.clone() else {
             return;
@@ -2128,7 +2148,7 @@ impl App {
         let cwd = self.tabs[self.active].cwd();
         let cur = Workspace::take(self);
         self.parked.push(cur);
-        self.ws_idx = self.parked.len(); // total = parked + 1, então é o último
+        self.ws_idx = self.parked.len(); // total = parked + 1, so it is the last one
         let mut tab = Tab::new(cols, rows);
         tab.term.scrollback_limit = self.opts.scrollback;
         self.tabs = vec![tab];
@@ -2144,7 +2164,7 @@ impl App {
         self.redraw();
     }
 
-    /// Começa a renomear o workspace `i` no cartão (I8).
+    /// Starts renaming workspace `i` on the card (I8).
     fn start_rename(&mut self, i: usize) {
         if i >= self.ws_count() {
             return;
@@ -2163,7 +2183,7 @@ impl App {
         self.redraw();
     }
 
-    /// Aplica (ou descarta) o nome em edição. `keep=false` é o Esc.
+    /// Applies (or discards) the name being edited. `keep=false` is Esc.
     fn finish_rename(&mut self, keep: bool) {
         let Some(Rename { ws: i, text, .. }) = self.rename.take() else {
             return;
@@ -2172,9 +2192,9 @@ impl App {
             self.redraw();
             return;
         }
-        // o nome vai para o cartão e para o cabeçalho do `dump`: mesma regra do
-        // título de aba (controle, zero-width, direção) — o campo é digitação
-        // livre, não payload de terminal
+        // the name goes to the card and to the `dump` header: same rule as the
+        // tab title (control, zero-width, direction) — the field is free typing,
+        // not terminal payload
         let new = bzmux_core::term::sanitize_title(&text).trim().to_string();
         if new.is_empty() {
             self.redraw();
@@ -2189,8 +2209,8 @@ impl App {
         self.redraw();
     }
 
-    /// Teclado durante o rename: digitar edita, Enter confirma, Esc cancela.
-    /// Devolve `true` quando a tecla foi consumida (o filho não a vê).
+    /// Keyboard during the rename: typing edits, Enter confirms, Esc cancels.
+    /// Returns `true` when the key was consumed (the child does not see it).
     fn rename_key(&mut self, k: &KeyIn<'_>) -> bool {
         if self.rename.is_none() {
             return false;
@@ -2213,8 +2233,9 @@ impl App {
                 let Some(s) = k.character else {
                     return true;
                 };
-                // tecla que só produz invisível (ou controle) não entra no
-                // campo: o nome em edição é desenhado no cartão como está
+                // a key that only produces something invisible (or control)
+                // does not enter the field: the name being edited is drawn on the
+                // card as it is
                 let clean = bzmux_core::term::sanitize_title(s);
                 if clean.is_empty() {
                     return true;
@@ -2224,7 +2245,7 @@ impl App {
                         r.text.clear();
                         r.replace = false;
                     }
-                    // só o que cabe no cartão; o resto seria invisível
+                    // only what fits on the card; the rest would be invisible
                     if r.text.chars().count() + clean.chars().count() <= 40 {
                         r.text.push_str(&clean);
                     }
@@ -2236,10 +2257,10 @@ impl App {
         true
     }
 
-    /// Troca o workspace da frente sem matar nada: só troca quem ocupa o
-    /// lugar. A ordem lógica é remontada de propósito — trocar `parked[slot]`
-    /// no lugar embaralhava os cartões quando o corrente ia para uma posição
-    /// mais alta (o buraco dele ficava onde não devia).
+    /// Switches the workspace in front without killing anything: only who fills
+    /// the slot changes. The logical order is rebuilt on purpose — swapping
+    /// `parked[slot]` in place shuffled the cards when the current one went to a
+    /// higher position (its hole ended up where it should not).
     fn select_workspace(&mut self, i: usize) {
         let total = self.ws_count();
         if i >= total || i == self.ws_idx {
@@ -2247,25 +2268,25 @@ impl App {
         }
         let old = self.ws_idx;
         let cur = Workspace::take(self);
-        // `all[j]` = workspace lógico j; o do meio é o que está na frente
+        // `all[j]` = logical workspace j; the one in the middle is the one in front
         let mut parked = std::mem::take(&mut self.parked).into_iter();
         let mut all: Vec<Option<Workspace>> = (0..total)
             .map(|j| if j == old { None } else { parked.next() })
             .collect();
         all[old] = Some(cur);
-        let new = all[i].take().expect("workspace do índice lógico");
+        let new = all[i].take().expect("workspace for the logical index");
         self.ws_idx = i;
         self.parked = all
             .into_iter()
             .enumerate()
             .filter(|(j, _)| *j != i)
-            .map(|(_, w)| w.expect("só o slot alvo fica vazio"))
+            .map(|(_, w)| w.expect("only the target slot stays empty"))
             .collect();
         new.into_current(self);
         self.after_ws_change();
     }
 
-    /// Fecha um workspace com todas as abas dele.
+    /// Closes a workspace with all of its tabs.
     fn close_workspace(&mut self, i: usize) {
         if i >= self.ws_count() {
             return;
@@ -2293,11 +2314,11 @@ impl App {
         self.after_ws_change();
     }
 
-    /// O workspace da frente ficou sem abas: promove o primeiro estacionado
-    /// (ou fecha o app, se não sobrou nenhum) — I20.
+    /// The workspace in front lost its tabs: promotes the first parked one (or
+    /// closes the app, if none is left) — I20.
     fn drop_empty_workspace(&mut self) {
         if self.parked.is_empty() {
-            // último workspace: o app fecha no próximo `RedrawRequested`
+            // last workspace: the app closes on the next `RedrawRequested`
             self.exiting = true;
             self.redraw();
             return;
@@ -2308,8 +2329,8 @@ impl App {
         self.after_ws_change();
     }
 
-    /// Depois de mexer em workspaces: barra pode aparecer/sumir (a altura
-    /// depende do número de abas *deste* workspace), então a grade é refeita.
+    /// After touching workspaces: the bar may appear/disappear (its height
+    /// depends on the number of tabs *of this* workspace), so the grid is redone.
     fn after_ws_change(&mut self) {
         if let Some(w) = self.window.as_ref() {
             let s = w.inner_size();
@@ -2319,12 +2340,12 @@ impl App {
         self.redraw();
     }
 
-    /// Ctrl+Shift+F2: abre o arquivo de configuração no editor, em aba nova
-    /// (P33). `VISUAL`/`EDITOR` vencem o `vim`; o diretório é criado porque o
-    /// editor só cria o arquivo ao salvar.
+    /// Ctrl+Shift+F2: opens the config file in the editor, in a new tab (P33).
+    /// `VISUAL`/`EDITOR` beat `vim`; the directory is created because the editor
+    /// only creates the file on save.
     fn open_config(&mut self) {
         let Some(path) = self.opts.cfg_path.clone() else {
-            self.toast("config: sem caminho (sem HOME)".to_string());
+            self.toast("config: no path (no HOME)".to_string());
             return;
         };
         if let Some(dir) = path.parent() {
@@ -2337,7 +2358,7 @@ impl App {
         self.new_tab_cmd(Some(&cmd));
     }
 
-    /// Troca de aba (Alt+N). Fora da faixa, não faz nada.
+    /// Switches tab (Alt+N). Out of range, does nothing.
     fn select_tab(&mut self, i: usize) {
         if i >= self.tabs.len() || i == self.active {
             return;
@@ -2349,34 +2370,35 @@ impl App {
         }
     }
 
-    /// Título da janela = título da aba ativa (I17), para o WM e a taskbar.
+    /// Window title = title of the active tab (I17), for the WM and the taskbar.
     fn sync_title(&mut self) {
-        let titulo = self.tabs[self.active].title();
-        if titulo == self.last_title {
+        let title = self.tabs[self.active].title();
+        if title == self.last_title {
             return;
         }
-        self.last_title.clone_from(&titulo);
-        // `BZMUX_NO_TITLE=1`: sonda de depuração, não configuração. Existe por
-        // causa de um tropeço do winit no X11: qualquer erro X pendente na
-        // conexão vira `panic` na próxima chamada de propriedade, e o WSI do
-        // Mesa pode deixar um lá (ver DEBUG.md). Sem tocar no título, dá para
-        // usar o terminal e investigar.
+        self.last_title.clone_from(&title);
+        // `BZMUX_NO_TITLE=1`: debug probe, not configuration. It exists because
+        // of a winit stumble on X11: any pending X error on the connection
+        // becomes a `panic` on the next property call, and the Mesa WSI may
+        // leave one there (see DEBUG.md). Without touching the title, one can
+        // still use the terminal and investigate.
         if std::env::var_os("BZMUX_NO_TITLE").is_some() {
             return;
         }
         if let Some(w) = self.window.as_ref() {
-            w.set_title(&format!("{titulo} — bzmux"));
+            w.set_title(&format!("{title} — bzmux"));
         }
     }
 }
 
-/// Uma tecla em pedaços, sem depender do `KeyEvent`: o teclado real e o verbo
-/// `keys` do socket passam pelo **mesmo** caminho de atalho e encoder.
+/// A key in pieces, without depending on `KeyEvent`: the real keyboard and the
+/// socket's `keys` verb go through the **same** shortcut and encoder path.
 struct KeyIn<'a> {
     named: Option<NamedKey>,
     character: Option<&'a str>,
     text: Option<&'a str>,
-    /// Dígito da tecla física (0..=9); no socket vem do próprio `spec`.
+    /// Digit of the physical key (0..=9); on the socket it comes from `spec`
+    /// itself.
     digit: Option<usize>,
     mods: ModifiersState,
 }
@@ -2393,19 +2415,19 @@ impl<'a> KeyIn<'a> {
             character,
             text: ev.text.as_deref(),
             digit: digit_of(ev),
-            mods: ModifiersState::empty(), // quem chama põe o `self.mods`
+            mods: ModifiersState::empty(), // the caller sets `self.mods`
         }
     }
 }
 
-/// `ctrl+shift+n` -> bytes (versão mínima do `parse_key` do Python: o caminho
-/// completo de teclado é o do winit, este verbo serve para teste/automação).
-/// `spec` do verbo `keys`: `ctrl+shift+t`, `alt+left`, `f5`, `a`.
+/// `ctrl+shift+n` -> bytes (minimal version of Python's `parse_key`: the full
+/// keyboard path is winit's, this verb is for test/automation).
+/// `spec` of the `keys` verb: `ctrl+shift+t`, `alt+left`, `f5`, `a`.
 ///
-/// Resolve modificadores e nome de tecla e entrega ao encoder real
-/// (`keys::encode_parts`) — não há tabela paralela aqui. Tecla que o encoder
-/// não conhece devolve vazio, e o socket responde `keys: [0]`.
-/// `spec` do verbo `keys` -> `KeyIn`: modificadores, nome de tecla e dígito.
+/// Resolves modifiers and key name and hands over to the real encoder
+/// (`keys::encode_parts`) — there is no parallel table here. A key the encoder
+/// does not know returns empty, and the socket answers `keys: [0]`.
+/// `spec` of the `keys` verb -> `KeyIn`: modifiers, key name and digit.
 fn key_from_spec(spec: &str) -> Option<KeyIn<'_>> {
     let parts: Vec<&str> = spec.split('+').filter(|p| !p.is_empty()).collect();
     let (key, mods_spec) = parts.split_last()?;
@@ -2489,22 +2511,23 @@ impl ApplicationHandler<UserEvent> for App {
                 return;
             },
         };
-        // `ceil`: pedir `round` dá pixels a menos que o grid precisa e a
-        // janela nasce com uma coluna/linha de menos (o WM não devolve)
-        // a margem entra no pedido: a grade é `cols*cw` e o resto é padding
-        // sinais: `SIGUSR1` (dump) e `SIGTERM` (sair limpo), como no Python
+        // `ceil`: asking for `round` gives fewer pixels than the grid needs and
+        // the window is born one column/row short (the WM does not give it back)
+        // the padding enters the request: the grid is `cols*cw` and the rest is
+        // padding
+        // signals: `SIGUSR1` (dump) and `SIGTERM` (clean exit), as in Python
         instala_sinais();
-        let (w, h, pos, maximizado) = self.geometry_initial(event_loop, &fonts);
+        let (w, h, pos, maximized) = self.geometry_initial(event_loop, &fonts);
         let mut attrs = Window::default_attributes()
             .with_title("bzmux")
             .with_inner_size(PhysicalSize::new(w, h))
-            .with_maximized(maximizado);
+            .with_maximized(maximized);
         if let Some((x, y)) = pos {
             attrs = attrs.with_position(PhysicalPosition::new(x, y));
         }
-        // K19: `WM_CLASS` explícito, não herdado do nome do executável — é o
-        // que o `StartupWMClass` do `.desktop` procura para agrupar a janela
-        // no dock. Binário renomeado (`bzmux-rs`) não pode mudar o WM_CLASS.
+        // K19: explicit `WM_CLASS`, not inherited from the executable name — it
+        // is what the `.desktop` `StartupWMClass` looks for to group the window
+        // in the dock. A renamed binary (`bzmux-rs`) cannot change WM_CLASS.
         #[cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))]
         let attrs = {
             use winit::platform::x11::WindowAttributesExtX11 as _;
@@ -2513,17 +2536,17 @@ impl ApplicationHandler<UserEvent> for App {
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
             Err(e) => {
-                eprintln!("bzmux: janela: {e}");
+                eprintln!("bzmux: window: {e}");
                 event_loop.exit();
                 return;
             },
         };
         self.window = Some(window.clone());
-        // o título sai **antes** de tocar na GPU: criar a swapchain deixa
-        // erro X pendente na conexão (o WSI do Mesa cria e destrói pixmaps) e
-        // o winit trata qualquer erro X como fatal na próxima chamada de
-        // propriedade — o `set_title` seguinte morria com `BadDrawable` que não
-        // era dele. Ver DEBUG.md, "erro X pendente".
+        // the title goes out **before** touching the GPU: creating the swapchain
+        // leaves a pending X error on the connection (the Mesa WSI creates and
+        // destroys pixmaps) and winit treats any X error as fatal on the next
+        // property call — the following `set_title` died with a `BadDrawable`
+        // that was not its own. See DEBUG.md, "pending X error".
         self.sync_title();
         let renderer = match Renderer::new(&window, fonts, self.opts.vsync, &self.opts.cfg) {
             Ok(r) => r,
@@ -2533,16 +2556,16 @@ impl ApplicationHandler<UserEvent> for App {
                 return;
             },
         };
-        // o grid real vem do tamanho que a janela conseguiu, não do pedido
+        // the real grid comes from the size the window got, not from the request
         let size = window.inner_size();
         self.renderer = Some(renderer);
         let proxy = self.proxy.clone();
         self.wake = Some(Arc::new(move || {
             let _ = proxy.send_event(UserEvent::Wake);
         }));
-        // aplica o tamanho agora e **só então** o filho nasce: com o filho
-        // nascendo antes, os primeiros KB saem na largura do pedido e o
-        // primeiro resize do WM embaralha o que já estava na tela
+        // apply the size now and **only then** the child is born: with the child
+        // born earlier, the first KB come out at the requested width and the
+        // first WM resize shuffles what was already on screen
         self.apply_size(size.width, size.height);
         let (cols, rows) = (
             self.tabs[self.active].term.cols,
@@ -2556,8 +2579,8 @@ impl ApplicationHandler<UserEvent> for App {
                     self.debug = Some(s);
                 },
                 Err(e) => {
-                    // quem abriu a superfície de debug tem de saber que ela não
-                    // está de pé (o Python mostra no toast)
+                    // whoever opened the debug surface has to know it is not up
+                    // (Python shows it in the toast)
                     eprintln!("bzmux: debug socket: {e}");
                     self.toast(format!("debug socket: {e}"));
                 },
@@ -2567,7 +2590,7 @@ impl ApplicationHandler<UserEvent> for App {
             set_log(&path);
         }
         logln(&format!(
-            "bzmux {} — {}x{} células, célula {}x{}, fonte {} {}px",
+            "bzmux {} — {}x{} cells, cell {}x{}, font {} {}px",
             env!("CARGO_PKG_VERSION"),
             cols,
             rows,
@@ -2585,9 +2608,9 @@ impl ApplicationHandler<UserEvent> for App {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
             UserEvent::Wake => {
-                // alimentar **antes** de perguntar pelo `?2026`: o estado que
-                // interessa é o dos bytes que acabaram de chegar, não o da
-                // leitura anterior (um desenho por leitura era o G16)
+                // feed **before** asking about `?2026`: the state that matters is
+                // that of the bytes that just arrived, not that of the previous
+                // read (one draw per read was G16)
                 self.drain();
                 let sync = self
                     .tabs
@@ -2598,7 +2621,7 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Debug(line, reply) => {
                 let out = self.debug_dispatch(&line);
                 let _ = reply.send(out);
-                // `resize`/`quit` precisam de um ciclo de evento para valer
+                // `resize`/`quit` need an event cycle to take effect
                 if let Some(w) = self.window.as_ref() {
                     w.request_redraw();
                 }
@@ -2610,14 +2633,14 @@ impl ApplicationHandler<UserEvent> for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Moved(pos) => {
-                // posição externa (moldura): é a que `with_position` consome,
-                // e a que o `get_position()` do Python salvava — salvar a do
-                // cliente descia a janela a barra de título a cada execução
+                // outer position (frame): it is the one `with_position` consumes,
+                // and the one Python's `get_position()` saved — saving the client
+                // position walked the window down a title bar on every run
                 self.geom_pos = Some((pos.x, pos.y));
             },
             WindowEvent::Resized(size) => {
-                // J5: maximizado é estado do WM, não tamanho; se salvasse aqui,
-                // o tamanho de antes de maximizar se perderia
+                // J5: maximized is WM state, not size; saving it here would lose
+                // the size from before maximizing
                 if !self.window.as_ref().is_some_and(|w| w.is_maximized()) {
                     self.geom_normal = (size.width, size.height);
                 }
@@ -2636,8 +2659,9 @@ impl ApplicationHandler<UserEvent> for App {
                 self.mods = m.state();
             },
             WindowEvent::KeyboardInput { event, .. } => {
-                // o release só tem valor no protocolo do kitty (flag 2); o
-                // caminho legado não relata soltura, e o `encode` devolve nada
+                // the release only has value under the kitty protocol (flag 2);
+                // the legacy path does not report releases, and `encode` returns
+                // nothing
                 self.on_key(&event);
             },
             WindowEvent::CursorMoved { position, .. } => {
@@ -2669,10 +2693,10 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         let now = std::time::Instant::now();
-        // o reload precisa de um tique mesmo sem evento nenhum
+        // the reload needs a tick even with no event at all
         let mut when = now + Duration::from_millis(250);
-        // frame coalescido: venceu → um pedido de desenho; senão acorda nele
-        if self.gate.venceu(now) {
+        // coalesced frame: expired → one draw request; else wake up on it
+        if self.gate.won(now) {
             if let Some(w) = self.window.as_ref() {
                 w.request_redraw();
             }
@@ -2681,8 +2705,8 @@ impl ApplicationHandler<UserEvent> for App {
             when = when.min(t);
         }
 
-        // sinais: o handler só levanta a bandeira, quem age é aqui
-        let (dump, finish) = sinais();
+        // signals: the handler only raises the flag, whoever acts is here
+        let (dump, finish) = signals();
         if dump {
             self.dump();
         }
@@ -2692,7 +2716,7 @@ impl ApplicationHandler<UserEvent> for App {
             event_loop.exit();
             return;
         }
-        // `--quit-after`: fecha sozinho (automação) e deixa o dump
+        // `--quit-after`: closes by itself (automation) and leaves the dump
         if self.deadline.is_some_and(|p| now >= p) {
             self.deadline = None;
             self.dump();
@@ -2701,11 +2725,11 @@ impl ApplicationHandler<UserEvent> for App {
             return;
         }
 
-        // toast vencido sai da tela (ninguém mais o tiraria)
+        // an expired toast leaves the screen (nobody else would take it out)
         if self
             .toast
             .as_ref()
-            .is_some_and(|t| t.desde.elapsed() > TOAST_DUR)
+            .is_some_and(|t| t.since.elapsed() > TOAST_DUR)
         {
             self.toast = None;
             if let Some(w) = self.window.as_ref() {
@@ -2713,9 +2737,9 @@ impl ApplicationHandler<UserEvent> for App {
             }
         }
 
-        // pisca: acorda na virada seguinte da fase; redesenha só quando ela
-        // vira de verdade (um redesenho a cada 500 ms, não a cada tique)
-        if self.pisca_active() {
+        // blink: wake up on the next phase flip; redraw only when it really
+        // flips (one redraw every 500 ms, not one per tick)
+        if self.blink_active() {
             let e = self.blink_epoch.elapsed().as_millis() as u64;
             let next = (e / BLINK_MS + 1) * BLINK_MS;
             when = when.min(self.blink_epoch + Duration::from_millis(next));
@@ -2729,8 +2753,8 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         event_loop.set_control_flow(ControlFlow::WaitUntil(when));
-        // flash do BEL (I13): acorda quando o primeiro rótulo apaga e
-        // redesenha uma vez para tirar o destaque
+        // BEL flash (I13): wake up when the first label goes dark and redraw
+        // once to remove the highlight
         let now = std::time::Instant::now();
         let mut apagou = false;
         for t in &mut self.tabs {
@@ -2758,12 +2782,13 @@ impl ApplicationHandler<UserEvent> for App {
             ));
         }
 
-        // aba cujo shell morreu fecha sozinha; a última fecha o workspace, e só
-        // o último workspace fecha o app (I20). Aqui estava o `M-W`: o atalho
-        // `tabs.len() == 1 → exit` pulava o `drop_empty_workspace`, então um
-        // `Ctrl+D`/`exit` na aba visível matava o app inteiro mesmo com outro
-        // workspace estacionado (o Python fecha só a aba). A morte do filho tem
-        // de entrar no **mesmo** caminho do `close_tab_at`.
+        // a tab whose shell died closes by itself; the last one closes the
+        // workspace, and only the last workspace closes the app (I20). Here was
+        // the `M-W`: the shortcut `tabs.len() == 1 → exit` skipped
+        // `drop_empty_workspace`, so a `Ctrl+D`/`exit` in the visible tab killed
+        // the whole app even with another workspace parked (Python closes only
+        // the tab). The death of the child has to enter the **same** path as
+        // `close_tab_at`.
         if let Some(morta) = (0..self.tabs.len()).find(|&i| {
             self.tabs[i]
                 .pty
@@ -2792,7 +2817,7 @@ impl ApplicationHandler<UserEvent> for App {
     }
 }
 
-/// Linhas de uma aba para o dump: scrollback recente e o viewport vivo.
+/// Lines of one tab for the dump: recent scrollback and the live viewport.
 fn dump_tab(t: &Tab, ativa: bool) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let hist = t.term.scrollback.len();
@@ -2803,14 +2828,15 @@ fn dump_tab(t: &Tab, ativa: bool) -> Vec<String> {
             out.push(row.text().trim_end().to_string());
         }
     }
-    // o off vai no cabeçalho: as linhas abaixo são a grade viva, não a visão
-    // rolada — sem isso o dump não conta se a visão estava no histórico
+    // the offset goes in the header: the lines below are the live grid, not the
+    // scrolled view — without it the dump does not tell whether the view was in
+    // the history
     let off = if t.view_off > 0 {
-        format!(" (histórico +{})", t.view_off)
+        format!(" (history +{})", t.view_off)
     } else {
         String::new()
     };
-    let mark = if ativa { "" } else { " [fundo]" };
+    let mark = if ativa { "" } else { " [background]" };
     out.push(format!(
         "=== viewport {}x{}{off}{mark} ===",
         t.term.cols, t.term.rows
@@ -2821,9 +2847,9 @@ fn dump_tab(t: &Tab, ativa: bool) -> Vec<String> {
     out
 }
 
-// ------------------------------------------------------------ sinais
+// ------------------------------------------------------------ signals
 
-/// `SIGUSR1` pediu um dump; `SIGTERM` pediu sair limpo (dump + fechar).
+/// `SIGUSR1` asked for a dump; `SIGTERM` asked for a clean exit (dump + close).
 static SIGNAL_DUMP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static SIGNAL_TERM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -2835,12 +2861,12 @@ extern "C" fn on_term(_: libc::c_int) {
     SIGNAL_TERM.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Instala `SIGUSR1`/`SIGTERM`. O handler só levanta um `AtomicBool`: `store`
-/// de `AtomicBool` é livre de lock e seguro em handler, e quem age é o laço de
-/// eventos (que acorda a cada 250 ms de qualquer forma).
+/// Installs `SIGUSR1`/`SIGTERM`. The handler only raises an `AtomicBool`:
+/// `store` on `AtomicBool` is lock free and safe in a handler, and whoever acts
+/// is the event loop (which wakes up every 250 ms anyway).
 ///
-/// `unsafe`: `libc::signal` troca o handler do processo — não há API segura
-/// para isso, como no `SO_PEERCRED` do `debugsock`.
+/// `unsafe`: `libc::signal` swaps the process handler — there is no safe API
+/// for that, as with the `debugsock` `SO_PEERCRED`.
 #[allow(unsafe_code)]
 pub fn instala_sinais() {
     unsafe {
@@ -2849,8 +2875,8 @@ pub fn instala_sinais() {
     }
 }
 
-/// Leitura dos sinais (uma vez cada): (dump, sair).
-fn sinais() -> (bool, bool) {
+/// Signal readout (once each): (dump, quit).
+fn signals() -> (bool, bool) {
     use std::sync::atomic::Ordering::Relaxed;
     (
         SIGNAL_DUMP.swap(false, Relaxed),

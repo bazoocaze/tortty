@@ -1,15 +1,15 @@
 #!/bin/sh
-# check.sh — a régua de qualidade: formatação, lints e testes.
+# check.sh — the quality ruler: formatting, lints and tests.
 #
-# É o mesmo comando no pre-commit e no CI, de propósito: se o hook e o CI
-# discordam, o hook não serve para nada.
+# It is the same command in the pre-commit and in CI, on purpose: if the hook and CI
+# disagree, the hook is worthless.
 #
-#   tools/check.sh            # fmt --check, clippy, testes, build release
-#   tools/check.sh --fast     # sem o build release (o que o pre-commit roda)
-#   tools/check.sh --fix      # aplica fmt e clippy --fix antes de checar
+#   tools/check.sh            # fmt --check, clippy, tests, release build
+#   tools/check.sh --fast     # without the release build (what the pre-commit runs)
+#   tools/check.sh --fix      # applies fmt and clippy --fix before checking
 #
-# Sai com 0 só se tudo passa. Nada aqui roda GUI: `mc`/`vim` continuam manuais
-# (docs/DEBUG.md).
+# Exits with 0 only if everything passes. Nothing here runs a GUI: `mc`/`vim` stay
+# manual (docs/DEBUG.md).
 set -eu
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
@@ -22,27 +22,27 @@ for arg in "$@"; do
         --fast) FAST=1 ;;
         --fix) FIX=1 ;;
         -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *) echo "opção desconhecida: $arg" >&2; exit 2 ;;
+        *) echo "unknown option: $arg" >&2; exit 2 ;;
     esac
 done
 
-falhou=0
+failed=0
 step() {
     name=$1
     shift
     printf '%-22s' "$name"
-    if saida=$("$@" 2>&1); then
+    if output=$("$@" 2>&1); then
         echo "ok"
     else
-        echo "FALHOU"
-        echo "$saida" | tail -30 | sed 's/^/    /'
-        falhou=1
+        echo "FAILED"
+        echo "$output" | tail -30 | sed 's/^/    /'
+        failed=1
     fi
 }
 
 if [ "$FIX" = 1 ]; then
     cargo fmt --all
-    # o `--fix` do clippy recusa árvore suja por padrão; aqui é intencional
+    # clippy's `--fix` refuses a dirty tree by default; here it is intentional
     cargo clippy --fix --allow-dirty --allow-staged --all-targets \
         --workspace --release >/dev/null 2>&1 || true
 fi
@@ -53,16 +53,16 @@ step "cargo test" cargo test --workspace --quiet
 
 if [ "$FAST" = 0 ]; then
     step "build --release" cargo build --release --workspace
-    # parsebench é o benchmark sem display: se ele quebra, o número do
-    # docs/BENCHMARKS.md morre junto
-    # `--selftest` é o smoke do emulador sem display: 14 áreas do núcleo
+    # parsebench is the display-less benchmark: if it breaks, the number in
+    # docs/BENCHMARKS.md dies with it
+    # `--selftest` is the display-less emulator smoke test: 14 core areas
     step "selftest" ./target/release/bzmux --selftest
     step "parsebench" ./target/release/parsebench --frames 100 --cols 40 --rows 12
 fi
 
-if [ "$falhou" = 0 ]; then
-    echo "tudo verde"
+if [ "$failed" = 0 ]; then
+    echo "all green"
 else
-    echo "tem coisa vermelha acima" >&2
+    echo "something above is red" >&2
 fi
-exit "$falhou"
+exit "$failed"

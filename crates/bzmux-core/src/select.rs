@@ -1,29 +1,30 @@
-//! Seleção: âncora absoluta e texto.
+//! Selection: absolute anchor and text.
 //!
-//! A âncora é `(linha absoluta, coluna)` e **não** um par de coordenadas da
-//! tela: assim a seleção sobrevive a rolar o histórico e a output chegando
-//! (o texto anda, a seleção anda junto). É o mesmo modelo do `bzmux` Python
-//! (`term.py:1050-1075`), com uma diferença: `scrolled` e `abs_gen` são
-//! contadores aqui, não objetos.
+//! The anchor is `(absolute line, column)` and **not** a pair of screen
+//! coordinates: that way the selection survives scrolling the history and output
+//! arriving (the text moves, the selection moves with it). It is the same model
+//! as Python `bzmux` (`term.py:1050-1075`), with one difference: `scrolled` and
+//! `abs_gen` are counters here, not objects.
 //!
-//! `abs_gen` é a geração do espaço absoluto: qualquer coisa que reescreve o
-//! histórico por baixo (`CSI 3J`, RIS, reflow) incrementa e mata as âncoras
-//! antigas — melhor perder a seleção que copiar o texto errado.
+//! `abs_gen` is the generation of the absolute space: anything that rewrites the
+//! history underneath (`CSI 3J`, RIS, reflow) increments it and kills the old
+//! anchors — better to lose the selection than to copy the wrong text.
 
 use crate::grid::Row;
 use crate::term::Term;
 
-/// Célula endereçada no espaço absoluto (histórico + grade viva).
+/// Cell addressed in the absolute space (history + live grid).
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Anchor {
-    /// Linha absoluta: cresce com o scroll, não muda quando o histórico rola.
+    /// Absolute line: it grows with scrolling and does not move when the history
+    /// scrolls.
     pub line: i64,
     pub col: usize,
-    /// Geração do espaço absoluto em que a âncora nasceu.
+    /// Generation of the absolute space the anchor was born in.
     pub gen: u64,
 }
 
-/// Seleção normalizada: `a <= b` na ordem de leitura.
+/// Normalized selection: `a <= b` in reading order.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Span {
     pub a: Anchor,
@@ -31,7 +32,7 @@ pub struct Span {
 }
 
 impl Span {
-    /// Ordena as pontas (arrastar de baixo para cima é normal).
+    /// Sort the ends (dragging bottom-up is normal).
     #[must_use]
     pub fn new(p: Anchor, q: Anchor) -> Span {
         if (p.line, p.col) <= (q.line, q.col) {
@@ -41,11 +42,11 @@ impl Span {
         }
     }
 
-    /// Interseção com a tela: `(r1, c1, r2, c2)` na visão com `view_off`.
+    /// Intersection with the screen: `(r1, c1, r2, c2)` in the view at `view_off`.
     ///
-    /// `None` = a seleção inteira está fora da tela (ou morreu). O que ficou
-    /// para fora é preso na borda: o desenho pinta o pedaço visível e a cópia
-    /// usa a âncora inteira.
+    /// `None` = the whole selection is off screen (or dead). Whatever fell outside
+    /// is pinned to the edge: the drawing paints the visible piece and the copy
+    /// uses the whole anchor.
     #[must_use]
     pub fn visible(&self, t: &Term, view_off: usize) -> Option<(usize, usize, usize, usize)> {
         if !t.anchor_alive(&self.a) || !t.anchor_alive(&self.b) {
@@ -68,7 +69,7 @@ impl Span {
 }
 
 impl Term {
-    /// Âncora da célula `(row, col)` da visão com `off` linhas de histórico.
+    /// Anchor of cell `(row, col)` of the view with `off` lines of history.
     #[must_use]
     pub fn anchor_at(&self, off: usize, row: usize, col: usize) -> Anchor {
         Anchor {
@@ -78,25 +79,25 @@ impl Term {
         }
     }
 
-    /// Primeira linha absoluta que ainda existe (o histórico tem teto).
+    /// First absolute line that still exists (the history has a ceiling).
     #[must_use]
     pub fn abs_first(&self) -> i64 {
         self.scrolled as i64 - self.scrollback.len() as i64
     }
 
-    /// Fileira da visão onde a âncora cai (< 0 ou >= rows = fora da tela).
+    /// View row where the anchor falls (< 0 or >= rows = off screen).
     #[must_use]
     pub fn anchor_row(&self, a: &Anchor, off: usize) -> i64 {
         a.line - self.scrolled as i64 + off as i64
     }
 
-    /// A âncora ainda aponta para conteúdo que existe.
+    /// The anchor still points at content that exists.
     #[must_use]
     pub fn anchor_alive(&self, a: &Anchor) -> bool {
         a.gen == self.abs_gen && self.abs_row(a.line).is_some()
     }
 
-    /// A linha absoluta, se ela existe (histórico ou grade viva).
+    /// The absolute line, if it exists (history or live grid).
     #[must_use]
     pub fn abs_row(&self, line: i64) -> Option<&Row> {
         let lo = self.abs_first();
@@ -110,10 +111,10 @@ impl Term {
         }
     }
 
-    /// Texto entre duas âncoras (pontas inclusivas), mesmo fora da tela.
+    /// Text between two anchors (ends inclusive), even off screen.
     ///
-    /// Espaço à direita de cada linha sai fora; âncora morta devolve `None`
-    /// em vez de texto pela metade.
+    /// Trailing space is dropped from each line; a dead anchor returns `None`
+    /// instead of half the text.
     #[must_use]
     pub fn span_text(&self, span: &Span) -> Option<String> {
         if !self.anchor_alive(&span.a) || !self.anchor_alive(&span.b) {
@@ -135,9 +136,9 @@ impl Term {
         Some(out.join("\n"))
     }
 
-    /// Texto de um retângulo da visão `(r1,c1)..(r2,c2)`, pontas inclusivas.
+    /// Text of a rectangle of the view `(r1,c1)..(r2,c2)`, ends inclusive.
     ///
-    /// Usado para copiar a viewport quando não há seleção.
+    /// Used to copy the viewport when there is no selection.
     #[must_use]
     pub fn selection_text(
         &self,
@@ -162,7 +163,8 @@ impl Term {
         out.join("\n")
     }
 
-    /// A viewport inteira, sem linhas vazias no fim (Ctrl+Shift+C sem seleção).
+    /// The whole viewport, without trailing blank lines (Ctrl+Shift+C with no
+    /// selection).
     #[must_use]
     pub fn view_text(&self, off: usize) -> String {
         let mut lines: Vec<String> = self
@@ -181,11 +183,11 @@ impl Term {
         s
     }
 
-    /// O que mandar para o filho quando o usuário cola `text`.
+    /// What to send to the child when the user pastes `text`.
     ///
-    /// Com `?2004` ligado o texto vai entre `ESC[200~` e `ESC[201~`: o app
-    /// (readline, vim, python) sabe que é cola e não trata `\n` como Enter.
-    /// A política mora aqui para ser testável sem display.
+    /// With `?2004` on, the text goes between `ESC[200~` and `ESC[201~`: the app
+    /// (readline, vim, python) knows it is a paste and does not treat `\n` as
+    /// Enter. The policy lives here so it is testable without a display.
     #[must_use]
     pub fn paste_payload(&self, text: &str) -> Vec<u8> {
         if self.bracketed_paste {
@@ -209,62 +211,62 @@ mod tests {
     }
 
     #[test]
-    fn ancora_sobrevive_on_scroll() {
+    fn anchor_survives_scroll() {
         let mut t = term();
-        // três linhas: enche a tela, depois rola uma
+        // three lines: fills the screen, then scrolls one
         t.feed(b"AAA\r\nBBB\r\nCCC\r\nDDD");
         let a = t.anchor_at(0, 1, 0); // "BBB"
         t.feed(b"\r\nEEE");
         let b = t.anchor_at(0, 2, 1); // "CCC" col 1
         let txt = t.span_text(&Span::new(a, b)).unwrap();
-        assert_eq!(txt, "BBB\nCCC\nDD", "o texto tem que andar junto");
+        assert_eq!(txt, "BBB\nCCC\nDD", "the text has to move along with it");
     }
 
     #[test]
-    fn ancora_morre_when_o_historico_e_reescrito() {
+    fn anchor_dies_when_the_history_is_rewritten() {
         let mut t = term();
         t.feed(b"AAA\r\nBBB");
         let a = t.anchor_at(0, 0, 0);
         assert!(t.anchor_alive(&a));
-        t.feed(b"\x1b[3J"); // ED3: limpa o histórico
+        t.feed(b"\x1b[3J"); // ED3: clears the history
         assert!(!t.anchor_alive(&a));
         assert_eq!(t.span_text(&Span::new(a, a)), None);
     }
 
     #[test]
-    fn span_normaliza_e_cuts_espaco_a_direita() {
+    fn span_normalizes_and_cuts_trailing_space() {
         let mut t = term();
-        t.feed(b"oi   \r\nmundo  ");
-        let a = t.anchor_at(0, 1, 4); // "o" de "mundo" (ponta inclusiva)
-        let b = t.anchor_at(0, 0, 0); // início de "oi"
+        t.feed(b"hi   \r\nworld  ");
+        let a = t.anchor_at(0, 1, 4); // last "d" of "world" (inclusive end)
+        let b = t.anchor_at(0, 0, 0); // start of "hi"
         let txt = t.span_text(&Span::new(a, b)).unwrap();
-        assert_eq!(txt, "oi\nmundo");
+        assert_eq!(txt, "hi\nworld");
     }
 
     #[test]
-    fn visible_prende_a_selecao_na_borda() {
+    fn visible_pins_the_selection_to_the_edge() {
         let mut t = Term::new(6, 2);
         t.feed(b"111111\r\n222222\r\n333333\r\n444444");
-        // seleciona da linha 2 até a 3, mas a visão mostra 2 linhas
+        // selects from line 2 to line 3, but the view shows 2 lines
         let a = t.anchor_at(0, 0, 0);
         let b = t.anchor_at(0, 1, 5);
         let (r1, c1, r2, c2) = Span::new(a, b).visible(&t, 0).unwrap();
         assert_eq!((r1, c1, r2, c2), (0, 0, 1, 5));
-        // rolar duas linhas para trás tira a seleção da tela
+        // scrolling two lines back takes the selection off screen
         assert_eq!(Span::new(a, b).visible(&t, 3), None);
     }
 
     #[test]
-    fn view_text_cuts_linhas_vazias_do_end() {
+    fn view_text_cuts_trailing_blank_lines() {
         let mut t = term();
-        t.feed(b"um\r\ndois");
-        assert_eq!(t.view_text(0), "um\ndois\n");
-        let empty = super::tests::term(); // tela limpa -> nada
+        t.feed(b"one\r\ntwo");
+        assert_eq!(t.view_text(0), "one\ntwo\n");
+        let empty = super::tests::term(); // clean screen -> nothing
         assert_eq!(empty.view_text(0), "");
     }
 
     #[test]
-    fn paste_respeita_bracketed_paste() {
+    fn paste_respects_bracketed_paste() {
         let mut t = term();
         assert_eq!(t.paste_payload("a\nb"), b"a\nb");
         t.feed(b"\x1b[?2004h");

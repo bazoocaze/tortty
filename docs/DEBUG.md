@@ -1,298 +1,309 @@
-# Desenvolvimento: ferramentas, verificação e armadilhas
+# Development: tools, verification and pitfalls
 
-Manual operacional. **Ler antes de rodar qualquer ferramenta gráfica**: o
-primeiro item abaixo já custou o terminal de trabalho de alguém.
+Operational manual. **Read before running any graphical tool**: the first item
+below already cost someone their work terminal.
 
-## Nunca `pkill` — PID file, sempre
+## Never `pkill` — PID file, always
 
-`pkill -f bzmux` mata o **shell que chamou** o comando, porque o padrão aparece
-na linha de comando dele. `pkill -x bzmux` mata o `bzmux` do **pipx**, que tem
-exatamente o mesmo nome do binário de dev deste repositório — foi assim que um
-`pkill` aqui derrubou a sessão do terminal do usuário.
+`pkill -f bzmux` kills the **shell that called** the command, because the
+pattern appears in its command line. `pkill -x bzmux` kills the **pipx** `bzmux`,
+which has exactly the same name as this repository's dev binary — that is how a
+`pkill` here brought down the user's terminal session.
 
-As ferramentas só matam PID registrado, conferindo `/proc/<pid>/exe` antes:
+The tools only kill a registered PID, checking `/proc/<pid>/exe` first:
 
 ```sh
 ./tools/devrun.sh --cmd 'mc' --cols 100 --rows 30 --debug-socket /tmp/bz.sock
-./tools/devkill.sh            # mata só o PID do arquivo /tmp/bzmux-rs.pid
-./tools/devkill.sh --status   # mostra vida/exe sem matar
+./tools/devkill.sh            # kills only the PID from /tmp/bzmux-rs.pid
+./tools/devkill.sh --status   # shows life/exe without killing
 ```
 
-O `devrun.sh` recusa subir se já existe processo vivo com aquele PID file (evita
-duas instâncias disputando o mesmo socket).
+`devrun.sh` refuses to start if a live process with that PID file already
+exists (it avoids two instances fighting over the same socket).
 
-## Sondas (o que dá para ligar sem recompilar)
+## Probes (what you can turn on without recompiling)
 
-| sonda | efeito |
+| probe | effect |
 |---|---|
-| `--cmd 'CMD'` | roda `sh -c CMD` em vez de `$SHELL` |
-| `--cols N --rows N` | tamanho inicial em células (o WM pode ajustar) |
-| `--font-family`, `--font-size PT`, `--dpi N` | fonte em pontos; `--dpi` é o `Xft.dpi` |
-| `--scrollback N` | teto de linhas do histórico |
-| `--no-vsync` | desenha o mais rápido possível (medir vazão) |
-| `--prof` | liga contadores de `draw`/`parse`/`pty` (consultados por `prof`) |
-| `--debug-socket CAMINHO\|auto` | socket JSON de introspecção (`auto` = `$XDG_RUNTIME_DIR/bzmux-<pid>.sock`) |
-| `--debug-log ARQ` | log de eventos (`logln!`) |
-| `WGPU_BACKEND=gl\|vulkan` | força backend do `wgpu` (válvula para GPU problemática) |
-| `WGPU_ADAPTER_NAME=…` | escolhe adaptador (útil para testar llvmpipe) |
-| `SHELL=…` | shell padrão quando não há `--cmd` |
+| `--cmd 'CMD'` | runs `sh -c CMD` instead of `$SHELL` |
+| `--cols N --rows N` | initial size in cells (the WM may adjust it) |
+| `--font-family`, `--font-size PT`, `--dpi N` | font in points; `--dpi` is `Xft.dpi` |
+| `--scrollback N` | cap on history lines |
+| `--no-vsync` | draws as fast as possible (measure throughput) |
+| `--prof` | turns on the `draw`/`parse`/`pty` counters (queried by `prof`) |
+| `--debug-socket PATH\|auto` | JSON introspection socket (`auto` = `$XDG_RUNTIME_DIR/bzmux-<pid>.sock`) |
+| `--debug-log FILE` | event log (`logln!`) |
+| `WGPU_BACKEND=gl\|vulkan` | forces the `wgpu` backend (escape valve for a problematic GPU) |
+| `WGPU_ADAPTER_NAME=…` | picks the adapter (useful to test llvmpipe) |
+| `SHELL=…` | default shell when there is no `--cmd` |
 
-## Verificação visual sem roubar a tela do dono
+## Visual verification without stealing the owner's screen
 
-Abrir a janela na sessão gráfica de quem está trabalhando atrapalha: ela sobe por
-cima e, com `xdotool`, rouba o foco. A verificação visual daqui roda num display
-próprio — a janela existe, mas não na tela de ninguém:
+Opening the window in the graphical session of whoever is working gets in the
+way: it comes up on top and, with `xdotool`, steals focus. The visual
+verification here runs on a display of its own — the window exists, but not on
+anyone's screen:
 
 ```sh
-./tools/visual.sh            # Xvfb + tema fixo + captura + comparação; sai 0/1
-./tools/visual.sh --keep     # guarda as capturas em /tmp/bzmux-visual
+./tools/visual.sh            # Xvfb + fixed theme + capture + comparison; exits 0/1
+./tools/visual.sh --keep     # keeps the captures in /tmp/bzmux-visual
 ```
 
-O `tools/visual.sh` é o dono dessa receita (display, `HOME` de mentira com
-`bzmux.conf` de tema fixo, espera do primeiro frame, captura pelo `state`/`xid`, e
-as quatro checagens de pixel via [`tools/pixel.py`](../tools/pixel.py)). Para
-sondar à mão uma captura: `tools/pixel.py shot.png 100,50` (cor de um ponto),
-`--scan X`/`--row Y` (amostra por célula) e `--diff a.png b.png` (quantos pixels
-mudaram e onde).
+`tools/visual.sh` owns that recipe (display, fake `HOME` with a `bzmux.conf` of
+the fixed theme, wait for the first frame, capture through `state`/`xid`, and
+the four pixel checks via [`tools/pixel.py`](../tools/pixel.py)). To probe a
+capture by hand: `tools/pixel.py shot.png 100,50` (colour of one point),
+`--scan X`/`--row Y` (sample per cell) and `--diff a.png b.png` (how many pixels
+changed and where).
 
-Detalhes que economizam tempo:
+Details that save time:
 
-- **O `xid` vem do `state`**, não de `xdotool search --class bzmux`: num display
-  com mais de uma instância a busca pega a janela errada e a captura sai vazia.
-- **`HOME` de mentira** é o que instala fonte de teste ou configuração sem tocar
-  no `~/.config` real; PID file separado evita que o `devkill` derrube a
-  instância que o dono esteja usando.
-- **`import -window`/`xwd` não precisam de foco** — é `xdotool` que precisa, e no
-  Xvfb ele manda para a janela do display isolado.
-- **Sem `/dev/dri` o `wgpu` cai em llvmpipe, e llvmpipe desenha** sob Xvfb (foi
-  assim que emoji, ligadura e dano foram conferidos em 2026-11-02). Serve para
-  conteúdo e geometria; número de desempenho só vale na GPU.
+- **The `xid` comes from `state`**, not from `xdotool search --class bzmux`: on
+  a display with more than one instance the search picks the wrong window and
+  the capture comes out empty.
+- **A fake `HOME`** is what installs a test font or configuration without
+  touching the real `~/.config`; a separate PID file keeps `devkill` from
+  bringing down the instance the owner is using.
+- **`import -window`/`xwd` do not need focus** — `xdotool` is the one that needs
+  it, and on Xvfb it sends it to the window of the isolated display.
+- **Without `/dev/dri` `wgpu` falls back to llvmpipe, and llvmpipe draws** under
+  Xvfb (that is how emoji, ligature and damage were checked on 2026-11-02). It
+  serves for content and geometry; a performance number is only valid on the
+  GPU.
 
-## Verificação com janela (sem depender de olho)
+## Verification with a window (without relying on an eye)
 
 ```sh
 ./tools/devrun.sh --cmd 'mc' --cols 90 --rows 24 --debug-socket /tmp/bz.sock
 PID=$(cat /tmp/bzmux-rs.pid)
 WID=$(wmctrl -lp | awk -v p=$PID '$3==p {print $1; exit}')
-xwd -id "$WID" -out /tmp/x.xwd && convert /tmp/x.xwd /tmp/x.png   # olhar
+xwd -id "$WID" -out /tmp/x.xwd && convert /tmp/x.xwd /tmp/x.png   # look
 xdotool windowactivate "$WID"; xdotool mousemove --window "$WID" 200 200
-for i in $(seq 6); do xdotool click 4; done                        # roda do mouse
+for i in $(seq 6); do xdotool click 4; done                        # mouse wheel
 ```
 
-Depois, conferir **por estado**, não por pixel: `state.scrollback`,
-`state.view_off` e `text where=view` dizem se a rolagem aconteceu. Pixel diz que
-algo foi desenhado; estado diz o quê.
+Then check **by state**, not by pixel: `state.scrollback`, `state.view_off` and
+`text where=view` say whether the scroll happened. Pixel says something was
+drawn; state says what.
 
-Para teclado, o caminho é o real (`xdotool key` → XTest → winit → encoder →
-pty), não `keys` do socket: `keys` testa o encoder, `xdotool` testa a fronteira.
+For the keyboard, the path is the real one (`xdotool key` → XTest → winit →
+encoder → pty), not the socket `keys`: `keys` tests the encoder, `xdotool` tests
+the boundary.
 
-## Socket de introspecção
+## Introspection socket
 
-Unix socket, uma requisição JSON por linha, uma resposta JSON por linha. `ok:
-true` ou `ok: false` com `err`. O mesmo protocolo do bzmux Python, de propósito:
-o `tools/benchrun.py` roda nos dois.
+Unix socket, one JSON request per line, one JSON response per line. `ok: true`
+or `ok: false` with `err`. The same protocol as the Python bzmux, on purpose:
+`tools/benchrun.py` runs on both.
 
-| verbo | entrada | resposta |
+| verb | input | response |
 |---|---|---|
 | `state` | — | `ok` + `cols`, `rows`, `cursor` `[row,col]`, `title`, `view_off`, `scrolled`, `scrollback`, `alt`, `sync`, `cell` `[w,h]`, `font`, `font_px`, `tabs`, `workspaces`, `errors`, `draws`, **`drawn`**, **`skips`**, **`last_frame`**, `last_damage`, `frames_all`, `rows_max`, `all_reason`, `xid` |
 | `text` | `where` (`view`\|`history`\|`screen`), `start`, `count` | `lines` (strings) |
-| `write` | `data` (string) | `ok` (escreve no pty) |
-| `keys` | `data` (spec tipo `ctrl+shift+t`, `f5`, `alt+left`) | `keys: [n]` bytes escritos no pty |
-| `resize` | `cols`, `rows` | `requested` (o grid **pedido**; confira em `state`) |
-| `prof` | `on` (bool, opcional) | contadores: `draw_ms_call`, `draw_calls`, `parse_*`, `pty_*` |
-| `osc` | `tab` (opcional, padrão a ativa) | os últimos 8 OSC que o parser viu, do mais novo para o mais velho: `hex`, `text` (lossy), `truncated`, `title` (o resultante). É a sonda de "por que o título da aba está com lixo" |
-| `log` | `data` | escreve no log de debug |
-| `quit` | — | fecha a janela |
+| `write` | `data` (string) | `ok` (writes to the pty) |
+| `keys` | `data` (spec like `ctrl+shift+t`, `f5`, `alt+left`) | `keys: [n]` bytes written to the pty |
+| `resize` | `cols`, `rows` | `requested` (the grid **asked for**; check it in `state`) |
+| `prof` | `on` (bool, optional) | counters: `draw_ms_call`, `draw_calls`, `parse_*`, `pty_*` |
+| `osc` | `tab` (optional, default the active one) | the last 8 OSC the parser saw, newest to oldest: `hex`, `text` (lossy), `truncated`, `title` (the resulting one). It is the probe for "why is the tab title full of garbage" |
+| `log` | `data` | writes to the debug log |
+| `quit` | — | closes the window |
 
-`state` é a fonte da verdade para o harness: a resposta tem a grade **depois** do
-WM, que é o que importa. `resize` devolve o pedido, não o resultado — quem confere
-é o cliente, com `state`, e é por isso que o `benchrun.py` insiste até bater.
+`state` is the source of truth for the harness: the response has the grid
+**after** the WM, which is what matters. `resize` returns the request, not the
+result — the client is the one that checks, with `state`, and that is why
+`benchrun.py` insists until it matches.
 
-## Armadilhas
+## Pitfalls
 
 ### winit
 
-- **`request_inner_size` é sugestão.** Pedir `cols * cw` pixels pode voltar com
-  1 célula a menos (o WM arredonda e o `floor` corta). O app guarda o grid pedido
-  (`want`) e corrige em passos de célula até bater, até 4 tentativas; sem isso o
-  benchmark mediria 60x18 achando que mediu 61x18.
-- **`RedrawRequested` não é "a cada frame"**: é sob demanda. Em `--no-vsync`
-  quem puxa o desenho é o `request_redraw` depois de cada leitura de pty; em uso
-  normal é o vsync.
-- **`Resized` chega com tamanho físico**; a grade tem de ser recalculada com o
-  `cw`/`ch` atuais, e o `surface` do `wgpu` reconfigurado no mesmo evento.
-- **Teclado**: o `logical_key` importa para texto; `physical_key` para
-  modificadores e teclas de função. Usar só um dos dois erra acento ou atalho.
+- **`request_inner_size` is a suggestion.** Asking for `cols * cw` pixels can
+  come back 1 cell short (the WM rounds and `floor` cuts). The app keeps the
+  requested grid (`want`) and corrects it in cell steps until it matches, up to
+  4 attempts; without that the benchmark would measure 60x18 thinking it
+  measured 61x18.
+- **`RedrawRequested` is not "every frame"**: it is on demand. With `--no-vsync`
+  what pulls the drawing is the `request_redraw` after each pty read; in normal
+  use it is vsync.
+- **`Resized` arrives with the physical size**; the grid has to be recomputed
+  with the current `cw`/`ch`, and the `wgpu` `surface` reconfigured in the same
+  event.
+- **Keyboard**: `logical_key` matters for text; `physical_key` for modifiers and
+  function keys. Using only one of the two gets accents or shortcuts wrong.
 
 ### wgpu
 
-- **`InstanceDescriptor`, `RequestAdapterOptions` e `DeviceDescriptor` mudaram
-  de forma** entre versões: campos obrigatórios novos, sem default. Compilar
-  contra a versão do `Cargo.lock`, não contra a documentação da web.
-- **O `surface` precisa ser reconfigurado a cada resize** (formato, tamanho),
-  senão frame com lixo ou `Validation Error` no log.
-- **`Usage::COPY_DST` no atlas** e `write_texture` no mesmo comando que desenha
-  exige cuidado: subir o atlas *antes* do render pass do frame.
-- **Formato do atlas é `R8`** (alpha): o shader coloriza pela cor da instância.
-  Usar `Rgba8` quadruplica a memória e não melhora nada.
+- **`InstanceDescriptor`, `RequestAdapterOptions` and `DeviceDescriptor` changed
+  shape** between versions: new mandatory fields, no default. Compile against
+  the `Cargo.lock` version, not against the web documentation.
+- **The `surface` must be reconfigured on every resize** (format, size),
+  otherwise a frame with garbage or a `Validation Error` in the log.
+- **`Usage::COPY_DST` on the atlas** and `write_texture` in the same command
+  that draws needs care: upload the atlas *before* the frame's render pass.
+- **The atlas format is `R8`** (alpha): the shader colors by the instance
+  colour. Using `Rgba8` quadruples the memory and improves nothing.
 
-### fonte (fontdb + swash)
+### font (fontdb + swash)
 
-- **Bitmap de cor rouba glifo da primária**: `glyph_bitmap` existe para o texto
-  fora da grade (barra, sidebar, selo, toast) e resolve cor → máscara. Se a
-  passada de cor varrer a cadeia de socorro inteira antes de qualquer máscara,
-  uma fonte de emoji que mapeie ASCII vence: a **Noto Color Emoji** mapeia
-  dígito e devolve bitmap de 19x18 px, então o número da aba virava um
-  retângulo de duas células. A ordem certa é a fonte da célula primeiro (cor e
-  máscara na mesma face) e só depois a cadeia; a grade não sofre disso porque
-  escolhe a face pelo cmap (`face_of`). Teste: `digito_vem_da_primaria_em_mascara`.
-- **Não há fontconfig**: a escolha é lista de preferência fixa + varredura do
-  sistema. Máquina sem monoespaçada → o app sai com mensagem, não com `.notdef`.
-- **pt→px**: `px = pt * dpi / 72 * scale_factor`. É o que faz a célula bater com
-  a do Pango/GDK (`Xft.dpi`); errar isso desalinha a grade em 8%.
-- **Métricas** vêm do glifo `M`, não do `font_extents`: é o que o terminal
-  precisa (largura de avanço), não a caixa tipográfica.
+- **A colour bitmap steals a glyph from the primary**: `glyph_bitmap` exists for
+  text outside the grid (bar, sidebar, badge, toast) and resolves colour →
+  mask. If the colour pass walks the entire fallback chain before any mask, a
+  font that maps ASCII wins: **Noto Color Emoji** maps digits and returns a
+  19x18 px bitmap, so the tab number became a two-cell rectangle. The right
+  order is the cell font first (colour and mask in the same face) and only then
+  the chain; the grid does not suffer from this because it picks the face by
+  the cmap (`face_of`). Test: `digit_comes_from_primary_as_mask`.
+- **There is no fontconfig**: the choice is a fixed preference list + a system
+  scan. A machine without a monospaced font → the app exits with a message, not
+  with `.notdef`.
+- **pt→px**: `px = pt * dpi / 72 * scale_factor`. It is what makes the cell
+  match Pango/GDK (`Xft.dpi`); getting it wrong misaligns the grid by 8%.
+- **Metrics** come from the `M` glyph, not from `font_extents`: it is what the
+  terminal needs (advance width), not the typographic box.
 
 ### pty
 
-- **`CommandBuilder` não herda o `cwd`** por conta própria: sem `cwd()`, o
-  `mc` abre em `$HOME` mesmo que o app tenha sido chamado de outro diretório.
-- **`SHELL` exportado** é o que roda de fato (`--cmd` troca o comando, não o
-  `SHELL`): o filho herda o ambiente inteiro e passa a mentir sobre si mesmo.
-- **`TERM=xterm-256color`** e **`COLORTERM=truecolor`** precisam ser exportados;
-  sem eles `mc` desenha em 8 cores e `vim` não liga o truecolor.
+- **`CommandBuilder` does not inherit the `cwd`** on its own: without `cwd()`,
+  `mc` opens in `$HOME` even if the app was called from another directory.
+- **The exported `SHELL`** is what actually runs (`--cmd` swaps the command, not
+  `SHELL`): the child inherits the whole environment and starts lying about
+  itself.
+- **`TERM=xterm-256color`** and **`COLORTERM=truecolor`** must be exported;
+  without them `mc` draws in 8 colours and `vim` does not turn on truecolor.
 
-### parser / grade (o que o Python já tinha aprendido)
+### parser / grid (what Python had already learned)
 
-- **Quebra pendente**: depois de escrever na última coluna, o próximo caractere
-  quebra a linha — e um `\r\n` logo em seguida **não** pode contar como segunda
-  quebra. Padrão de TUI que desenha até a borda depende disso.
-- **Dano é a única fonte de repintura.** Caminho novo que escreve célula sem
-  marcar `dirty[y]` não aparece na tela até algo rolar, e o bug parece de parse.
-- **Wide char na borda direita**: não cabe, então a célula fica vazia e o glifo
-  vai para a linha seguinte. Escrever no meio de um par largo (ou apagar metade)
-  tem de limpar as duas células, senão sobra fantasma.
-- **Âncora de histórico é distância do vivo, não linha absoluta**: `CSI 3J`
-  apaga o histórico e uma âncora absoluta faz a visão saltar para o topo.
-- **`CSI 3J`/`RIS`/troca de alt-screen** invalidam cursor, margens e charset:
-  limpar só a grade deixa estado sujo entre aplicações.
-- **`feed` com UTF-8 parcial**: o buffer pode terminar no meio de uma sequência;
-  guardar os bytes e continuar na próxima chamada (o `dmesg` cortado no meio de
-  um acento é o caso de teste).
-- **`ST` de 8 bits**: `0x9c` fecha OSC/DCS/APC/PM/SOS como o `ESC \` (muito
-  cliente manda isso em vez do ST de 7 bits). Só vale quando **não** é byte de
-  continuação de UTF-8 — `М` é `d0 9c`, e cortar ali perde o resto do título.
-  Um `ESC` que não é ST (dentro do corpo) **encerra** a sequência: empurrá-lo
-  de volta para o payload colava o `ESC ]` do título seguinte dentro do título
-  e a barra de abas mostrava lixo antes do texto (B4, 2026-11-04). A sonda é o
-  verbo `osc` do socket, que devolve os payloads crus.
-- **Texto de cromo não é sequência de terminal**: a regra é uma só,
-  `bzmux_core::term::sanitize_title` (fora controle, zero-width, marcas de
-  direção e BOM), e ela vale em **dois níveis**:
-  - *desenho*: `Renderer::chrome_text` é o único lugar que desenha texto fora da
-    grade (barra de abas, cartão da sidebar, selo de histórico, toast) e sanitiza
-    ali — elemento de cromo novo herda a garantia sem chamar nada;
-  - *produtores*: payload do OSC (`osc_dispatch`), basename do cwd
-    (`Tab::cwd_name`) e nome de workspace (digitação do rename e o `Enter` que o
-    confirma) saem limpos, porque além da tela eles vão para o título da janela,
-    para o `state` do socket e para o cabeçalho do `dump` — um `\n` num nome de
-    diretório quebra o formato do dump.
+- **Pending wrap**: after writing to the last column, the next character wraps
+  the line — and a `\r\n` right after it **must not** count as a second wrap. TUI
+  patterns that draw up to the edge depend on it.
+- **Damage is the only source of repaint.** A new path that writes a cell
+  without marking `dirty[y]` does not show up on screen until something scrolls,
+  and the bug looks like a parse bug.
+- **Wide char at the right edge**: it does not fit, so the cell stays empty and
+  the glyph goes to the next line. Writing in the middle of a wide pair (or
+  erasing half of it) has to clear both cells, otherwise a ghost remains.
+- **A history anchor is a distance from live, not an absolute line**: `CSI 3J`
+  erases the history and an absolute anchor makes the view jump to the top.
+- **`CSI 3J`/`RIS`/alt-screen switch** invalidate cursor, margins and charset:
+  clearing only the grid leaves dirty state between applications.
+- **`feed` with partial UTF-8**: the buffer can end in the middle of a sequence;
+  keep the bytes and continue on the next call (the `dmesg` cut in the middle of
+  an accented character is the test case).
+- **8-bit `ST`**: `0x9c` closes OSC/DCS/APC/PM/SOS like `ESC \` (many clients
+  send that instead of the 7-bit ST). It only holds when it is **not** a UTF-8
+  continuation byte — `М` is `d0 9c`, and cutting there loses the rest of the
+  title. An `ESC` that is not ST (inside the body) **ends** the sequence: pushing
+  it back into the payload glued the `ESC ]` of the following title inside the
+  title and the tab bar showed garbage before the text (B4, 2026-11-04). The
+  probe is the socket `osc` verb, which returns the raw payloads.
+- **Chrome text is not a terminal sequence**: the rule is a single one,
+  `bzmux_core::term::sanitize_title` (control, zero-width, direction marks and
+  BOM out), and it holds at **two levels**:
+  - *drawing*: `Renderer::chrome_text` is the only place that draws text outside
+    the grid (tab bar, sidebar card, history badge, toast) and sanitizes there —
+    a new chrome element inherits the guarantee without calling anything;
+  - *producers*: OSC payload (`osc_dispatch`), cwd basename (`Tab::cwd_name`)
+    and workspace name (rename typing and the `Enter` that confirms it) come
+    out clean, because besides the screen they go to the window title, to the
+    socket `state` and to the `dump` header — a `\n` in a directory name breaks
+    the dump format.
 
-## Qualidade (linter e formatação)
+## Quality (linter and formatting)
 
 ```sh
-./tools/check.sh          # a régua completa: fmt, clippy, teste, build, parsebench
-./tools/check.sh --fix    # conserta o que é mecânico (fmt + clippy --fix)
+./tools/check.sh          # the full ruler: fmt, clippy, test, build, parsebench
+./tools/check.sh --fix    # fixes what is mechanical (fmt + clippy --fix)
 ```
 
-O `pre-commit` roda `--fast` sozinho (instalado com
-`git config core.hooksPath .githooks`); o CI roda o script inteiro. Se
-`clippy` reclamar de algo que o código **quer** fazer, o `#[allow]` vai na
-função com o motivo — não no topo do crate, e não em `#![allow]` global.
+`pre-commit` runs `--fast` on its own (installed with
+`git config core.hooksPath .githooks`); CI runs the whole script. If `clippy`
+complains about something the code **wants** to do, the `#[allow]` goes in the
+function with the reason — not at the top of the crate, and not in a global
+`#![allow]`.
 
-Antes de rodar GUI, lembre do resto deste arquivo: matar processo é por PID
-file, e `pkill` por nome derruba sessão.
+Before running the GUI, remember the rest of this file: killing a process is by
+PID file, and `pkill` by name brings a session down.
 
 ### Mouse
 
-`mouse.rs` é puro (como o `mouse.py`): traduz `(botão, col, row)` em bytes do
-protocolo. Quem decide se o evento vai para o filho é o `Term`
-(`mouse_mode` 0/1/2/3, `mouse_sgr`, `mouse_utf8`). O `state` do socket expõe os
-três, que é como se descobre, sem chutar, se o app ligou o mouse.
+`mouse.rs` is pure (like `mouse.py`): it translates `(button, col, row)` into
+protocol bytes. What decides whether the event goes to the child is the `Term`
+(`mouse_mode` 0/1/2/3, `mouse_sgr`, `mouse_utf8`). The socket `state` exposes all
+three, which is how you find out, without guessing, whether the app turned the
+mouse on.
 
-Sonda que fecha o ciclo (o que o app *recebeu*, não o que ele fez):
+Probe that closes the loop (what the app *received*, not what it did):
 
 ```sh
 ./tools/devrun.sh --cmd 'python3 /tmp/mtest.py' --cols 60 --rows 12 --debug-socket /tmp/bz.sock
-# mtest.py faz tty.setraw(0), liga ?1000/?1006 e imprime o hex do que chegar
+# mtest.py does tty.setraw(0), turns on ?1000/?1006 and prints the hex of what arrives
 xdotool mousemove $((X+120)) $((Y+60)) click 1
-# ler a tela: {"cmd":"text","where":"view"} -> 1b5b3c303b31313b344d = ESC[<0;11;4M
+# read the screen: {"cmd":"text","where":"view"} -> 1b5b3c303b31313b344d = ESC[<0;11;4M
 ```
 
-### Cromo: a linha 1 e a coluna da esquerda
+### Chrome: line 1 and the left column
 
-Duas faixas da janela não são grade, e as duas moram no mesmo espaço do
-`origin` do shader (`pad + bar`, `pad + side`), o que é a fonte de quase todo
-erro de coordenada:
+Two bands of the window are not grid, and both live in the same space as the
+shader `origin` (`pad + bar`, `pad + side`), which is the source of almost every
+coordinate bug:
 
-| faixa | desenho | teste de clique |
+| band | drawing | click test |
 |---|---|---|
-| barra de abas (linha 1, à direita da sidebar) | `y0 = -bar`, `x0 = 0` | `tab_at`: `py` em `[pad, pad+bar)`, `x` a partir de `pad+side` |
-| sidebar (coluna da esquerda, desde a linha 1) | `y0 = -bar` no 1º cartão | `card_at`: `px < pad+side`, `i = (py - pad) / (2,4*ch)` |
+| tab bar (line 1, to the right of the sidebar) | `y0 = -bar`, `x0 = 0` | `tab_at`: `py` in `[pad, pad+bar)`, `x` from `pad+side` |
+| sidebar (left column, from line 1) | `y0 = -bar` on the 1st card | `card_at`: `px < pad+side`, `i = (py - pad) / (2.4*ch)` |
 
-A barra **some** com uma aba só (`bar_h = 0`), então tudo que depende dela tem
-que perguntar `bar_h(ch)` na hora — e a grade ganha a linha de volta quando ela
-some. O cartão tem 2,4 linhas de altura: para clicar no segundo, o `y` é ~1,5
-linha abaixo do primeiro, não meia linha.
+The bar **disappears** with a single tab (`bar_h = 0`), so everything that
+depends on it has to ask `bar_h(ch)` at the time — and the grid gets the line
+back when it goes away. The card is 2.4 lines tall: to click the second one, the
+`y` is ~1.5 lines below the first, not half a line.
 
-Correção de origem, quando o clique cai na faixa errada: mover o mouse e ler
-`cursor_px`/`cell_at` do `state` (é exato, sem offset de moldura) e derivar
+Origin correction, when the click lands on the wrong band: move the mouse and
+read `cursor_px`/`cell_at` from `state` (it is exact, no frame offset) and derive
 `side = px - col*cw`.
 
-### Tamanho inicial da grade
+### Initial grid size
 
-Duas armadilhas juntas, e as duas aparecem como "texto embaralhado no
-primeiro segundo":
+Two pitfalls together, and both look like "scrambled text in the first second":
 
-1. Pedir a janela em `round(cols*cw)` dá pixels **a menos** que o grid precisa
-   (100 células de 13,044 px = 1304,4 → 1304 → 99 colunas). Por isso o pedido é
-   `ceil`.
-2. O filho nascia antes de saber o tamanho final; o primeiro `resize` do WM
-   chegava com o filho já escrevendo, e o que estava na tela ficava com a
-   largura velha. Agora o `apply_size` roda primeiro e o `spawn_shell` só
-   acontece no primeiro tamanho aplicado.
+1. Asking for the window at `round(cols*cw)` gives **fewer** pixels than the grid
+   needs (100 cells of 13.044 px = 1304.4 → 1304 → 99 columns). That is why the
+   request is `ceil`.
+2. The child used to be born before knowing the final size; the first WM
+   `resize` arrived with the child already writing, and what was on screen kept
+   the old width. Now `apply_size` runs first and `spawn_shell` only happens at
+   the first applied size.
 
-Sonda: `bzmux --cmd 'stty size'` tem que imprimir exatamente
-`<rows> <cols>` do pedido, sem resize depois.
+Probe: `bzmux --cmd 'stty size'` has to print exactly `<rows> <cols>` of the
+request, with no resize afterwards.
 
-### Teclado
+### Keyboard
 
-O verbo `keys` do socket passa pelo **encoder real** e devolve os bytes em hex,
-que é como se confere `Ctrl+Space` (NUL), `Alt+←` (`CSI 1;3D`) e `F5`
-(`CSI 15~`) sem adivinhação:
+The socket `keys` verb goes through the **real encoder** and returns the bytes
+in hex, which is how you check `Ctrl+Space` (NUL), `Alt+←` (`CSI 1;3D`) and `F5`
+(`CSI 15~`) without guessing:
 
 ```sh
 python3 -c 'import socket,json; s=socket.socket(socket.AF_UNIX); s.connect("/tmp/bz.sock");
 s.sendall(b"{\"cmd\":\"keys\",\"data\":\"alt+left\"}\n"); print(s.recv(999))'
 ```
 
-Cuidado ao testar: `ctrl+c`/`ctrl+\\` matam o filho (`SIGINT`/`SIGQUIT`), o app
-fecha junto e o cliente fica lendo de um socket morto. Use um filho que ignora
-os sinais (`sh -c 'trap "" INT QUIT; sleep 200'`).
+Careful when testing: `ctrl+c`/`ctrl+\\` kill the child (`SIGINT`/`SIGQUIT`), the
+app closes with it and the client is left reading from a dead socket. Use a child
+that ignores the signals (`sh -c 'trap "" INT QUIT; sleep 200'`).
 
-Dead keys não têm código nosso: o `winit` entrega `Key::Dead` (que não gera
-byte) e depois o texto composto em `event.text`. Teste com
-`xdotool key dead_tilde a` e leia a tela pelo `text`.
+Dead keys have no code of ours: `winit` delivers `Key::Dead` (which generates no
+byte) and then the composed text in `event.text`. Test with
+`xdotool key dead_tilde a` and read the screen through `text`.
 
-## Medição
+## Measurement
 
-Ver [`BENCHMARKS.md`](BENCHMARKS.md) — é o único lugar com número. Resumo do
-fluxo: `parsebench` para o parser, `tools/benchrun.py` para o app,
-`tools/bench.sh` para a escada.
+See [`BENCHMARKS.md`](BENCHMARKS.md) — it is the only place with numbers. Flow
+summary: `parsebench` for the parser, `tools/benchrun.py` for the app,
+`tools/bench.sh` for the ladder.
 
-## Armadilha: erro X pendente mata o app no `set_title`
+## Pitfall: a pending X error kills the app in `set_title`
 
-Sintoma, no X11:
+Symptom, on X11:
 
 ```
 thread 'main' panicked at winit-0.30/src/platform_impl/linux/x11/window.rs:1028
@@ -300,73 +311,75 @@ Failed to set window title: XError { description: "BadDrawable (invalid Pixmap o
 Window parameter)", error_code: 9, request_code: 149, minor_code: 4 }
 ```
 
-O `winit` trata **qualquer** erro X recebido durante um `flush` como fatal e
-atribui o erro à chamada que estava sendo feita. Quando o WSI do Mesa (llvmpipe,
-sem `/dev/dri`) cria e destrói pixmaps na nossa conexão, sobra um erro pendente e
-a próxima `ChangeProperty` (título) leva a culpa — a janela morre mesmo estando
-sadia, e o erro não é dela.
+`winit` treats **any** X error received during a `flush` as fatal and attributes
+it to the call that was being made. When the Mesa WSI (llvmpipe, without
+`/dev/dri`) creates and destroys pixmaps on our connection, a pending error is
+left over and the next `ChangeProperty` (title) takes the blame — the window dies
+even though it is healthy, and the error is not its fault.
 
-Como confirmar: `RUST_BACKTRACE=1` mostra `sync_title` na pilha, e o app **roda
-normalmente** com a sonda abaixo.
+How to confirm: `RUST_BACKTRACE=1` shows `sync_title` in the stack, and the app
+**runs normally** with the probe below.
 
-Sonda: `BZMUX_NO_TITLE=1 bzmux` (não toca no título da janela). É sonda de
-depuração, não configuração — só existe para conseguir usar o terminal enquanto
-se investiga.
+Probe: `BZMUX_NO_TITLE=1 bzmux` (does not touch the window title). It is a
+debugging probe, not configuration — it only exists so you can use the terminal
+while investigating.
 
-## Armadilha: GL sem display handle, e o `alpha_mode`
+## Pitfall: GL without a display handle, and `alpha_mode`
 
-Duas coisas que só aparecem no backend GL:
+Two things that only show up in the GL backend:
 
-- `InstanceDescriptor::new_without_display_handle_from_env()` faz o EGL
-  responder `gl not compatible with provided surface`. O display handle não é
-  opcional para o EGL; a instância é criada com
+- `InstanceDescriptor::new_without_display_handle_from_env()` makes EGL reply
+  `gl not compatible with provided surface`. The display handle is not optional
+  for EGL; the instance is created with
   `new_with_display_handle_from_env(Box::new(window))`.
-- `alpha_mode: caps.alpha_modes[0]` pegava `PreMultiplied` no GL e a janela
-  ficava translúcida. Terminal é opaco: `CompositeAlphaMode::Opaque` explícito.
+- `alpha_mode: caps.alpha_modes[0]` picked `PreMultiplied` on GL and the window
+  came out translucent. A terminal is opaque: explicit
+  `CompositeAlphaMode::Opaque`.
 
-O backend e a placa escolhidos aparecem na primeira linha do log:
+The backend and the board chosen appear in the first line of the log:
 
 ```
 bzmux: GPU: Vulkan llvmpipe (LLVM 20.1.2, 256 bits) (driver llvmpipe)
 ```
 
-## Sandbox degradado: janela que não pinta nada
+## Degraded sandbox: a window that paints nothing
 
-**Antes de investigar desenho, confira `/dev/dri` com `ls -la /dev/dri`.** Sem
-os nós de device o `wgpu` fica só com llvmpipe. Sob um display próprio (Xvfb)
-llvmpipe **desenha** — `tools/visual.sh` passa sem `/dev/dri`. Na sessão real do
-dono, em 2026-11-02, o container sem `/dev/dri` fez o pty e o socket
-funcionarem com a janela **sem receber frame**.
+**Before investigating drawing, check `/dev/dri` with `ls -la /dev/dri`.** Without
+the device nodes `wgpu` only has llvmpipe. Under a display of its own (Xvfb)
+llvmpipe **draws** — `tools/visual.sh` passes without `/dev/dri`. In the owner's
+real session, on 2026-11-02, the container without `/dev/dri` made the pty and
+the socket work with the window **receiving no frame**.
 
-O primeiro campo a olhar é o par que separa as duas causas:
+The first field to look at is the pair that separates the two causes:
 
-| `drawn` | `skips` | `last_frame` | leitura |
+| `drawn` | `skips` | `last_frame` | reading |
 |---|---|---|---|
-| > 0 | 0 | `drawn` | desenhou e apresentou |
-| 0 | > 0 | `skipped (timeout/occluded)` | o desenho roda, a **superfície** recusa: ambiente (compositor/WM/sandbox), não o app |
-| 0 | 0 | `nenhum` | o app nem chegou a desenhar: veja o log (`bzmux: GPU:`), pty e config |
+| > 0 | 0 | `drawn` | it drew and presented |
+| 0 | > 0 | `skipped (timeout/occluded)` | drawing runs, the **surface** refuses: environment (compositor/WM/sandbox), not the app |
+| 0 | 0 | `none` | the app did not even get to draw: see the log (`bzmux: GPU:`), pty and config |
 
-**`drawn > 0` não prova que a tela desenhou.** Medido em 2026-11-03 no `sandbox` sem
-GPU: com `WGPU_BACKEND=gl` o contador subia (`drawn 5`, `skips 0`) e o pixmap da
-própria janela **não mudava um byte** — present que retorna sucesso e não pinta.
-O teste que não mente é comparar a janela com ela mesma:
+**`drawn > 0` does not prove the screen drew.** Measured on 2026-11-03 on `sandbox`
+without a GPU: with `WGPU_BACKEND=gl` the counter went up (`drawn 5`, `skips 0`)
+and the window's own pixmap **did not change a byte** — a present that returns
+success and does not paint. The test that does not lie is comparing the window
+with itself:
 
 ```sh
-xwd -id <xid> -silent -out /tmp/a.xwd      # xid vem do `state` do socket
-# ... manda o app pintar algo (verbo `write`) ...
+xwd -id <xid> -silent -out /tmp/a.xwd      # xid comes from the socket `state`
+# ... make the app paint something (the `write` verb) ...
 xwd -id <xid> -silent -out /tmp/b.xwd
-cmp -s /tmp/a.xwd /tmp/b.xwd && echo "não pinta" || echo "pinta"
+cmp -s /tmp/a.xwd /tmp/b.xwd && echo "does not paint" || echo "paints"
 ```
 
-Quando a superfície recusa o frame, o app escreve **uma vez** no stderr:
+When the surface refuses the frame, the app writes **once** to stderr:
 
 ```
-bzmux: a superfície não apresenta (timeout/occluded) — o app desenha, mas o
-frame não chega à tela. Ambiente confinado sem GPU visível costuma ser isso:
-confira /dev/dri e, no sandbox, use `sandbox @gpu`; ver docs/DEBUG.md
+bzmux: the surface is not presenting (timeout/occluded) — the app draws, but the
+frame does not reach the screen. A confined environment without a visible GPU
+usually looks like this: check /dev/dri and, on sandbox, use `sandbox @gpu`; see docs/DEBUG.md
 ```
 
-Sinais no log, nessa ordem, quando é o sandbox:
+Signals in the log, in this order, when it is the sandbox:
 
 ```
 _amdgpu_device_initialize: amdgpu_get_auth (1) failed (-1)
@@ -374,67 +387,68 @@ libEGL warning: egl: failed to create dri2 screen
 MESA: error: Failed to attach to x11 shm
 ```
 
-Consequência prática: **verificação visual não é confiável nesse estado**. Nesse
-caso o gate é outro: `tools/visual.sh` num Xvfb (prova pixel sem depender do
-display do dono), mais o que não depende de pixel — `state` (grade, cursor,
-imagens, `drawn`/`skips`/`rows_max`/`last_damage`), `--selftest`, `cargo test` e
-`parsebench`.
+Practical consequence: **visual verification is not trustworthy in that state**.
+In that case the gate is another one: `tools/visual.sh` on an Xvfb (pixel proof
+without depending on the owner's display), plus what does not depend on pixel —
+`state` (grid, cursor, images, `drawn`/`skips`/`rows_max`/`last_damage`),
+`--selftest`, `cargo test` and `parsebench`.
 
-No mesmo sandbox, o **cache do `cargo` já foi somente leitura**
-(`/home/user/.cargo/registry`): dependência nova falhava com `Read-only file
-system (os error 30)`. Hoje o perfil `@dev` do sandbox libera a escrita nesse
-diretório (`sandbox @dev -- cargo build`), e sem ele o contorno é
-`CARGO_HOME=/tmp/cargohome` (cópia do `~/.cargo` em tmpfs).
+In the same sandbox, the **`cargo` cache has been read-only**
+(`/home/user/.cargo/registry`): a new dependency failed with `Read-only file
+system (os error 30)`. Today the `@dev` profile of the sandbox frees writing in
+that directory (`sandbox @dev -- cargo build`), and without it the workaround is
+`CARGO_HOME=/tmp/cargohome` (a copy of `~/.cargo` on tmpfs).
 
-### Os três terminais dentro do `sandbox` (medido em 2026-11-02)
+### The three terminals inside `sandbox` (measured on 2026-11-02)
 
-Mesmo sandbox, sem `/dev/dri`, tudo em llvmpipe. A diferença entre eles é
-política de erro, não capacidade do ambiente:
+Same sandbox, no `/dev/dri`, everything on llvmpipe. The difference between them
+is error policy, not the capacity of the environment:
 
-| terminal | o que acontece | como se soube |
+| terminal | what happens | how it was found out |
 |---|---|---|
-| `kitty 0.48.2` | **abre e desenha**; só reclama do DBus | `xdotool` acha a janela; o log só tem `glfw error 65544` (DBus) |
-| `ghostty 1.3.1` | abre a janela, mas o GL degrada: `MESA: error: Failed to attach to x11 shm` em série | não sai; a janela existe e o log repete o erro de SHM |
-| `bzmux` (Vulkan/lavapipe), até 1.0.4 | **abortava** (134) no `set_window_title` | panic da winit em `x11/window.rs:1028` |
-| `bzmux` desde 1.0.5 | **não aborta**: o erro X que não é nosso é registrado e o app segue (hook abaixo) | `sandbox bzmux` vivo por 12 s, respondendo no socket |
-| `bzmux` com `WGPU_BACKEND=gl` | também não aborta, mas **não pinta** (present no-op silencioso) | `xwd` da janela idêntico antes/depois |
-| `sandbox @gpu bzmux` | **pinta de verdade** (`RADV RENOIR`, pixmap muda) | `xwd` antes/depois diferente |
+| `kitty 0.48.2` | **opens and draws**; it only complains about DBus | `xdotool` finds the window; the log only has `glfw error 65544` (DBus) |
+| `ghostty 1.3.1` | opens the window, but GL degrades: `MESA: error: Failed to attach to x11 shm` in a loop | it does not exit; the window exists and the log repeats the SHM error |
+| `bzmux` (Vulkan/lavapipe), up to 1.0.4 | **aborted** (134) in `set_window_title` | winit panic at `x11/window.rs:1028` |
+| `bzmux` since 1.0.5 | **does not abort**: the X error that is not ours is recorded and the app goes on (hook below) | `sandbox bzmux` alive for 12 s, answering on the socket |
+| `bzmux` with `WGPU_BACKEND=gl` | also does not abort, but **does not paint** (silent no-op present) | `xwd` of the window identical before/after |
+| `sandbox @gpu bzmux` | **really paints** (`RADV RENOIR`, pixmap changes) | `xwd` before/after different |
 
-Ou seja: sem `/dev/dri` este X server não apresenta superfície de GPU — nem por
-Vulkan nem por GL. A saída é o perfil `@gpu` do sandbox, não um backend
-diferente; o app avisa isso em uma linha no stderr.
+That is: without `/dev/dri` this X server does not present a GPU surface —
+neither through Vulkan nor through GL. The way out is the sandbox `@gpu`
+profile, not a different backend; the app warns about it in one line on stderr.
 
-### Erro X do WSI não pode matar o app
+### An X error from the WSI must not kill the app
 
-O `winit` guarda o último erro X da conexão e o `expect()`a na próxima chamada
-que faz flush (`x11/window.rs:1028`, em `set_window_title`). Erro que **não é
-nosso** — o WSI do Mesa deixa pendente ao criar/destruir pixmap — matava o
-processo. `crates/bzmux/src/xguard.rs` registra o hook público do winit
-(`platform::x11::register_xlib_error_hook`) e engole, registrando no stderr:
+`winit` keeps the last X error of the connection and `expect()`s it on the next
+call that flushes (`x11/window.rs:1028`, in `set_window_title`). An error that
+**is not ours** — the Mesa WSI leaves it pending while creating/destroying a
+pixmap — killed the process. `crates/bzmux/src/xguard.rs` registers winit's
+public hook (`platform::x11::register_xlib_error_hook`) and swallows it,
+recording it on stderr:
 
-| código | onde | por quê |
+| code | where | why |
 |---|---|---|
-| `BadDrawable` (9), `BadWindow` (3), `BadMatch` (8) | qualquer requisição | desenho: o WSI mexe em pixmap/janela, inclusive por requisição do núcleo |
-| `BadAccess` (10) | só extensão (`request_code >= 128`) | é o `DRI3Open` negado no sandbox — **era este o que matava** |
+| `BadDrawable` (9), `BadWindow` (3), `BadMatch` (8) | any request | drawing: the WSI touches pixmap/window, including on request from the core |
+| `BadAccess` (10) | extension only (`request_code >= 128`) | it is `DRI3Open` denied in the sandbox — **this was the one that killed it** |
 
-Com `BZMUX_XERR=1` o hook imprime **todo** erro X que vê, com código,
-requisição e se engoliu — foi assim que o `BadAccess` na `DRI3` apareceu:
+With `BZMUX_XERR=1` the hook prints **every** X error it sees, with code,
+request and whether it swallowed it — that is how the `BadAccess` on `DRI3`
+showed up:
 
 ```
-XERR codigo=10 requisicao=130 menor=1 recurso=0x4000002 engolir=false
+XERR code=10 request=130 minor=1 resource=0x4000002 swallow=false
 ```
 
-`BZMUX_NO_TITLE=1` continua existindo como sonda (não mexe no título), mas desde
-o hook não é mais necessária para o app sobreviver.
+`BZMUX_NO_TITLE=1` still exists as a probe (it does not touch the title), but
+since the hook it is no longer needed for the app to survive.
 
-### Captura de tela não é neutra
+### Screen capture is not neutral
 
-- **Janela obscurecida**: `xwd`/`import` de uma janela coberta devolvem o que
-  está **na tela** naquelas coordenadas — o conteúdo de outra janela. Se a
-  captura "não bate com o app", primeiro pergunte se ele está visível.
-- **Grab de ponteiro**: `import`/`xwd` pegam o ponteiro e mostram crosshair (o
-  "modo mira"); se o processo morre no meio, o ponteiro pode ficar preso até o
-  cliente X sumir.
-- Consequência: captura só em display virtual próprio (`tools/visual.sh`);
-  nunca no display de quem está trabalhando.
-
+- **Obscured window**: `xwd`/`import` of a covered window return what is **on
+  screen** at those coordinates — the content of another window. If the capture
+  "does not match the app", first ask whether it is visible.
+- **Pointer grab**: `import`/`xwd` grab the pointer and show a crosshair (the
+  "aim mode"); if the process dies halfway, the pointer can stay stuck until the
+  X client goes away.
+- Consequence: capture only on a virtual display of your own
+  (`tools/visual.sh`); never on the display of whoever is working.

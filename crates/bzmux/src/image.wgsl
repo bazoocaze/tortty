@@ -1,7 +1,7 @@
-// Imagens do protocolo de gráficos (H1–H13): o mesmo instanciamento do
-// shader.wgsl (retângulo + uv), mas amostrando a textura da imagem em RGB com
-// alfa em vez da máscara de cobertura do atlas. Reusa o layout de bind group do
-// atlas — só troca qual textura está ligada no grupo 1.
+// Images of the graphics protocol (H1–H13): the same instancing as
+// shader.wgsl (rectangle + uv), but sampling the image texture as RGB with
+// alpha instead of the atlas' coverage mask. It reuses the atlas' bind group
+// layout — only which texture is bound in group 1 changes.
 
 struct Globals {
     screen: vec2<f32>,
@@ -50,8 +50,8 @@ fn vs_img(@builtin(vertex_index) vi: u32, inst: Inst) -> VOut {
 
 @fragment
 fn fs_img(in: VOut) -> @location(0) vec4<f32> {
-    // imagem com alfa (PNG, RGBA cru) entra como está; a cor da instância
-    // multiplica para o app poder apagar/tingir no futuro
+    // image with alpha (PNG, raw RGBA) goes in as is; the instance colour
+    // multiplies so the app can erase/tint in the future
     let c = textureSample(tex, samp, in.uv);
     return vec4<f32>(c.rgb * in.color.rgb, c.a * in.color.a);
 }

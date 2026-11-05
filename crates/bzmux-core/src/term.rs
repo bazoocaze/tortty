@@ -1,8 +1,8 @@
-//! Estado do terminal: grade, cursor e parser VT.
+//! Terminal state: grid, cursor and VT parser.
 //!
-//! Sem GUI, sem pty, sem GPU — a mesma disciplina do `bzmux/term.py`. É o que
-//! deixa o benchmark de parser rodar sem display e o que garante que o número
-//! medido é do parser, não do toolkit.
+//! No GUI, no pty, no GPU — the same discipline as `bzmux/term.py`. It is what
+//! lets the parser benchmark run without a display, and what guarantees the
+//! number measured is the parser's, not the toolkit's.
 
 use std::collections::VecDeque;
 use unicode_width::UnicodeWidthChar;
@@ -18,10 +18,10 @@ use crate::grid::Row;
 
 const REPLACEMENT: char = '\u{FFFD}';
 
-/// Teto do payload de um OSC em curso: sequência que nunca fecha não pode
-/// crescer sem fim.
+/// Ceiling for the payload of an in-flight OSC: a sequence that never closes
+/// must not grow without bound.
 const MAX_OSC: usize = 4096;
-/// Quantos OSC a sonda guarda, e quanto de cada um (o verbo `osc` do socket).
+/// How many OSC the probe keeps, and how much of each (the socket's `osc` verb).
 const OSC_SEEN: usize = 8;
 const OSC_SEEN_MAX: usize = 256;
 
@@ -33,8 +33,8 @@ enum State {
     Csi,
     Osc,
     OscEsc,
-    /// DCS/APC/PM/SOS: consumidos até ST. Imagem do kitty cai aqui (fase 1
-    /// ignora o conteúdo, mas não pode deixar lixo na grade).
+    /// DCS/APC/PM/SOS: consumed until ST. Kitty images land here (phase 1
+    /// ignores the content, but it must not leave junk on the grid).
     Str,
     StrEsc,
 }
@@ -68,20 +68,20 @@ impl Default for SavedCursor {
     }
 }
 
-/// Um OSC que chegou, com o payload cru (sem `ESC ]` e sem terminador). É a
-/// sonda do verbo `osc` do socket: quando a barra de abas mostra lixo, a
-/// pergunta é "que bytes o filho mandou", e só o parser sabe responder.
+/// An OSC that arrived, with the raw payload (no `ESC ]`, no terminator). It is
+/// the probe behind the socket's `osc` verb: when the tab bar shows junk, the
+/// question is "which bytes did the child send", and only the parser can answer.
 #[derive(Clone, Debug)]
 pub struct OscSeen {
     pub raw: Vec<u8>,
-    /// O payload passou de `OSC_SEEN_MAX` e foi cortado.
+    /// The payload went past `OSC_SEEN_MAX` and was cut.
     pub truncated: bool,
-    /// Título **depois** de aplicar este OSC (útil quando o título não mudou:
-    /// o OSC era cor, link ou lixo que não casou com `0`/`2`).
+    /// Title **after** applying this OSC (useful when the title did not change:
+    /// the OSC was a color, a link, or junk that matched neither `0` nor `2`).
     pub title: String,
 }
 
-/// Onde a cor estendida vai: texto, fundo ou sublinhado.
+/// Where the extended color goes: text, background or underline.
 #[derive(Copy, Clone)]
 enum Slot {
     Fg,
@@ -89,15 +89,15 @@ enum Slot {
     Ul,
 }
 
-#[allow(clippy::struct_excessive_bools)] // estado do VT é booleano por natureza
+#[allow(clippy::struct_excessive_bools)] // VT state is boolean by nature
 pub struct Term {
     pub cols: usize,
     pub rows: usize,
-    /// Grade viva (uma linha por `Row`, células contíguas).
+    /// Live grid (one `Row` per line, contiguous cells).
     pub grid: Vec<Row>,
-    /// Buffer principal guardado enquanto o app está em tela cheia.
+    /// Main buffer stashed while the app is on the alt screen.
     alt: Option<Vec<Row>>,
-    /// Imagens do kitty (H1–H13): protocolo, imagens e colocações.
+    /// Kitty images (H1–H13): protocol, images and placements.
     pub graphics: crate::graphics::Graphics,
     pub scrollback: VecDeque<Row>,
     pub scrollback_limit: usize,
@@ -108,44 +108,44 @@ pub struct Term {
     /// `SGR 58`.
     pub ul_color: Color,
     pub flags: u8,
-    /// Estilo do sublinhado (`UL_*`).
+    /// Underline style (`UL_*`).
     pub ul: u8,
-    /// Região de scroll (DECSTBM), inclusiva.
+    /// Scroll region (DECSTBM), inclusive.
     pub top: usize,
     pub bottom: usize,
     pub wrap_pending: bool,
     pub cursor_visible: bool,
     pub app_cursor: bool,
-    /// `(forma 1..6, pisca)` do DECSCUSR; None = configuração.
+    /// `(shape 1..6, blink)` from DECSCUSR; None = from the config.
     pub app_cursor_style: Option<(u8, bool)>,
-    /// `?1000`=1 press, `?1002`=2 com arrasto, `?1003`=3 tudo (0 = não).
+    /// `?1000`=1 press, `?1002`=2 with drag, `?1003`=3 everything (0 = no).
     pub mouse_mode: u8,
-    /// `?1006`: coordenada decimal com botão explícito no release.
+    /// `?1006`: decimal coordinates with an explicit button on release.
     pub mouse_sgr: bool,
-    /// `?1005`: coordenada como UTF-8 no protocolo antigo.
+    /// `?1005`: coordinates as UTF-8 in the legacy protocol.
     pub mouse_utf8: bool,
     pub focus_report: bool,
     pub bracketed_paste: bool,
     pub sync_output: bool,
     pub autowrap: bool,
     pub origin: bool,
-    /// Flags do protocolo de teclado do kitty (`CSI > u`, `CSI = u`). O
-    /// encoder do app lê daqui: os bits mudam **o que** a tecla vira.
+    /// Kitty keyboard protocol flags (`CSI > u`, `CSI = u`). The app's
+    /// encoder reads from here: the bits change **what** the key becomes.
     pub kbd_flags: u32,
-    /// Pilha do `CSI > u` / `CSI < n u`. O kitty limita a 64 níveis.
+    /// Stack of `CSI > u` / `CSI < n u`. Kitty caps it at 64 levels.
     kbd_stack: Vec<u32>,
     g0_dec: bool,
     g1_dec: bool,
     use_g1: bool,
     saved: SavedCursor,
-    /// Respostas ao filho (DA, CPR, DECRQM...). O app drena e escreve no pty.
+    /// Replies to the child (DA, CPR, DECRQM...). The app drains and writes to the pty.
     pub child_out: Vec<u8>,
     pub title: String,
-    /// Os últimos OSC que chegaram, do mais antigo para o mais novo.
+    /// The last OSC that arrived, oldest to newest.
     pub osc_seen: VecDeque<OscSeen>,
-    /// Cores do tema: o desenho usa e `OSC 4/10/11/12` consulta/altera.
+    /// Theme colors: the renderer uses them and `OSC 4/10/11/12` queries/changes them.
     pub theme: Theme,
-    /// Alguém mexeu nas cores por OSC: o app tem que reenviar ao renderer.
+    /// Someone touched the colors via OSC: the app has to resend them to the renderer.
     pub theme_dirty: bool,
     pub cell_size: (u32, u32),
     pub bells: u32,
@@ -153,19 +153,19 @@ pub struct Term {
     tabstops: Vec<bool>,
     pub dirty: Vec<bool>,
     pub dirty_all: bool,
-    /// Quantas vezes o dano global foi marcado, e por quem. É a primeira
-    /// pergunta quando a grade inteira remonta sem motivo aparente.
+    /// How many times global damage was marked, and by whom. That is the first
+    /// question when the whole grid rebuilds for no apparent reason.
     pub global_marks: u64,
     pub global_why: &'static str,
-    /// Linhas que a tela inteira subiu (+) ou desceu (−) desde o último
-    /// `clear_damage`. Rolagem de tela cheia não suja linha nenhuma: o conteúdo
-    /// só mudou de lugar, e o desenho aproveita as linhas já montadas.
+    /// Rows the whole screen moved up (+) or down (−) since the last
+    /// `clear_damage`. Full-screen scrolling dirties no row at all: the content
+    /// only changed place, and the renderer reuses the rows already built.
     pub scroll_shift: isize,
-    /// Houve rolagem para os dois lados: aí o deslocamento líquido não descreve
-    /// o que aconteceu (linha que sai vira branco e não volta), e o desenho tem
-    /// de remontar tudo.
+    /// Scrolling happened both ways: the net shift no longer describes what
+    /// happened (a row that leaves becomes blank and never comes back), so the
+    /// renderer has to rebuild everything.
     pub scroll_conflict: bool,
-    /// Linhas que saíram pelo topo desde o início (índice absoluto).
+    /// Rows that left through the top since the start (absolute index).
     pub scrolled: u64,
     pub abs_gen: u64,
     pub hist_gen: u64,
@@ -173,9 +173,9 @@ pub struct Term {
     state: State,
     csi: Vec<u8>,
     osc: Vec<u8>,
-    /// Corpo do APC (`ESC _`): é por aqui que chega a imagem do kitty.
+    /// APC body (`ESC _`): this is how the kitty image arrives.
     apc: Vec<u8>,
-    /// O `Str` em curso é um APC (e não DCS/PM/SOS, que são descartados).
+    /// The in-flight `Str` is an APC (not DCS/PM/SOS, which are discarded).
     apc_active: bool,
     csi_prefix: u8,
     csi_inter: u8,
@@ -257,9 +257,9 @@ impl Term {
         }
     }
 
-    // ---------------------------------------------------------------- grade
+    // ----------------------------------------------------------------- grid
 
-    /// Célula em branco herda o bg corrente (BCE), como terminal de verdade.
+    /// A blank cell inherits the current bg (BCE), like a real terminal.
     #[inline]
     fn blank_cell(&self) -> Cell {
         Cell {
@@ -287,14 +287,14 @@ impl Term {
         self.dirty_all || self.dirty.iter().any(|&d| d)
     }
 
-    /// Suja um intervalo de linhas (fim exclusivo), limitado à grade.
+    /// Dirties a range of rows (exclusive end), clamped to the grid.
     pub fn mark_rows(&mut self, from: usize, to: usize) {
         for y in from..to.min(self.dirty.len()) {
             self.dirty[y] = true;
         }
     }
 
-    /// Marca a grade inteira como suja, guardando quem pediu.
+    /// Marks the whole grid dirty, recording who asked.
     pub fn mark_global(&mut self, why: &'static str) {
         self.dirty_all = true;
         self.global_marks = self.global_marks.saturating_add(1);
@@ -319,7 +319,7 @@ impl Term {
         self.abs_gen = abs;
     }
 
-    /// DECSTR (soft reset): não mexe em grade nem em histórico.
+    /// DECSTR (soft reset): touches neither the grid nor the scrollback.
     fn soft_reset(&mut self) {
         self.fg = Color::Default;
         self.bg = Color::Default;
@@ -335,12 +335,12 @@ impl Term {
         self.wrap_pending = false;
     }
 
-    /// Quanto a visão precisa andar para o leitor não perder a linha em que
-    /// estava, depois de `prev_scrolled`/`prev_hist` (D10).
+    /// How far the view must move so the reader does not lose the line they
+    /// were on, after `prev_scrolled`/`prev_hist` (D10).
     ///
-    /// Saíram `d` linhas por cima desde a leitura anterior: o conteúdo subiu
-    /// `d`, então a visão desce `d`. Mas se o histórico bateu no teto, as
-    /// `dropped` mais antigas morreram — e aí elas não contam.
+    /// `d` rows left through the top since the previous read: the content moved
+    /// up `d`, so the view moves down `d`. But if the scrollback hit its cap,
+    /// the oldest `dropped` lines died — and those do not count.
     #[must_use]
     pub fn view_after_output(&self, off: usize, prev_scrolled: u64, prev_hist: usize) -> usize {
         if off == 0 {
@@ -350,11 +350,11 @@ impl Term {
         if d == 0 {
             return off;
         }
-        // Só a distância do vivo importa: linha que saiu do histórico (por
-        // teto ou por `CSI 3J`) já é tratada pelo clamp em `sb`. Subtrair as
-        // descartadas fazia a visão andar para o lado errado a cada linha que
-        // a grade descartava — no teto, `off` congelava e o leitor perdia uma
-        // linha de conteúdo por linha nova (o oposto do D10).
+        // Only the distance from the live area matters: a row that left the
+        // scrollback (by cap or by `CSI 3J`) is already handled by the clamp in
+        // `sb`. Subtracting the discarded ones made the view move the wrong way
+        // for every row the grid dropped — at the cap, `off` froze and the
+        // reader lost one row of content per new row (the opposite of D10).
         let _ = prev_hist;
         (off + d).min(self.scrollback.len())
     }
@@ -368,13 +368,13 @@ impl Term {
         self.mark_global("resize");
         self.abs_gen += 1;
         if let Some(alt) = self.alt.as_mut() {
-            // Alt-screen não tem histórico: quem sai pela tela morre, e sem
-            // reflow (é tela de app, não de texto).
+            // The alt screen has no scrollback: whatever leaves the screen dies,
+            // and no reflow (it is an app screen, not a text one).
             crop_rows(alt, cols, rows);
         }
-        // Buffer principal: junta os parágrafos moles e re-quebra na largura
-        // nova. O cursor é recalculado a partir do offset dentro do parágrafo,
-        // não de `cy` — que deixa de significar a mesma coisa.
+        // Main buffer: joins the soft paragraphs and rewraps them at the new
+        // width. The cursor is recomputed from the offset inside the paragraph,
+        // not from `cy` — which stops meaning the same thing.
         let (cur_row, cur_col) = (self.cy, self.cx);
         let hist = self.scrollback.len();
         let all: Vec<Row> = self
@@ -390,21 +390,21 @@ impl Term {
             self.scrollback.pop_front();
         }
         self.grid = live;
-        // `rows` linhas vivas sempre: as que faltam nascem em branco embaixo
+        // always `rows` live rows: the missing ones are born blank at the bottom
         while self.grid.len() < rows {
             self.grid.push(Row::blank(cols));
         }
         self.cy = re.cur_row.saturating_sub(first_live).min(rows - 1);
         self.cx = re.cur_col.min(cols - 1);
-        // H12: o reflow mudou quantas linhas existem acima da grade. Quem caiu
-        // fora do histórico virou inalcançável (nem com o wheel), então é
-        // descartado; a imagem que continua na faixa fica onde está (imagem não
-        // acompanha reflow linha a linha, como no kitty).
+        // H12: the reflow changed how many rows exist above the grid. Whatever
+        // fell outside the scrollback became unreachable (not even with the
+        // wheel), so it is dropped; an image still in the band stays where it is
+        // (an image does not follow reflow row by row, as in kitty).
         self.graphics
             .drop_above(-i32::try_from(self.scrollback.len()).unwrap_or(i32::MAX));
         let wrap = re.wrap;
-        // o índice absoluto continua válido, mas o conteúdo andou: âncora velha
-        // passa a apontar para outra linha, então morre (o `abs_gen` já subiu)
+        // the absolute index is still valid, but the content moved: an old
+        // anchor now points at another row, so it dies (the `abs_gen` went up)
         self.scrolled = self.scrolled.max(self.scrollback.len() as u64);
         self.cols = cols;
         self.rows = rows;
@@ -420,7 +420,7 @@ impl Term {
         self.dirty = vec![true; rows];
     }
 
-    // --------------------------------------------------------------- escrita
+    // -------------------------------------------------------------- writing
 
     #[inline]
     fn dec_active(&self) -> bool {
@@ -505,8 +505,8 @@ impl Term {
     fn put_char(&mut self, ch: char) {
         let w = ch.width().unwrap_or(1);
         if w == 0 {
-            // combinante: a célula do bzmux Python também não compõe (nota no
-            // TASK). Ignorar é melhor que desenhar uma caixinha.
+            // combining: the Python bzmux cell does not compose either (note in
+            // TASK). Ignoring it beats drawing a box.
             return;
         }
         if self.wrap_pending {
@@ -538,7 +538,7 @@ impl Term {
             }
             return;
         }
-        // largo: precisa de duas colunas livres
+        // wide: needs two free columns
         if self.cx + 1 >= self.cols {
             if self.autowrap {
                 self.do_wrap();
@@ -597,12 +597,12 @@ impl Term {
         }
     }
 
-    /// IND (ESC D): desce sem voltar a coluna.
+    /// IND (ESC D): goes down without returning the column.
     fn index(&mut self) {
         self.newline();
     }
 
-    /// RI (ESC M): sobe; no topo da região, rola para baixo.
+    /// RI (ESC M): goes up; at the top of the region, scrolls down.
     fn reverse_index(&mut self) {
         if self.cy == self.top {
             self.scroll_down(1);
@@ -614,7 +614,7 @@ impl Term {
     pub fn scroll_up(&mut self, n: usize) {
         let full = self.top == 0 && self.bottom + 1 == self.rows;
         if full {
-            // a tela inteira subiu: o desenho desloca as linhas prontas
+            // the whole screen moved up: the renderer shifts the ready rows
             if self.scroll_shift < 0 {
                 self.scroll_conflict = true;
             }
@@ -626,9 +626,9 @@ impl Term {
             self.mark_global("scroll_up_region");
         }
         let keep = full && self.alt.is_none();
-        // H12: a imagem sobe junto com o texto. Rolagem de tela cheia manda a
-        // colocação para o histórico (linha negativa) e ela volta ao subir no
-        // wheel; rolagem de região não tem histórico, então descarta.
+        // H12: the image moves up with the text. Full-screen scrolling sends the
+        // placement to the scrollback (negative row) and it comes back when the
+        // wheel goes up; region scrolling has no scrollback, so it is dropped.
         let floor = if self.top == 0 {
             Some(-i32::try_from(self.scrollback_limit + 1).unwrap_or(i32::MAX))
         } else {
@@ -645,7 +645,7 @@ impl Term {
                 self.scrollback.push_back(row);
                 while self.scrollback.len() > self.scrollback_limit {
                     self.scrollback.pop_front();
-                    // o que estava preso nessa linha morreu de vez (H12)
+                    // what was pinned to that row died for good (H12)
                     self.graphics
                         .drop_above(-i32::try_from(self.scrollback.len()).unwrap_or(i32::MAX));
                 }
@@ -654,15 +654,15 @@ impl Term {
             let at = self.bottom.min(self.grid.len());
             self.grid.insert(at, blank);
             if let Some(d) = self.dirty.get_mut(at) {
-                *d = true; // linha nova: não existe versão pronta para deslocar
+                *d = true; // new row: there is no ready version to shift
             }
             self.scrolled += 1;
         }
-        // o dano anda junto com o conteúdo: a linha suja de antes da rolagem
-        // agora é outra, e o desenho gira o cache com a mesma conta. Sem isto
-        // a linha que recebeu texto ainda não desenhado (escrita e `\n` no
-        // mesmo chunk, o caso do `time sleep 1`) girava com o cache velho e
-        // ficava em branco até um rebuild inteiro (B6).
+        // damage travels with the content: the row that was dirty before the
+        // scroll is another one now, and the renderer rotates its cache with the
+        // same arithmetic. Without this, the row that took text not yet drawn
+        // (write and `\n` in the same chunk, the `time sleep 1` case) rotated
+        // with a stale cache and stayed blank until a full rebuild (B6).
         if full && !self.scroll_conflict {
             for _ in 0..n {
                 self.dirty.rotate_left(1);
@@ -671,7 +671,7 @@ impl Term {
                 }
             }
         }
-        // a região pode ter encolhido (linhas fora dela não se movem)
+        // the region may have shrunk (rows outside it do not move)
         while self.grid.len() > self.rows {
             self.grid.pop();
         }
@@ -697,13 +697,13 @@ impl Term {
             }
             self.grid.insert(self.top, Row::blank(self.cols));
             if let Some(d) = self.dirty.get_mut(self.top) {
-                *d = true; // linha nova no topo: nada pronto para deslocar
+                *d = true; // new row at the top: nothing ready to shift
             }
             while self.grid.len() > self.rows {
                 self.grid.pop();
             }
         }
-        // espelho da rolagem para cima: o dano desce com o conteúdo
+        // mirror of the upward scroll: damage goes down with the content
         if full && !self.scroll_conflict {
             for _ in 0..n {
                 self.dirty.rotate_right(1);
@@ -786,7 +786,7 @@ impl Term {
         self.wrap_pending = false;
     }
 
-    // ---------------------------------------------------------------- apagar
+    // -------------------------------------------------------------- erasing
 
     fn erase_display(&mut self, n: u32) {
         match n {
@@ -803,8 +803,8 @@ impl Term {
                     self.grid[y] = row;
                 }
                 if n == 3 {
-                    // H13: `ED 3` limpa o histórico **e** as imagens — sem
-                    // isto sobrava imagem pendurada numa tela vazia
+                    // H13: `ED 3` clears the scrollback **and** the images —
+                    // without this an image was left hanging on an empty screen
                     self.graphics.clear();
                     self.scrollback.clear();
                     self.abs_gen += 1;
@@ -926,7 +926,7 @@ impl Term {
 
     // ------------------------------------------------------------------ SGR
 
-    /// SGR completo (C1-C8 de `docs/MIGRATION.md`).
+    /// Full SGR (C1-C8 of `docs/MIGRATION.md`).
     fn sgr(&mut self, body: &[u8]) {
         let mut toks = Toks::new(body);
         while let Some(tok) = toks.next() {
@@ -943,8 +943,8 @@ impl Term {
                 5 | 6 => self.flags |= BLINK,
                 7 => self.flags |= INV,
                 9 => self.flags |= STRIKE,
-                // xterm usa 21 como "duplo"; ECMA-48 diria "sem negrito". O
-                // que aparece na prática (bat, delta) é duplo.
+                // xterm uses 21 as "double"; ECMA-48 would say "no bold". What
+                // shows up in practice (bat, delta) is double.
                 21 => self.ul = UL_DOUBLE,
                 22 => self.flags &= !(BOLD | FAINT),
                 23 => self.flags &= !ITALIC,
@@ -985,7 +985,7 @@ impl Term {
         }
     }
 
-    /// Cor estendida depois de 38/48/58: `;5;n` (256) ou `;2;r;g;b` (truecolor).
+    /// Extended color after 38/48/58: `;5;n` (256) or `;2;r;g;b` (truecolor).
     fn extended(&mut self, toks: &mut Toks<'_>, slot: Slot) {
         let color = match toks.next_num() {
             Some(5) => match toks.next_num() {
@@ -1005,7 +1005,7 @@ impl Term {
         self.slot_set(slot, color);
     }
 
-    /// SGR com subparâmetros (`38:2::r:g:b`, `48:5:196`, `4:3`).
+    /// SGR with subparameters (`38:2::r:g:b`, `48:5:196`, `4:3`).
     fn sgr_sub(&mut self, tok: &[u8]) {
         let mut vals = [0u32; 8];
         let mut n = 0usize;
@@ -1030,7 +1030,7 @@ impl Term {
                     if n < 5 {
                         return;
                     }
-                    // o campo vazio é o "espaço de cor" omitido: vale o último trio
+                    // the empty field is the omitted "color space": the last trio counts
                     Color::rgb(vals[n - 3], vals[n - 2], vals[n - 1])
                 } else if n >= 3 && vals[1] == 5 {
                     Color::Idx(vals[2].min(255) as u8)
@@ -1040,7 +1040,7 @@ impl Term {
                 self.slot_set(slot, color);
             },
             4 => {
-                // 4:0 tira o sublinhado; 4:1..4:5 escolhem o estilo
+                // 4:0 removes the underline; 4:1..4:5 pick the style
                 self.ul = match vals[1] {
                     0 => UL_NONE,
                     2 => UL_DOUBLE,
@@ -1055,7 +1055,7 @@ impl Term {
         }
     }
 
-    // ----------------------------------------------------------------- modos
+    // ---------------------------------------------------------------- modes
 
     fn set_mode(&mut self, body: &[u8], private: bool, on: bool) {
         for t in body.split(|&b| b == b';') {
@@ -1097,8 +1097,8 @@ impl Term {
                 _ => {},
             }
         }
-        // modos ANSI (IRM=4, LNM=20) não são implementados de propósito;
-        // ficam anotados no TASK como pendência
+        // ANSI modes (IRM=4, LNM=20) are deliberately not implemented; they are
+        // noted in TASK as pending
         let _ = p;
     }
 
@@ -1163,7 +1163,7 @@ impl Term {
 
     // ------------------------------------------------------------ dispatch
 
-    #[allow(clippy::too_many_lines)] // tabela de despacho: partir só esconde o mapa
+    #[allow(clippy::too_many_lines)] // dispatch table: splitting it only hides the map
     fn csi_dispatch(&mut self, final_: u8) {
         let body = std::mem::take(&mut self.csi);
         let prefix = self.csi_prefix;
@@ -1235,7 +1235,7 @@ impl Term {
             },
             b'c' => {
                 if prefix == b'>' {
-                    // DA2: a resposta TEM de começar com '>'
+                    // DA2: the reply MUST start with '>'
                     self.child_out.extend_from_slice(b"\x1b[>1;100;0c");
                 } else if body.is_empty() || body == b"0" {
                     self.child_out.extend_from_slice(b"\x1b[?62c");
@@ -1310,9 +1310,9 @@ impl Term {
                     self.save_cursor();
                 }
             },
-            // `u` tem quatro donos: SCORC (sem prefixo) e o protocolo de
-            // teclado do kitty (`?` consulta, `>` empilha, `<` desempilha,
-            // `=` ajusta com modo 1=substitui, 2=acrescenta, 3=remove).
+            // `u` has four owners: SCORC (no prefix) and the kitty keyboard
+            // protocol (`?` queries, `>` pushes, `<` pops, `=` adjusts with
+            // mode 1=replace, 2=add, 3=remove).
             b'u' => match prefix {
                 0 => self.restore_cursor(),
                 b'?' => self
@@ -1346,11 +1346,11 @@ impl Term {
                         .extend_from_slice(format!("\x1b[6;{ch};{cw}t").as_bytes());
                 },
                 14 => {
-                    // área de texto em PIXELS: é o que o `kitten icat` pede
-                    // antes de mandar a imagem (sem ela ele desiste com
+                    // text area in PIXELS: it is what `kitten icat` asks for
+                    // before sending the image (without it, it gives up with
                     // "terminal does not support reporting screen sizes").
-                    // O Python também não responde esta — aqui sai de graça,
-                    // porque o parser já carrega o tamanho da célula.
+                    // Python does not answer this one either — here it is free,
+                    // because the parser already carries the cell size.
                     let (cw, ch) = self.cell_size;
                     let w = self.cols as u32 * cw;
                     let h = self.rows as u32 * ch;
@@ -1366,26 +1366,27 @@ impl Term {
             },
             _ => {},
         }
-        // devolve o buffer (sem realocar no próximo escape)
+        // give the buffer back (no realloc on the next escape)
         self.csi = body;
         self.csi.clear();
     }
 
     fn osc_dispatch(&mut self, data: &[u8]) {
-        // "0;título", "2;título", "8;;url", "4;idx;rgb"...
+        // "0;title", "2;title", "8;;url", "4;idx;rgb"...
         let mut it = data.splitn(2, |&b| b == b';');
         let cmd = it.next().unwrap_or_default();
         let arg = it.next().unwrap_or_default();
         match parse_u32(cmd) {
             0 | 2 => {
-                // `from_utf8_lossy` de um corte no meio de UTF-8 já vira `�`;
-                // o resto do lixo é o que `sanitize_title` tira (B4).
+                // a cut in the middle of UTF-8 already becomes `�` through
+                // `from_utf8_lossy`; the rest of the junk is what `sanitize_title`
+                // removes (B4).
                 let clean = sanitize_title(&String::from_utf8_lossy(arg));
                 if !clean.is_empty() {
                     self.title = clean;
                 }
             },
-            // 4;índice;cor define a paleta, 4;índice;? consulta
+            // 4;index;color defines the palette, 4;index;? queries it
             4 => self.osc_palette(arg),
             10 => self.osc_color(10, arg),
             11 => self.osc_color(11, arg),
@@ -1399,7 +1400,7 @@ impl Term {
         self.osc_record(data);
     }
 
-    /// Guarda o payload na sonda (anel de `OSC_SEEN`), com o título resultante.
+    /// Stores the payload in the probe (a ring of `OSC_SEEN`), with the resulting title.
     fn osc_record(&mut self, data: &[u8]) {
         let truncated = data.len() > OSC_SEEN_MAX;
         let raw = data[..data.len().min(OSC_SEEN_MAX)].to_vec();
@@ -1413,7 +1414,7 @@ impl Term {
         });
     }
 
-    /// Fecha o OSC em curso: despacha o que chegou e volta para a grade.
+    /// Closes the in-flight OSC: dispatches what arrived and returns to the grid.
     fn osc_end(&mut self) {
         let data = std::mem::take(&mut self.osc);
         self.osc_dispatch(&data);
@@ -1422,7 +1423,7 @@ impl Term {
         self.state = State::Ground;
     }
 
-    /// `OSC 4;índice;cor` (define) ou `OSC 4;índice;?` (consulta).
+    /// `OSC 4;index;color` (defines) or `OSC 4;index;?` (queries).
     fn osc_palette(&mut self, arg: &[u8]) {
         let mut it = arg.splitn(2, |&b| b == b';');
         let Some(idx) = it.next().and_then(parse_u32_full) else {
@@ -1444,7 +1445,7 @@ impl Term {
         }
     }
 
-    /// `OSC 10/11/12`: cor de texto, fundo e cursor — consulta (`?`) ou define.
+    /// `OSC 10/11/12`: text color, background and cursor — query (`?`) or define.
     fn osc_color(&mut self, which: u32, arg: &[u8]) {
         let current = match which {
             10 => self.theme.fg,
@@ -1467,8 +1468,8 @@ impl Term {
         self.theme_dirty = true;
     }
 
-    /// Resposta de cor: `OSC 4;i;rgb:…` ou `OSC 1x;rgb:…` (4 dígitos, como o
-    /// xterm; o `rgb:rr/gg/bb` de 2 também é aceito pelo lado de lá).
+    /// Color reply: `OSC 4;i;rgb:…` or `OSC 1x;rgb:…` (4 digits, like xterm;
+    /// the 2-digit `rgb:rr/gg/bb` is also accepted on the other side).
     fn reply_color(&mut self, which: u32, idx: Option<usize>, r: u8, g: u8, b: u8) {
         let body = match idx {
             Some(i) => format!("4;{i};rgb:{r:02x}{r:02x}/{g:02x}{g:02x}/{b:02x}{b:02x}"),
@@ -1478,7 +1479,7 @@ impl Term {
             .extend_from_slice(format!("\x1b]{body}\x1b\\").as_bytes());
     }
 
-    /// `OSC 104` (paleta inteira ou índices listados) volta ao padrão.
+    /// `OSC 104` (whole palette or the listed indices) goes back to the default.
     fn osc_reset_palette(&mut self, arg: &[u8]) {
         let idxs: Vec<usize> = if arg.is_empty() {
             (0..16).collect()
@@ -1554,12 +1555,12 @@ impl Term {
                     match b {
                         0x07 => self.osc_end(),
                         0x1b => self.state = State::OscEsc,
-                        // ST em 8 bits (o `\x9c` que muito cliente manda em
-                        // vez de `ESC \`): sem isto o OSC nunca fechava e
-                        // engolia tudo até o próximo BEL.
+                        // 8-bit ST (the `\x9c` many clients send instead of
+                        // `ESC \`): without it the OSC never closed and
+                        // swallowed everything until the next BEL.
                         0x9c if st_c1(&self.osc) => {
                             if self.osc.last() == Some(&0xc2) {
-                                self.osc.pop(); // U+009C em UTF-8
+                                self.osc.pop(); // U+009C in UTF-8
                             }
                             self.osc_end();
                         },
@@ -1573,11 +1574,11 @@ impl Term {
                 State::OscEsc => {
                     let b = bytes[i];
                     i += 1;
-                    // `ESC \` é ST. Qualquer outro ESC no corpo é sequência
-                    // quebrada: despacha o que já veio e trata o byte como o
-                    // que viria depois de um ESC. Empurrar o ESC de volta para
-                    // o corpo (o que se fazia) colava o `ESC ]` do título
-                    // seguinte dentro do título deste — o lixo do B4.
+                    // `ESC \` is ST. Any other ESC in the body is a broken
+                    // sequence: dispatch what already came and treat the byte as
+                    // the one that would follow an ESC. Pushing the ESC back into
+                    // the body (as was done) glued the `ESC ]` of the next title
+                    // inside this one's title — the B4 junk.
                     self.osc_end();
                     if b != b'\\' {
                         self.escape(b);
@@ -1604,13 +1605,13 @@ impl Term {
         }
     }
 
-    /// Um byte dentro de DCS/APC/PM/SOS: só o APC guarda conteúdo.
+    /// One byte inside DCS/APC/PM/SOS: only the APC keeps content.
     fn str_byte(&mut self, b: u8) {
         let body: &[u8] = if self.apc_active { &self.apc } else { &[] };
         if b == 0x1b {
             self.state = State::StrEsc;
         } else if b == 0x9c && st_c1(body) {
-            // ST em 8 bits também fecha DCS/APC/PM/SOS
+            // 8-bit ST also closes DCS/APC/PM/SOS
             if self.apc.last() == Some(&0xc2) {
                 self.apc.pop();
             }
@@ -1619,12 +1620,12 @@ impl Term {
                 self.apc_done();
             }
         } else if self.apc_active && self.apc.len() < crate::graphics::MAX_APC {
-            // teto: transmissão que nunca fecha não pode crescer sem fim
+            // cap: a transmission that never closes must not grow without bound
             self.apc.push(b);
         }
     }
 
-    /// Chegou um APC completo: as imagens do kitty passam por aqui (H1).
+    /// A complete APC arrived: kitty images go through here (H1).
     fn apc_done(&mut self) {
         let body = std::mem::take(&mut self.apc);
         let cursor = (
@@ -1637,9 +1638,9 @@ impl Term {
             self.child_out.extend_from_slice(&r);
             self.child_out.extend_from_slice(b"\x1b\\");
         }
-        // H10: sem `C=1` o cursor desce as linhas que a imagem ocupou
+        // H10: without `C=1` the cursor goes down the rows the image took
         if out.move_cursor {
-            for _ in 0..out.linhas {
+            for _ in 0..out.lines {
                 self.newline();
             }
         }
@@ -1692,8 +1693,8 @@ impl Term {
                 self.osc.clear();
             },
             b'_' => {
-                // APC: só este tipo é conteúdo (imagem do kitty); DCS/PM/SOS
-                // seguem descartados até o ST
+                // APC: only this kind is content (kitty image); DCS/PM/SOS stay
+                // discarded until ST
                 self.apc.clear();
                 self.apc_active = true;
                 self.state = State::Str;
@@ -1740,7 +1741,7 @@ impl Term {
                 self.reset();
             },
             _ => {
-                // ESC = / ESC > (keypad), ESC \ (ST), e o resto: sem efeito
+                // ESC = / ESC > (keypad), ESC \ (ST), and the rest: no effect
                 self.state = State::Ground;
             },
         }
@@ -1757,7 +1758,7 @@ impl Term {
                 self.state = State::Ground;
             },
             b'#' if b == b'8' => {
-                // DECALN: tela cheia de 'E' (usado por teste de alinhamento)
+                // DECALN: screen full of 'E' (used by alignment tests)
                 let cell = Cell {
                     ch: 'E',
                     ..Cell::BLANK
@@ -1831,14 +1832,14 @@ impl Term {
                 }
                 return;
             }
-            // continuação inválida: emite U+FFFD e reprocessa este byte
+            // invalid continuation: emit U+FFFD and reprocess this byte
             self.put_char(REPLACEMENT);
             self.utf8_need = 0;
             self.utf8_len = 0;
         }
     }
 
-    // ------------------------------------------------------------ leitura
+    // -------------------------------------------------------------- reading
 
     pub fn row_text(&self, y: usize) -> String {
         match self.grid.get(y) {
@@ -1847,7 +1848,7 @@ impl Term {
         }
     }
 
-    /// Linhas visíveis, com `off` linhas de histórico acima do topo do vivo.
+    /// Visible rows, with `off` scrollback rows above the top of the live area.
     pub fn visible_rows(&self, off: usize) -> Vec<&Row> {
         let sb = self.scrollback.len();
         let off = off.min(sb);
@@ -1890,7 +1891,7 @@ fn onoff(v: bool) -> u32 {
     }
 }
 
-/// Números do corpo do CSI, sem alocação: `/` é separador e `:` é subparâmetro.
+/// Numbers of the CSI body, without allocation: `/` is a separator and `:` is a subparameter.
 struct Toks<'a> {
     body: &'a [u8],
     pos: usize,
@@ -1927,7 +1928,7 @@ impl<'a> Toks<'a> {
 }
 
 #[inline]
-/// Cor de `OSC 4/10/11/12`: `rgb:RR/GG/BB`, `rgb:RRRR/GGGG/BBBB` ou `#RRGGBB`.
+/// Color of `OSC 4/10/11/12`: `rgb:RR/GG/BB`, `rgb:RRRR/GGGG/BBBB` or `#RRGGBB`.
 fn parse_osc_color(spec: &[u8]) -> Option<Color> {
     let s = std::str::from_utf8(spec).ok()?.trim();
     if let Some(hex) = s.strip_prefix('#') {
@@ -1945,7 +1946,7 @@ fn parse_osc_color(spec: &[u8]) -> Option<Color> {
     let mut channel = || -> Option<u32> {
         let v = it.next()?;
         match v.len() {
-            // xterm manda 4 dígitos e o valor é o byte duplicado (rrrr)
+            // xterm sends 4 digits and the value is the duplicated byte (rrrr)
             4 => u32::from_str_radix(&v[0..2], 16).ok(),
             2 | 1 => u32::from_str_radix(v, 16).ok(),
             _ => None,
@@ -1955,8 +1956,8 @@ fn parse_osc_color(spec: &[u8]) -> Option<Color> {
     Some(Color::rgb(r, g, b))
 }
 
-/// Como `parse_u32`, mas `None` quando o texto não é só dígitos (o `OSC 4`
-/// precisa distinguir "sem índice" de "índice 0").
+/// Like `parse_u32`, but `None` when the text is not digits only (`OSC 4`
+/// needs to tell "no index" from "index 0").
 fn parse_u32_full(t: &[u8]) -> Option<u32> {
     let s = std::str::from_utf8(t).ok()?;
     if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
@@ -1977,17 +1978,17 @@ fn parse_u32(t: &[u8]) -> u32 {
     v
 }
 
-/// Título próprio para desenhar: sem caractere de controle nem marca
-/// invisível/de direção. O payload do OSC vem do filho e o cwd pode ser um nome
-/// de diretório com qualquer byte; nenhum dos dois pode mexer no layout do
-/// rótulo (um `U+202E` inverteria o resto do texto da aba).
+/// Title fit to draw: no control character, no invisible/direction mark. The
+/// OSC payload comes from the child and the cwd can be a directory name with any
+/// byte; neither may touch the label layout (a `U+202E` would reverse the rest of
+/// the tab text).
 pub fn sanitize_title(s: &str) -> String {
-    s.chars().filter(|c| !invisivel(*c)).collect()
+    s.chars().filter(|c| !invisible(*c)).collect()
 }
 
-/// O que não desenha e só serve para mexer no layout: controle (C0, C1, DEL),
-/// zero-width, marcas de direção e BOM.
-fn invisivel(c: char) -> bool {
+/// What does not draw and only exists to move the layout around: control (C0,
+/// C1, DEL), zero-width, direction marks and BOM.
+fn invisible(c: char) -> bool {
     c.is_control()
         || matches!(
             c,
@@ -2000,8 +2001,8 @@ fn invisivel(c: char) -> bool {
         )
 }
 
-/// O buffer termina no meio de uma sequência UTF-8? Um `0x9c` logo depois
-/// seria byte de continuação (`М` = `d0 9c`), não o ST de 8 bits.
+/// Does the buffer end in the middle of a UTF-8 sequence? A `0x9c` right after
+/// would be a continuation byte (`М` = `d0 9c`), not the 8-bit ST.
 fn middle_utf8(buf: &[u8]) -> bool {
     let mut i = buf.len();
     let mut cont = 0usize;
@@ -2012,22 +2013,22 @@ fn middle_utf8(buf: &[u8]) -> bool {
     if i == 0 {
         return false;
     }
-    let precisa = match buf[i - 1] {
+    let needed = match buf[i - 1] {
         0xc2..=0xdf => 1,
         0xe0..=0xef => 2,
         0xf0..=0xf4 => 3,
         _ => 0,
     };
-    cont < precisa
+    cont < needed
 }
 
-/// `0x9c` fecha a string? Sim quando é o ST de 8 bits, e não quando é byte de
-/// continuação de UTF-8. `c2 9c` é o próprio U+009C, que também é ST.
+/// Does `0x9c` close the string? Yes when it is the 8-bit ST, and no when it is a
+/// UTF-8 continuation byte. `c2 9c` is U+009C itself, which is also ST.
 fn st_c1(buf: &[u8]) -> bool {
     buf.last() == Some(&0xc2) || !middle_utf8(buf)
 }
 
-/// Parâmetro `idx` do corpo: token vazio vale 0; token inexistente, `default`.
+/// Parameter `idx` of the body: an empty token is 0; a missing token, `default`.
 fn param(body: &[u8], idx: usize, default: u32) -> u32 {
     let mut n = 0usize;
     let mut start = 0usize;
@@ -2047,7 +2048,7 @@ fn param(body: &[u8], idx: usize, default: u32) -> u32 {
     }
 }
 
-/// Corta/preenche as linhas para o tamanho novo (sem reflow nesta fase).
+/// Crops/pads the rows to the new size (no reflow at this stage).
 fn crop_rows(grid: &mut Vec<Row>, cols: usize, rows: usize) {
     for r in grid.iter_mut() {
         r.cells.resize(cols, Cell::BLANK);
@@ -2062,30 +2063,30 @@ fn crop_rows(grid: &mut Vec<Row>, cols: usize, rows: usize) {
     }
 }
 
-/// O que o reflow devolveu: linhas absolutas (histórico + grade) e o cursor.
+/// What the reflow returned: absolute rows (scrollback + grid) and the cursor.
 struct Reflowed {
     rows: Vec<Row>,
     cur_row: usize,
     cur_col: usize,
-    /// O cursor caiu no fim de uma linha cheia: o próximo caractere quebra
-    /// (o `wrap_pending` do VT), não sobrescreve a última coluna.
+    /// The cursor fell at the end of a full row: the next character wraps
+    /// (the VT's `wrap_pending`), it does not overwrite the last column.
     wrap: bool,
 }
 
-/// Junta as linhas "moles" (`wrapped`) em parágrafos e re-quebra tudo na
-/// largura nova — o reflow do `resize`.
+/// Joins the "soft" (`wrapped`) rows into paragraphs and rewraps everything at
+/// the new width — the `resize` reflow.
 ///
-/// Duas regras que valem a pena saber:
+/// Two rules worth knowing:
 ///
-/// - espaço em branco no fim do parágrafo só sai se o fundo for o default
-///   (A23). Espaço com fundo pintado é conteúdo: barra de status do `vim`,
-///   `git diff --color`, `bat --style=full` são linhas de largura inteira
-///   pintada, e apagá-las come o desenho;
-/// - par largo (`CJK`, emoji) não é partido ao meio: se o corte cairia entre
-///   a célula e sua continuação, a linha quebra uma coluna antes.
+/// - trailing whitespace only goes away if the background is the default one
+///   (A23). A space with a painted background is content: the `vim` status line,
+///   `git diff --color`, `bat --style=full` are full-width painted rows, and
+///   erasing them eats the drawing;
+/// - a wide pair (`CJK`, emoji) is not split in half: if the cut would fall
+///   between the cell and its continuation, the row breaks one column earlier.
 fn reflow(all: Vec<Row>, cols: usize, cur_abs: usize, cur_col: usize) -> Reflowed {
     let cols = cols.max(1);
-    // -- 1. parágrafos, na ordem de leitura
+    // -- 1. paragraphs, in reading order
     let mut paragraphs: Vec<Vec<Cell>> = Vec::new();
     let mut cur_to = 0usize;
     let mut cur_off = 0usize;
@@ -2110,7 +2111,7 @@ fn reflow(all: Vec<Row>, cols: usize, cur_abs: usize, cur_col: usize) -> Reflowe
         paragraphs.push(to);
     }
 
-    // -- 2. re-quebra
+    // -- 2. rewrap
     let mut rows: Vec<Row> = Vec::new();
     let mut cur_row = 0usize;
     let mut cur_col_new = 0usize;
@@ -2122,7 +2123,7 @@ fn reflow(all: Vec<Row>, cols: usize, cur_abs: usize, cur_col: usize) -> Reflowe
         loop {
             let mut e = (s + cols).min(cells.len());
             if e < cells.len() && e > s && cells[e].is_cont() {
-                e -= 1; // o par inteiro desce
+                e -= 1; // the whole pair goes down
             }
             chunks.push((s, e));
             if e >= cells.len() {
@@ -2155,11 +2156,11 @@ fn reflow(all: Vec<Row>, cols: usize, cur_abs: usize, cur_col: usize) -> Reflowe
             }
         }
     }
-    // o que está DEPOIS do cursor é área em branco: não vale empurrar linha
-    // vazia para o histórico só porque a tela mudou de tamanho (o Python faz
-    // o mesmo laço em `_reflow`). Sem isto, maximizar de 36 para 48 linhas
-    // empurrava as 12 vazias de baixo para o histórico e elas voltavam como
-    // 12 linhas acima do prompt — o conteúdo "começava no meio da tela".
+    // what is AFTER the cursor is blank area: it is not worth pushing empty
+    // rows into the scrollback just because the screen changed size (Python runs
+    // the same loop in `_reflow`). Without this, maximizing from 36 to 48 rows
+    // pushed the 12 empty ones at the bottom into the scrollback, and they came
+    // back as 12 rows above the prompt — the content "started mid-screen".
     while rows.len() > cur_row + 1
         && rows
             .last()
@@ -2179,54 +2180,57 @@ fn reflow(all: Vec<Row>, cols: usize, cur_abs: usize, cur_col: usize) -> Reflowe
 mod scroll_shift_tests {
     use super::*;
 
-    /// Tela cheia rolada reporta o deslocamento líquido, não dano global.
+    /// A scrolled full screen reports the net shift, not global damage.
     #[test]
     fn full_scroll_reports_shift() {
         let mut t = Term::new(10, 4);
         t.clear_damage();
-        t.feed(b"\x1b[4;1H\n"); // LF na última linha rola a tela
+        t.feed(b"\x1b[4;1H\n"); // LF on the last row scrolls the screen
         assert_eq!(t.scroll_shift, 1);
         assert!(!t.dirty_all);
         t.feed(b"\n\n");
         assert_eq!(t.scroll_shift, 3);
         t.clear_damage();
-        assert_eq!(t.scroll_shift, 0, "consumir o dano zera o deslocamento");
+        assert_eq!(t.scroll_shift, 0, "consuming the damage zeroes the shift");
     }
 
-    /// O dano tem de rolar junto com o conteúdo: escrita que ainda não foi
-    /// desenhada e rola no mesmo chunk cairia na linha errada (B6).
+    /// Damage has to scroll along with the content: a write not drawn yet that
+    /// scrolls in the same chunk would land on the wrong row (B6).
     #[test]
-    fn damage_anda_together_with_o_conteudo_on_scroll() {
+    fn damage_scrolls_together_with_the_content() {
         let mut t = Term::new(10, 4);
         t.feed(b"\x1b[4;1H");
         t.clear_damage();
-        t.feed(b"abc"); // texto na última linha, ainda não desenhado
+        t.feed(b"abc"); // text on the last row, not drawn yet
         assert!(t.dirty[3]);
-        t.feed(b"\r\n"); // rola uma: "abc" foi para a linha 2
+        t.feed(b"\r\n"); // scrolls one: "abc" went to row 2
         assert_eq!(t.scroll_shift, 1);
-        assert!(t.dirty[2], "a linha que recebeu o texto rola suja junto");
-        assert!(t.dirty[3], "a linha nova embaixo também nasce suja");
-        assert!(!t.dirty[0], "o resto continua pronto para deslocar");
-        // e para baixo, o espelho
+        assert!(t.dirty[2], "the row that took the text scrolls dirty along");
+        assert!(t.dirty[3], "the new row at the bottom is born dirty too");
+        assert!(!t.dirty[0], "the rest stays ready to shift");
+        // and downwards, the mirror
         t.clear_damage();
         t.feed(b"\x1b[1;1Hxyz");
         assert!(t.dirty[0]);
-        t.feed(b"\x1bM"); // RI no topo desce uma
-        assert!(t.dirty[1], "descer: o dano da linha 0 vai para a 1");
+        t.feed(b"\x1bM"); // RI at the top scrolls down one
+        assert!(t.dirty[1], "downwards: the damage of row 0 goes to row 1");
     }
 
-    /// Rolar para cima e depois para baixo não é deslocamento zero: a linha que
-    /// saiu não volta, então o desenho tem de remontar tudo.
+    /// Scrolling up and then down is not a zero shift: the row that left does
+    /// not come back, so the renderer has to rebuild everything.
     #[test]
     fn scroll_both_ways_conflicts() {
         let mut t = Term::new(10, 4);
         t.clear_damage();
-        t.feed(b"\x1b[4;1H\n"); // rola para cima
-        t.feed(b"\x1b[1;1H\x1bM"); // RI no topo: rola para baixo
-        assert!(t.scroll_conflict, "sentidos opostos têm de marcar conflito");
+        t.feed(b"\x1b[4;1H\n"); // scrolls up
+        t.feed(b"\x1b[1;1H\x1bM"); // RI at the top: scrolls down
+        assert!(
+            t.scroll_conflict,
+            "opposite directions must mark a conflict"
+        );
     }
 
-    /// Rolagem de região não desloca a tela inteira: só dano global resolve.
+    /// Region scrolling does not shift the whole screen: only global damage works.
     #[test]
     fn region_scroll_is_global_damage() {
         let mut t = Term::new(10, 4);
@@ -2246,37 +2250,43 @@ mod damage_precision_tests {
         (t.global_marks, t.global_why)
     }
 
-    /// IL/DL mudam do cursor até o fim da região: nada de tela toda.
+    /// IL/DL change from the cursor to the end of the region: no full screen.
     #[test]
     fn insert_and_delete_lines_mark_only_the_tail() {
         let mut t = Term::new(10, 6);
         t.clear_damage();
-        t.feed(b"\x1b[3;1H\x1b[L"); // IL na linha 3
-        assert_eq!(marks(&t).0, 0, "IL não é dano global");
-        assert!(t.dirty[2] && t.dirty[5], "do cursor ao fim da região");
-        assert!(!t.dirty[0] && !t.dirty[1], "acima do cursor não mudou");
+        t.feed(b"\x1b[3;1H\x1b[L"); // IL on row 3
+        assert_eq!(marks(&t).0, 0, "IL is not global damage");
+        assert!(
+            t.dirty[2] && t.dirty[5],
+            "from the cursor to the end of the region"
+        );
+        assert!(
+            !t.dirty[0] && !t.dirty[1],
+            "above the cursor nothing changed"
+        );
         t.clear_damage();
-        t.feed(b"\x1b[3;1H\x1b[M"); // DL na linha 3
-        assert_eq!(marks(&t).0, 0, "DL não é dano global");
+        t.feed(b"\x1b[3;1H\x1b[M"); // DL on row 3
+        assert_eq!(marks(&t).0, 0, "DL is not global damage");
         assert!(!t.dirty[0] && !t.dirty[1]);
     }
 
-    /// ED 0 e ED 1 atingem do cursor para um lado; ED 2 é a tela toda.
+    /// ED 0 and ED 1 reach one side of the cursor; ED 2 is the whole screen.
     #[test]
     fn erase_display_marks_the_right_side() {
         let mut t = Term::new(10, 6);
         t.feed(b"\x1b[3;1H");
         t.clear_damage();
         t.feed(b"\x1b[0J");
-        assert_eq!(marks(&t).0, 0, "ED0 não é dano global");
+        assert_eq!(marks(&t).0, 0, "ED0 is not global damage");
         assert!(!t.dirty[0] && t.dirty[2] && t.dirty[5]);
         t.clear_damage();
         t.feed(b"\x1b[3;1H\x1b[1J");
-        assert_eq!(marks(&t).0, 0, "ED1 não é dano global");
+        assert_eq!(marks(&t).0, 0, "ED1 is not global damage");
         assert!(t.dirty[0] && t.dirty[2] && !t.dirty[5]);
         t.clear_damage();
         t.feed(b"\x1b[2J");
-        assert_eq!(marks(&t).1, "touch_all", "ED2 é a tela toda");
+        assert_eq!(marks(&t).1, "touch_all", "ED2 is the whole screen");
     }
 }
 
@@ -2288,7 +2298,7 @@ mod tests {
         Term::new(10, 4)
     }
 
-    /// 2x2 RGBA de uma cor só, como nos checks do Python.
+    /// Solid-color 2x2 RGBA, as in the Python checks.
     fn rgba2x2() -> String {
         use base64::Engine as _;
         base64::engine::general_purpose::STANDARD.encode([9, 8, 7, 255].repeat(4))
@@ -2299,22 +2309,22 @@ mod tests {
     }
 
     #[test]
-    fn apc_do_kitty_becomes_image_response_e_line_do_cursor() {
+    fn kitty_apc_becomes_image_reply_and_moves_cursor_down() {
         let mut t = Term::new(20, 4);
         t.feed(&apc(&format!("Ga=T,f=32,s=2,v=2,i=3;{}", rgba2x2())));
         assert_eq!(t.graphics.images().len(), 1);
         assert_eq!(t.graphics.placements().len(), 1);
-        // a resposta vai para o filho no mesmo formato que ele mandou
+        // the reply goes to the child in the same format it sent
         assert_eq!(t.take_child_out(), b"\x1b_Gi=3;OK\x1b\\".to_vec());
-        // H10: sem `C=1` o cursor desce as linhas que a imagem ocupou
+        // H10: without `C=1` the cursor goes down the rows the image took
         assert_eq!(t.cy, 1);
         assert_eq!(t.cx, 0);
-        // nada disso pode sujar a grade
+        // none of this may dirty the grid
         assert!(screen(&t)[0].trim().is_empty(), "{:?}", screen(&t));
     }
 
     #[test]
-    fn c_1_mantem_o_cursor_onde_was() {
+    fn c_1_keeps_the_cursor_where_it_was() {
         let mut t = Term::new(20, 4);
         t.feed(&apc(&format!("Ga=T,f=32,s=2,v=2,i=1,C=1;{}", rgba2x2())));
         assert_eq!(t.cy, 0);
@@ -2322,23 +2332,23 @@ mod tests {
     }
 
     #[test]
-    fn dcs_e_apc_que_not_e_do_kitty_not_guardam_nada() {
+    fn dcs_and_a_non_kitty_apc_store_nothing() {
         let mut t = Term::new(20, 4);
-        // DCS (`ESC P`): descartado até o ST, e não pode virar imagem
+        // DCS (`ESC P`): discarded until ST, and it must not become an image
         t.feed(b"\x1bP1;2;3+abc\x1b\\");
-        // APC que não começa com `G`: não é do protocolo
+        // APC that does not start with `G`: not from the protocol
         t.feed(&apc("x=1,f=32"));
         assert_eq!(t.graphics.images().len(), 0);
         assert_eq!(t.take_child_out(), Vec::<u8>::new());
-        // e o parser continua vivo depois disso
+        // and the parser stays alive after that
         t.feed(b"ok");
         assert!(screen(&t)[0].starts_with("ok"), "{:?}", screen(&t));
     }
 
     #[test]
-    fn csi_14_t_responde_a_area_em_pixels() {
-        // o `kitten icat` pergunta antes de mandar a imagem; sem resposta ele
-        // desiste com "terminal does not support reporting screen sizes"
+    fn csi_14_t_reports_the_area_in_pixels() {
+        // `kitten icat` asks before sending the image; without an answer it
+        // gives up with "terminal does not support reporting screen sizes"
         let mut t = Term::new(20, 4);
         t.cell_size = (10, 19);
         t.feed(b"\x1b[14t");
@@ -2346,7 +2356,7 @@ mod tests {
     }
 
     #[test]
-    fn ed_3_clears_as_imagens() {
+    fn ed_3_clears_the_images() {
         let mut t = Term::new(20, 4);
         t.feed(&apc(&format!("Ga=T,f=32,s=2,v=2,i=1;{}", rgba2x2())));
         assert_eq!(t.graphics.images().len(), 1);
@@ -2356,15 +2366,15 @@ mod tests {
     }
 
     #[test]
-    fn image_acompanha_a_scrollback_e_o_reflow_prune_a_inalcancavel() {
-        // `graphics_follow_history` do Python
+    fn image_follows_the_scrollback_and_reflow_prunes_the_unreachable() {
+        // Python's `graphics_follow_history`
         let mut t = Term::new(20, 4);
         t.feed(&apc(&format!("Ga=T,f=32,s=2,v=2,i=7;{}", rgba2x2())));
         for _ in 0..6 {
             t.feed(b"\r\n");
         }
         let p = t.graphics.placements()[0];
-        assert!(p.line < 0, "saiu pelo topo: {}", p.line);
+        assert!(p.line < 0, "left through the top: {}", p.line);
         assert!(p.line + i32::try_from(t.scrollback.len()).unwrap() >= 0);
         t.resize(40, 4);
         assert!(
@@ -2382,39 +2392,39 @@ mod tests {
     }
 
     #[test]
-    fn kbd_protocol_do_kitty_empilha_desempilha_e_consulta() {
+    fn kitty_keyboard_protocol_pushes_pops_and_queries() {
         let mut t = term();
-        // consulta: o app pergunta e o terminal responde com o estado (0)
+        // query: the app asks and the terminal replies with the state (0)
         t.feed(b"\x1b[?u");
         assert_eq!(t.take_child_out(), b"\x1b[?0u".to_vec());
-        // push guarda o atual e põe o novo
+        // push saves the current one and sets the new one
         t.feed(b"\x1b[>5u");
         assert_eq!(t.kbd_flags, 5);
         t.feed(b"\x1b[?u");
         assert_eq!(t.take_child_out(), b"\x1b[?5u".to_vec());
-        // pop devolve o que estava antes
+        // pop brings back what was there before
         t.feed(b"\x1b[<u");
         assert_eq!(t.kbd_flags, 0);
-        // pop de pilha vazia vira 0 (não explode)
+        // popping an empty stack yields 0 (it does not blow up)
         t.feed(b"\x1b[<1u");
         assert_eq!(t.kbd_flags, 0);
     }
 
     #[test]
-    fn kbd_protocol_do_kitty_modos_do_set() {
+    fn kitty_keyboard_protocol_set_modes() {
         let mut t = term();
-        t.feed(b"\x1b[=3u"); // modo default = 1 (substitui)
+        t.feed(b"\x1b[=3u"); // default mode = 1 (replace)
         assert_eq!(t.kbd_flags, 3);
-        t.feed(b"\x1b[=4;2u"); // acrescenta
+        t.feed(b"\x1b[=4;2u"); // adds
         assert_eq!(t.kbd_flags, 7);
-        t.feed(b"\x1b[=4;3u"); // remove
+        t.feed(b"\x1b[=4;3u"); // removes
         assert_eq!(t.kbd_flags, 3);
-        t.feed(b"\x1b[=0;1u"); // substitui por nada
+        t.feed(b"\x1b[=0;1u"); // replaces with nothing
         assert_eq!(t.kbd_flags, 0);
     }
 
     #[test]
-    fn kbd_protocol_do_kitty_stack_with_two_niveis() {
+    fn kitty_keyboard_protocol_stack_with_two_levels() {
         let mut t = term();
         t.feed(b"\x1b[>1u\x1b[>11u");
         assert_eq!(t.kbd_flags, 11);
@@ -2425,26 +2435,29 @@ mod tests {
     }
 
     #[test]
-    fn scorc_without_prefix_continua_being_restore_cursor() {
+    fn scorc_without_prefix_still_restores_the_cursor() {
         let mut t = term();
         t.feed(b"\x1b[2;3H\x1b[s\x1b[H\x1b[u");
         assert_eq!((t.cy, t.cx), (1, 2));
-        assert!(t.take_child_out().is_empty(), "SCORC não fala com o filho");
+        assert!(
+            t.take_child_out().is_empty(),
+            "SCORC does not talk to the child"
+        );
     }
 
     #[test]
-    fn text_simple_e_break() {
+    fn simple_text_and_breaks() {
         let mut t = term();
         t.feed(b"abc");
         assert_eq!(t.row_text(0), "abc");
         assert_eq!((t.cy, t.cx), (0, 3));
-        // '\n' desce sem voltar a coluna
+        // '\n' goes down without returning the column
         t.feed(b"\nxy");
         assert_eq!(t.row_text(1), "   xy");
     }
 
     #[test]
-    fn autowrap_mark_break_mole() {
+    fn autowrap_marks_a_soft_break() {
         let mut t = term();
         t.feed(b"0123456789A");
         assert_eq!(t.row_text(0), "0123456789");
@@ -2454,8 +2467,8 @@ mod tests {
     }
 
     #[test]
-    fn crlf_after_de_line_full_not_pula_duas() {
-        // o bug do P15: preencher a linha e depois \r\n avançava duas
+    fn crlf_after_a_full_row_does_not_skip_two() {
+        // the P15 bug: filling the row and then \r\n advanced two
         let mut t = term();
         t.feed(b"0123456789\r\nx");
         assert_eq!(t.row_text(1), "x");
@@ -2463,7 +2476,7 @@ mod tests {
     }
 
     #[test]
-    fn sgr_truecolor_per_celula() {
+    fn sgr_truecolor_per_cell() {
         let mut t = term();
         t.feed(b"\x1b[38;2;1;2;3m\x1b[48;2;4;5;6mA");
         let c = t.grid[0].cells[0];
@@ -2473,7 +2486,7 @@ mod tests {
     }
 
     #[test]
-    fn sgr_256_e_basico() {
+    fn sgr_256_and_basic() {
         let mut t = term();
         t.feed(b"\x1b[38;5;196m\x1b[1;4mA");
         let c = t.grid[0].cells[0];
@@ -2486,32 +2499,32 @@ mod tests {
     }
 
     #[test]
-    fn sgr_attributes_de_text() {
+    fn sgr_text_attributes() {
         let mut t = term();
         t.feed(b"\x1b[3;2;5;9;53mA");
         let c = t.grid[0].cells[0];
         for (bit, name) in [
-            (ITALIC, "italico"),
+            (ITALIC, "italic"),
             (FAINT, "faint"),
-            (BLINK, "pisca"),
-            (STRIKE, "riscado"),
+            (BLINK, "blink"),
+            (STRIKE, "strike"),
             (OVERLINE, "overline"),
         ] {
-            assert_eq!(c.flags & bit, bit, "{name} não subiu");
+            assert_eq!(c.flags & bit, bit, "{name} was not set");
         }
-        // 23/22/25/29/55 desligam um a um, sem tocar nos outros
+        // 23/22/25/29/55 turn them off one by one, without touching the others
         t.feed(b"\x1b[23mB");
         let c = t.grid[0].cells[1];
         assert_eq!(c.flags & ITALIC, 0);
         assert_eq!(c.flags & FAINT, FAINT);
-        // 22 desliga negrito E faint (é o que o xterm faz)
+        // 22 turns off bold AND faint (that is what xterm does)
         t.feed(b"\x1b[1;22mC");
         let c = t.grid[0].cells[2];
         assert_eq!(c.flags & (BOLD | FAINT), 0);
     }
 
     #[test]
-    fn sgr_estilos_de_sublinhado() {
+    fn sgr_underline_styles() {
         let mut t = term();
         let cases: [(&[u8], usize, u8); 7] = [
             (b"\x1b[4m", 0, UL_SINGLE),
@@ -2522,15 +2535,15 @@ mod tests {
             (b"\x1b[21m", 5, UL_DOUBLE),
             (b"\x1b[4:0m", 6, UL_NONE),
         ];
-        for (seq, col, esperado) in cases {
+        for (seq, col, expected) in cases {
             t.feed(seq);
             t.feed(&[b'A' + col as u8]);
-            assert_eq!(t.grid[0].cells[col].ul, esperado, "seq {seq:?}");
+            assert_eq!(t.grid[0].cells[col].ul, expected, "seq {seq:?}");
         }
     }
 
     #[test]
-    fn sgr_cor_do_sublinhado() {
+    fn sgr_underline_color() {
         let mut t = term();
         t.feed(b"\x1b[4m\x1b[58;5;196mA");
         assert_eq!(t.grid[0].cells[0].ul_color, Color::Idx(196));
@@ -2539,7 +2552,7 @@ mod tests {
         assert_eq!(t.grid[0].cells[0].ul_color, Color::Rgb(1, 2, 3));
         t.feed(b"\x1b[59mC");
         assert_eq!(t.grid[0].cells[1].ul_color, Color::Default);
-        // 0 zera tudo, inclusive o sublinhado e a cor dele
+        // 0 zeroes everything, including the underline and its color
         let mut t = term();
         t.feed(b"\x1b[4;58;5;9;3;9m\x1b[0mD");
         let c = t.grid[0].cells[0];
@@ -2549,7 +2562,7 @@ mod tests {
     }
 
     #[test]
-    fn sgr_subparametro_with_espaco_de_cor() {
+    fn sgr_subparameter_with_color_space() {
         let mut t = term();
         t.feed(b"\x1b[38:2::10:20:30mX");
         assert_eq!(t.grid[0].cells[0].fg, Color::Rgb(10, 20, 30));
@@ -2559,7 +2572,7 @@ mod tests {
     }
 
     #[test]
-    fn erase_e_cursor() {
+    fn erase_and_cursor() {
         let mut t = term();
         t.feed(b"abc\r\nxyz\x1b[2J");
         assert_eq!(screen(&t), vec!["", "", "", ""]);
@@ -2569,16 +2582,16 @@ mod tests {
     }
 
     #[test]
-    fn alt_screen_holds_o_principal() {
+    fn alt_screen_holds_the_main_buffer() {
         let mut t = term();
-        t.feed(b"principal\r\n");
+        t.feed(b"main\r\n");
         t.feed(b"\x1b[?1049h");
         assert!(t.in_alt_screen());
-        t.feed(b"dentro");
-        assert_eq!(t.row_text(0), "dentro");
+        t.feed(b"inside");
+        assert_eq!(t.row_text(0), "inside");
         t.feed(b"\x1b[?1049l");
         assert!(!t.in_alt_screen());
-        assert_eq!(t.row_text(0), "principal");
+        assert_eq!(t.row_text(0), "main");
         assert_eq!((t.cy, t.cx), (1, 0));
     }
 
@@ -2590,10 +2603,10 @@ mod tests {
     }
 
     #[test]
-    fn decstbm_scrolls_inside_da_regiao() {
+    fn decstbm_scrolls_inside_the_region() {
         let mut t = term();
         t.feed(b"1\r\n2\r\n3\r\n4");
-        t.feed(b"\x1b[2;3r"); // linhas 2..3 (1-based)
+        t.feed(b"\x1b[2;3r"); // rows 2..3 (1-based)
         t.feed(b"\x1b[3;1H\n");
         assert_eq!(t.row_text(0), "1");
         assert_eq!(t.row_text(1), "3");
@@ -2617,127 +2630,131 @@ mod tests {
     }
 
     #[test]
-    fn save_e_restaura_cursor() {
+    fn save_and_restore_cursor() {
         let mut t = term();
         t.feed(b"\x1b[2;3H\x1b7\x1b[4;1H\x1b8X");
         assert_eq!(t.grid[1].cells[2].ch, 'X');
     }
 
     #[test]
-    fn osc_consulta_e_define_cores() {
+    fn osc_queries_and_defines_colors() {
         let mut t = term();
         t.theme.fg = Color::Rgb(0x11, 0x22, 0x33);
         t.theme.palette[3] = Color::Rgb(0xff, 0x80, 0x00);
-        // consulta de fg (OSC 10), bg (OSC 11) e paleta (OSC 4;3)
+        // query of fg (OSC 10), bg (OSC 11) and palette (OSC 4;3)
         t.feed(b"\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]4;3;?\x1b\\");
         let out = String::from_utf8_lossy(&t.take_child_out()).to_string();
         assert!(out.contains("]10;rgb:1111/2222/3333"), "{out}");
         assert!(out.contains("]11;rgb:1616/1818/1d1d"), "{out}");
         assert!(out.contains("]4;3;rgb:ffff/8080/0000"), "{out}");
-        // define a paleta e o fundo, e marca sujo para o renderer
+        // defines the palette and the background, and marks it dirty for the renderer
         assert!(!t.theme_dirty);
         t.feed(b"\x1b]4;1;rgb:12/34/56\x1b\\\x1b]11;#000000\x1b\\");
         assert_eq!(t.theme.palette[1], Color::Rgb(0x12, 0x34, 0x56));
         assert_eq!(t.theme.bg, Color::Rgb(0, 0, 0));
         assert!(t.theme_dirty);
-        // 104 volta a paleta ao padrão; 111 volta o fundo
+        // 104 returns the palette to the default; 111 returns the background
         t.feed(b"\x1b]104;1\x1b\\\x1b]111\x1b\\");
         assert_eq!(t.theme.palette[1], Color::Idx(1));
         assert_eq!(t.theme.bg, Theme::default().bg);
     }
 
     #[test]
-    fn titulo_osc() {
+    fn osc_title() {
         let mut t = term();
-        t.feed(b"\x1b]0;meu titulo\x07");
-        assert_eq!(t.title, "meu titulo");
-        t.feed(b"\x1b]2;outro\x1b\\");
-        assert_eq!(t.title, "outro");
+        t.feed(b"\x1b]0;my title\x07");
+        assert_eq!(t.title, "my title");
+        t.feed(b"\x1b]2;other\x1b\\");
+        assert_eq!(t.title, "other");
     }
 
     #[test]
-    fn titulo_osc_termina_with_st_de_8_bits() {
+    fn osc_title_terminates_on_8_bit_st() {
         let mut t = term();
-        // `0x9c` puro e o próprio U+009C em UTF-8 fecham o OSC; sem isso o
-        // escape seguia aberto e engolia até o próximo BEL (B4)
+        // a bare `0x9c` and U+009C itself in UTF-8 both close the OSC; without
+        // this the escape stayed open and swallowed everything until the next BEL
+        // (B4)
         t.feed(b"\x1b]0;c1\x9c");
         assert_eq!(t.title, "c1");
         t.feed(b"\x1b]0;utf8\xc2\x9c");
         assert_eq!(t.title, "utf8");
-        // e o texto seguinte volta a aparecer na grade
-        t.feed(b"Xdepois");
+        // and the following text shows up on the grid again
+        t.feed(b"Xafter");
         assert_eq!(t.grid[0].cells[0].ch, 'X');
     }
 
     #[test]
-    fn titulo_osc_with_9c_de_continuacao_utf8_not_cuts() {
+    fn osc_title_with_9c_utf8_continuation_is_not_cut() {
         let mut t = term();
-        // `d0 9c` é `М` e `e2 90 9c` é `␜`: o 0x9c aqui é continuação de
-        // UTF-8, não ST — cortar no meio perderia o resto do título
+        // `d0 9c` is `М` and `e2 90 9c` is `␜`: the 0x9c here is a UTF-8
+        // continuation, not ST — cutting in the middle would lose the rest of
+        // the title
         t.feed(b"\x1b]0;\xd0\x9c\xd0\xbe \xe2\x90\x9c \x07");
         assert_eq!(t.title, "Мо ␜ ");
     }
 
     #[test]
-    fn osc_not_swallows_o_titulo_next() {
+    fn osc_does_not_swallow_the_next_title() {
         let mut t = term();
-        // OSC fechado com ST de 8 bits seguido do título seguinte, separados
-        // por outro escape: o título tem de ser só o último pedido
-        t.feed(b"\x1b]0;LIXO\x9c\x1b]8;;http://x\x1b\\\x1b]0;LIMPO\x07");
-        assert_eq!(t.title, "LIMPO");
+        // OSC closed with an 8-bit ST followed by the next title, separated by
+        // another escape: the title must be only the last request
+        t.feed(b"\x1b]0;JUNK\x9c\x1b]8;;http://x\x1b\\\x1b]0;CLEAN\x07");
+        assert_eq!(t.title, "CLEAN");
     }
 
     #[test]
-    fn esc_no_body_do_osc_encerra_a_sequencia() {
+    fn esc_in_the_osc_body_ends_the_sequence() {
         let mut t = term();
-        // ESC que não é ST encerra o OSC (não volta para o corpo): o título é
-        // o que veio antes, e o `[31m` depois vira SGR de verdade
-        t.feed(b"\x1b]2;titulo\x1b[31mX");
-        assert_eq!(t.title, "titulo");
+        // an ESC that is not ST ends the OSC (it does not go back into the
+        // body): the title is what came before, and the `[31m` after it becomes
+        // real SGR
+        t.feed(b"\x1b]2;title\x1b[31mX");
+        assert_eq!(t.title, "title");
         assert_eq!(t.grid[0].cells[0].ch, 'X');
         assert_eq!(t.grid[0].cells[0].fg, Color::Idx(1));
     }
 
     #[test]
-    fn titulo_osc_without_character_de_controle() {
+    fn osc_title_without_control_characters() {
         let mut t = term();
         t.feed(b"\x1b]0;A\x01B\x7fC\x07");
         assert_eq!(t.title, "ABC");
-        // marca invisível e de direção saem também: `U+202E` inverteria o
-        // resto do rótulo da aba
+        // invisible and direction marks go too: `U+202E` would reverse the rest
+        // of the tab label
         t.feed("\x1b]0;A\u{202e}B\u{200b}C\u{feff}\x07".as_bytes());
         assert_eq!(t.title, "ABC");
-        // controle sozinho não zera o título (o `OSC 0;` vazio já era no-op)
+        // control alone does not zero the title (an empty `OSC 0;` was already a
+        // no-op)
         t.feed(b"\x1b]0;\x01\x07");
         assert_eq!(t.title, "ABC");
     }
 
     #[test]
-    fn name_de_diretorio_not_brings_controle_to_o_titulo() {
-        // nome de arquivo no Linux tem qualquer byte menos `/` e NUL: o título
-        // vindo do cwd passa pela mesma regra do payload do OSC
+    fn directory_name_does_not_bring_control_into_the_title() {
+        // a Linux file name has any byte but `/` and NUL: the title coming from
+        // the cwd goes through the same rule as the OSC payload
         assert_eq!(sanitize_title("proj\r\n\u{1b}[31m\u{202e}x"), "proj[31mx");
         assert_eq!(sanitize_title("ok"), "ok");
     }
 
     #[test]
-    fn st_de_8_bits_fecha_dcs_without_swallow_a_grade() {
+    fn eight_bit_st_closes_dcs_without_swallowing_the_grid() {
         let mut t = term();
         t.feed(b"\x1bP1$qm\x9cok");
         assert_eq!(t.grid[0].cells[0].ch, 'o');
     }
 
     #[test]
-    fn probe_holds_os_osc_recebidos() {
+    fn probe_keeps_the_osc_received() {
         let mut t = term();
-        t.feed(b"\x1b]0;um\x07");
+        t.feed(b"\x1b]0;one\x07");
         t.feed(b"\x1b]8;;http://x\x07");
         let seen: Vec<&[u8]> = t.osc_seen.iter().map(|o| o.raw.as_slice()).collect();
-        assert_eq!(seen, vec![b"0;um".as_slice(), b"8;;http://x".as_slice()]);
-        assert_eq!(t.osc_seen[0].title, "um");
-        // link não mexe no título
-        assert_eq!(t.osc_seen[1].title, "um");
-        // anel limitado: dois OSC a mais não crescem o histórico
+        assert_eq!(seen, vec![b"0;one".as_slice(), b"8;;http://x".as_slice()]);
+        assert_eq!(t.osc_seen[0].title, "one");
+        // a link does not touch the title
+        assert_eq!(t.osc_seen[1].title, "one");
+        // bounded ring: two extra OSC do not grow the history
         for _ in 0..OSC_SEEN + 2 {
             t.feed(b"\x1b]2;x\x07");
         }
@@ -2746,7 +2763,7 @@ mod tests {
     }
 
     #[test]
-    fn responses_on_child() {
+    fn replies_to_the_child() {
         let mut t = term();
         t.feed(b"\x1b[c");
         assert_eq!(t.take_child_out(), b"\x1b[?62c".to_vec());
@@ -2759,7 +2776,7 @@ mod tests {
     }
 
     #[test]
-    fn mode_autowrap_desligado_not_break() {
+    fn autowrap_off_does_not_wrap() {
         let mut t = term();
         t.feed(b"\x1b[?7l0123456789AB");
         assert_eq!(t.row_text(0), "012345678B");
@@ -2767,17 +2784,17 @@ mod tests {
     }
 
     #[test]
-    fn scrollback_holds_o_que_saiu() {
+    fn scrollback_holds_what_left_the_screen() {
         let mut t = term();
         for i in 0..8 {
-            t.feed(format!("linha{i}\r\n").as_bytes());
+            t.feed(format!("line{i}\r\n").as_bytes());
         }
         assert!(!t.scrollback.is_empty());
         let hist = t.history_text(0, 10);
-        assert_eq!(hist[0], "linha0");
+        assert_eq!(hist[0], "line0");
     }
 
-    /// Texto de todas as linhas (histórico + tela), na ordem de leitura.
+    /// Text of all rows (scrollback + screen), in reading order.
     fn all(t: &Term) -> String {
         t.scrollback
             .iter()
@@ -2788,95 +2805,98 @@ mod tests {
     }
 
     #[test]
-    fn visao_stays_no_place_while_arrives_output() {
+    fn view_stays_in_place_while_output_arrives() {
         let mut t = Term::new(20, 4);
         for i in 0..10 {
             t.feed(format!("l{i}\r\n").as_bytes());
         }
-        // leitor foi para 3 linhas atrás
+        // the reader went 3 rows back
         let (sc, hist, off) = (t.scrolled, t.scrollback.len(), 3usize);
-        let antes = t.abs_row(t.scrolled as i64 - off as i64).map(Row::text);
-        // chegam mais 2 linhas: ele continua na mesma linha absoluta
-        t.feed(b"nova1\r\nnova2\r\n");
+        let before = t.abs_row(t.scrolled as i64 - off as i64).map(Row::text);
+        // 2 more rows arrive: it stays on the same absolute row
+        t.feed(b"new1\r\nnew2\r\n");
         let off2 = t.view_after_output(off, sc, hist);
         let after = t.abs_row(t.scrolled as i64 - off2 as i64).map(Row::text);
-        assert_eq!(antes, after, "a visão andou junto com o output");
-        // no fundo (off=0) fica no fundo
+        assert_eq!(before, after, "the view moved along with the output");
+        // at the bottom (off=0) it stays at the bottom
         assert_eq!(t.view_after_output(0, sc, hist), 0);
     }
 
     #[test]
-    fn visao_desconta_o_que_caiu_do_historico_full() {
+    fn view_discounts_what_fell_out_of_a_full_history() {
         let mut t = Term::new(20, 2);
         t.scrollback_limit = 3;
         for i in 0..5 {
             t.feed(format!("l{i}\r\n").as_bytes());
         }
         let (sc, hist, off) = (t.scrolled, t.scrollback.len(), 2usize);
-        // 5 linhas de uma vez: o histórico (teto 3) descarta as mais velhas
+        // 5 rows at once: the scrollback (cap 3) drops the oldest
         for i in 5..10 {
             t.feed(format!("l{i}\r\n").as_bytes());
         }
         let off2 = t.view_after_output(off, sc, hist);
         assert!(
             off2 <= t.scrollback.len(),
-            "não pode apontar além do histórico"
+            "it cannot point past the scrollback"
         );
     }
 
     #[test]
-    fn reflow_estreita_e_alarga_preservando_o_text() {
+    fn reflow_narrows_and_widens_preserving_the_text() {
         let mut t = term(); // 10x4
-        t.feed(b"abcdefghijklmnopqrstuvwxy"); // 25 células
+        t.feed(b"abcdefghijklmnopqrstuvwxy"); // 25 cells
         assert_eq!(screen(&t)[..3], ["abcdefghij", "klmnopqrst", "uvwxy"]);
         t.resize(5, 4);
-        // 25 células viram 5 linhas de 5: só a primeira vai para o histórico
-        // (a tela guarda o fim do parágrafo, como qualquer terminal). O cursor
-        // está na última linha, então nada em branco desce para o histórico.
+        // 25 cells become 5 rows of 5: only the first goes to the scrollback
+        // (the screen keeps the end of the paragraph, like any terminal). The
+        // cursor is on the last row, so no blank goes down into the scrollback.
         assert_eq!(all(&t), "abcde\nfghij\nklmno\npqrst\nuvwxy");
         assert_eq!(t.scrollback.len(), 1);
         assert_eq!(t.row_text(3), "uvwxy");
-        // volta: re-quebra de novo na largura original
+        // back: rewraps again at the original width
         t.resize(10, 4);
         assert_eq!(screen(&t)[..3], ["abcdefghij", "klmnopqrst", "uvwxy"]);
     }
 
     #[test]
-    fn reflow_poe_o_cursor_na_celula_certa() {
+    fn reflow_puts_the_cursor_on_the_right_cell() {
         let mut t = term();
-        t.feed(b"abcdefghijklmno"); // 15 células → cy=1, cx=5
+        t.feed(b"abcdefghijklmno"); // 15 cells → cy=1, cx=5
         assert_eq!((t.cy, t.cx), (1, 5));
         t.resize(5, 4);
-        // 15 células: 3 linhas de 5, cursor no fim da terceira (quebra
-        // pendente). As 3 linhas cabem na tela, então não há histórico e o
-        // cursor fica na linha 2.
+        // 15 cells: 3 rows of 5, cursor at the end of the third (pending wrap).
+        // The 3 rows fit on screen, so there is no scrollback and the cursor
+        // stays on row 2.
         assert_eq!((t.cy, t.cx), (2, 4));
         assert!(t.wrap_pending);
         t.feed(b"!");
         assert_eq!(t.row_text(2), "klmno");
-        assert_eq!(t.row_text(3), "!", "a quebra pendente tem que valer");
+        assert_eq!(t.row_text(3), "!", "the pending wrap has to count");
     }
 
     #[test]
-    fn reflow_mark_break_mole_only_in_linhas_do_middle() {
+    fn reflow_marks_a_soft_break_only_on_middle_rows() {
         let mut t = term();
-        t.feed(b"abcdefghijklmnopqrstuvwxy\r\ncurta");
+        t.feed(b"abcdefghijklmnopqrstuvwxy\r\nshort");
         t.resize(5, 8);
-        // "abcdefghijklmnopqrstuvwxy" vira 5 linhas: 4 moles + 1 dura
+        // "abcdefghijklmnopqrstuvwxy" becomes 5 rows: 4 soft + 1 hard
         assert!(t.grid[0].wrapped && t.grid[1].wrapped && t.grid[3].wrapped);
-        assert!(!t.grid[4].wrapped, "fim do parágrafo não é quebra mole");
-        assert!(!t.grid[5].wrapped, "linha seguinte é outro parágrafo");
-        assert_eq!(t.row_text(5), "curta");
+        assert!(
+            !t.grid[4].wrapped,
+            "the end of the paragraph is not a soft break"
+        );
+        assert!(!t.grid[5].wrapped, "the next row is another paragraph");
+        assert_eq!(t.row_text(5), "short");
     }
 
     #[test]
-    fn reflow_not_come_espaco_with_bg_pintado() {
-        // A23: espaço com fundo pintado é conteúdo (barra de status, git diff)
+    fn reflow_does_not_eat_spaces_with_a_painted_bg() {
+        // A23: a space with a painted background is content (status line, git diff)
         let mut t = term();
-        t.feed(b"\x1b[48;2;200;0;0mabc       "); // 3 letras + 7 espaços pintados
+        t.feed(b"\x1b[48;2;200;0;0mabc       "); // 3 letters + 7 painted spaces
         t.resize(20, 4);
         assert_eq!(t.grid[0].cells[9].bg, Color::Rgb(200, 0, 0));
-        // o mesmo sem pintura: os espaços do fim somem, sobra "abc"
+        // the same without paint: the trailing spaces go away, "abc" remains
         let mut u = term();
         u.feed(b"abc       ");
         u.resize(20, 4);
@@ -2885,9 +2905,9 @@ mod tests {
     }
 
     #[test]
-    fn reflow_not_part_par_total_w_on_middle() {
+    fn reflow_does_not_split_a_wide_pair_in_the_middle() {
         let mut t = Term::new(10, 4);
-        // 5 ideogramas: 10 células (cada um ocupa 2)
+        // 5 ideograms: 10 cells (each one takes 2)
         for _ in 0..5 {
             t.feed("漢".as_bytes());
         }
@@ -2895,37 +2915,34 @@ mod tests {
         for y in 0..6 {
             assert!(
                 !t.grid[y].cells[0].is_cont(),
-                "linha {y} começa com metade de um par largo"
+                "row {y} starts with half a wide pair"
             );
         }
         let text: String = (0..6).map(|y| t.row_text(y)).collect();
-        assert_eq!(text, "漢漢漢漢漢", "nenhum ideograma pode sumir no reflow");
+        assert_eq!(text, "漢漢漢漢漢", "no ideogram may vanish in the reflow");
     }
 
     #[test]
-    fn reflow_mantem_o_historico_na_order() {
+    fn reflow_keeps_the_history_in_order() {
         let mut t = Term::new(20, 4);
         for i in 0..50 {
-            t.feed(format!("linha {i:02}\r\n").as_bytes());
+            t.feed(format!("line {i:02}\r\n").as_bytes());
         }
         t.resize(10, 4);
         let after = all(&t);
         assert!(
-            after.contains("linha 00") && after.contains("linha 49"),
-            "o reflow não pode perder as pontas do histórico"
+            after.contains("line 00") && after.contains("line 49"),
+            "the reflow must not lose the ends of the history"
         );
-        // as linhas continuam em ordem crescente
+        // the rows stay in increasing order
         let pos: Vec<usize> = (0..50)
-            .map(|i| after.find(&format!("linha {i:02}")).expect("linha sumiu"))
+            .map(|i| after.find(&format!("line {i:02}")).expect("row vanished"))
             .collect();
-        assert!(
-            pos.windows(2).all(|w| w[0] < w[1]),
-            "histórico fora de ordem"
-        );
+        assert!(pos.windows(2).all(|w| w[0] < w[1]), "history out of order");
     }
 
     #[test]
-    fn resize_preserva_runs_to_o_historico() {
+    fn resize_preserves_runs_into_the_scrollback() {
         let mut t = term();
         for i in 0..6 {
             t.feed(format!("l{i}\r\n").as_bytes());
@@ -2933,29 +2950,29 @@ mod tests {
         t.resize(20, 3);
         assert_eq!(t.rows, 3);
         assert!(t.scrollback.len() >= 3);
-        // o que saiu pelo topo foi para o histórico; o vivo deslizou
+        // what left through the top went to the scrollback; the live area slid
         assert_eq!(t.row_text(0), "l4");
         assert_eq!(t.row_text(1), "l5");
         assert_eq!(t.row_text(2), "");
     }
 
-    /// Encolher e crescer de volta (é o que o WM faz ao maximizar) não pode
-    /// mover o conteúdo: a linha do prompt continua sendo a primeira.
+    /// Shrinking and growing back (what the WM does when maximizing) must not
+    /// move the content: the prompt row is still the first one.
     #[test]
-    fn grow_after_de_shrink_not_leva_o_prompt_to_o_middle() {
+    fn grow_after_shrink_does_not_take_the_prompt_to_the_middle() {
         let mut t = Term::new(20, 12);
         t.feed(b"prompt");
         for (c, r) in [(20, 16), (20, 12), (20, 16)] {
             t.resize(c, r);
-            assert_eq!(t.row_text(0), "prompt", "{c}x{r}: o texto desceu");
-            assert_eq!(t.cy, 0, "{c}x{r}: o cursor desceu");
+            assert_eq!(t.row_text(0), "prompt", "{c}x{r}: the text moved down");
+            assert_eq!(t.cy, 0, "{c}x{r}: the cursor moved down");
         }
         assert!(
             t.scrollback.is_empty(),
-            "linha vazia abaixo do cursor não vai para o histórico: {:?}",
+            "an empty row below the cursor does not go to the scrollback: {:?}",
             t.scrollback.len()
         );
-        // e o texto com conteúdo ACIMA do cursor continua indo, como antes
+        // and text WITH content ABOVE the cursor still goes, as before
         let mut u = Term::new(20, 12);
         for i in 0..14 {
             u.feed(format!("l{i}\r\n").as_bytes());
@@ -2963,12 +2980,12 @@ mod tests {
         u.resize(20, 6);
         assert!(
             !u.scrollback.is_empty(),
-            "o que sai pelo topo tem de ir para o histórico"
+            "what leaves through the top has to go to the scrollback"
         );
     }
 
     #[test]
-    fn utf8_incremental_atravessa_chunks() {
+    fn utf8_incremental_spans_chunks() {
         let mut t = term();
         let bytes = "▀".as_bytes();
         t.feed(&bytes[..1]);
@@ -2978,7 +2995,7 @@ mod tests {
     }
 
     #[test]
-    fn total_w_ocupa_duas_celulas() {
+    fn a_wide_char_takes_two_cells() {
         let mut t = term();
         t.feed("漢".as_bytes());
         assert_eq!(t.grid[0].cells[0].ch, '漢');
@@ -2987,7 +3004,7 @@ mod tests {
     }
 
     #[test]
-    fn rep_repeats_o_last_character() {
+    fn rep_repeats_the_last_character() {
         let mut t = term();
         t.feed(b"a\x1b[3b");
         assert_eq!(t.row_text(0), "aaaa");

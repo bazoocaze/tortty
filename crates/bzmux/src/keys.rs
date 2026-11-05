@@ -1,20 +1,20 @@
-//! Teclado: evento do winit -> bytes que o terminal manda para o filho.
+//! Keyboard: winit event -> bytes the terminal sends to the child.
 //!
-//! Mesma tabela do `bzmux/keys.py`: setas em modo aplicação (DECCKM `?1`),
-//! modificadores no formato do xterm, Alt como prefixo ESC, Shift+Tab `\e[Z` e
-//! Ctrl+letra em 0x01..0x1a.
+//! Same table as `bzmux/keys.py`: arrows in application mode (DECCKM `?1`),
+//! modifiers in the xterm format, Alt as an ESC prefix, Shift+Tab `\e[Z` and
+//! Ctrl+letter in 0x01..0x1a.
 //!
-//! Por cima disso, o protocolo de teclado do kitty (`kitty_kbd.py`): quando o
-//! filho liga flags por `CSI > u`, as teclas saem como `CSI codigo ; mods u` em
-//! vez do byte de controle. As flags moram no `Term` (uma por aba) e quem
-//! decide é o app — aqui só mora a codificação.
+//! On top of that, the kitty keyboard protocol (`kitty_kbd.py`): when the child
+//! turns flags on with `CSI > u`, keys go out as `CSI code ; mods u` instead of
+//! the control byte. The flags live in `Term` (one per tab) and the app decides
+//! — only the encoding lives here.
 
 use std::fmt::Write as _;
 
 use winit::event::{ElementState, KeyEvent};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
-/// 1 + shift(1) + alt(2) + ctrl(4) — o parâmetro de modificador do xterm.
+/// 1 + shift(1) + alt(2) + ctrl(4) — the xterm modifier parameter.
 fn mod_param(ctrl: bool, alt: bool, shift: bool) -> u8 {
     1 + u8::from(shift) + 2 * u8::from(alt) + 4 * u8::from(ctrl)
 }
@@ -93,11 +93,11 @@ fn named_base(n: NamedKey, app_cursor: bool) -> Option<&'static str> {
     Some(s)
 }
 
-/// Aplica modificadores no formato do xterm (como o `_special` do Python).
+/// Applies modifiers in the xterm format (like `_special` in the Python).
 fn with_mods(seq: &str, ctrl: bool, alt: bool, shift: bool) -> Vec<u8> {
-    // Shift+Tab chega como `\t` com shift: a forma canônica é backtab
+    // Shift+Tab arrives as `\t` with shift: the canonical form is backtab
     if seq == "\t" && shift {
-        // Shift+Tab é backtab; o shift já está na forma canônica
+        // Shift+Tab is backtab; the shift is already in the canonical form
         if ctrl || alt {
             return format!("\x1b[1;{}Z", mod_param(ctrl, alt, false)).into_bytes();
         }
@@ -125,9 +125,9 @@ fn with_mods(seq: &str, ctrl: bool, alt: bool, shift: bool) -> Vec<u8> {
     seq.as_bytes().to_vec()
 }
 
-// ------------------------------------------------- protocolo do kitty
+// ------------------------------------------------------ kitty protocol
 
-/// Flags do `CSI > u` (bits do kitty; 4 = alternate keys, fora do escopo).
+/// Flags of `CSI > u` (kitty bits; 4 = alternate keys, out of scope).
 pub const F_DISAMBIGUATE: u32 = 1;
 pub const F_EVENT_TYPES: u32 = 2;
 pub const F_ALL_KEYS: u32 = 8;
@@ -137,12 +137,12 @@ const PRESS: u8 = 1;
 const REPEAT: u8 = 2;
 const RELEASE: u8 = 3;
 
-/// Tecla nomeada na forma do kitty: (número do CSI, trailer).
+/// A named key in the kitty shape: (CSI number, trailer).
 ///
-/// O trailer é o que muda entre `CSI 27;5 u` (Escape com Ctrl) e
-/// `CSI 1;5 A` (seta para cima com Ctrl). Vale a tabela do kitty
-/// (`key_encoding.c`) — inclusive F3 = `1 R`, que no `kitty_kbd.py` do Python
-/// saiu como `13 ~` (typo: F3 é `SS3 R`, não `CSI 13~`).
+/// The trailer is what changes between `CSI 27;5 u` (Escape with Ctrl) and
+/// `CSI 1;5 A` (up arrow with Ctrl). The kitty table applies (`key_encoding.c`)
+/// — including F3 = `1 R`, which in the Python `kitty_kbd.py` came out as
+/// `13 ~` (typo: F3 is `SS3 R`, not `CSI 13~`).
 fn kitty_functional(n: NamedKey) -> Option<(u32, char)> {
     use NamedKey::{
         ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Backspace, Delete, End, Enter, Escape, Home,
@@ -153,9 +153,9 @@ fn kitty_functional(n: NamedKey) -> Option<(u32, char)> {
         Enter => (13, 'u'),
         Tab => (9, 'u'),
         Backspace => (127, 'u'),
-        // Space não é "funcional" no legado: só vira `CSI u` quando o app
-        // pediu desambiguação (flag 1) ou todas as teclas (flag 8) — ver a
-        // guarda em `kitty_encode`
+        // Space is not "functional" in the legacy path: it only becomes `CSI u`
+        // when the app asked for disambiguation (flag 1) or all keys (flag 8) —
+        // see the guard in `kitty_encode`
         Space => (32, 'u'),
         Insert => (2, '~'),
         Delete => (3, '~'),
@@ -183,8 +183,8 @@ fn kitty_functional(n: NamedKey) -> Option<(u32, char)> {
     })
 }
 
-/// `CSI chave ; mods[:evento] [;texto] trailer`, sem campo que o terminal não
-/// precisa ver (é o mesmo cuidado do `_csi` do Python).
+/// `CSI key ; mods[:event] [;text] trailer`, with no field the terminal does not
+/// need to see (the same care as `_csi` in the Python).
 fn kitty_csi(key: u32, mods: u8, trailer: char, event: Option<u8>, text: &str) -> Vec<u8> {
     let event = event.filter(|e| *e != PRESS);
     let mut out = String::from("\x1b[");
@@ -194,7 +194,7 @@ fn kitty_csi(key: u32, mods: u8, trailer: char, event: Option<u8>, text: &str) -
     if mods != 1 || event.is_some() {
         out.push(';');
         if mods == 1 {
-            out.push('1'); // sem modificador o campo ainda existe
+            out.push('1'); // without a modifier the field still exists
         } else {
             out.push_str(&mods.to_string());
         }
@@ -211,11 +211,11 @@ fn kitty_csi(key: u32, mods: u8, trailer: char, event: Option<u8>, text: &str) -
     out.into_bytes()
 }
 
-/// O que o protocolo do kitty respondeu para esta tecla.
+/// What the kitty protocol answered for this key.
 enum Kitty {
-    /// Sai como `CSI ... u` (ou variante).
+    /// Goes out as `CSI ... u` (or a variant).
     Seq(Vec<u8>),
-    /// Não cobre: cai no caminho legado do xterm.
+    /// Not covered: falls back to the legacy xterm path.
     Legacy,
 }
 
@@ -233,7 +233,7 @@ fn kitty_encode(
     let all_keys = flags & F_ALL_KEYS != 0;
     let embed = flags & F_TEXT != 0;
 
-    // sem a flag 2 não existe release: o legado só sabe "a tecla saiu"
+    // without flag 2 there is no release: the legacy path only knows the press
     if event == RELEASE && !ev_types {
         return Kitty::Legacy;
     }
@@ -249,48 +249,48 @@ fn kitty_encode(
         let Some((key, trailer)) = kitty_functional(n) else {
             return Kitty::Legacy;
         };
-        let especial = matches!(
+        let special = matches!(
             n,
             NamedKey::Escape | NamedKey::Enter | NamedKey::Tab | NamedKey::Backspace
         );
-        // com só a flag 2 (eventos), o Ctrl+Space tem de continuar NUL: é o
-        // que o readline/vim esperam, e trocar por `CSI 32;5u` quebraria quem
-        // liga a flag 2 e nada mais
+        // with only flag 2 (events), Ctrl+Space has to stay NUL: that is what
+        // readline/vim expect, and swapping it for `CSI 32;5u` would break
+        // whoever turns on flag 2 and nothing else
         if n == NamedKey::Space && !(dis || all_keys) {
             return Kitty::Legacy;
         }
-        if !especial && m == 1 && !all_keys {
-            // seta/Home/F1 sem modificador: o legado já manda o certo (e
-            // respeita DECCKM)
+        if !special && m == 1 && !all_keys {
+            // arrow/Home/F1 without a modifier: the legacy path already sends
+            // the right thing (and respects DECCKM)
             return Kitty::Legacy;
         }
-        if especial && m == 1 && !(dis || all_keys) {
-            return Kitty::Legacy; // ESC, CR, TAB, DEL clássicos
+        if special && m == 1 && !(dis || all_keys) {
+            return Kitty::Legacy; // classic ESC, CR, TAB, DEL
         }
         return Kitty::Seq(kitty_csi(key, m, trailer, ev, text));
     }
 
     let Some(cp) = character.and_then(|s| s.chars().next()) else {
-        return Kitty::Legacy; // tecla sem caractere (modificador, tecla morta)
+        return Kitty::Legacy; // key with no character (modifier, dead key)
     };
     let mut cp = cp as u32;
-    // Ctrl+Shift+a relata a tecla base, não o maiúsculo
+    // Ctrl+Shift+a reports the base key, not the uppercase character
     if mods.control_key() && (0x41..=0x5a).contains(&cp) {
         cp += 32;
     }
     if m == 2 && !all_keys {
-        return Kitty::Legacy; // Shift+letra continua sendo texto
+        return Kitty::Legacy; // Shift+letter is still text
     }
     if m == 1 && !all_keys {
-        return Kitty::Legacy; // texto puro
+        return Kitty::Legacy; // plain text
     }
     if !(dis || all_keys) {
-        return Kitty::Legacy; // modificador sem disambiguate: xterm clássico
+        return Kitty::Legacy; // modifier without disambiguate: classic xterm
     }
     Kitty::Seq(kitty_csi(cp, m, 'u', ev, text))
 }
 
-/// Traduz o evento. `None` = não manda nada (modificador, Super do WM, etc.).
+/// Translates the event. `None` = send nothing (modifier, WM Super, etc.).
 pub fn encode(
     ev: &KeyEvent,
     mods: ModifiersState,
@@ -304,7 +304,8 @@ pub fn encode(
     } else {
         PRESS
     };
-    // release só interessa ao protocolo do kitty (o legado não relata soltura)
+    // release only matters to the kitty protocol (the legacy path never reports
+    // the key going up)
     if ev.state != ElementState::Pressed && kbd_flags & F_EVENT_TYPES == 0 {
         return None;
     }
@@ -324,8 +325,8 @@ pub fn encode(
     )
 }
 
-/// O corpo do `encode` sem o `KeyEvent`: é o que os testes usam para o release
-/// e o repeat, que são decisão do protocolo e não do winit.
+/// The body of `encode` without the `KeyEvent`: it is what the tests use for
+/// release and repeat, which are a protocol decision and not a winit one.
 pub fn encode_event(
     named: Option<NamedKey>,
     character: Option<&str>,
@@ -341,18 +342,19 @@ pub fn encode_event(
             Kitty::Legacy => {},
         }
     }
-    // release sem forma do kitty: não sai nada (E19 — senão o `pi`, que liga a
-    // flag 2, recebia o texto duas vezes: o legado não sabe "a tecla saiu" e
-    // mandava o texto de novo)
+    // release with no kitty shape: nothing goes out (E19 — otherwise `pi`,
+    // which turns on flag 2, got the text twice: the legacy path does not know
+    // the key went up and sent the text again)
     if event == RELEASE {
         return None;
     }
     encode_parts(named, character, text, mods, app_cursor, kbd_flags)
 }
 
-/// A tradução em si, sem depender de um `KeyEvent`: é o que o verbo `keys` do
-/// debug socket usa, para testar o **mesmo** caminho do teclado real (um
-/// encoder paralelo no socket já divergiu uma vez: F5 virava 1 byte).
+/// The translation itself, without depending on a `KeyEvent`: it is what the
+/// `keys` verb of the debug socket uses, to exercise the **same** path as the
+/// real keyboard (a parallel encoder in the socket diverged once: F5 became
+/// 1 byte).
 pub fn encode_parts(
     named: Option<NamedKey>,
     character: Option<&str>,
@@ -370,14 +372,14 @@ pub fn encode_parts(
     let ctrl = mods.control_key();
     let alt = mods.alt_key();
     let shift = mods.shift_key();
-    // atalho do window manager: não é do terminal
+    // window manager shortcut: not the terminal's business
     if mods.super_key() {
         return None;
     }
 
     if let Some(n) = named {
-        // Ctrl+Space é NUL (é o que o readline/vim esperam para "marcar"),
-        // não o `CSI 1;5 ` que a tabela genérica produziria
+        // Ctrl+Space is NUL (it is what readline/vim expect to "mark" a
+        // selection), not the `CSI 1;5 ` the generic table would produce
         if ctrl && n == NamedKey::Space {
             return Some(if alt { vec![0x1b, 0x00] } else { vec![0x00] });
         }
@@ -389,7 +391,7 @@ pub fn encode_parts(
     let first = s.chars().next()?;
 
     if ctrl {
-        // Ctrl+letra e os pontuais do xterm (Ctrl+Space/NUL, Ctrl+-/US)
+        // Ctrl+letter and the xterm one-offs (Ctrl+Space/NUL, Ctrl+-/US)
         let low = first.to_ascii_lowercase();
         let code = match low {
             'a'..='z' => (low as u8) & 0x1f,
@@ -409,7 +411,7 @@ pub fn encode_parts(
         return Some(v);
     }
 
-    // texto composto (dead keys já resolvidas pelo winit)
+    // composed text (dead keys already resolved by winit)
     let text = text.unwrap_or("");
     let body: &str = if text.is_empty() { s } else { text };
     if body.is_empty() {
@@ -439,28 +441,28 @@ mod tests {
     }
 
     #[test]
-    fn without_flags_o_path_e_o_legado() {
+    fn without_flags_the_path_is_the_legacy_one() {
         assert_eq!(enc(Some(NamedKey::Escape), None, NONE, 0), "\x1b");
         assert_eq!(enc(None, Some("a"), NONE, 0), "a");
         assert_eq!(enc(None, Some("a"), ModifiersState::CONTROL, 0), "\x01");
     }
 
     #[test]
-    fn flag_1_disambiguate_escape_e_ctrl() {
+    fn flag_1_disambiguates_escape_and_ctrl() {
         let f = F_DISAMBIGUATE;
-        // ESC vira CSI 27u (o "ESC sozinho" que o vim distingue de Alt+[)
+        // ESC becomes CSI 27u (the "bare ESC" vim distinguishes from Alt+[)
         assert_eq!(enc(Some(NamedKey::Escape), None, NONE, f), "\x1b[27u");
-        // Ctrl+a vira CSI 97;5u em vez de ^A
+        // Ctrl+a becomes CSI 97;5u instead of ^A
         assert_eq!(
             enc(None, Some("a"), ModifiersState::CONTROL, f),
             "\x1b[97;5u"
         );
-        // Enter e Tab também
+        // Enter and Tab too
         assert_eq!(enc(Some(NamedKey::Enter), None, NONE, f), "\x1b[13u");
         assert_eq!(enc(Some(NamedKey::Tab), None, NONE, f), "\x1b[9u");
-        // seta sem modificador continua no legado (e respeita DECCKM)
+        // an arrow without a modifier stays legacy (and respects DECCKM)
         assert_eq!(enc(Some(NamedKey::ArrowUp), None, NONE, f), "\x1b[A");
-        // com modificador, sai na forma do kitty
+        // with a modifier it goes out in the kitty shape
         assert_eq!(
             enc(Some(NamedKey::ArrowUp), None, ModifiersState::CONTROL, f),
             "\x1b[1;5A"
@@ -468,15 +470,15 @@ mod tests {
     }
 
     #[test]
-    fn flag_8_sends_all_como_csi_u() {
+    fn flag_8_sends_all_as_csi_u() {
         let f = F_ALL_KEYS;
         assert_eq!(enc(None, Some("a"), NONE, f), "\x1b[97u");
-        // Shift+letra deixa de ser texto puro. O código sai como 65 ('A') e não
-        // 97: o winit entrega o caractere **depois** do shift, e a tecla base
-        // exigiria uma tabela de layout (o Python, via Gdk keyval, faz igual).
-        // O que não pode voltar é o texto puro.
+        // Shift+letter stops being plain text. The code goes out as 65 ('A') and
+        // not 97: winit hands over the character **after** shift, and the base
+        // key would need a layout table (the Python, via Gdk keyval, does the
+        // same). What must not come back is the plain text.
         assert_eq!(enc(None, Some("A"), ModifiersState::SHIFT, f), "\x1b[65;2u");
-        // Ctrl+Shift+a relata a tecla base, não o maiúsculo
+        // Ctrl+Shift+a reports the base key, not the uppercase character
         assert_eq!(
             enc(
                 None,
@@ -486,7 +488,8 @@ mod tests {
             ),
             "\x1b[97;6u"
         );
-        // Shift+letra SEM report-all continua texto (o winit já entrega "A")
+        // Shift+letter WITHOUT report-all is still text (winit already hands
+        // over "A")
         assert_eq!(
             enc(None, Some("A"), ModifiersState::SHIFT, F_DISAMBIGUATE),
             "A"
@@ -494,9 +497,9 @@ mod tests {
     }
 
     #[test]
-    fn f3_usa_a_shape_do_kitty_e_not_o_typo_do_python() {
-        // `CSI 1;2R` (kitty) e não `CSI 13;2~` (o `kitty_kbd.py` tinha F3 como
-        // 13~, que é Shift+F3 do xterm)
+    fn f3_uses_the_kitty_shape_not_the_python_typo() {
+        // `CSI 1;2R` (kitty) and not `CSI 13;2~` (`kitty_kbd.py` had F3 as 13~,
+        // which is xterm's Shift+F3)
         assert_eq!(
             enc(
                 Some(NamedKey::F3),
@@ -509,7 +512,7 @@ mod tests {
     }
 
     #[test]
-    fn flag_16_embute_o_text() {
+    fn flag_16_embeds_the_text() {
         let f = F_ALL_KEYS | F_TEXT;
         assert_eq!(
             encode_parts(None, Some("a"), Some("a"), NONE, false, f)
@@ -525,17 +528,17 @@ mod tests {
     }
 
     #[test]
-    fn release_e_repeat_follow_a_flag_2() {
-        // E19: release sem a flag 2 não manda nada (era o bug do `pi`, que
-        // recebia o texto de novo porque o legado não sabe "a tecla saiu")
+    fn release_and_repeat_follow_flag_2() {
+        // E19: release without flag 2 sends nothing (it was the `pi` bug: it got
+        // the text again because the legacy path does not know the key went up)
         assert_eq!(ev(None, Some("a"), F_DISAMBIGUATE, RELEASE), None);
         assert_eq!(ev(None, Some("a"), 0, RELEASE), None);
-        // com a flag 2 e report-all, o release vira `:3`
+        // with flag 2 and report-all, the release becomes `:3`
         assert_eq!(
             ev(None, Some("a"), F_ALL_KEYS | F_EVENT_TYPES, RELEASE).as_deref(),
             Some("\x1b[97;1:3u")
         );
-        // press é o padrão (sem sufixo), repeat explicita `:2`
+        // press is the default (no suffix), repeat spells out `:2`
         assert_eq!(
             ev(None, Some("a"), F_ALL_KEYS | F_EVENT_TYPES, PRESS).as_deref(),
             Some("\x1b[97u")
@@ -547,9 +550,9 @@ mod tests {
     }
 }
 
-/// N3: o check `kitty_keyboard()` do `checks.py`, de ponta a ponta — o parser do
-/// `Term` liga as flags (`CSI > u`, `CSI = u`, `CSI < u`, `CSI ? u`) e o encoder
-/// deste arquivo produz os bytes que vão para o filho.
+/// N3: the `kitty_keyboard()` check of `checks.py`, end to end — the parser in
+/// `Term` turns the flags on (`CSI > u`, `CSI = u`, `CSI < u`, `CSI ? u`) and the
+/// encoder in this file produces the bytes that go to the child.
 #[cfg(test)]
 mod checks_keyboard {
     use super::*;
@@ -561,8 +564,8 @@ mod checks_keyboard {
         Term::new(80, 24)
     }
 
-    /// O encoder com o estado que o app usa de verdade (`?1` e `kbd_flags` do
-    /// `Term`), para comparar bytes como o check do Python faz.
+    /// The encoder with the state the app really uses (`?1` and `kbd_flags` from
+    /// `Term`), to compare bytes the way the Python check does.
     fn enc(
         t: &Term,
         named: Option<NamedKey>,
@@ -573,13 +576,13 @@ mod checks_keyboard {
             .map(|v| String::from_utf8_lossy(&v).to_string())
     }
 
-    /// Com texto associado diferente do caractere — é o caso da flag 16.
+    /// With text associated that differs from the character — the flag 16 case.
     fn enc_text(t: &Term, ch: &str, text: &str) -> Option<String> {
         encode_parts(None, Some(ch), Some(text), NONE, t.app_cursor, t.kbd_flags)
             .map(|v| String::from_utf8_lossy(&v).to_string())
     }
 
-    /// Press/repeat/release, que no winit chegam como estado do `KeyEvent`.
+    /// Press/repeat/release, which reach winit as `KeyEvent` state.
     fn enc_ev(
         t: &Term,
         named: Option<NamedKey>,
@@ -592,33 +595,33 @@ mod checks_keyboard {
     }
 
     #[test]
-    fn push_pop_set_e_consulta_do_keyboard_by_term() {
+    fn push_pop_set_and_query_of_keyboard_by_term() {
         let mut t = term();
         assert_eq!(t.kbd_flags, 0);
-        // `CSI > 1 u`: empilha o estado atual (0) e passa a desambiguar
+        // `CSI > 1 u`: push the current state (0) and start disambiguating
         t.feed(b"\x1b[>1u");
         assert_eq!(t.kbd_flags, F_DISAMBIGUATE);
-        // `CSI ? u`: o terminal responde o estado atual
+        // `CSI ? u`: the terminal answers with the current state
         t.feed(b"\x1b[?u");
         assert_eq!(t.take_child_out(), b"\x1b[?1u".to_vec());
-        // `CSI = 3 ; 1 u` (modo 1 = substitui): flags 1|2
+        // `CSI = 3 ; 1 u` (mode 1 = replace): flags 1|2
         t.feed(b"\x1b[=3;1u");
         assert_eq!(t.kbd_flags, F_DISAMBIGUATE | F_EVENT_TYPES);
         t.feed(b"\x1b[?u");
         assert_eq!(t.take_child_out(), b"\x1b[?3u".to_vec());
-        // modo 2 acrescenta, modo 3 remove
+        // mode 2 adds, mode 3 removes
         t.feed(b"\x1b[=8;2u");
         assert_eq!(t.kbd_flags, 11);
         t.feed(b"\x1b[=8;3u");
         assert_eq!(t.kbd_flags, 3);
-        // push de 8|16 e pop devolve o que estava guardado
+        // push of 8|16 and pop gives back what was stored
         t.feed(b"\x1b[>24u");
         assert_eq!(t.kbd_flags, F_ALL_KEYS | F_TEXT);
         t.feed(b"\x1b[<u");
         assert_eq!(t.kbd_flags, 3);
         t.feed(b"\x1b[?u");
         assert_eq!(t.take_child_out(), b"\x1b[?3u".to_vec());
-        // `CSI < 2 u` esvazia a pilha: o kitty manda os flags voltarem a 0
+        // `CSI < 2 u` empties the stack: kitty says the flags go back to 0
         t.feed(b"\x1b[<2u");
         assert_eq!(t.kbd_flags, 0);
         t.feed(b"\x1b[?u");
@@ -626,10 +629,10 @@ mod checks_keyboard {
     }
 
     #[test]
-    fn flag_1_do_term_disambiguate_escape_e_modificadores() {
+    fn flag_1_of_term_disambiguates_escape_and_modifiers() {
         let mut t = term();
         t.feed(b"\x1b[>1u");
-        // ESC, Enter, Tab e Backspace saem como `CSI codigo u`
+        // ESC, Enter, Tab and Backspace go out as `CSI code u`
         assert_eq!(
             enc(&t, Some(NamedKey::Escape), None, NONE).as_deref(),
             Some("\x1b[27u")
@@ -646,7 +649,7 @@ mod checks_keyboard {
             enc(&t, Some(NamedKey::Backspace), None, NONE).as_deref(),
             Some("\x1b[127u")
         );
-        // Ctrl+a deixa de ser ^A; Alt+a deixa de ser ESC + "a"
+        // Ctrl+a stops being ^A; Alt+a stops being ESC + "a"
         assert_eq!(
             enc(&t, None, Some("a"), ModifiersState::CONTROL).as_deref(),
             Some("\x1b[97;5u")
@@ -665,17 +668,18 @@ mod checks_keyboard {
             .as_deref(),
             Some("\x1b[97;7u")
         );
-        // Shift+Tab é a forma do kitty, não o `\t` do legado
+        // Shift+Tab is the kitty shape, not the legacy `\t`
         assert_eq!(
             enc(&t, Some(NamedKey::Tab), None, ModifiersState::SHIFT).as_deref(),
             Some("\x1b[9;2u")
         );
-        // F1..F4 sem modificador continuam `SS3 P`.., que já é a forma do kitty
+        // F1..F4 without a modifier stay `SS3 P`.., which already is the kitty
+        // shape
         assert_eq!(
             enc(&t, Some(NamedKey::F3), None, NONE).as_deref(),
             Some("\x1bOR")
         );
-        // e F3 com Shift é `CSI 1;2R` (não o `CSI 13~` do `kitty_kbd.py`)
+        // and F3 with Shift is `CSI 1;2R` (not the `CSI 13~` of `kitty_kbd.py`)
         assert_eq!(
             enc(&t, Some(NamedKey::F3), None, ModifiersState::SHIFT).as_deref(),
             Some("\x1b[1;2R")
@@ -683,14 +687,15 @@ mod checks_keyboard {
     }
 
     #[test]
-    fn decckm_decide_o_legado_e_not_a_shape_do_kitty() {
+    fn decckm_decides_the_legacy_not_the_kitty_shape() {
         let mut t = term();
         assert!(!t.app_cursor);
         assert_eq!(
             enc(&t, Some(NamedKey::ArrowUp), None, NONE).as_deref(),
             Some("\x1b[A")
         );
-        // `CSI ? 1 h` liga DECCKM: seta e Home sem modificador viram SS3
+        // `CSI ? 1 h` turns DECCKM on: arrow and Home without a modifier become
+        // SS3
         t.feed(b"\x1b[?1h");
         assert!(t.app_cursor);
         assert_eq!(
@@ -701,7 +706,7 @@ mod checks_keyboard {
             enc(&t, Some(NamedKey::Home), None, NONE).as_deref(),
             Some("\x1bOH")
         );
-        // com modificador a forma do kitty é a mesma nos dois modos
+        // with a modifier the kitty shape is the same in both modes
         t.feed(b"\x1b[>1u");
         assert_eq!(
             enc(&t, Some(NamedKey::ArrowUp), None, ModifiersState::CONTROL).as_deref(),
@@ -713,7 +718,7 @@ mod checks_keyboard {
             enc(&t, Some(NamedKey::ArrowUp), None, ModifiersState::CONTROL).as_deref(),
             Some("\x1b[1;5A")
         );
-        // flag 8 manda a seta na forma do kitty mesmo com DECCKM ligado
+        // flag 8 sends the arrow in the kitty shape even with DECCKM on
         t.feed(b"\x1b[?1h\x1b[=8;2u");
         assert!(t.app_cursor);
         assert_eq!(t.kbd_flags, F_DISAMBIGUATE | F_ALL_KEYS);
@@ -732,17 +737,17 @@ mod checks_keyboard {
     }
 
     #[test]
-    fn flag_8_sends_all_inclusive_super() {
+    fn flag_8_sends_all_including_super() {
         let mut t = term();
         t.feed(b"\x1b[>8u");
         assert_eq!(enc(&t, None, Some("a"), NONE).as_deref(), Some("\x1b[97u"));
-        // Shift+letra sai com o código PÓS-shift (LIMITATIONS §Teclado): o winit
-        // entrega "A" e desfazer o Shift exigiria tabela de layout
+        // Shift+letter goes out with the POST-shift code (LIMITATIONS §Keyboard):
+        // winit hands over "A" and undoing the Shift would need a layout table
         assert_eq!(
             enc(&t, None, Some("A"), ModifiersState::SHIFT).as_deref(),
             Some("\x1b[65;2u")
         );
-        // mas Ctrl+Shift+a relata a tecla base (97), mods 1+shift+ctrl = 6
+        // but Ctrl+Shift+a reports the base key (97), mods 1+shift+ctrl = 6
         assert_eq!(
             enc(
                 &t,
@@ -753,12 +758,12 @@ mod checks_keyboard {
             .as_deref(),
             Some("\x1b[97;6u")
         );
-        // Super deixa de ser "atalho do WM": entra na conta (1+8 = 9)
+        // Super stops being a "WM shortcut": it enters the count (1+8 = 9)
         assert_eq!(
             enc(&t, None, Some("a"), ModifiersState::SUPER).as_deref(),
             Some("\x1b[97;9u")
         );
-        // e sem flag nenhuma o Super continua não indo para o filho
+        // and with no flag at all Super still does not reach the child
         let without_flags = term();
         assert_eq!(
             enc(&without_flags, None, Some("a"), ModifiersState::SUPER),
@@ -767,14 +772,14 @@ mod checks_keyboard {
     }
 
     #[test]
-    fn flag_2_key_segurada_e_release() {
+    fn flag_2_held_key_and_release() {
         let mut t = term();
         t.feed(b"\x1b[>10u"); // 2|8
         assert_eq!(
             enc_ev(&t, None, Some("a"), NONE, PRESS).as_deref(),
             Some("\x1b[97u")
         );
-        // `:2` é a tecla segurada (auto-repeat), `:3` é a soltura
+        // `:2` is the held key (auto-repeat), `:3` is the key going up
         assert_eq!(
             enc_ev(&t, None, Some("a"), NONE, REPEAT).as_deref(),
             Some("\x1b[97;1:2u")
@@ -783,13 +788,13 @@ mod checks_keyboard {
             enc_ev(&t, None, Some("a"), NONE, RELEASE).as_deref(),
             Some("\x1b[97;1:3u")
         );
-        // seta também ganha o campo de evento
+        // the arrow gets the event field too
         assert_eq!(
             enc_ev(&t, Some(NamedKey::ArrowUp), None, NONE, REPEAT).as_deref(),
             Some("\x1b[1;1:2A")
         );
-        // só a flag 2: texto continua texto e a soltura não sai duas vezes
-        // (E19 — o legado não sabe "a tecla saiu")
+        // only flag 2: text stays text and the release does not go out twice
+        // (E19 — the legacy path does not know the key went up)
         let mut only_eventos = term();
         only_eventos.feed(b"\x1b[>2u");
         assert_eq!(
@@ -797,12 +802,12 @@ mod checks_keyboard {
             Some("a")
         );
         assert_eq!(enc_ev(&only_eventos, None, Some("a"), NONE, RELEASE), None);
-        // ESC sem disambiguate também não tem release
+        // ESC without disambiguate has no release either
         assert_eq!(
             enc_ev(&only_eventos, Some(NamedKey::Escape), None, NONE, RELEASE),
             None
         );
-        // com a flag 1 junto (1|2) o ESC ganha `:3` e o press perde o sufixo
+        // with flag 1 along (1|2) ESC gains `:3` and the press loses the suffix
         only_eventos.feed(b"\x1b[=1;2u");
         assert_eq!(only_eventos.kbd_flags, F_DISAMBIGUATE | F_EVENT_TYPES);
         assert_eq!(
@@ -816,47 +821,47 @@ mod checks_keyboard {
     }
 
     #[test]
-    fn ctrl_space_depende_da_flag_e_not_do_shortcut() {
-        // só a flag 2 (eventos): o Ctrl+Space continua NUL — readline/vim
-        // dependem disso e trocar por `CSI 32;5u` quebraria quem liga a flag 2
+    fn ctrl_space_depends_on_the_flag_not_the_shortcut() {
+        // only flag 2 (events): Ctrl+Space stays NUL — readline/vim depend on it
+        // and swapping it for `CSI 32;5u` would break whoever turns on flag 2
         let mut t = term();
         t.feed(b"\x1b[>2u");
         assert_eq!(
             enc(&t, Some(NamedKey::Space), None, ModifiersState::CONTROL).as_deref(),
             Some("\x00")
         );
-        // com a flag 1 o kitty desambigua: `CSI 32;5u`
+        // with flag 1 kitty disambiguates: `CSI 32;5u`
         t.feed(b"\x1b[=1;2u");
         assert_eq!(
             enc(&t, Some(NamedKey::Space), None, ModifiersState::CONTROL).as_deref(),
             Some("\x1b[32;5u")
         );
-        // sem modificador e sem a flag 8, espaço continua espaço
+        // with no modifier and no flag 8, space stays space
         assert_eq!(
             enc(&t, Some(NamedKey::Space), None, NONE).as_deref(),
             Some(" ")
         );
-        // com a flag 8, todas as teclas: espaço vira `CSI 32u`
+        // with flag 8, all keys: space becomes `CSI 32u`
         t.feed(b"\x1b[=24;1u");
         assert_eq!(t.kbd_flags, F_ALL_KEYS | F_TEXT);
         assert_eq!(enc_text(&t, " ", " ").as_deref(), Some("\x1b[32;32u"));
     }
 
     #[test]
-    fn flag_16_embute_o_text_da_key() {
+    fn flag_16_embeds_the_text_of_the_key() {
         let mut t = term();
         t.feed(b"\x1b[>24u"); // 8|16
         assert_eq!(t.kbd_flags, F_ALL_KEYS | F_TEXT);
         assert_eq!(enc_text(&t, "a", "a").as_deref(), Some("\x1b[97;97u"));
-        // 'é' = U+00E9 = 233: a tecla e o texto são o mesmo codepoint
+        // 'é' = U+00E9 = 233: key and text are the same codepoint
         assert_eq!(enc_text(&t, "é", "é").as_deref(), Some("\x1b[233;233u"));
-        // texto com mais de um codepoint sai separado por ':'
+        // text with more than one codepoint goes out separated by ':'
         assert_eq!(enc_text(&t, "a", "aé").as_deref(), Some("\x1b[97;97:233u"));
-        // sem a flag 16 o texto não viaja junto
+        // without flag 16 the text does not travel along
         t.feed(b"\x1b[=16;3u");
         assert_eq!(t.kbd_flags, F_ALL_KEYS);
         assert_eq!(enc_text(&t, "a", "a").as_deref(), Some("\x1b[97u"));
-        // e com as flags nenhuma o texto é o caminho legado de sempre
+        // and with no flags at all the text is the usual legacy path
         t.feed(b"\x1b[=8;3u");
         assert_eq!(t.kbd_flags, 0);
         assert_eq!(enc_text(&t, "a", "a").as_deref(), Some("a"));

@@ -1,9 +1,9 @@
-//! Grade: linha e utilitários de texto.
+//! Grid: row and text helpers.
 
 use crate::cell::Cell;
 
-/// Linha da grade. `wrapped` é a quebra mole (autowrap): a linha continua na
-/// de baixo. O parser usa isso para (futuro) reflow e para concatenar texto.
+/// Grid row. `wrapped` is the soft wrap (autowrap): the row continues on the one
+/// below. The parser uses it for (future) reflow and to concatenate text.
 #[derive(Clone, Debug)]
 pub struct Row {
     pub cells: Vec<Cell>,
@@ -28,7 +28,7 @@ impl Row {
         self.cells.is_empty()
     }
 
-    /// Texto da linha sem os espaços à direita (para o `text` do socket).
+    /// Row text without the trailing spaces (for the socket `text`).
     pub fn text(&self) -> String {
         let mut s: String = self
             .cells
@@ -42,8 +42,8 @@ impl Row {
         s
     }
 
-    /// Texto das colunas `a..b` (fim exclusivo), sem cont e sem espaço à
-    /// direita. É a base da cópia: cortar por coluna, não por caractere.
+    /// Text of columns `a..b` (end exclusive), without cont and without trailing
+    /// space. It is the base of the copy: cut by column, not by character.
     #[must_use]
     pub fn text_cols(&self, a: usize, b: usize) -> String {
         let b = b.min(self.cells.len());
@@ -59,7 +59,7 @@ impl Row {
         s
     }
 
-    /// Redimensiona a linha (cresce com célula em branco, corta o excedente).
+    /// Resize the row (grows with a blank cell, cuts the excess).
     pub fn resize(&mut self, cols: usize) {
         self.cells.resize(cols, Cell::BLANK);
     }

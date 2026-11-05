@@ -1,60 +1,60 @@
-//! Configuração: formato do kitty (`chave valor`), padrões embutidos e erro
-//! por linha.
+//! Configuration: kitty format (`key value`), built-in defaults and per-line
+//! errors.
 //!
-//! A regra é a do bzmux Python (`config.py`): **merge chave a chave**, com os
-//! padrões escritos como arquivo (`DEFAULT_CONF`) e o arquivo do usuário por
-//! cima. Erro é por linha, não por arquivo: o que validou vale, a chave
-//! inválida fica no padrão anterior e o erro sai com o número da linha (o app
-//! mostra em toast). No reload a regra é mais dura: **qualquer** erro mantém a
-//! configuração que já estava valendo — trocar tudo por metade é pior que
-//! ignorar a edição.
+//! The rule is the bzmux Python one (`config.py`): **merge key by key**, with
+//! the defaults written as a file (`DEFAULT_CONF`) and the user file on top.
+//! The error is per line, not per file: whatever validated holds, the invalid
+//! key keeps the previous default and the error comes out with the line number
+//! (the app shows it in a toast). On reload the rule is stricter: **any** error
+//! keeps the configuration that was already in effect — swapping everything for
+//! half is worse than ignoring the edit.
 //!
-//! `#` comenta quando está no começo da linha ou depois de espaço, então
-//! `foreground #e6e6e6` continua sendo uma cor e não um comentário.
+//! `#` comments when it sits at the start of the line or after a space, so
+//! `foreground #e6e6e6` is still a colour and not a comment.
 
 use crate::color::Color;
 
-/// Os padrões, escritos como o arquivo que o usuário editaria. É a **única**
-/// fonte deles: `Config::base()` é o resultado de parsear este texto, e o teste
-/// `padroes_parseiam_limpos` garante que ele não tem erro.
+/// The defaults, written as the file the user would edit. It is the **only**
+/// source of them: `Config::base()` is the result of parsing this text, and the
+/// test `defaults_parse_clean` guarantees it has no error.
 pub const DEFAULT_CONF: &str = "\
-# bzmux — padrões embutidos (o seu ~/.config/bzmux/bzmux.conf entra por cima)
+# bzmux — built-in defaults (your ~/.config/bzmux/bzmux.conf goes on top)
 
-# programa das abas. Vazio = $SHELL do ambiente. O --cmd vence este valor.
+# tab program. Empty = $SHELL from the environment. --cmd beats this value.
 shell
 
-# fonte da grade, em PONTOS (o DPI converte para pixel)
+# grid font, in POINTS (the DPI converts to pixels)
 font_family Monospace
 font_size 12
 
-# ligaduras tipográficas: off (nenhuma), standard (liga/calt: fi, ->, !=) ou
-# all (standard + discricionárias). Só aparece em fonte que as tenha; o shaping
-# de script (árabe, devanagari) roda sempre, com qualquer valor.
+# typographic ligatures: off (none), standard (liga/calt: fi, ->, !=) or
+# all (standard + discretionary). Only shows up in a font that has them; the
+# script shaping (Arabic, Devanagari) always runs, whatever the value.
 ligatures standard
 
-# cursor: block, beam ou underline; o pisca é on/off (CSI 6 q de um app vence)
+# cursor: block, beam or underline; blink is on/off (CSI 6 q from an app wins)
 cursor_shape block
 cursor_blink off
 
-# linhas de histórico guardadas acima da tela
+# history lines kept above the screen
 scrollback 10000
 
-# margem em volta da grade, em px
+# margin around the grid, in px
 window_padding_width 0
 
-# BEL: none (ignora), visual (marca a janela) ou audible (apita)
+# BEL: none (ignores), visual (marks the window) or audible (beeps)
 bell none
 
-# seleção com o mouse já vai para CLIPBOARD (PRIMARY é sempre)
+# mouse selection goes straight to CLIPBOARD (PRIMARY is always)
 copy_on_select off
 
-# log de diagnóstico; `off` desliga (o --debug-log troca o caminho)
+# diagnostic log; `off` turns it off (--debug-log changes the path)
 debug_log off
 
-# cores: foreground/background/cursor e a paleta ANSI de 16.
-# Os padrões são a paleta clássica do xterm (a mesma do bzmux Python): mc, htop
-# e ls --color foram calibrados nela, e trocar por um \"tema bonito\" muda o
-# significado das cores que o programa escolheu.
+# colours: foreground/background/cursor and the 16-colour ANSI palette.
+# The defaults are the classic xterm palette (the same as bzmux Python): mc,
+# htop and ls --color were calibrated on it, and swapping it for a \"pretty
+# theme\" changes the meaning of the colours the program picked.
 foreground #d6d6d6
 background #000000
 cursor_color #d6d6d6
@@ -76,7 +76,7 @@ color14 #00ffff
 color15 #ffffff
 ";
 
-/// Como o BEL do app se manifesta.
+/// How the app's BEL manifests itself.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum Bell {
     #[default]
@@ -85,23 +85,23 @@ pub enum Bell {
     Audible,
 }
 
-/// Ligaduras tipográficas. Só tem efeito em fonte que as tenha (Fira Code,
-/// JetBrains Mono…): o desenho não funde célula nenhuma, pede ao HarfBuzz o
-/// glifo de cada célula com o contexto do trecho.
+/// Typographic ligatures. Only takes effect in a font that has them (Fira Code,
+/// JetBrains Mono…): the renderer does not fuse any cell, it asks HarfBuzz for
+/// the glyph of each cell with the context of the run.
 ///
-/// `Off` desliga **as ligaduras**, não o shaping: árabe e devanágari dependem do
-/// shaping para serem legíveis e continuam sendo shapeados (é o que o Pango
-/// fazia no Python).
+/// `Off` turns off **the ligatures**, not the shaping: Arabic and Devanagari
+/// depend on shaping to be readable and keep being shaped (what Pango did in
+/// Python).
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Ligatures {
     Off,
     #[default]
     Standard,
-    /// `standard` + discricionárias (`dlig`, `clig`).
+    /// `standard` + discretionary ones (`dlig`, `clig`).
     All,
 }
 
-/// Forma do cursor quando o app não pediu outra por `CSI 6 q`.
+/// Cursor shape when the app has not asked for another one via `CSI 6 q`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum CursorShape {
     #[default]
@@ -110,7 +110,7 @@ pub enum CursorShape {
     Underline,
 }
 
-/// Uma linha que não passou: `linha`, `chave` e o motivo.
+/// A line that did not pass: `line`, `key` and the reason.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Error {
     pub line: usize,
@@ -121,15 +121,15 @@ pub struct Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.key.is_empty() {
-            write!(f, "linha {}: {}", self.line, self.msg)
+            write!(f, "line {}: {}", self.line, self.msg)
         } else {
-            write!(f, "linha {}: '{}': {}", self.line, self.key, self.msg)
+            write!(f, "line {}: '{}': {}", self.line, self.key, self.msg)
         }
     }
 }
 
-/// Cores do tema como o terminal as conhece: é o que o desenho usa e o que
-/// `OSC 4/10/11/12` consulta e altera em tempo de execução.
+/// Theme colours as the terminal knows them: this is what the renderer uses and
+/// what `OSC 4/10/11/12` queries and changes at run time.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Theme {
     pub fg: Color,
@@ -139,7 +139,7 @@ pub struct Theme {
 }
 
 impl Default for Theme {
-    /// O mesmo tema dos padrões embutidos, sem precisar parsear texto.
+    /// The same theme as the built-in defaults, without parsing text.
     fn default() -> Self {
         Theme {
             fg: Color::Rgb(0xe6, 0xe6, 0xe6),
@@ -151,7 +151,7 @@ impl Default for Theme {
 }
 
 impl Theme {
-    /// Paleta de 256 com as 16 primeiras vindo do tema.
+    /// 256-colour palette with the first 16 coming from the theme.
     #[must_use]
     pub fn palette256(&self) -> Vec<(u8, u8, u8)> {
         let mut pal = crate::color::palette256();
@@ -163,9 +163,9 @@ impl Theme {
         pal
     }
 
-    /// RGB final de uma cor do tema (a paleta resolve os índices); `Default`
-    /// cai no `default` que o chamador escolher (fundo para espaço, texto
-    /// para glifo).
+    /// Final RGB of a theme colour (the palette resolves the indices); `Default`
+    /// falls back to the `default` the caller picks (background for space, text
+    /// for glyph).
     #[must_use]
     pub fn rgb(&self, c: Color, default: (u8, u8, u8)) -> (u8, u8, u8) {
         match c {
@@ -175,7 +175,7 @@ impl Theme {
     }
 }
 
-/// A configuração efetiva.
+/// The effective configuration.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Config {
     pub shell: Option<String>,
@@ -201,7 +201,8 @@ impl Default for Config {
     }
 }
 
-/// As chaves conhecidas: chave fora daqui é erro (com o resto do arquivo valendo).
+/// The known keys: a key outside this list is an error (with the rest of the
+/// file still holding).
 const KNOWN: &[&str] = &[
     "shell",
     "font_family",
@@ -241,16 +242,16 @@ const SCROLLBACK_MAX: usize = 100_000;
 const PADDING_MAX: u32 = 200;
 
 impl Config {
-    /// Os padrões (parse limpo de `DEFAULT_CONF`; sem arquivo de usuário).
+    /// The defaults (clean parse of `DEFAULT_CONF`; no user file).
     #[must_use]
     pub fn base() -> Config {
         let (cfg, errs) = Config::parse_text(&Config::fallback(), DEFAULT_CONF);
-        debug_assert!(errs.is_empty(), "DEFAULT_CONF tem erro: {errs:?}");
+        debug_assert!(errs.is_empty(), "DEFAULT_CONF has an error: {errs:?}");
         cfg
     }
 
-    /// Valores mínimos de segurança, usados só se `DEFAULT_CONF` estiver
-    /// quebrado (não deve acontecer: o teste garante).
+    /// Minimum safety values, used only if `DEFAULT_CONF` is broken (it should
+    /// not happen: the test guarantees it).
     fn fallback() -> Config {
         Config {
             shell: None,
@@ -288,27 +289,27 @@ impl Config {
         }
     }
 
-    /// Padrões + texto do usuário. Devolve os erros (vazios = tudo aplicado).
+    /// Defaults + user text. Returns the errors (empty = everything applied).
     #[must_use]
     pub fn parse(text: &str) -> (Config, Vec<Error>) {
         Config::parse_text(&Config::base(), text)
     }
 
-    /// Como `parse`, mas partindo de uma configuração qualquer (é o reload: a
-    /// que estava valendo é a base).
+    /// Like `parse`, but starting from an arbitrary configuration (this is the
+    /// reload: the one in effect is the base).
     #[must_use]
     pub fn over(&self, text: &str) -> (Config, Vec<Error>) {
         Config::parse_text(self, text)
     }
 
-    #[allow(clippy::too_many_lines)] // um braço por chave, de propósito
+    #[allow(clippy::too_many_lines)] // one arm per key, on purpose
     fn parse_text(base: &Config, text: &str) -> (Config, Vec<Error>) {
         let mut cfg = base.clone();
         let mut errors: Vec<Error> = Vec::new();
         for (n, raw) in text.lines().enumerate() {
             let line = n + 1;
             let without = raw.trim();
-            // linha em branco ou comentário de linha inteira
+            // blank line or whole-line comment
             if without.is_empty() || without.starts_with('#') {
                 continue;
             }
@@ -322,7 +323,7 @@ impl Config {
                 errors.push(Error {
                     line,
                     key: key.to_string(),
-                    msg: "chave desconhecida".to_string(),
+                    msg: "unknown key".to_string(),
                 });
                 continue;
             }
@@ -341,7 +342,7 @@ impl Config {
                 },
                 "font_family" => {
                     if value.is_empty() {
-                        errors.push(bad("família vazia".to_string()));
+                        errors.push(bad("empty family".to_string()));
                     } else {
                         cfg.font_family = value.to_string();
                     }
@@ -349,16 +350,16 @@ impl Config {
                 "font_size" => match value.parse::<f32>() {
                     Ok(v) if (FONT_MIN..=FONT_MAX).contains(&v) => cfg.font_size = v,
                     Ok(v) => errors.push(bad(format!(
-                        "{v} fora da faixa {FONT_MIN}..{FONT_MAX} pontos"
+                        "{v} outside the range {FONT_MIN}..{FONT_MAX} points"
                     ))),
-                    Err(_) => errors.push(bad(format!("\"{value}\" não é número"))),
+                    Err(_) => errors.push(bad(format!("\"{value}\" is not a number"))),
                 },
                 "ligatures" => match value {
                     "off" => cfg.ligatures = Ligatures::Off,
                     "standard" => cfg.ligatures = Ligatures::Standard,
                     "all" => cfg.ligatures = Ligatures::All,
                     other => {
-                        errors.push(bad(format!("\"{other}\" não é off, standard nem all")));
+                        errors.push(bad(format!("\"{other}\" is not off, standard or all")));
                     },
                 },
                 "cursor_shape" => match value {
@@ -366,34 +367,34 @@ impl Config {
                     "beam" => cfg.cursor_shape = CursorShape::Beam,
                     "underline" => cfg.cursor_shape = CursorShape::Underline,
                     other => {
-                        errors.push(bad(format!("\"{other}\" não é block, beam nem underline")));
+                        errors.push(bad(format!("\"{other}\" is not block, beam or underline")));
                     },
                 },
                 "cursor_blink" => match parse_bool(value) {
                     Some(b) => cfg.cursor_blink = b,
-                    None => errors.push(bad(format!("\"{value}\" não é on/off"))),
+                    None => errors.push(bad(format!("\"{value}\" is not on/off"))),
                 },
                 "scrollback" => match value.parse::<usize>() {
                     Ok(v) if v <= SCROLLBACK_MAX => cfg.scrollback = v,
-                    Ok(v) => errors.push(bad(format!("{v} acima do teto {SCROLLBACK_MAX}"))),
-                    Err(_) => errors.push(bad(format!("\"{value}\" não é número"))),
+                    Ok(v) => errors.push(bad(format!("{v} above the ceiling {SCROLLBACK_MAX}"))),
+                    Err(_) => errors.push(bad(format!("\"{value}\" is not a number"))),
                 },
                 "window_padding_width" => match value.parse::<u32>() {
                     Ok(v) if v <= PADDING_MAX => cfg.padding = v,
-                    Ok(v) => errors.push(bad(format!("{v} acima do teto {PADDING_MAX} px"))),
-                    Err(_) => errors.push(bad(format!("\"{value}\" não é número"))),
+                    Ok(v) => errors.push(bad(format!("{v} above the ceiling {PADDING_MAX} px"))),
+                    Err(_) => errors.push(bad(format!("\"{value}\" is not a number"))),
                 },
                 "bell" => match value {
                     "none" => cfg.bell = Bell::None,
                     "visual" => cfg.bell = Bell::Visual,
                     "audible" => cfg.bell = Bell::Audible,
                     other => {
-                        errors.push(bad(format!("\"{other}\" não é none, visual nem audible")));
+                        errors.push(bad(format!("\"{other}\" is not none, visual or audible")));
                     },
                 },
                 "copy_on_select" => match parse_bool(value) {
                     Some(b) => cfg.copy_on_select = b,
-                    None => errors.push(bad(format!("\"{value}\" não é on/off"))),
+                    None => errors.push(bad(format!("\"{value}\" is not on/off"))),
                 },
                 "debug_log" => {
                     cfg.debug_log = if value.is_empty() || value == "off" {
@@ -408,15 +409,15 @@ impl Config {
                         "background" => cfg.bg = c,
                         _ => cfg.cursor = c,
                     },
-                    None => errors.push(bad(format!("\"{value}\" não é cor"))),
+                    None => errors.push(bad(format!("\"{value}\" is not a colour"))),
                 },
                 _ => {
                     // color0..color15
                     let idx: usize = key[5..].parse().unwrap_or(16);
                     match parse_color(value) {
                         Some(c) if idx < 16 => cfg.palette[idx] = c,
-                        Some(_) => errors.push(bad("índice de paleta fora de 0..15".to_string())),
-                        None => errors.push(bad(format!("\"{value}\" não é cor"))),
+                        Some(_) => errors.push(bad("palette index outside 0..15".to_string())),
+                        None => errors.push(bad(format!("\"{value}\" is not a colour"))),
                     }
                 },
             }
@@ -424,7 +425,7 @@ impl Config {
         (cfg, errors)
     }
 
-    /// O tema (cores) desta configuração.
+    /// The theme (colours) of this configuration.
     #[must_use]
     pub fn theme(&self) -> Theme {
         Theme {
@@ -435,18 +436,19 @@ impl Config {
         }
     }
 
-    /// Paleta de 256 com as 16 primeiras vindas do tema.
+    /// 256-colour palette with the first 16 coming from the theme.
     #[must_use]
     pub fn palette256(&self) -> Vec<(u8, u8, u8)> {
         self.theme().palette256()
     }
 }
 
-/// Valor de uma linha, com comentário no fim.
+/// Value of a line, with a trailing comment.
 ///
-/// Regra: `#` que **abre** o valor é cor (`foreground #e6e6e6`); `#` depois de
-/// espaço, com valor já começado, comenta até o fim (`font_size 12  # nota`).
-/// É a única forma de ter cor em hexadecimal e comentário na mesma sintaxe.
+/// Rule: a `#` that **opens** the value is a colour (`foreground #e6e6e6`); a
+/// `#` after a space, with the value already started, comments to the end
+/// (`font_size 12  # note`). It is the only way to have a hex colour and a
+/// comment in the same syntax.
 fn value_of(rest: &str) -> String {
     let rest = rest.trim();
     if rest.starts_with('#') {
@@ -487,9 +489,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn padroes_parseiam_limpos() {
+    fn defaults_parse_clean() {
         let (cfg, errs) = Config::parse("");
-        assert!(errs.is_empty(), "DEFAULT_CONF tem erro: {errs:?}");
+        assert!(errs.is_empty(), "DEFAULT_CONF has an error: {errs:?}");
         assert_eq!(cfg.font_family, "Monospace");
         assert!((cfg.font_size - 12.0).abs() < f32::EPSILON);
         assert_eq!(cfg.scrollback, 10_000);
@@ -498,76 +500,77 @@ mod tests {
         assert_eq!(cfg.debug_log, None);
         assert_eq!(cfg.shell, None);
         assert_eq!(cfg.palette.len(), 16);
-        // a paleta clássica do xterm: mc/htop contam com ela (ver CONFIG.md)
+        // the classic xterm palette: mc/htop rely on it (see CONFIG.md)
         assert!(matches!(cfg.palette[1], Color::Rgb(0xcd, 0x00, 0x00)));
         assert_eq!(cfg.bg, Color::Rgb(0, 0, 0));
     }
 
     #[test]
-    fn comentario_not_come_cor() {
+    fn comment_does_not_swallow_colour() {
         let (cfg, errs) =
-            Config::parse("# linha toda\nforeground #112233   # nota no fim\nbackground #abc\n");
+            Config::parse("# whole line\nforeground #112233   # note\nbackground #abc\n");
         assert!(errs.is_empty(), "{errs:?}");
         assert_eq!(cfg.fg, Color::Rgb(0x11, 0x22, 0x33));
-        // #abc expande como #aabbcc
+        // #abc expands as #aabbcc
         assert_eq!(cfg.bg, Color::Rgb(0xaa, 0xbb, 0xcc));
     }
 
-    /// Os três valores de `ligatures` valem e o padrão é `standard` (ligadura
-    /// ligada, como no kitty); valor errado não derruba o arquivo, só a linha.
+    /// All three `ligatures` values are valid and the default is `standard`
+    /// (ligatures on, as in kitty); a wrong value does not bring the file down,
+    /// only the line.
     #[test]
-    fn ligaduras_per_name() {
+    fn ligatures_by_name() {
         assert_eq!(Config::parse("").0.ligatures, Ligatures::Standard);
-        for (text, esperado) in [
+        for (text, expected) in [
             ("off", Ligatures::Off),
             ("standard", Ligatures::Standard),
             ("all", Ligatures::All),
         ] {
             let (cfg, errs) = Config::parse(&format!("ligatures {text}\n"));
             assert!(errs.is_empty(), "{text}: {errs:?}");
-            assert_eq!(cfg.ligatures, esperado, "{text}");
+            assert_eq!(cfg.ligatures, expected, "{text}");
         }
-        let (cfg, errs) = Config::parse("ligatures talvez\nfont_size 14\n");
+        let (cfg, errs) = Config::parse("ligatures maybe\nfont_size 14\n");
         assert_eq!(
             cfg.ligatures,
             Ligatures::Standard,
-            "linha ruim mantém o padrão"
+            "a bad line keeps the default"
         );
         assert!(
             (cfg.font_size - 14.0).abs() < f32::EPSILON,
-            "o resto do arquivo vale"
+            "the rest of the file holds"
         );
         assert_eq!(errs.len(), 1);
         assert_eq!(errs[0].key, "ligatures");
     }
 
     #[test]
-    fn repetida_vence_a_last() {
+    fn repeated_key_last_wins() {
         let (cfg, _) = Config::parse("font_size 20\nfont_size 14\n");
         assert!((cfg.font_size - 14.0).abs() < f32::EPSILON);
     }
 
     #[test]
-    fn key_desconhecida_e_error_e_o_rest_vale() {
-        let (cfg, errs) = Config::parse("inventada 1\nfont_size 20\n");
+    fn unknown_key_is_error_and_rest_holds() {
+        let (cfg, errs) = Config::parse("bogus 1\nfont_size 20\n");
         assert_eq!(errs.len(), 1);
         assert_eq!(errs[0].line, 1);
-        assert_eq!(errs[0].key, "inventada");
-        assert!((cfg.font_size - 20.0).abs() < f32::EPSILON, "o resto valeu");
+        assert_eq!(errs[0].key, "bogus");
+        assert!((cfg.font_size - 20.0).abs() < f32::EPSILON, "the rest held");
     }
 
     #[test]
-    fn valor_invalido_mantem_o_padrao() {
-        let (cfg, errs) = Config::parse("font_size abc\nscrollback -3\nbell grita\n");
+    fn invalid_value_keeps_default() {
+        let (cfg, errs) = Config::parse("font_size abc\nscrollback -3\nbell beep\n");
         assert_eq!(errs.len(), 3);
         assert!((cfg.font_size - 12.0).abs() < f32::EPSILON);
         assert_eq!(cfg.scrollback, 10_000);
         assert_eq!(cfg.bell, Bell::None);
-        assert!(errs[0].to_string().starts_with("linha 1: 'font_size'"));
+        assert!(errs[0].to_string().starts_with("line 1: 'font_size'"));
     }
 
     #[test]
-    fn faixas_has_cap() {
+    fn ranges_have_ceiling() {
         let (_, errs) =
             Config::parse("font_size 200\nscrollback 999999\nwindow_padding_width 900\n");
         assert_eq!(errs.len(), 3);
@@ -576,7 +579,7 @@ mod tests {
     }
 
     #[test]
-    fn shell_empty_e_none_e_debug_log_off_desliga() {
+    fn empty_shell_is_none_and_debug_log_off_disables() {
         let (cfg, _) = Config::parse("shell del\n");
         assert_eq!(cfg.shell.as_deref(), Some("del"));
         let (cfg, _) = Config::parse("shell\ndebug_log off\n");
@@ -585,42 +588,42 @@ mod tests {
     }
 
     #[test]
-    fn palette_do_theme_arrives_na_256() {
+    fn theme_palette_arrives_in_the_256() {
         let (cfg, errs) = Config::parse("color1 #ff0000\ncolor8 #00ff00\n");
-        assert_eq!(errs, [], "erros inesperados");
+        assert_eq!(errs, [], "unexpected errors");
         let p = cfg.palette256();
         assert_eq!(p[1], (0xff, 0, 0));
         assert_eq!(p[8], (0, 0xff, 0));
-        // o resto do cubo 6x6x6 continua intacto
+        // the rest of the 6x6x6 cube is still intact
         assert_eq!(p[196], (255, 0, 0));
         assert_eq!(p.len(), 256);
     }
 
     #[test]
-    fn reload_with_error_not_swap_nada() {
+    fn reload_with_error_swaps_nothing() {
         let (good, _) = Config::parse("font_size 16\n");
-        let (tentativa, errs) = good.over("font_size 18\nbell grita\n");
-        assert_ne!(errs, [], "o erro tinha que aparecer");
-        // quem chama só aplica se `errs` estiver vazio; aqui provamos que a base
-        // não é mutada e que o valor bom sobrevive
+        let (attempt, errs) = good.over("font_size 18\nbell beep\n");
+        assert_ne!(errs, [], "the error had to show up");
+        // the caller only applies if `errs` is empty; here we prove the base is
+        // not mutated and the good value survives
         assert!((good.font_size - 16.0).abs() < f32::EPSILON);
-        assert!((tentativa.font_size - 18.0).abs() < f32::EPSILON);
+        assert!((attempt.font_size - 18.0).abs() < f32::EPSILON);
     }
 
     #[test]
-    fn doc_de_configuracao_mentions_all_as_chaves() {
-        // a doc não pode envelhecer sozinha: toda chave dos padrões tem que
-        // aparecer em docs/CONFIG.md
+    fn config_doc_mentions_all_keys() {
+        // the doc cannot age on its own: every key of the defaults has to appear
+        // in docs/CONFIG.md
         let doc =
             std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/CONFIG.md"))
                 .expect("docs/CONFIG.md");
         for k in KNOWN {
-            // a paleta aparece como intervalo na doc (`color0` … `color15`)
+            // the palette appears as a range in the doc (`color0` … `color15`)
             let interval =
                 k.starts_with("color") && doc.contains("color0") && doc.contains("color15");
             assert!(
                 doc.contains(k) || interval,
-                "docs/CONFIG.md não fala de '{k}'"
+                "docs/CONFIG.md does not mention '{k}'"
             );
         }
     }

@@ -1,85 +1,87 @@
-# Limites
+# Limits
 
-O que o bzmux **não** faz e por quê. Aqui só entra **decisão** ou consequência
-aceita do escopo. Funcionalidade do bzmux Python que ainda não foi migrada é
-`falta` em [`MIGRATION.md`](MIGRATION.md) — não é limite. Se um limite deixar de
-existir, sai daqui e vira item concluído em [`HISTORY.md`](HISTORY.md).
+What bzmux **does not** do and why. Only a **decision** or an accepted
+consequence of scope enters here. Functionality of bzmux Python that has not
+been migrated yet is `missing` in [`MIGRATION.md`](MIGRATION.md) — it is not a
+limit. If a limit stops existing, it leaves here and becomes a completed item in
+[`HISTORY.md`](HISTORY.md).
 
-## Escopo
+## Scope
 
-- **Um usuário, uma máquina.** Sem multiplexação de sessão, sem servidor, sem
-  reconexão, sem daemon. Fechar a janela termina tudo.
-- **Um terminal, não um ambiente de janelas.** Sem splits nesta fase
-  (`BACKLOG.md` M-J), sem gerenciador de layout; abas e workspaces existem,
-  mas não sobrevivem ao fechar (`BACKLOG.md` M-I).
-- **Imagem embutida no escape (base64), protocolo do kitty.** A imagem precisa
-  chegar dentro do próprio escape; trafegar por arquivo/temp/SHM, animar quadros
-  e falar sixel/iTerm2 não são limite aceito: são fila do [`BACKLOG.md`](BACKLOG.md).
-- **`TERM=xterm-256color`.** Não inventamos entrada de terminfo própria: o
-  objetivo é que `vim`, `mc`, `less` e `dmesg` funcionem com o que já existe.
+- **One user, one machine.** No session multiplexing, no server, no
+  reconnection, no daemon. Closing the window ends everything.
+- **One terminal, not a window environment.** No splits at this stage
+  (`BACKLOG.md` M-J), no layout manager; tabs and workspaces exist, but they do
+  not survive closing (`BACKLOG.md` M-I).
+- **Image embedded in the escape (base64), kitty protocol.** The image has to
+  arrive inside the escape itself; carrying it over file/temp/SHM, animating
+  frames and speaking sixel/iTerm2 are not accepted limits: they are the
+  [`BACKLOG.md`](BACKLOG.md) queue.
+- **`TERM=xterm-256color`.** We do not invent our own terminfo entry: the goal
+  is that `vim`, `mc`, `less` and `dmesg` work with what already exists.
 
-## Plataforma
+## Platform
 
-- **Linux X11 é o alvo testado.** Wayland não é exercitado aqui (`M-AB` no BACKLOG);
-  Windows e macOS **não são paridade** (o Python nunca rodou lá) e estão na fila
-  como `M-X`/`M-Y` do [`BACKLOG`](BACKLOG.md), com o que cada um exige em
-  [`PORTABILITY.md`](PORTABILITY.md). Até passarem por CI, "funciona lá" é
-  expectativa, não fato.
-- **Posição da janela no Wayland**: o cliente não escolhe onde a janela fica.
-  Quando a geometria for persistida (J2/J3), no Wayland só tamanho e maximizado
-  são guardados. Não é falta de código, é o protocolo.
-- **Sem backend de software próprio.** Se não houver Vulkan/Metal/D3D12/GL
-  utilizável, o app sai com mensagem. Rasterizar por CPU é um renderer inteiro.
-  Pior: **llvmpipe não é saída de emergência** — medido em 2026-11-03 dentro do
-  `sandbox` sem `/dev/dri`, o present ou estoura timeout (Vulkan) ou retorna sucesso
-  sem pintar um pixel (GL). Quem roda confinado usa `sandbox @gpu`, que apresenta de
-  verdade; o app avisa isso no stderr, uma vez (ver [`DEBUG.md`](DEBUG.md)).
-- **Sem assinatura/notarização por enquanto.** macOS 15+ exige "Abrir Mesmo
-  Assim" para binário baixado pela rede. Está em `M-Z` do
-  [`BACKLOG`](BACKLOG.md) (o custo é a conta de developer, US$ 99/ano), atrás de
-  `M-X`/`M-Y`: sem alvo compilado não há o que assinar.
+- **Linux X11 is the tested target.** Wayland is not exercised here (`M-AB` in
+  BACKLOG); Windows and macOS **are not parity** (Python never ran there) and are
+  in the queue as `M-X`/`M-Y` of [`BACKLOG`](BACKLOG.md), with what each one
+  requires in [`PORTABILITY.md`](PORTABILITY.md). Until they go through CI, "it
+  works there" is an expectation, not a fact.
+- **Window position on Wayland**: the client does not choose where the window
+  goes. When geometry is persisted (J2/J3), on Wayland only size and maximized
+  are stored. It is not missing code, it is the protocol.
+- **No software backend of our own.** If there is no usable Vulkan/Metal/D3D12/GL,
+  the app exits with a message. Rasterizing on the CPU is an entire renderer.
+  Worse: **llvmpipe is not an emergency exit** — measured on 2026-11-03 inside
+  `sandbox` without `/dev/dri`, the present either blows the timeout (Vulkan) or
+  returns success without painting a pixel (GL). Whoever runs confined uses
+  `sandbox @gpu`, which presents for real; the app warns this on stderr, once (see
+  [`DEBUG.md`](DEBUG.md)).
+- **No signing/notarization for now.** macOS 15+ requires "Open Anyway" for a
+  binary downloaded from the network. It is in `M-Z` of
+  [`BACKLOG`](BACKLOG.md) (the cost is the developer account, US$ 99/year), behind
+  `M-X`/`M-Y`: without a compiled target there is nothing to sign.
 
-## Emulação
+## Emulation
 
-- **Wide char funciona, é melhoria consciente** — e por isso o modelo de célula
-  tem marca de continuação (`WIDE_CONT`). O bzmux Python não tem: lá CJK ocupa
-  uma célula. Toda operação nova de grade precisa respeitar o par.
-- **Combinação de grafema**: cada célula carrega um `char`; marca combinante
-  que não veio junto no mesmo commit do texto vira célula própria. Compor de
-  verdade é atividade nova (`BACKLOG.md` M-U), não limite aceito para sempre.
-- **Sem ligaduras/shaping complexo** (G8): `swash` rasteriza glifo, não faz
-  shaping de HarfBuzz. Não há plano de trocar por `harfbuzz` nesta fase.
-- **Sem `IRM`/`LNM`** (insert mode, newline mode) e sem `CSI ? 3` (80/132):
-  raros a ponto de não pagar o teste. Ficam registrados no parser como
-  pendência conhecida.
-- **Sem DECDL/DECDHL** e sem double-height: nem o Python tem.
+- **Wide char works, it is a conscious improvement** — and that is why the cell
+  model has a continuation mark (`WIDE_CONT`). bzmux Python does not have it:
+  there CJK occupies one cell. Every new grid operation has to respect the pair.
+- **Grapheme combination**: each cell carries a `char`; a combining mark that did
+  not come together in the same commit as the text becomes its own cell. Really
+  composing is new activity (`BACKLOG.md` M-U), not a limit accepted forever.
+- **No ligatures/complex shaping** (G8): `swash` rasterizes a glyph, it does not
+  shape like HarfBuzz. There is no plan to switch to `harfbuzz` at this stage.
+- **No `IRM`/`LNM`** (insert mode, newline mode) and no `CSI ? 3` (80/132):
+  rare to the point of not paying for the test. They stay registered in the
+  parser as a known pending item.
+- **No DECDL/DECDHL** and no double-height: Python does not have them either.
 
-### Teclado
+### Keyboard
 
-- **Shift+letra no protocolo do kitty sai com o código *pós*-Shift**:
-  Shift+A vira `CSI 65;2u`, não `CSI 97;2u`. O `winit` entrega a tecla já
-  aplicada ao layout e a tecla **base** exigiria uma tabela de layout própria
-  (`xkb`/`keymap`) só para desfazer o Shift. O Python, via Gdk, tem a mesma
-  limitação: é paridade, não regressão. Quem precisar da tecla base para
-  atalho (`ctrl+shift+a` distinto de `ctrl+a`) só tem o código shiftado.
-- **F3 sai `CSI 1;2R`, divergindo do Python, de propósito.** O
-  `kitty_kbd.py` mapeia `GDK_KEY_F3` para `(13, "~")` — `13` é o número do
-  **Enter** e `CSI 13~` é Shift+F3 do xterm, não a forma do kitty (`F1`..`F4`
-  são `1P`..`1S`). O certo é o que está no código; não "consertar" de volta por
-  paridade.
+- **Shift+letter in the kitty protocol comes out with the *post*-Shift code**:
+  Shift+A becomes `CSI 65;2u`, not `CSI 97;2u`. `winit` delivers the key already
+  applied to the layout and the **base** key would require its own layout table
+  (`xkb`/`keymap`) only to undo Shift. Python, via Gdk, has the same limitation:
+  it is parity, not regression. Whoever needs the base key for a shortcut
+  (`ctrl+shift+a` distinct from `ctrl+a`) only has the shifted code.
+- **F3 comes out `CSI 1;2R`, diverging from Python, on purpose.** `kitty_kbd.py`
+  maps `GDK_KEY_F3` to `(13, "~")` — `13` is the number of **Enter** and
+  `CSI 13~` is xterm's Shift+F3, not the kitty form (`F1`..`F4` are `1P`..`1S`).
+  The right thing is what is in the code; do not "fix" it back for parity.
 
 ## Interface
 
-- **Atalhos fixos até a F3.** Não há remapeamento; a config em arquivo (que
-  vem na F3) cobre fonte, cores, padding, bell, scrollback.
-- **Sem tema escuro/claro automático**: a paleta vem da config, não do portal
-  do desktop.
-- **Sem menu de contexto e sem DnD** de arquivo na janela.
+- **Fixed shortcuts up to F3.** There is no remapping; the config file (which
+  comes in F3) covers font, colors, padding, bell, scrollback.
+- **No automatic dark/light theme**: the palette comes from the config, not from
+  the desktop portal.
+- **No context menu and no DnD** of a file onto the window.
 
-## Desenvolvimento
+## Development
 
-- **Número de desempenho mora em um lugar** ([`BENCHMARKS.md`](BENCHMARKS.md)) e
-  não em README, TASK ou comentário de código. Repetir número produz divergência
-  e cada re-medição vira uma caçada.
-- **`--no-vsync` não é modo de uso**: é instrumento. Em uso normal o desenho é
-  limitado pelo vsync, e é assim que deve ser.
+- **A performance number lives in one place** ([`BENCHMARKS.md`](BENCHMARKS.md))
+  and not in README, TASK or a code comment. Repeating a number produces
+  divergence and every re-measurement becomes a hunt.
+- **`--no-vsync` is not a mode of use**: it is an instrument. In normal use
+  drawing is limited by vsync, and that is how it should be.

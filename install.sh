@@ -1,31 +1,31 @@
 #!/usr/bin/env bash
-# install.sh — instala o bzmux (Rust) como o comando `bzmux`.
+# install.sh — installs bzmux (Rust) as the `bzmux` command.
 #
-# Diferente do instalador do bzmux Python, aqui não existe passo de dependência:
-# o binário é único e só precisa de libc/libm (+ o driver da GPU em tempo de
-# execução). Instalar = copiar um arquivo e, se quiser, uma entrada no menu.
+# Unlike the bzmux Python installer, there is no dependency step here:
+# the binary is single and only needs libc/libm (+ the GPU driver at
+# runtime). Installing = copying one file and, if you want, a menu entry.
 #
-# Uso (do repositório clonado):
-#   ./install.sh                 compila (release) e instala em ~/.local/bin/bzmux
-#   ./install.sh --prefix DIR    outro prefixo (o comando fica em DIR/bin/bzmux)
-#   ./install.sh --binary ARQ    instala um binário já compilado (não compila)
-#   ./install.sh --from-release  baixa o binário do GitHub Releases (sem cargo)
-#   ./install.sh --local         comando aponta para target/release/bzmux (dev)
-#   ./install.sh --no-shortcut   não cria a entrada no menu do sistema
-#   ./install.sh --check         confere a instalação existente
-#   ./install.sh --uninstall     remove comando, entrada e ícone
-#   ./install.sh --dry-run       mostra cada comando e não executa nada
+# Usage (from the cloned repository):
+#   ./install.sh                 builds (release) and installs into ~/.local/bin/bzmux
+#   ./install.sh --prefix DIR    another prefix (the command lands in DIR/bin/bzmux)
+#   ./install.sh --binary FILE   installs an already built binary (does not build)
+#   ./install.sh --from-release  downloads the binary from GitHub Releases (no cargo)
+#   ./install.sh --local         command points at target/release/bzmux (dev)
+#   ./install.sh --no-shortcut   does not create the system menu entry
+#   ./install.sh --check         checks the existing installation
+#   ./install.sh --uninstall     removes command, entry and icon
+#   ./install.sh --dry-run       prints every command and executes nothing
 #
-# Conviver com o bzmux Python: ele instala pelo pipx com o nome `bzmux`; este
-# instalador toma o nome e avisa se encontrar o shim do pipx no caminho. Depois
-# de instalar o Python com o nome novo (`tortty-python`), rode `pipx uninstall bzmux`
-# para não sobrar o shim antigo.
+# Living with the bzmux Python: it installs through pipx under the name `bzmux`; this
+# installer takes the name and warns if it finds the pipx shim on the path. After
+# installing the Python one under the new name (`tortty-python`), run `pipx uninstall bzmux`
+# so the old shim does not linger.
 #
-# MIT (ver LICENSE).
+# MIT (see LICENSE).
 set -euo pipefail
 
 APP=bzmux
-# Repositório de onde o --from-release baixa; troque quando o repo for público.
+# Repository the --from-release mode downloads from; change it when the repo goes public.
 REPO=${BZMUX_REPO:-bazoocaze/rust_term}
 PREFIX=${BZMUX_PREFIX:-$HOME/.local}
 
@@ -36,9 +36,9 @@ die()  { warn "bzmux: $*"; exit 1; }
 DRY=0; SHORTCUT=1; MODE=install; LOCAL=0; FROM_RELEASE=0; BINARY=""
 while [ $# -gt 0 ]; do
     case "$1" in
-        --prefix)      PREFIX=${2:?--prefix ask um diretório}; shift 2 ;;
+        --prefix)      PREFIX=${2:?--prefix needs a directory}; shift 2 ;;
         --prefix=*)    PREFIX=${1#*=}; shift ;;
-        --binary)      BINARY=${2:?--binary ask um file}; shift 2 ;;
+        --binary)      BINARY=${2:?--binary needs a file}; shift 2 ;;
         --binary=*)    BINARY=${1#*=}; shift ;;
         --from-release) FROM_RELEASE=1; shift ;;
         --local)       LOCAL=1; shift ;;
@@ -48,7 +48,7 @@ while [ $# -gt 0 ]; do
         --check)       MODE=check; shift ;;
         --dry-run)     DRY=1; shift ;;
         -h|--help)     awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
-        *) die "opção inválida: $1 (use -h)" ;;
+        *) die "invalid option: $1 (use -h)" ;;
     esac
 done
 
@@ -60,9 +60,9 @@ run() {
     if [ "$DRY" = 1 ]; then say "+ $*"; else "$@"; fi
 }
 
-# sudo só quando o destino não é gravável (ex.: --prefix /usr/local)
+# sudo only when the destination is not writable (e.g. --prefix /usr/local)
 SUDO=""
-# -w só vale para diretório existente: sobe até o ancestral mais próximo
+# -w only holds for an existing directory: walk up to the nearest ancestor
 writable() {
     local d=$1
     while [ ! -e "$d" ]; do d=$(dirname "$d"); done
@@ -71,21 +71,21 @@ writable() {
 need_sudo() {
     writable "$1" && { SUDO=""; return 0; }
     [ "$(id -u)" = 0 ] && { SUDO=""; return 0; }
-    # alvo dentro do $HOME e sem escrita: sudo não resolve (o dono é você), o
-    # caso é home somente leitura — diz o que fazer em vez de tentar escalar
+    # target inside $HOME and not writable: sudo does not help (you own it), the
+    # case is a read-only home — say what to do instead of trying to escalate
     case "$1" in
         "$HOME"/*)
-            die "sem escrita em $1 (home somente leitura?); use --prefix <dir gravável>" ;;
+            die "no write access to $1 (read-only home?); use --prefix <writable dir>" ;;
     esac
     if command -v sudo >/dev/null 2>&1; then
         SUDO="sudo"
-        # container com no-new-privileges derruba o sudo e despeja o erro dele;
-        # avisa antes, sem impedir o uso interativo (senha)
+        # a container with no-new-privileges kills sudo and dumps its error;
+        # warn beforehand, without blocking interactive use (password)
         sudo -n true 2>/dev/null ||
-            say "== aviso: sudo não roda sem senha aqui; se falhar, use --prefix \$HOME/.local"
+            say "== warning: sudo does not run without a password here; if it fails, use --prefix \$HOME/.local"
         return 0
     fi
-    die "sem permissão de escrita em $1 e sem sudo (use --prefix \$HOME/.local)"
+    die "no write permission on $1 and no sudo (use --prefix \$HOME/.local)"
 }
 
 here() { cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd; }
@@ -104,11 +104,11 @@ target_triple() {
     case "$m" in
         x86_64|amd64)   printf 'x86_64-unknown-linux-gnu' ;;
         aarch64|arm64)  printf 'aarch64-unknown-linux-gnu' ;;
-        *) die "arquitetura sem binário publicado: $m (compile com --binary)" ;;
+        *) die "architecture with no published binary: $m (build with --binary)" ;;
     esac
 }
 
-# -- avisos de convivência ------------------------------------------------
+# -- coexistence warnings ------------------------------------------------
 check_conflict() {
     local cur real mine
     cur=$(command -v "$APP" 2>/dev/null || true)
@@ -116,59 +116,59 @@ check_conflict() {
     real=$(readlink -f "$cur" 2>/dev/null || printf %s "$cur")
     mine=$(readlink -f "$BINDIR/$APP" 2>/dev/null || printf %s "$BINDIR/$APP")
     [ "$real" = "$mine" ] && return 0
-    # o shim do pipx em ~/.local/bin não tem "pipx" no caminho: quem tem é o alvo
+    # the pipx shim in ~/.local/bin has no "pipx" in the path: its target does
     case "$cur$real" in
-        *pipx*) warn "== '$APP' hoje é o bzmux **Python** ($real)"
-                warn "   este instalador assume o nome: instale o Python como 'tortty-python'"
-                warn "   e depois rode 'pipx uninstall bzmux' (a venv continua em"
-                warn "   ~/.local/share/pipx/venvs/bzmux enquanto você não remover)" ;;
-        *)      warn "== '$APP' já existe em $real; esta instalação fica em $BINDIR/$APP"
-                warn "   e quem responde no PATH é o primeiro da lista (confira com: $APP --version)" ;;
+        *pipx*) warn "== '$APP' is the **Python** bzmux today ($real)"
+                warn "   this installer takes the name over: install the Python one as 'tortty-python'"
+                warn "   and then run 'pipx uninstall bzmux' (the venv stays in"
+                warn "   ~/.local/share/pipx/venvs/bzmux until you remove it)" ;;
+        *)      warn "== '$APP' already exists at $real; this installation goes to $BINDIR/$APP"
+                warn "   and whoever answers on the PATH is the first one listed (check with: $APP --version)" ;;
     esac
 }
 
-# -- download do release --------------------------------------------------
+# -- release download ----------------------------------------------------
 fetch_release() {
     local look tag file url tmp
     look=$(version); tag="v$ver"
     file="bzmux-$ver-$(target_triple).tar.gz"
     url="https://github.com/$REPO/releases/download/$tag/$file"
-    command -v curl >/dev/null 2>&1 || die "--from-release precisa de curl"
+    command -v curl >/dev/null 2>&1 || die "--from-release needs curl"
     tmp=$(mktemp -d)
-    say "== baixando $url"
+    say "== downloading $url"
     curl -fsSL "$url" -o "$tmp/pkg.tgz" \
-        || die "sem release em $url (repo privado ou tag ausente: use --binary ou compile)"
+        || die "no release at $url (private repo or missing tag: use --binary or build)"
     tar -xzf "$tmp/pkg.tgz" -C "$tmp"
     local bin
     bin=$(find "$tmp" -type f -name "$APP" -perm -u+x | head -1)
-    [ -n "$bin" ] || die "o pacote baixado não tem o binário '$APP'"
+    [ -n "$bin" ] || die "the downloaded package has no '$APP' binary"
     printf '%s' "$bin"
 }
 
-# -- instalação -----------------------------------------------------------
+# -- installation --------------------------------------------------------
 do_install() {
     local src=""
     if [ "$LOCAL" = 1 ] && [ "$FROM_RELEASE" = 1 ]; then
-        die "--local e --from-release não combinam"
+        die "--local and --from-release do not combine"
     fi
 
     if [ -n "$BINARY" ]; then
-        [ -f "$BINARY" ] || die "binário não encontrado: $BINARY"
+        [ -f "$BINARY" ] || die "binary not found: $BINARY"
         src=$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")
-        say "== usando binário: $src"
+        say "== using binary: $src"
     elif [ "$FROM_RELEASE" = 1 ]; then
         src=$(fetch_release)
     elif [ "$LOCAL" = 1 ]; then
-        command -v cargo >/dev/null 2>&1 || die "--local precisa de cargo"
+        command -v cargo >/dev/null 2>&1 || die "--local needs cargo"
         run cargo build --release --manifest-path "$ROOT/Cargo.toml" --locked
         src="$ROOT/target/release/$APP"
-        [ -f "$src" ] || die "build não gerou $src"
+        [ -f "$src" ] || die "build did not produce $src"
     elif [ -n "$ROOT" ] && [ -f "$ROOT/Cargo.toml" ]; then
-        command -v cargo >/dev/null 2>&1 || die "cargo ausente (instale rustup, ou use --from-release)"
-        say "== compilando (release, ~2 min na primeira vez)"
+        command -v cargo >/dev/null 2>&1 || die "cargo missing (install rustup, or use --from-release)"
+        say "== building (release, ~2 min the first time)"
         run cargo build --release --manifest-path "$ROOT/Cargo.toml" --locked
         src="$ROOT/target/release/$APP"
-        [ -f "$src" ] || die "build não gerou $src"
+        [ -f "$src" ] || die "build did not produce $src"
     else
         src=$(fetch_release)
     fi
@@ -181,7 +181,7 @@ do_install() {
         say "== link: $BINDIR/$APP -> $src"
         run $SUDO ln -sfn "$src" "$BINDIR/$APP"
     else
-        say "== instalando: $BINDIR/$APP"
+        say "== installing: $BINDIR/$APP"
         run $SUDO command install -m 755 "$src" "$BINDIR/$APP"
     fi
 
@@ -196,7 +196,7 @@ do_install() {
         fi
         run $SUDO mkdir -p "$(dirname "$DESKTOP")"
         if [ "$DRY" = 1 ]; then
-            say "+ escrever $DESKTOP (Exec=$BINDIR/$APP)"
+            say "+ write $DESKTOP (Exec=$BINDIR/$APP)"
         else
             local tmpd
             tmpd=$(mktemp)
@@ -205,7 +205,7 @@ do_install() {
 Type=Application
 Name=bzmux
 GenericName=Terminal
-Comment=Terminal with workspaces e abas
+Comment=Terminal with workspaces and tabs
 Exec=$BINDIR/$APP
 TryExec=$BINDIR/$APP
 Icon=$APP
@@ -213,7 +213,7 @@ StartupWMClass=$APP
 Terminal=false
 Categories=System;TerminalEmulator;
 Keywords=terminal;shell;console;
-# sem notificacao de inicio: o app nao responde o contrato (B7)
+# no startup notification: the app does not honor the contract (B7)
 StartupNotify=false
 EOF
             $SUDO command install -m 644 "$tmpd" "$DESKTOP"
@@ -225,58 +225,58 @@ EOF
 
     if [ "$DRY" = 1 ]; then say "+ $BINDIR/$APP --version"; return 0; fi
 
-    # -- verificação ------------------------------------------------------
-    say "== verificação"
+    # -- verification -----------------------------------------------------
+    say "== verification"
     "$BINDIR/$APP" --version
     if command -v ldd >/dev/null 2>&1; then
         if ldd "$BINDIR/$APP" 2>/dev/null | grep -q 'not found'; then
-            die "o binário tem biblioteca faltando: $(ldd "$BINDIR/$APP" | grep 'not found')"
+            die "the binary has a missing library: $(ldd "$BINDIR/$APP" | grep 'not found')"
         fi
     fi
     case ":$PATH:" in
         *":$BINDIR:"*) : ;;
-        *) warn "== $BINDIR não está no PATH: adicione ao seu shell (export PATH=\"$BINDIR:\$PATH\")" ;;
+        *) warn "== $BINDIR is not on the PATH: add it to your shell (export PATH=\"$BINDIR:\$PATH\")" ;;
     esac
 
     say
-    say "pronto: rode '$APP' (atualizar: rode este instalador de novo)"
+    say "done: run '$APP' (to update: run this installer again)"
 }
 
 do_check() {
     local bin="$BINDIR/$APP"
-    [ -x "$bin" ] || die "não instalado em $bin"
-    say "binário:  $bin"
-    say "versão:   $("$bin" --version)"
-    say "tamanho:  $(du -h "$bin" | cut -f1)"
+    [ -x "$bin" ] || die "not installed at $bin"
+    say "binary:   $bin"
+    say "version:  $("$bin" --version)"
+    say "size:     $(du -h "$bin" | cut -f1)"
     local cur
     cur=$(command -v "$APP" 2>/dev/null || true)
     case "$cur" in
-        "$BINDIR/$APP") say "link:     $cur (este prefixo, no PATH)" ;;
-        "")             say "link:     (nada no PATH: adicione $BINDIR)" ;;
-        *)              say "link:     $cur (outro bzmux: $BINDIR não vem antes no PATH)" ;;
+        "$BINDIR/$APP") say "link:     $cur (this prefix, on the PATH)" ;;
+        "")             say "link:     (nothing on the PATH: add $BINDIR)" ;;
+        *)              say "link:     $cur (another bzmux: $BINDIR does not come first on the PATH)" ;;
     esac
     if command -v ldd >/dev/null 2>&1; then
-        say "libs:     $(ldd "$bin" | awk '{print $1}' | grep -c . ) entradas, faltando: $(ldd "$bin" | grep -c 'not found')"
+        say "libs:     $(ldd "$bin" | awk '{print $1}' | grep -c . ) entries, missing: $(ldd "$bin" | grep -c 'not found')"
     fi
-    [ -f "$DESKTOP" ] && say "menu:     $DESKTOP" || say "menu:     (sem entrada)"
-    [ -f "$ICON" ] && say "ícone:    $ICON" || true
+    [ -f "$DESKTOP" ] && say "menu:     $DESKTOP" || say "menu:     (no entry)"
+    [ -f "$ICON" ] && say "icon:     $ICON" || true
     if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
-        say "tela:     ${DISPLAY:-${WAYLAND_DISPLAY}}"
+        say "screen:   ${DISPLAY:-${WAYLAND_DISPLAY}}"
     fi
 }
 
 do_uninstall() {
     need_sudo "$PREFIX"
     if [ -L "$BINDIR/$APP" ] || [ -f "$BINDIR/$APP" ]; then
-        say "== removendo $BINDIR/$APP"
+        say "== removing $BINDIR/$APP"
         run $SUDO rm -f "$BINDIR/$APP"
     else
-        say "== nada em $BINDIR/$APP"
+        say "== nothing at $BINDIR/$APP"
     fi
     for f in "$DESKTOP" "$ICON"; do
         [ -e "$f" ] && { run $SUDO rm -f "$f"; }
     done
-    say "pronto: '$APP' removido de $PREFIX (nenhum outro bzmux foi tocado)"
+    say "done: '$APP' removed from $PREFIX (no other bzmux was touched)"
 }
 
 ROOT=$(here)

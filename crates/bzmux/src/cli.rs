@@ -1,14 +1,14 @@
-//! Linha de comando e arquivo de configuração.
+//! Command line and configuration file.
 //!
-//! Ordem de precedência: **CLI > arquivo do usuário > padrões embutidos**
-//! (`bzmux_core::config::DEFAULT_CONF`). O `--config ARQ` troca o caminho do
-//! arquivo do usuário; sem ele vale `$XDG_CONFIG_HOME/bzmux/bzmux.conf`.
+//! Precedence: **CLI > user file > built-in defaults**
+//! (`bzmux_core::config::DEFAULT_CONF`). `--config FILE` replaces the path of the
+//! user file; without it `$XDG_CONFIG_HOME/bzmux/bzmux.conf` applies.
 
 use std::path::PathBuf;
 
 use bzmux_core::config::{Config, Error};
 
-/// O que veio da linha de comando: só o que foi escrito (`None` = não veio).
+/// What came from the command line: only what was written (`None` = absent).
 #[derive(Default, Clone)]
 pub struct Overrides {
     pub cmd: Option<String>,
@@ -33,31 +33,31 @@ pub struct Options {
     pub cols: usize,
     pub rows: usize,
     pub font_family: String,
-    /// Tamanho em PONTOS, como o `font_size` do bzmux Python.
+    /// Size in POINTS, like `font_size` in the bzmux Python.
     pub font_size_pt: f32,
-    /// DPI usado para pt -> px (o `Xft.dpi` do Python). 96 = padrão X11.
+    /// DPI used for pt -> px (the Python `Xft.dpi`). 96 = X11 default.
     pub dpi: f32,
     pub scrollback: usize,
     pub debug_socket: Option<String>,
     pub debug_log: Option<String>,
     pub vsync: bool,
     pub prof: bool,
-    /// Segundos até fechar sozinho (`--quit-after`), usado pela automação.
+    /// Seconds until self-close (`--quit-after`), used by automation.
     pub quit_after: Option<u64>,
-    /// Onde o dump escreve (`--dump-to`); `None` = /tmp/bzmux-dump.txt.
+    /// Where the dump writes (`--dump-to`); `None` = /tmp/bzmux-dump.txt.
     pub dump_to: Option<PathBuf>,
-    /// O tema que não é da grade: paleta, cores, bell, padding, cursor.
+    /// The theme that is not the grid: palette, colors, bell, padding, cursor.
     pub cfg: Config,
-    /// De onde veio o arquivo do usuário (para o auto-reload e para o log).
+    /// Where the user file came from (for auto-reload and for the log).
     pub cfg_path: Option<PathBuf>,
-    /// `--cols`/`--rows` pedidos na linha de comando: a grade pedida vence a
-    /// geometria lembrada (é o que a automação e o bench precisam).
+    /// `--cols`/`--rows` asked on the command line: the requested grid wins over
+    /// the remembered geometry (what automation and the bench need).
     pub grid_explicito: bool,
 }
 
 impl Options {
-    /// Config do usuário + CLI. Devolve também os erros do arquivo (o app
-    /// mostra no log e, quando houver toast, na tela).
+    /// User config + CLI. Also returns the file errors (the app shows them in
+    /// the log and, once there is a toast, on screen).
     #[must_use]
     pub fn build(over: Overrides) -> (Options, Vec<Error>) {
         let path = over.config.clone().map(PathBuf::from).or_else(default_path);
@@ -78,13 +78,13 @@ impl Options {
                 }),
             }
         }
-        // CLI vence o arquivo, chave a chave
+        // CLI wins over the file, key by key
         let font_family = over.font_family.unwrap_or_else(|| cfg.font_family.clone());
         let font_size_pt = over.font_size_pt.unwrap_or(cfg.font_size);
         let scrollback = over.scrollback.unwrap_or(cfg.scrollback);
         let debug_log = over.debug_log.or_else(|| cfg.debug_log.clone());
-        // caminho vazio é "não pedi socket": sem isto o `bind("")` falha com
-        // uma mensagem que não diz nada (o Python trata vazio como desligado)
+        // empty path means "no socket asked for": otherwise `bind("")` fails
+        // with a message that says nothing (Python treats empty as off)
         let debug_socket = over.debug_socket.filter(|p| !p.is_empty());
         let grid_explicito = over.cols.is_some() || over.rows.is_some();
         let opts = Options {
@@ -109,7 +109,7 @@ impl Options {
     }
 }
 
-/// `$XDG_CONFIG_HOME/bzmux/bzmux.conf` (ou `~/.config/...`).
+/// `$XDG_CONFIG_HOME/bzmux/bzmux.conf` (or `~/.config/...`).
 #[must_use]
 pub fn default_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
@@ -119,31 +119,31 @@ pub fn default_path() -> Option<PathBuf> {
 }
 
 pub const HELP: &str = "\
-bzmux (Rust) — terminal com workspaces e abas
+bzmux (Rust) — terminal with workspaces and tabs
 
-USO:
-  bzmux [opções]
+USAGE:
+  bzmux [options]
 
-OPÇÕES:
-  --cmd CMD             comando inicial (vazio = $SHELL)
-  --cols N --rows N     grade inicial (default 80x24)
-  -c, --config ARQ      arquivo de configuração (default ~/.config/bzmux/bzmux.conf)
-  --font-family NOME    família (default do arquivo: Monospace)
-  --font-size PONTOS    tamanho em pontos (default do arquivo: 12)
-  --dpi N               dpi para converter pontos em pixels (default 96)
-  --scrollback N        teto de linhas do histórico
-  --debug-socket ARQ    socket JSON de introspecção (auto = XDG_RUNTIME_DIR)
-  --debug-log ARQ       arquivo de log de diagnóstico (off = desligado)
-  --no-vsync            desliga a sincronia vertical (mede vazão, não o monitor)
-  --prof                liga os contadores de custo (parse/draw/pty)
-  --selftest            roda os checks do núcleo sem abrir janela e sai
-  --quit-after SEG      fecha sozinho depois de SEG segundos (automação)
-  --dump-to ARQ         no fim (e em SIGUSR1), escreve o texto de todas as abas
-  -h, --help            esta ajuda
-  -V, --version         versão
+OPTIONS:
+  --cmd CMD             initial command (empty = $SHELL)
+  --cols N --rows N     initial grid (default 80x24)
+  -c, --config FILE     configuration file (default ~/.config/bzmux/bzmux.conf)
+  --font-family NAME    family (file default: Monospace)
+  --font-size POINTS    size in points (file default: 12)
+  --dpi N               dpi to convert points into pixels (default 96)
+  --scrollback N        cap on history lines
+  --debug-socket FILE   JSON introspection socket (auto = XDG_RUNTIME_DIR)
+  --debug-log FILE      diagnostic log file (off = disabled)
+  --no-vsync            disables vertical sync (measures throughput, not the monitor)
+  --prof                enables the cost counters (parse/draw/pty)
+  --selftest            runs the core checks without opening a window, then exits
+  --quit-after SECS     closes by itself after SECS seconds (automation)
+  --dump-to FILE        at the end (and on SIGUSR1), writes the text of every tab
+  -h, --help            this help
+  -V, --version         version
 
-O arquivo de configuração tem fonte, cores, bell, padding e scrollback:
-os padrões e as chaves estão em docs/CONFIG.md.
+The configuration file holds font, colors, bell, padding and scrollback:
+the defaults and the keys are in docs/CONFIG.md.
 ";
 
 pub fn parse(args: Vec<String>) -> Result<Overrides, String> {
@@ -170,7 +170,7 @@ pub fn parse(args: Vec<String>) -> Result<Overrides, String> {
             "--selftest" => o.selftest = true,
             "--quit-after" => o.quit_after = Some(num(&mut it, "--quit-after")? as u64),
             "--dump-to" => o.dump_to = Some(need(&mut it, "--dump-to")?),
-            other => return Err(format!("opção desconhecida: {other}\n\n{HELP}")),
+            other => return Err(format!("unknown option: {other}\n\n{HELP}")),
         }
     }
     if let Some(c) = o.cols {
@@ -183,35 +183,36 @@ pub fn parse(args: Vec<String>) -> Result<Overrides, String> {
 }
 
 fn need(it: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, String> {
-    it.next().ok_or_else(|| format!("falta o valor de {flag}"))
+    it.next()
+        .ok_or_else(|| format!("missing the value of {flag}"))
 }
 
 fn num(it: &mut impl Iterator<Item = String>, flag: &str) -> Result<usize, String> {
     let v = need(it, flag)?;
     v.parse()
-        .map_err(|_| format!("{flag} espera um inteiro: {v}"))
+        .map_err(|_| format!("{flag} expects an integer: {v}"))
 }
 
 fn float(it: &mut impl Iterator<Item = String>, flag: &str) -> Result<f32, String> {
     let v = need(it, flag)?;
     v.parse()
-        .map_err(|_| format!("{flag} espera um número: {v}"))
+        .map_err(|_| format!("{flag} expects a number: {v}"))
 }
 
-/// Equivalente ao `argv_parsing` do `checks.py`: o parsing de argv e o merge
-/// CLI > arquivo > padrões não abrem janela, então cabem num teste comum (o
-/// `--selftest` só roda o núcleo, que não conhece `cli.rs`).
-/// Código de saída para a mensagem de `parse`: `--help`/`--version` são
-/// informativas (0), **todo o resto é erro de uso (2)** — inclusive valor que
-/// não é número, que antes saía 0 e fazia script de automação passar por cima
-/// de um comando inválido.
+/// Equivalent of `argv_parsing` in `checks.py`: argv parsing and the merge
+/// CLI > file > defaults open no window, so they fit in an ordinary test
+/// (`--selftest` only runs the core, which does not know `cli.rs`).
+/// Exit code for the `parse` message: `--help`/`--version` are informative
+/// (0), **everything else is a usage error (2)** — including a value that is
+/// not a number, which used to exit 0 and let automation scripts walk over an
+/// invalid command.
 #[must_use]
 pub fn exit_code(msg: &str) -> i32 {
-    // `--help` e `--version` **começam** com o nome do programa; a mensagem de
-    // erro de uso também traz a ajuda colada no fim, então procurar "USO:" no
-    // texto classificava erro como ajuda
-    let informativa = msg.starts_with("bzmux ");
-    if informativa {
+    // `--help` and `--version` **start** with the program name; the usage error
+    // message also carries the help glued at the end, so looking for "USAGE:" in
+    // the text classified an error as help
+    let informative = msg.starts_with("bzmux ");
+    if informative {
         0
     } else {
         2
@@ -228,18 +229,18 @@ mod checks_cli {
         v.iter().map(|s| (*s).to_string()).collect()
     }
 
-    /// `parse` devolve `Err` também para `--help`/`--version`; `Overrides`
-    /// (de propósito) não tem `Debug`, então nada de `unwrap`/`expect` aqui.
+    /// `parse` also returns `Err` for `--help`/`--version`; `Overrides`
+    /// (on purpose) has no `Debug`, so no `unwrap`/`expect` here.
     fn ok(v: &[&str]) -> Overrides {
         match parse(args(v)) {
             Ok(o) => o,
-            Err(e) => panic!("{v:?} devia ser válido: {e}"),
+            Err(e) => panic!("{v:?} should be valid: {e}"),
         }
     }
 
     fn error(v: &[&str]) -> String {
         match parse(args(v)) {
-            Ok(_) => panic!("{v:?} devia ser erro de uso"),
+            Ok(_) => panic!("{v:?} should be a usage error"),
             Err(e) => e,
         }
     }
@@ -248,18 +249,18 @@ mod checks_cli {
         (a - b).abs() < f32::EPSILON
     }
 
-    fn conf_temporario(name: &str, text: &str) -> PathBuf {
+    fn temp_conf(name: &str, text: &str) -> PathBuf {
         let p = std::env::temp_dir().join(format!("bzmux-{}-{name}.conf", std::process::id()));
-        std::fs::write(&p, text).expect("escrever o config de teste");
+        std::fs::write(&p, text).expect("write the test config");
         p
     }
 
     #[test]
-    fn argv_empty_not_asks_nada() {
-        // sem argumento nada é sobrescrito: os padrões entram no `build`
+    fn argv_empty_asks_nothing() {
+        // with no argument nothing is overridden: the defaults come in `build`
         let o = ok(&[]);
         assert!(o.cmd.is_none(), "cmd");
-        assert!(o.cols.is_none() && o.rows.is_none(), "grade");
+        assert!(o.cols.is_none() && o.rows.is_none(), "grid");
         assert!(o.config.is_none(), "config");
         assert!(o.font_family.is_none() && o.font_size_pt.is_none() && o.dpi.is_none());
         assert!(o.scrollback.is_none(), "scrollback");
@@ -269,13 +270,13 @@ mod checks_cli {
     }
 
     #[test]
-    fn argv_command_e_grade() {
+    fn argv_command_and_grid() {
         let o = ok(&["--cmd", "mc", "--quit-after", "2"]);
         assert_eq!(o.cmd.as_deref(), Some("mc"));
         assert_eq!(o.quit_after, Some(2));
         let o = ok(&["--cols", "100", "--rows", "40"]);
         assert_eq!((o.cols, o.rows), (Some(100), Some(40)));
-        // grade vazia não existe: 0 vira 1
+        // an empty grid does not exist: 0 becomes 1
         let o = ok(&["--cols", "0", "--rows", "0"]);
         assert_eq!((o.cols, o.rows), (Some(1), Some(1)));
     }
@@ -289,13 +290,13 @@ mod checks_cli {
     }
 
     #[test]
-    fn argv_debug_socket_e_log() {
-        // socket de introspecção: valor obrigatório, `auto` resolvido depois
+    fn argv_debug_socket_and_log() {
+        // introspection socket: value required, `auto` resolved later
         for v in ["auto", "/tmp/b.sock"] {
             let o = ok(&["--debug-socket", v]);
             assert_eq!(o.debug_socket.as_deref(), Some(v));
         }
-        // `--debug-log` troca o caminho; `off` passa cru ao `Options::build`
+        // `--debug-log` swaps the path; `off` passes through raw to `Options::build`
         let o = ok(&["--debug-log", "/tmp/x.log"]);
         assert_eq!(o.debug_log.as_deref(), Some("/tmp/x.log"));
         let o = ok(&["--debug-log", "off"]);
@@ -303,7 +304,7 @@ mod checks_cli {
     }
 
     #[test]
-    fn argv_rest_of_opcoes() {
+    fn argv_rest_of_options() {
         let o = ok(&[
             "--font-family",
             "Hack",
@@ -329,35 +330,35 @@ mod checks_cli {
     }
 
     #[test]
-    fn argv_error_de_uso() {
-        // valor faltando: a mensagem nomeia a opção
+    fn argv_usage_error() {
+        // missing value: the message names the option
         let e = error(&["--cmd"]);
-        assert!(e.contains("--cmd") && e.starts_with("falta"), "{e}");
+        assert!(e.contains("--cmd") && e.starts_with("missing"), "{e}");
         let e = error(&["--debug-socket"]);
         assert!(e.contains("--debug-socket"), "{e}");
-        // opção desconhecida: erro de uso com a ajuda junto
-        let e = error(&["--nada"]);
-        assert!(e.starts_with("opção desconhecida"), "{e}");
-        assert!(e.contains("--nada") && e.contains("--cmd"), "{e}");
-        // valor que não é número
+        // unknown option: usage error with the help attached
+        let e = error(&["--nope"]);
+        assert!(e.starts_with("unknown option"), "{e}");
+        assert!(e.contains("--nope") && e.contains("--cmd"), "{e}");
+        // value that is not a number
         let e = error(&["--quit-after", "abc"]);
         assert!(e.contains("--quit-after") && e.contains("abc"), "{e}");
-        let e = error(&["--font-size", "grande"]);
-        assert!(e.contains("--font-size") && e.contains("grande"), "{e}");
+        let e = error(&["--font-size", "big"]);
+        assert!(e.contains("--font-size") && e.contains("big"), "{e}");
         let e = error(&["--rows", "-1"]);
         assert!(e.contains("--rows"), "{e}");
     }
 
     #[test]
-    fn codigo_de_saida_do_uso() {
-        // informativa = 0 (quem canaliza `--help` num script não vê erro)
+    fn usage_exit_code() {
+        // informative = 0 (piping `--help` into a script sees no error)
         assert_eq!(exit_code(&error(&["--help"])), 0);
         assert_eq!(exit_code(&error(&["--version"])), 0);
-        // erro de uso = 2, inclusive valor que não é número (saía 0 antes)
+        // usage error = 2, including a value that is not a number (used to exit 0)
         for v in [
             &["--cols", "abc"][..],
             &["--quit-after", "x"][..],
-            &["--nada"][..],
+            &["--nope"][..],
             &["--cmd"][..],
         ] {
             assert_eq!(exit_code(&error(v)), 2, "{v:?}");
@@ -365,11 +366,11 @@ mod checks_cli {
     }
 
     #[test]
-    fn argv_help_e_version() {
-        // --help e --version saem pelo mesmo caminho (Err), sem abrir janela
+    fn argv_help_and_version() {
+        // --help and --version leave through the same path (Err), without a window
         let h = error(&["--help"]);
         assert!(h.starts_with("bzmux"), "{h}");
-        assert!(h.contains("USO:") && h.contains("--selftest"), "{h}");
+        assert!(h.contains("USAGE:") && h.contains("--selftest"), "{h}");
         assert_eq!(error(&["-h"]), h);
         let v = error(&["--version"]);
         assert_eq!(v, format!("bzmux {}", env!("CARGO_PKG_VERSION")));
@@ -377,9 +378,9 @@ mod checks_cli {
     }
 
     #[test]
-    fn merge_do_file_e_cli_vence() {
-        // o usuário só sobrescreve o que escreveu; a CLI vence chave a chave
-        let p = conf_temporario(
+    fn merge_file_and_cli_wins() {
+        // the user only overrides what they wrote; the CLI wins key by key
+        let p = temp_conf(
             "merge",
             "shell /bin/sh\nfont_family DejaVu Sans Mono\nfont_size 14\n\
              scrollback 200\nbell visual\n",
@@ -394,10 +395,10 @@ mod checks_cli {
         assert!(near(opts.font_size_pt, 14.0));
         assert_eq!(opts.scrollback, 200);
         assert_eq!(opts.cfg.bell, Bell::Visual);
-        // `shell` é dado, não resolução: quem decide é o `pty::spawn`
+        // `shell` is data, not resolution: `pty::spawn` decides
         assert_eq!(opts.cfg.shell.as_deref(), Some("/bin/sh"));
         assert_eq!(opts.cfg_path.as_deref(), Some(p.as_path()));
-        // o que nem arquivo nem CLI trazem cai no padrão do código
+        // what neither file nor CLI brings falls back to the code default
         assert_eq!((opts.cols, opts.rows), (80, 24));
         assert!(near(opts.dpi, 96.0) && opts.vsync);
         assert_eq!(opts.cmd, None);
@@ -413,13 +414,13 @@ mod checks_cli {
         assert_eq!(opts.font_family, "Hack");
         assert!(near(opts.font_size_pt, 20.0));
         assert_eq!(opts.scrollback, 50);
-        // a chave que a CLI não tocou continua vindo do arquivo
+        // the key the CLI did not touch keeps coming from the file
         assert_eq!(opts.cfg.bell, Bell::Visual);
 
-        // arquivo inexistente: valem os padrões, sem erro
-        let sumido = p.with_extension("nao-existe");
+        // missing file: the defaults apply, no error
+        let gone = p.with_extension("does-not-exist");
         let (opts, errs) = Options::build(Overrides {
-            config: Some(sumido.to_string_lossy().into_owned()),
+            config: Some(gone.to_string_lossy().into_owned()),
             ..Overrides::default()
         });
         assert!(errs.is_empty(), "{errs:?}");
@@ -427,11 +428,11 @@ mod checks_cli {
         assert_eq!(opts.scrollback, 10_000);
         assert_eq!(opts.debug_log, None);
         assert_eq!(opts.cfg.shell, None);
-        assert_eq!(opts.cfg_path.as_deref(), Some(sumido.as_path()));
+        assert_eq!(opts.cfg_path.as_deref(), Some(gone.as_path()));
 
-        // erro é por linha: o válido antes do erro aplica, o inválido fica no
-        // padrão; quem loga/mostra é o `main` (aqui a lista vem com a linha)
-        let bad = conf_temporario("ruim", "font_size 20\nbell beep\n");
+        // the error is per line: the valid line before it applies, the invalid
+        // one stays at the default; `main` logs/shows it (here the list carries the line)
+        let bad = temp_conf("bad", "font_size 20\nbell beep\n");
         let (opts, errs) = Options::build(Overrides {
             config: Some(bad.to_string_lossy().into_owned()),
             ..Overrides::default()

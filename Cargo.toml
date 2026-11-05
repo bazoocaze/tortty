@@ -7,14 +7,14 @@ version = "1.0.6"
 edition = "2021"
 license = "MIT"
 
-# Lints de workspace: os crates aderem com `[lints] workspace = true`.
+# Workspace lints: the crates opt in with `[lints] workspace = true`.
 #
-# Regra de ouro: lint que o código **quer** violar fica aqui, com o motivo.
-# Terminal é aritmética de célula — truncar f32 para u16 e perder precisão de
-# f32 é o desenho, não descuido. O que sobra do `pedantic` é sinal: formato
-# inline, `&str` no lugar de `String`, item depois de statement.
+# Rule of thumb: a lint the code **wants** to violate lives here, with the reason.
+# A terminal is cell arithmetic — truncating f32 to u16 and losing f32 precision
+# is the design, not sloppiness. What is left of `pedantic` is signal: inline
+# format args, `&str` instead of `String`, item after statement.
 [workspace.lints.rust]
-unsafe_code = "deny" # único bloco permitido: `#[allow]` local em debugsock (SO_PEERCRED)
+unsafe_code = "deny" # only allowed block: a local `#[allow]` in debugsock (SO_PEERCRED)
 unused_must_use = "deny"
 rust_2018_idioms = { level = "warn", priority = -1 }
 
@@ -24,19 +24,19 @@ correctness = { level = "deny", priority = -1 }
 suspicious = { level = "deny", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 
-# aritmética de célula/pixel: conversão é o domínio, não acidente
+# cell/pixel arithmetic: casting is the domain, not an accident
 cast_possible_truncation = "allow"
 cast_possible_wrap = "allow"
 cast_precision_loss = "allow"
 cast_sign_loss = "allow"
 cast_lossless = "warn"
-# API interna de app, não biblioteca publicada
+# app-internal API, not a published library
 doc_markdown = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 module_name_repetitions = "allow"
 must_use_candidate = "allow"
-# `new()` que devolve `Self` sem validação não precisa de `#[must_use]`
+# a `new()` returning `Self` without validation does not need `#[must_use]`
 return_self_not_must_use = "allow"
 
 [profile.release]
@@ -45,7 +45,7 @@ lto = "thin"
 codegen-units = 1
 panic = "abort"
 
-# O parse é o caminho quente do benchmark: sem otimização o número não vale.
+# Parsing is the benchmark's hot path: without optimisation the number is worthless.
 [profile.bench]
 opt-level = 3
 lto = "thin"

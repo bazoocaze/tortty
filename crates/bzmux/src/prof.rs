@@ -1,7 +1,7 @@
-//! Contadores de custo por etapa (o `PYTERM_PROF` do bzmux Python).
+//! Cost counters per stage (the `PYTERM_PROF` of the bzmux Python).
 //!
-//! Ligado por `--prof` ou pelo verbo `prof` do socket. Atomos porque o custo de
-//! pty é medido na thread leitora e o de parse/desenho na thread da UI.
+//! Turned on by `--prof` or by the socket verb `prof`. Atomics because the pty
+//! cost is measured on the reader thread and the parse/draw one on the UI thread.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -17,7 +17,7 @@ pub static PTY_READS: AtomicU64 = AtomicU64::new(0);
 pub static PTY_BYTES: AtomicU64 = AtomicU64::new(0);
 pub static WRITE_CALLS: AtomicU64 = AtomicU64::new(0);
 pub static WRITE_BYTES: AtomicU64 = AtomicU64::new(0);
-/// Escritas que voltaram sem aceitar tudo (`EAGAIN`/curto) e foram repetidas.
+/// Writes that came back without accepting everything (`EAGAIN`/short) and were repeated.
 pub static EAGAIN: AtomicU64 = AtomicU64::new(0);
 
 #[inline]
@@ -69,8 +69,8 @@ fn ms(ns: u64, call: u64) -> f64 {
     }
 }
 
-/// Linha no mesmo formato do Python (`prof: draw Nx X.XXms/call (...) | pty ...`),
-/// para o mesmo `grep` servir nos dois terminais.
+/// Line in the same format as Python (`prof: draw Nx X.XXms/call (...) | pty ...`),
+/// so the same `grep` works in both terminals.
 pub fn summary() -> String {
     let dc = DRAW_CALLS.load(Ordering::Relaxed);
     let pc = PARSE_CALLS.load(Ordering::Relaxed);
@@ -110,7 +110,7 @@ pub fn reset() {
     }
 }
 
-/// Campos do verbo `prof` (o `benchrun` lê `draw` e `pty` daqui).
+/// Fields of the `prof` verb (the `benchrun` reads `draw` and `pty` from here).
 pub fn fields() -> serde_json::Value {
     let dc = DRAW_CALLS.load(Ordering::Relaxed);
     let pc = PARSE_CALLS.load(Ordering::Relaxed);

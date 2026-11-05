@@ -1,5 +1,5 @@
 target/
 *.log
-pi/
+.pi/
 docs/NAMING.md
 tools/.sandbox-cargo-scratch/

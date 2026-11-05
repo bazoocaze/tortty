@@ -1,57 +1,57 @@
-//! Dano: quais linhas da grade precisam ser remontadas neste frame (A17/G17).
+//! Damage: which grid lines must be rebuilt in this frame (A17/G17).
 //!
-//! O equivalente no Python é o `queue_draw_area` do GTK (`view.py:330-364`):
-//! quem escreve marca a linha, e o desenho só refaz o que sujou. Aqui a marca já
-//! existe no núcleo (`Term::dirty` / `dirty_all`); o que faltava era o desenho
-//! usá-la em vez de remontar a grade inteira a cada frame.
+//! The Python equivalent is GTK's `queue_draw_area` (`view.py:330-364`): whoever
+//! writes marks the line, and drawing only remakes what got dirty. Here the mark
+//! already exists in the core (`Term::dirty` / `dirty_all`); what was missing was
+//! drawing using it instead of rebuilding the whole grid every frame.
 //!
-//! A decisão mora aqui, num módulo puro, por um motivo: é onde é fácil errar.
-//! Marcar "só a linha suja" é seguro apenas quando **nada global** mudou — se a
-//! visão rolou, se a seleção apareceu, se o tema trocou ou se o número de linhas
-//! mudou, todas as linhas são outras. Isso é a [`Signature`]: se ela mudou, o
-//! frame é inteiro; se não mudou, vale o dano linha a linha. Guardar essa regra
-//! num só lugar (em vez de espalhá-la pelo `app` e pelo `render`) é o que evita
-//! o bug clássico de "aparece conteúdo velho até rolar a tela".
+//! The decision lives here, in a pure module, for one reason: this is where it is
+//! easy to get wrong. Marking "only the dirty line" is safe only when **nothing
+//! global** changed — if the view scrolled, if the selection showed up, if the
+//! theme changed or if the line count changed, every line is a different one.
+//! That is the [`Signature`]: if it changed, the frame is whole; if it did not,
+//! the line-by-line damage applies. Keeping that rule in one place (instead of
+//! spreading it through `app` and `render`) is what avoids the classic bug of
+//! "stale content shows up until the screen scrolls".
 
-/// Tudo o que muda a tela inteira de uma vez.
+/// Everything that changes the whole screen at once.
 ///
-/// Deliberadamente **não** entram aqui coisas que são desenhadas fora da grade
-/// (cursor, barra de abas, sidebar, toast, badge de histórico): elas não moram
-/// em [`crate::render::Renderer::por_linha`] e são remontadas todo frame de
-/// qualquer jeito.
+/// Deliberately **not** here are things drawn outside the grid (cursor, tab bar,
+/// sidebar, toast, history badge): they do not live in
+/// [`crate::render::Renderer::por_linha`] and are rebuilt every frame anyway.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct Signature {
-    /// Qual aba/terminal está na tela: trocar de aba troca todo o conteúdo.
+    /// Which tab/terminal is on screen: switching tabs swaps all the content.
     pub tab: u64,
     pub cols: usize,
-    /// Linhas visíveis (muda quando a barra de abas aparece, por exemplo).
+    /// Visible lines (changes when the tab bar shows up, for example).
     pub rows: usize,
-    /// Quantas linhas o histórico subiu: muda o conteúdo de todas as linhas.
+    /// How many lines the history scrolled: changes the content of every line.
     pub view_off: usize,
-    /// Seleção visível, já recortada na tela: `(linha1, col1, linha2, col2)`.
+    /// Visible selection, already clipped to the screen: `(row1, col1, row2, col2)`.
     pub sel: Option<(usize, usize, usize, usize)>,
-    /// Fase do pisca **quando existe** célula com SGR 5 à vista. Sem isso o
-    /// pisca do cursor obrigaria um rebuild completo duas vezes por segundo.
+    /// Blink phase **when** an SGR 5 cell is on screen. Without it the cursor
+    /// blink would force a full rebuild twice a second.
     pub blink: bool,
-    /// Geração do tema: paleta, fg/bg/cursor e fonte mudam a cor de tudo.
+    /// Theme generation: palette, fg/bg/cursor and font change the color of everything.
     pub theme: u64,
     pub fg: (u8, u8, u8),
     pub bg: (u8, u8, u8),
 }
 
-/// O que remontar neste frame.
+/// What to rebuild in this frame.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Damage {
-    /// `All`: mudou algo de tela inteira (ou o dano do núcleo é global).
+    /// `All`: something screen-wide changed (or the core damage is global).
     All,
-    /// `Rows`: só estas linhas (as outras ficam como estão).
+    /// `Rows`: only these lines (the others stay as they are).
     Rows(Vec<usize>),
 }
 
-/// Decide o dano do frame e já atualiza a assinatura guardada.
+/// Decides the frame damage and already updates the stored signature.
 ///
-/// `dirty` é o dano do núcleo (uma posição por linha da grade). Linha que não
-/// existe no vetor conta como suja: dano desconhecido nunca vira tela velha.
+/// `dirty` is the core damage (one position per grid line). A line missing from
+/// the vector counts as dirty: unknown damage never turns into a stale screen.
 pub fn decide(
     current: &Signature,
     previous: &mut Signature,
@@ -92,9 +92,9 @@ mod tests {
     }
 
     #[test]
-    fn trocar_de_tab_remonta_all() {
-        // duas abas com a mesma geometria: reaproveitar a linha da outra
-        // mostraria o conteúdo errado
+    fn switching_tab_rebuilds_all() {
+        // two tabs with the same geometry: reusing the other one's line would
+        // show the wrong content
         let mut previous = signature();
         let mut next = signature();
         next.tab = 2;
@@ -105,7 +105,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_line_suja_e_remontada() {
+    fn only_a_dirty_line_is_rebuilt() {
         let mut previous = signature();
         let mut dirty = vec![false; 24];
         dirty[7] = true;
@@ -114,7 +114,7 @@ mod tests {
     }
 
     #[test]
-    fn nada_dirty_not_remonta_nada() {
+    fn nothing_dirty_rebuilds_nothing() {
         let mut previous = signature();
         let d = decide(&signature(), &mut previous, false, &[false; 24], 24);
         assert_eq!(d, Damage::Rows(vec![]));
@@ -130,7 +130,7 @@ mod tests {
     }
 
     #[test]
-    fn scroll_a_visao_remonta_all() {
+    fn scrolling_the_view_rebuilds_all() {
         let mut previous = signature();
         let mut next = signature();
         next.view_off = 3;
@@ -141,7 +141,7 @@ mod tests {
     }
 
     #[test]
-    fn selecao_remonta_all() {
+    fn selection_rebuilds_all() {
         let mut previous = signature();
         let mut next = signature();
         next.sel = Some((3, 1, 3, 5));
@@ -152,7 +152,7 @@ mod tests {
     }
 
     #[test]
-    fn trocar_o_theme_remonta_all() {
+    fn switching_theme_rebuilds_all() {
         let mut previous = signature();
         let mut next = signature();
         next.theme = 2;
@@ -163,8 +163,8 @@ mod tests {
     }
 
     #[test]
-    fn line_numero_apareceu_remonta_all() {
-        // 24 → 23 linhas (a barra de abas roubou uma): tudo é outra linha
+    fn line_count_appeared_rebuilds_all() {
+        // 24 → 23 lines (the tab bar stole one): everything is another line
         let mut previous = signature();
         let mut next = signature();
         next.rows = 23;
@@ -175,7 +175,7 @@ mod tests {
     }
 
     #[test]
-    fn pisca_with_celula_sgr5_remonta_all() {
+    fn blink_with_sgr5_cell_rebuilds_all() {
         let mut previous = signature();
         let mut next = signature();
         next.blink = true;
@@ -187,19 +187,19 @@ mod tests {
 
     #[test]
     fn unknown_damage_counts_as_dirty() {
-        // `dirty` menor que as linhas: o que falta é remontado, não ignorado
+        // `dirty` shorter than the lines: what is missing is rebuilt, not ignored
         let mut previous = signature();
         let d = decide(&signature(), &mut previous, false, &[false, true], 4);
         assert_eq!(d, Damage::Rows(vec![1, 2, 3]));
     }
 
     #[test]
-    fn a_signature_e_guardada_to_o_frame_next() {
+    fn signature_is_stored_for_the_next_frame() {
         let mut previous = signature();
         let mut next = signature();
         next.view_off = 5;
         let _ = decide(&next, &mut previous, false, &[false; 24], 24);
-        // o frame seguinte, igual, já não é "tudo"
+        // the next frame, identical, is no longer "everything"
         let d = decide(&next, &mut previous, false, &[false; 24], 24);
         assert_eq!(d, Damage::Rows(vec![]));
     }

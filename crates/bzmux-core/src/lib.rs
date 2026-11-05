@@ -1,8 +1,8 @@
-//! Núcleo de emulação do bzmux.
+//! bzmux emulation core.
 //!
-//! Regra herdada do bzmux Python: **nada aqui conhece GUI, pty ou GPU**. Tudo
-//! que este crate faz é transformar bytes do filho em grade de células, e é por
-//! isso que o benchmark de parser roda sem display.
+//! Rule inherited from bzmux Python: **nothing here knows about GUI, pty or
+//! GPU**. All this crate does is turn bytes from the child into a grid of cells,
+//! and that is why the parser benchmark runs without a display.
 
 pub mod cell;
 pub mod charset;

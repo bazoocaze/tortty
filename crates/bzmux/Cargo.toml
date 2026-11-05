@@ -3,7 +3,7 @@ name = "bzmux"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Terminal com workspaces e abas (experimento Rust do bzmux)"
+description = "Terminal with workspaces and tabs (the Rust experiment of bzmux)"
 
 [lints]
 workspace = true
@@ -11,7 +11,7 @@ workspace = true
 [dependencies]
 bzmux-core = { path = "../bzmux-core" }
 winit = "0.30"
-# PNG do protocolo de gráficos do kitty (f=100); puro em Rust
+# PNG of the kitty graphics protocol (f=100); pure Rust
 png = "0.17"
 wgpu = "30"
 bytemuck = { version = "1", features = ["derive"] }
@@ -20,7 +20,7 @@ fontdb = "0.23"
 swash = "0.2"
 portable-pty = "0.9"
 serde_json = "1"
-# só texto: `default-features = false` tira o suporte a imagem (tiff/png/jpeg)
+# text only: `default-features = false` drops image support (tiff/png/jpeg)
 arboard = { version = "3.7", default-features = false }
 rustybuzz = "0.20.1"
 

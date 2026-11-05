@@ -14,8 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # winit (x11/wayland) e wgpu precisam dos headers de sistema para linkar
-      - name: deps de sistema
+      # winit (x11/wayland) and wgpu need the system headers to link
+      - name: system deps
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -25,14 +25,14 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      # o mesmo script do pre-commit: hook e CI não podem discordar
+      # the same script as the pre-commit: hook and CI cannot disagree
       - name: fmt + clippy + test
         run: ./tools/check.sh
-      # o instalador é o que o usuário roda: um passo em prefixo temporário pega
-      # caminho quebrado, `install` faltando e `--version` que não responde
-      - name: selftest (sem display)
+      # the installer is what the user runs: a step on a temporary prefix catches a
+      # broken path, a missing `install` and a `--version` that does not answer
+      - name: selftest (no display)
         run: ./target/release/bzmux --selftest
-      - name: instalador
+      - name: installer
         run: |
           ./install.sh --prefix "$RUNNER_TEMP/inst" --no-shortcut \
             --binary target/release/bzmux

@@ -1,19 +1,19 @@
-//! Atlas de glifos: textura R8 com alocação por prateleira.
+//! Glyph atlas: R8 texture with shelf allocation.
 //!
-//! Um glifo é rasterizado uma vez e reusado em todo frame; o frame monta
-//! somente vértices. O pixel branco no canto serve de "textura" para os quad
-//! sólidos (fundo, sublinhado, cursor), o que permite um pipeline só.
+//! A glyph is rasterized once and reused across every frame; the frame builds
+//! only vertices. The white pixel in the corner serves as the "texture" for the
+//! solid quads (background, underline, cursor), which allows a single pipeline.
 
 use wgpu::util::DeviceExt;
 
 pub const ATLAS_SIZE: u32 = 2048;
-/// Borda em volta do bloco branco, longe dos glifos.
+/// Border around the white block, away from the glyphs.
 const WHITE: u32 = 4;
 
 pub struct Atlas {
     pub tex: wgpu::Texture,
     pub view: wgpu::TextureView,
-    /// Bytes por pixel: 1 = máscara (glifo), 4 = RGBA (emoji colorido).
+    /// Bytes per pixel: 1 = mask (glyph), 4 = RGBA (colored emoji).
     bpp: u32,
     size: u32,
     data: Vec<u8>,
@@ -25,8 +25,8 @@ pub struct Atlas {
 }
 
 impl Atlas {
-    /// Atlas RGBA para glifo colorido (emoji): o mesmo layout de prateleira,
-    /// com 4 bytes por pixel.
+    /// RGBA atlas for colored glyphs (emoji): the same shelf layout, with 4
+    /// bytes per pixel.
     pub fn new_rgba(device: &wgpu::Device) -> Atlas {
         let mut atlas = Atlas::new(device);
         let size = atlas.size;
@@ -38,8 +38,8 @@ impl Atlas {
                 atlas.data[i..i + 4].copy_from_slice(&[255, 255, 255, 255]);
             }
         }
-        // `new` deixou o bloco branco pendente em 1 byte/pixel; aqui ele é
-        // RGBA, senão o `write_texture` do flush não fecha com o `bpp`.
+        // `new` left the white block pending at 1 byte/pixel; here it is RGBA,
+        // otherwise the flush `write_texture` does not match the `bpp`.
         atlas.pending = vec![(
             0,
             0,
@@ -76,7 +76,7 @@ impl Atlas {
     pub fn new(device: &wgpu::Device) -> Atlas {
         let size = ATLAS_SIZE;
         let mut data = vec![0u8; (size * size) as usize];
-        // bloco branco (WHITE x WHITE) no canto
+        // white block (WHITE x WHITE) in the corner
         for y in 0..WHITE {
             for x in 0..WHITE {
                 data[(y * size + x) as usize] = 255;
@@ -109,19 +109,19 @@ impl Atlas {
             pending: Vec::new(),
             uv_white: [0.0; 4],
         };
-        // centro do bloco branco: evita amostrar a borda
+        // center of the white block: avoids sampling the border
         let c = (WHITE as f32 / 2.0) / size as f32;
         atlas.uv_white = [c, c, c, c];
-        // o bloco branco precisa ir para a GPU no primeiro flush
+        // the white block has to reach the GPU on the first flush
         atlas
             .pending
             .push((0, 0, WHITE, WHITE, vec![255u8; (WHITE * WHITE) as usize]));
         atlas
     }
 
-    /// Reserva espaço e devolve o retângulo UV (u0, v0, u1, v1).
-    // w/h/x/y/u/v são as coordenadas de um retângulo no atlas: renomear só
-    // afasta o código do desenho
+    /// Reserves space and returns the UV rectangle (u0, v0, u1, v1).
+    // w/h/x/y/u/v are the coordinates of a rectangle in the atlas: renaming
+    // them only moves the code further from the drawing
     #[allow(clippy::many_single_char_names)]
     pub fn add(&mut self, w: u32, h: u32, data: &[u8]) -> Option<[f32; 4]> {
         if w == 0 || h == 0 || w + 2 > self.size || h + 2 > self.size {
@@ -133,7 +133,7 @@ impl Atlas {
             self.row_h = 0;
         }
         if self.y + h + 1 > self.size {
-            return None; // atlas cheio: o glifo cai fora deste frame
+            return None; // atlas full: the glyph is dropped from this frame
         }
         let (x, y) = (self.x, self.y);
         let bpp = self.bpp as usize;
@@ -155,7 +155,8 @@ impl Atlas {
         ])
     }
 
-    /// Sobe os glifos novos para a GPU (só o que mudou, não o atlas inteiro).
+    /// Uploads the new glyphs to the GPU (only what changed, not the whole
+    /// atlas).
     pub fn flush(&mut self, queue: &wgpu::Queue) {
         for (x, y, w, h, data) in self.pending.drain(..) {
             queue.write_texture(
@@ -181,7 +182,7 @@ impl Atlas {
     }
 }
 
-/// O `bind_group` do atlas (textura + sampler nearest).
+/// The atlas `bind_group` (texture + nearest sampler).
 pub fn bind_atlas(
     device: &wgpu::Device,
     atlas: &Atlas,
@@ -232,7 +233,7 @@ pub fn bind_atlas(
     (layout, bind)
 }
 
-/// Buffer de globals (tamanho da tela em pixels).
+/// Globals buffer (screen size in pixels).
 pub fn globals_buffer(device: &wgpu::Device, w: f32, h: f32, pad: f32) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("globals"),
@@ -257,11 +258,11 @@ pub fn globals_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     })
 }
 
-/// Layout de bind group das imagens do protocolo de gráficos: mesmo formato do
-/// atlas, mas com amostragem **filtrável** e textura filtrável — imagem é
-/// escalada (o `icat` manda 48x48 e a célula ocupa mais que isso), e com
-/// `Nearest` o resultado fica serrilhado. O atlas não pode usar o mesmo layout
-/// porque a máscara de cobertura de glifo é `filterable: false`.
+/// Bind group layout for the images of the graphics protocol: same format as
+/// the atlas, but with **filterable** sampling and a filterable texture — an
+/// image is scaled (the `icat` sends 48x48 and the cell is bigger than that),
+/// and with `Nearest` the result comes out jagged. The atlas cannot use the
+/// same layout because the glyph coverage mask is `filterable: false`.
 pub fn bind_image(device: &wgpu::Device) -> (wgpu::BindGroupLayout, wgpu::Sampler) {
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("img-layout"),

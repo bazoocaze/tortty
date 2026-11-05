@@ -1,9 +1,9 @@
-//! Benchmark headless do parser: alimenta o `Term` com o frame exato do
-//! doom-fire e reporta µs/célula, MB/s e ns/escape.
+//! Headless parser benchmark: feeds `Term` with the exact doom-fire frame and
+//! reports µs/cell, MB/s and ns/escape.
 //!
-//! Mesma carga do `tools/doomfire.py` (fg truecolor + bg truecolor + `▀` por
-//! célula, sem agrupar), para o número ser comparável com o do bzmux Python
-//! medido no docs/BENCHMARKS.md (~35 µs/célula antes do P20, 5,5 depois).
+//! Same load as `tools/doomfire.py` (truecolor fg + truecolor bg + `▀` per cell,
+//! with no grouping), so the number is comparable with the bzmux Python one
+//! measured in docs/BENCHMARKS.md (~35 µs/cell before P20, 5,5 after).
 //!
 //! ```sh
 //! cargo run --release -p bzmux-core --bin parsebench
@@ -14,8 +14,8 @@ use std::time::Instant;
 
 use bzmux_core::Term;
 
-/// Os 37 tons do doom-fire (o gerador escolhe um por célula, então a cor varia
-/// de célula para célula — é isso que estressa o SGR).
+/// The 37 doom-fire tones (the generator picks one per cell, so the color varies
+/// from cell to cell — that is what stresses SGR).
 const TONS: [(u8, u8, u8); 8] = [
     (0x07, 0x07, 0x07),
     (0x47, 0x0f, 0x07),
@@ -27,7 +27,7 @@ const TONS: [(u8, u8, u8); 8] = [
     (0xff, 0xff, 0xff),
 ];
 
-/// Um frame completo: `CSI H` + (fg + bg + `▀`) por célula de meia-linha.
+/// One whole frame: `CSI H` + (fg + bg + `▀`) per half-line cell.
 fn frame(cols: usize, rows: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(cols * rows * 40);
     out.extend_from_slice(b"\x1b[H");
@@ -68,26 +68,26 @@ fn arg_s(name: &str) -> Option<String> {
     None
 }
 
-/// Modo "carga real": despeja um arquivo (o `dmesg` do sistema, com e sem cor)
-/// no parser, como o BENCHMARKS do Python faz com o `Term` sem GTK.
+/// "Real load" mode: dumps a file (the system `dmesg`, with and without color)
+/// into the parser, the way the Python BENCHMARKS does with the `Term` without GTK.
 fn bench_file(path: &str, cols: usize, rows: usize) {
-    const RODADAS: usize = 20;
+    const ROUNDS: usize = 20;
     let data = match std::fs::read(path) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("não abriu {path}: {e}");
+            eprintln!("could not open {path}: {e}");
             return;
         },
     };
     let mut term = Term::new(cols, rows);
     term.scrollback_limit = 100_000;
-    // aquece
+    // warm up
     for _ in 0..3 {
         term.feed(&data);
         term.clear_damage();
     }
     let mut best = f64::MAX;
-    for _ in 0..RODADAS {
+    for _ in 0..ROUNDS {
         let t0 = Instant::now();
         term.feed(&data);
         let ms = t0.elapsed().as_secs_f64() * 1e3;
@@ -96,21 +96,16 @@ fn bench_file(path: &str, cols: usize, rows: usize) {
             best = ms;
         }
     }
-    #[allow(clippy::naive_bytecount)] // uma passada, fora do cronômetro
-    let linhas = data.iter().filter(|&&b| b == b'\n').count();
+    #[allow(clippy::naive_bytecount)] // one pass, outside the timer
+    let lines = data.iter().filter(|&&b| b == b'\n').count();
+    println!("file         {} ({} B, {} lines)", path, data.len(), lines);
+    println!("grid         {cols}x{rows}");
     println!(
-        "arquivo      {} ({} B, {} linhas)",
-        path,
-        data.len(),
-        linhas
-    );
-    println!("grade        {cols}x{rows}");
-    println!(
-        "parse        {:.2} ms  ({:.2} MB/s, {:.1} µs/linha) — melhor de {}",
+        "parse        {:.2} ms  ({:.2} MB/s, {:.1} µs/line) — best of {}",
         best,
         data.len() as f64 / (best / 1e3) / 1e6,
-        best * 1000.0 / linhas.max(1) as f64,
-        RODADAS
+        best * 1000.0 / lines.max(1) as f64,
+        ROUNDS
     );
 }
 
@@ -129,7 +124,7 @@ fn main() {
     let mut term = Term::new(cols, rows);
     term.scrollback_limit = 1000;
 
-    // aquece (primeiro frame aloca linha, tabla de wide chars etc.)
+    // warm up (the first frame allocates rows, the wide-char table, etc.)
     let payload = frame(cols, rows);
     for _ in 0..20 {
         term.feed(&payload);
@@ -159,27 +154,25 @@ fn main() {
         }
     }
 
-    let media_ns = total_ns as f64 / frames as f64;
-    let media_us_cell = media_ns / 1000.0 / cells_per_frame as f64;
-    let media_mbs = total_bytes as f64 / (total_ns as f64 / 1e9) / 1e6;
+    let avg_ns = total_ns as f64 / frames as f64;
+    let avg_us_cell = avg_ns / 1000.0 / cells_per_frame as f64;
+    let avg_mbs = total_bytes as f64 / (total_ns as f64 / 1e9) / 1e6;
     let escapes = 1 + cells_per_frame * 2;
-    let ns_escape = media_ns / escapes as f64;
+    let ns_escape = avg_ns / escapes as f64;
 
-    println!("grade        {cols}x{rows} ({cells_per_frame} células)");
+    println!("grid         {cols}x{rows} ({cells_per_frame} cells)");
     println!(
-        "frame        {} B ({} B/célula)",
+        "frame        {} B ({} B/cell)",
         payload.len(),
         payload.len() / cells_per_frame
     );
     println!("frames       {frames}");
-    println!(
-        "média        {media_us_cell:.3} µs/célula  {media_mbs:.1} MB/s  {ns_escape:.1} ns/escape"
-    );
-    println!("melhor       {best:.3} µs/célula  {best_mbs:.1} MB/s");
-    println!("referência   python pós-P20 5,49 µs/célula · python pré-P20 35,0 · kitty ~1,0");
+    println!("mean         {avg_us_cell:.3} µs/cell  {avg_mbs:.1} MB/s  {ns_escape:.1} ns/escape");
+    println!("best         {best:.3} µs/cell  {best_mbs:.1} MB/s");
+    println!("reference    python post-P20 5,49 µs/cell · python pre-P20 35,0 · kitty ~1,0");
     if best > 0.0 {
         println!(
-            "ganho        {:.1}x sobre o python pós-P20, {:.1}x sobre o pré-P20",
+            "speedup      {:.1}x over python post-P20, {:.1}x over pre-P20",
             5.49 / best,
             35.0 / best
         );

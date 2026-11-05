@@ -1,5 +1,6 @@
-# Formatação: `cargo fmt` (rustfmt). Só opções estáveis — o rustfmt do stable
-# ignora as instáveis com aviso, e config que não vale nada é pior que nenhuma.
+# Formatting: `cargo fmt` (rustfmt). Stable options only — stable rustfmt
+# ignores unstable ones with a warning, and a config that does nothing is worse
+# than none.
 edition = "2021"
 max_width = 100
 newline_style = "Unix"

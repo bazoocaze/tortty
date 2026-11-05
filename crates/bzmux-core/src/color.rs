@@ -1,14 +1,14 @@
-//! Cor de célula e paleta xterm-256.
+//! Cell color and the xterm-256 palette.
 //!
-//! O Python guardava três coisas no mesmo `int` (índice 0-255, sentinelas
-//! 256/257 e RGB com o bit 24 marcado). Aqui o tipo diz o que é, sem
-//! decodificação no caminho quente: `Default` é a sentinela, `Idx` é a paleta e
-//! `Rgb` é truecolor direto na célula (sem tabela de cores alocadas, como no P4).
+//! Python kept three things in the same `int` (index 0-255, sentinels 256/257
+//! and RGB with bit 24 set). Here the type says what it is, with no decoding in
+//! the hot path: `Default` is the sentinel, `Idx` is the palette and `Rgb` is
+//! truecolor straight in the cell (no allocated color table, as in P4).
 
 use std::fmt;
 
-/// Cor de uma célula. `Default` vale como fg default no slot de fg e bg default
-/// no slot de bg — é a mesma convenção do bzmux Python (`DEF_FG`/`DEF_BG`).
+/// Color of a cell. `Default` counts as default fg in the fg slot and default bg
+/// in the bg slot — it is the same convention as bzmux Python (`DEF_FG`/`DEF_BG`).
 #[derive(Copy, Clone, PartialEq, Eq, Default, Debug, Hash)]
 pub enum Color {
     #[default]
@@ -18,7 +18,7 @@ pub enum Color {
 }
 
 impl Color {
-    /// Truecolor a partir dos três canais (clampados, como o SGR faz).
+    /// Truecolor from the three channels (clamped, as SGR does).
     #[inline]
     pub const fn rgb(r: u32, g: u32, b: u32) -> Color {
         const fn c(v: u32) -> u8 {
@@ -42,7 +42,7 @@ impl fmt::Display for Color {
     }
 }
 
-/// Os 16 primeiros tons (a paleta ANSI clássica do bzmux Python).
+/// The first 16 shades (the classic ANSI palette of bzmux Python).
 pub const PALETTE: [(u8, u8, u8); 16] = [
     (0, 0, 0),
     (205, 0, 0),
@@ -62,9 +62,9 @@ pub const PALETTE: [(u8, u8, u8); 16] = [
     (255, 255, 255),
 ];
 
-/// Paleta xterm-256 completa (16 ANSI + cubo 6×6×6 + 24 tons de cinza).
+/// Full xterm-256 palette (16 ANSI + 6×6×6 cube + 24 shades of gray).
 pub fn palette256() -> Vec<(u8, u8, u8)> {
-    // cubo 6x6x6: componentes 0, 95, 135, 175, 215, 255
+    // 6x6x6 cube: components 0, 95, 135, 175, 215, 255
     const STEPS: [u8; 6] = [0, 95, 135, 175, 215, 255];
     let mut pal: Vec<(u8, u8, u8)> = PALETTE.to_vec();
     for &r in &STEPS {
@@ -82,7 +82,7 @@ pub fn palette256() -> Vec<(u8, u8, u8)> {
     pal
 }
 
-/// RGB final de uma cor de célula: precisa dos defaults do tema.
+/// Final RGB of a cell color: it needs the theme defaults.
 #[inline]
 pub fn resolve(c: Color, pal: &[(u8, u8, u8)], default: (u8, u8, u8)) -> (u8, u8, u8) {
     match c {
@@ -97,7 +97,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn palette_has_256_e_bate_in_extremos() {
+    fn palette_has_256_and_matches_the_ends() {
         let p = palette256();
         assert_eq!(p.len(), 256);
         assert_eq!(p[16], (0, 0, 0));
@@ -109,7 +109,7 @@ mod tests {
     }
 
     #[test]
-    fn rgb_clampa() {
+    fn rgb_clamps() {
         assert_eq!(Color::rgb(300, 1, 2), Color::Rgb(255, 1, 2));
     }
 }

@@ -1,5 +1,5 @@
-//! bzmux em Rust — experimento de viabilidade (ver TASK-bzmux-in-rust.md).
-// o `json!` do `state` passa do limite padrão de expansão do macro
+//! bzmux in Rust — feasibility experiment (see TASK-bzmux-in-rust.md).
+// the `state` `json!` goes past the macro's default expansion limit
 #![recursion_limit = "256"]
 
 mod app;
@@ -36,7 +36,7 @@ fn main() {
     if over.selftest {
         std::process::exit(selftest());
     }
-    // CLI vence o arquivo; o arquivo vence os padrões embutidos
+    // CLI wins over the file; the file wins over the built-in defaults
     let (opts, cfg_errors) = cli::Options::build(over.clone());
     for e in &cfg_errors {
         eprintln!("bzmux: config: {e}");
@@ -45,7 +45,7 @@ fn main() {
         prof::set_on(true);
     }
 
-    // antes de qualquer janela: erro X do WSI da GPU não pode derrubar o app
+    // before any window: a GPU WSI X error cannot bring the app down
     xguard::install();
     let event_loop = match EventLoop::<UserEvent>::with_user_event().build() {
         Ok(e) => e,
@@ -64,16 +64,17 @@ fn main() {
     }
 }
 
-/// `--selftest`: um comando que responde "o emulador ainda está inteiro?" sem
-/// display, sem GPU e sem pty. É o que o `checks.py` do Python fazia à parte.
+/// `--selftest`: one command that answers "is the emulator still whole?" without
+/// a display, without a GPU and without a pty. It is what Python's `checks.py`
+/// did separately.
 fn selftest() -> i32 {
-    // `bzmux --selftest | head` fecha o pipe no meio da lista: com o SIGPIPE
-    // ignorado (o padrão do Rust) o `println!` seguinte vira panic. Aqui volta
-    // ao padrão do Unix só neste caminho — o app em si escreve BEL no stdout e
-    // não deve morrer por causa de pipe fechado.
+    // `bzmux --selftest | head` closes the pipe in the middle of the list: with
+    // SIGPIPE ignored (the Rust default) the next `println!` becomes a panic. Here
+    // it goes back to the Unix default only on this path — the app itself writes
+    // BEL to stdout and must not die because of a closed pipe.
     #[allow(unsafe_code)]
-    // SAFETY: `signal` com `SIG_DFL` não instala handler nem lê memória; é o
-    // único jeito de restaurar a disposição padrão do SIGPIPE.
+    // SAFETY: `signal` with `SIG_DFL` installs no handler and reads no memory; it
+    // is the only way to restore the default SIGPIPE disposition.
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
@@ -81,23 +82,23 @@ fn selftest() -> i32 {
         .into_iter()
         .chain(checks_app::all())
         .collect();
-    let mut falhas = 0;
+    let mut failures = 0;
     for c in &all {
         match (c.run)() {
             Ok(()) => println!("ok    {}", c.name),
             Err(e) => {
-                falhas += 1;
-                println!("FALHA {}: {e}", c.name);
+                failures += 1;
+                println!("FAIL {}: {e}", c.name);
             },
         }
     }
     let total = all.len();
     println!();
-    if falhas == 0 {
+    if failures == 0 {
         println!("selftest: {total}/{total} ok");
         0
     } else {
-        println!("selftest: {falhas} falha(s) de {total}");
+        println!("selftest: {failures} failure(s) out of {total}");
         1
     }
 }

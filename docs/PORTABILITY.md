@@ -1,119 +1,121 @@
-# Portabilidade (Linux, Windows, macOS)
+# Portability (Linux, Windows, macOS)
 
-Substitui o estudo `P30` do repo Python (`docs/PORTABILITY.md` de lá), que
-avaliava rotas **dentro** do Python (conda, Qt/PySide6, FFI). Aqui a decisão já
-foi tomada e o que resta é engenharia: a rota é **`winit` + `wgpu` + núcleo
-próprio em Rust**, sem toolkit de sistema, sem Pango/cairo/fontconfig e sem
-Python. Ver [`MIGRATION.md`](MIGRATION.md) para o que falta de funcionalidade.
+Replaces study `P30` of the Python repo (its `docs/PORTABILITY.md`), which
+evaluated routes **inside** Python (conda, Qt/PySide6, FFI). Here the decision is
+already made and what is left is engineering: the route is **`winit` + `wgpu` +
+our own core in Rust**, with no system toolkit, no Pango/cairo/fontconfig and no
+Python. See [`MIGRATION.md`](MIGRATION.md) for what is missing in functionality.
 
-Este documento é a **análise** de cada alvo; ele não é fila. A fila é o
-[`BACKLOG.md`](BACKLOG.md): Windows é `M-X`, macOS é `M-Y` e a assinatura é
-`M-Z`. Os ids `M6`/`M7`/`M9` que aparecem lá embaixo na seção 13 do
-`MIGRATION.md` saíram do painel em 2026-11-02 (o Python nunca rodou fora do
-Linux, logo não era paridade).
+This document is the **analysis** of each target; it is not a queue. The queue is
+[`BACKLOG.md`](BACKLOG.md): Windows is `M-X`, macOS is `M-Y` and the signing is
+`M-Z`. The ids `M6`/`M7`/`M9` that appear down there in section 13 of
+`MIGRATION.md` left the panel on 2026-11-02 (Python never ran outside Linux, so
+it was not parity).
 
-## Por que esta rota responde à pergunta original
+## Why this route answers the original question
 
-O pedido que abriu o experimento: "distribuir entre win/lin/mac é difícil no
-Python". O bloqueio não era o Python em si, era o **stack de sistema**: GTK3 +
-Pango + cairo + PyGObject + fontconfig, cada um com um jeito diferente de instalar
-em cada plataforma. Nesta rota esse stack não existe:
+The request that opened the experiment: "shipping across win/lin/mac is hard in
+Python". The blocker was not Python itself, it was the **system stack**: GTK3 +
+Pango + cairo + PyGObject + fontconfig, each one with a different way of
+installing on each platform. In this route that stack does not exist:
 
 | | Python/GTK | Rust/wgpu |
 |---|---|---|
-| binário | não gera binário (precisa de Python + libs) | **10,1 MB, um arquivo** |
-| deps do SO | GTK3, Pango, cairo, PyGObject, fontconfig | `libc`, `libm`, `libgcc_s` (+ driver gráfico em runtime) |
-| fonte | Pango + fontconfig | `fontdb` + `swash` (varre o sistema, sem fontconfig) |
-| GPU | cairo (glamor/software) | Vulkan / Metal / D3D12 / GL pelo `wgpu` |
-| janela | GTK3 | `winit` (X11, Wayland, Win32, Cocoa) |
-| pty | `pty.fork` (POSIX só) | `portable-pty` (pty POSIX **e** ConPTY) |
+| binary | does not produce a binary (needs Python + libs) | **10.1 MB, one file** |
+| OS deps | GTK3, Pango, cairo, PyGObject, fontconfig | `libc`, `libm`, `libgcc_s` (+ graphics driver at runtime) |
+| font | Pango + fontconfig | `fontdb` + `swash` (scans the system, no fontconfig) |
+| GPU | cairo (glamor/software) | Vulkan / Metal / D3D12 / GL through `wgpu` |
+| window | GTK3 | `winit` (X11, Wayland, Win32, Cocoa) |
+| pty | `pty.fork` (POSIX only) | `portable-pty` (POSIX pty **and** ConPTY) |
 
-Consequência prática: **"copiar o executável e rodar"** funciona dentro do mesmo
-sistema e arquitetura. Não funciona entre sistemas — binário Linux não roda em
-macOS nem em Windows; é preciso **compilar** para cada alvo (e é isso que a
-matriz de CI abaixo faz de graça).
+Practical consequence: **"copy the executable and run"** works within the same
+system and architecture. It does not work across systems — a Linux binary does
+not run on macOS nor on Windows; you have to **compile** for each target (and
+that is what the CI matrix below does for free).
 
-## Estado por plataforma
+## State per platform
 
-| alvo | render | pty | testado? |
+| target | render | pty | tested? |
 |---|---|---|---|
-| Linux X11 + Vulkan (RADV) | ● | ● | **sim**, é o ambiente de desenvolvimento |
-| Linux Wayland | deve funcionar (`winit` nativo) | ● | **não** — falta exercitar |
-| Linux + GL (`WGPU_BACKEND=gl`) | deve funcionar | ● | **não** — válvula para GPU velha |
-| Linux + llvmpipe (software) | deve funcionar, lento | ● | **não** — próximo teste de portabilidade |
-| Windows 10/11 | D3D12 (ou Vulkan) | ConPTY | **não** — precisa de runner Windows |
-| macOS Apple Silicon | Metal | POSIX pty | **não** — precisa de runner macOS |
-| macOS Intel | Metal | POSIX pty | **não** — runner `macos-13` |
+| Linux X11 + Vulkan (RADV) | ● | ● | **yes**, it is the development environment |
+| Linux Wayland | should work (`winit` native) | ● | **no** — still needs exercising |
+| Linux + GL (`WGPU_BACKEND=gl`) | should work | ● | **no** — valve for an old GPU |
+| Linux + llvmpipe (software) | should work, slow | ● | **no** — next portability test |
+| Windows 10/11 | D3D12 (or Vulkan) | ConPTY | **no** — needs a Windows runner |
+| macOS Apple Silicon | Metal | POSIX pty | **no** — needs a macOS runner |
+| macOS Intel | Metal | POSIX pty | **no** — `macos-13` runner |
 
-## Bloqueios concretos no código de hoje
+## Concrete blockers in today's code
 
-Ordenados por gravidade. Nenhum é arquitetural; todos são de fronteira.
+Ordered by severity. None of them is architectural; all are boundary ones.
 
-1. **Socket de debug é Unix socket** (`UnixListener`). No Windows não existe:
-   precisa de named pipe ou TCP em `127.0.0.1`. Decisão: manter Unix socket nos
-   sistemas POSIX e usar named pipe (`\\.\pipe\bzmux-<pid>`) no Windows, com a
-   mesma moldura JSON por linha. O `tools/benchrun.py` passa a escolher o
-   transporte pelo caminho.
-2. **`$XDG_RUNTIME_DIR`** para `--debug-socket auto`: no Windows é
-   `%LOCALAPPDATA%\Temp`, no macOS é `$TMPDIR`. Uma função `runtime_dir()` e
-   acabou.
-3. **`$SHELL` e `/bin/sh`** como default: no Windows o shell é `$COMSPEC`
-   (`cmd.exe`) e o `--cmd` precisa ser `cmd /c`. O `portable-pty` já abstrai o
-   spawn; falta a escolha do shell por plataforma.
-4. **Varredura de fonte**: `fontdb` cobre os diretórios de fonte de cada sistema,
-   mas a **lista de preferência** hoje é de fonte Linux (DejaVu, Liberation,
-   Noto). No macOS a monoespaçada padrão é Menlo/SF Mono; no Windows, Consolas e
-   Cascadia Mono. É uma lista por `cfg(target_os)`.
-5. **Caminho de configuração** (`$XDG_CONFIG_HOME`): no Windows
-   `%APPDATA%\bzmux`, no macOS `~/Library/Application Support/bzmux`. Só existe
-   quando a config em arquivo for migrada (ver MIGRATION).
-6. **Clipboard e IME**: quando entrarem, são plataforma-específicos
-   (`arboard`/`winit::Ime`); o `winit` já expõe IME em todos os alvos.
-7. **Bracketed paste / terminal modes**: nada a fazer, é do parser.
-8. **Wayland**: o cliente não escolhe posição de janela (nunca vai escolher).
-   Persistência de geometria no Wayland guarda tamanho e maximizado, não `x`/`y`.
-   Isso já era limite aceito no Python (`LIMITATIONS.md` de lá).
+1. **Debug socket is a Unix socket** (`UnixListener`). On Windows it does not
+   exist: it needs a named pipe or TCP on `127.0.0.1`. Decision: keep the Unix
+   socket on POSIX systems and use a named pipe (`\\.\pipe\bzmux-<pid>`) on
+   Windows, with the same one-line JSON framing. `tools/benchrun.py` starts
+   choosing the transport by the path.
+2. **`$XDG_RUNTIME_DIR`** for `--debug-socket auto`: on Windows it is
+   `%LOCALAPPDATA%\Temp`, on macOS it is `$TMPDIR`. One `runtime_dir()` function
+   and it is done.
+3. **`$SHELL` and `/bin/sh`** as default: on Windows the shell is `$COMSPEC`
+   (`cmd.exe`) and `--cmd` needs to be `cmd /c`. `portable-pty` already abstracts
+   the spawn; the per-platform shell choice is missing.
+4. **Font scan**: `fontdb` covers each system's font directories, but the
+   **preference list** today is of Linux fonts (DejaVu, Liberation, Noto). On
+   macOS the default monospaced font is Menlo/SF Mono; on Windows, Consolas and
+   Cascadia Mono. It is a list per `cfg(target_os)`.
+5. **Configuration path** (`$XDG_CONFIG_HOME`): on Windows
+   `%APPDATA%\bzmux`, on macOS `~/Library/Application Support/bzmux`. It only
+   exists once the config file is migrated (see MIGRATION).
+6. **Clipboard and IME**: when they come in, they are platform-specific
+   (`arboard`/`winit::Ime`); `winit` already exposes IME on all targets.
+7. **Bracketed paste / terminal modes**: nothing to do, it is the parser's.
+8. **Wayland**: the client does not choose the window position (it never will).
+   Geometry persistence on Wayland stores size and maximized, not `x`/`y`. That
+   was already an accepted limit in Python (its `LIMITATIONS.md`).
 
-## Distribuição
+## Distribution
 
-Caminho recomendado, nesta ordem:
+Recommended path, in this order:
 
-1. **GitHub Actions com matriz** — **já existe para Linux**
-   (`.github/workflows/release.yml`, tag `v*`): `x86_64` e `aarch64`, usando o
-   `tools/release.sh` (o mesmo comando do local) e publicando
-   `bzmux-<versão>-<triple>.tar.gz` + `SHA256SUMS`, que é exatamente o que
-   `./install.sh --from-release` baixa. O `aarch64` roda sob `qemu-user-static`
-   no CI para o `--version` valer como verificação. Quando M6/M7 fecharem,
-   `windows-latest` e `macos-14`/`macos-13` entram como mais duas linhas da
-   mesma matriz — em repo público é grátis; em privado, minuto de macOS conta
-   10x.
-2. **`lipo`** para universal binary no macOS (arm64 + x86_64) — um `.app`
-   simples ou binário solto + `.dmg`/`.zip`.
-3. **Assinatura**: no Apple Silicon todo executável precisa de assinatura, mas o
-   linker já aplica *ad-hoc signature* em arm64 — o que sai do `cargo build` roda.
-   O que **não** roda sem intervenção é binário baixado pela rede não notarizado
-   (Gatekeeper): o usuário precisa de "Abrir Mesmo Assim". Para evitar esse atrito
-   há duas saídas, e **nenhuma é uma "loja"**:
-   - **Apple Developer Program** (US$ 99/ano) → notarização → duplo clique abre
-     sem aviso. É o único jeito "limpo".
-   - **instalação que contorna a quarentena**: script `curl | sh` que compila do
-     fonte, ou um *tap* do Homebrew que faz build. Aí não há `com.apple.quarantine`
-     no arquivo e o Gatekeeper não entra. Menos confortável, custo zero.
-4. **Windows**: `.zip` com o `.exe` funciona direto (SmartScreen reclama de
-   assinatura ausente — `signtool` com certificado OV/EV resolve, se valer).
-   ConPTY é nativo desde o Windows 10 1809.
-5. **Linux**: binário estático (`musl`) por arquitetura, `.deb`/`.rpm`/AUR depois.
-   Não é prioridade: no Linux o usuário compila.
+1. **GitHub Actions with a matrix** — **it already exists for Linux**
+   (`.github/workflows/release.yml`, tag `v*`): `x86_64` and `aarch64`, using
+   `tools/release.sh` (the same command as locally) and publishing
+   `bzmux-<version>-<triple>.tar.gz` + `SHA256SUMS`, which is exactly what
+   `./install.sh --from-release` downloads. `aarch64` runs under
+   `qemu-user-static` in CI so that `--version` counts as verification. When
+   M6/M7 close, `windows-latest` and `macos-14`/`macos-13` enter as two more
+   lines of the same matrix — in a public repo it is free; in a private one, a
+   macOS minute counts 10x.
+2. **`lipo`** for a universal binary on macOS (arm64 + x86_64) — a simple `.app`
+   or a loose binary + `.dmg`/`.zip`.
+3. **Signing**: on Apple Silicon every executable needs a signature, but the
+   linker already applies an *ad-hoc signature* on arm64 — what comes out of
+   `cargo build` runs. What does **not** run without intervention is a binary
+   downloaded from the network that is not notarized (Gatekeeper): the user needs
+   "Open Anyway". To avoid that friction there are two ways out, and **neither is
+   a "store"**:
+   - **Apple Developer Program** (US$ 99/year) → notarization → double click
+     opens with no warning. It is the only "clean" way.
+   - **an installation that bypasses the quarantine**: a `curl | sh` script that
+     builds from source, or a Homebrew *tap* that builds. Then there is no
+     `com.apple.quarantine` on the file and the Gatekeeper does not get involved.
+     Less comfortable, zero cost.
+4. **Windows**: a `.zip` with the `.exe` works directly (SmartScreen complains
+   about the missing signature — `signtool` with an OV/EV certificate solves it,
+   if it is worth it). ConPTY is native since Windows 10 1809.
+5. **Linux**: static binary (`musl`) per architecture, `.deb`/`.rpm`/AUR later.
+   It is not a priority: on Linux the user compiles.
 
-Custo do Windows/macOS sem loja: **um `.zip` no GitHub Releases**. O que dói é
-notarização (macOS) e assinatura (Windows), ambos opcionais para uso próprio e
-para quem usa `curl | sh`.
+Cost of Windows/macOS without a store: **one `.zip` on GitHub Releases**. What
+hurts is notarization (macOS) and signing (Windows), both optional for own use
+and for whoever uses `curl | sh`.
 
-## Decisão
+## Decision
 
-Rota única, sem bifurcação: `winit` + `wgpu` + núcleo próprio. Linux X11 é o
-alvo de desenvolvimento e o único testado; os outros dois entram por CI quando a
-migração de funcionalidades estiver perto do fim (não antes: porta sem feature é
-retrabalho). O que **não** se faz: cross-compile de macOS a partir do Linux
-(`osxcross` exige SDK da Apple, é frágil e não passa em revisão), nem manter o
-stack GTK como alternativa.
+Single route, no bifurcation: `winit` + `wgpu` + our own core. Linux X11 is the
+development target and the only tested one; the other two enter through CI when
+the feature migration is near the end (not before: a port without features is
+rework). What is **not** done: cross-compiling macOS from Linux (`osxcross`
+requires the Apple SDK, it is fragile and does not pass review), nor keeping the
+GTK stack as an alternative.

@@ -1,23 +1,23 @@
-//! Erro X de extensão não pode derrubar o app.
+//! An X extension error must not bring the app down.
 //!
-//! O `winit` guarda o último erro X da conexão e o `expect()`a na chamada
-//! seguinte que faz flush (`flush_requests`). Um erro que **não é nosso** — o
-//! WSI do Mesa deixa `BadDrawable` pendente ao criar e destruir pixmaps para
-//! apresentar — mata o processo na próxima propriedade de janela (foi assim que
-//! `sandbox bzmux` saía com 134 em `set_window_title`; ver `docs/BACKLOG.md`, B5).
-//! A GLFW (kitty) registra o erro e segue; aqui o hook público do `winit` faz o
-//! mesmo, sem tocar no tratador do X por fora.
+//! `winit` stores the last X error of the connection and `expect()`s it on the
+//! next call that flushes (`flush_requests`). An error that is **not ours** — the
+//! Mesa WSI leaves `BadDrawable` pending while creating and destroying pixmaps to
+//! present — kills the process on the next window property (that is how
+//! `sandbox bzmux` exited with 134 in `set_window_title`; see `docs/BACKLOG.md`, B5).
+//! GLFW (kitty) records the error and moves on; here the winit public hook does
+//! the same, without touching the X handler from outside.
 //!
-//! O que ele engole é **estreito de propósito**: só código de erro de desenho
-//! (`BadDrawable`/`BadWindow`/`BadMatch`) e só em requisição de **extensão**
-//! (`request_code >= 128`), que é de onde vem o WSI (Present/DRI3). Requisição
-//! do núcleo do X continua sendo erro de verdade e o `winit` a reporta.
+//! What it swallows is **deliberately narrow**: only drawing error codes
+//! (`BadDrawable`/`BadWindow`/`BadMatch`) and only on **extension** requests
+//! (`request_code >= 128`), which is where the WSI comes from (Present/DRI3). A
+//! core X request is still a real error and `winit` reports it.
 
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-/// `XErrorEvent` da Xlib, campo a campo (X11/Xlib.h). O `winit` entrega o
-/// ponteiro cru no hook; ler a struct é a única forma de saber o que falhou.
+/// Xlib's `XErrorEvent`, field by field (X11/Xlib.h). `winit` hands the raw
+/// pointer to the hook; reading the struct is the only way to know what failed.
 #[repr(C)]
 struct XErrorEvent {
     kind: i32,
@@ -34,38 +34,38 @@ const BAD_MATCH: u8 = 8;
 const BAD_DRAWABLE: u8 = 9;
 const BAD_ACCESS: u8 = 10;
 
-/// Primeira requisição de extensão (as do núcleo vão até 127).
-const EXTENSAO_MIN: u8 = 128;
+/// First extension request (core ones go up to 127).
+const MIN_EXTENT: u8 = 128;
 
-/// Um erro de desenho vindo do WSI não é motivo para encerrar o terminal.
+/// A drawing error coming from the WSI is no reason to shut the terminal down.
 ///
-/// Medido em `sandbox` sem GPU (`docs/DEBUG.md`): o WSI deixa `BadDrawable` na
-/// `Present` **e** `BadAccess` na `DRI3Open` — o segundo é o que matava, porque
-/// a política anterior só olhava requisição de extensão para os códigos de
-/// desenho. Código de desenho vale em qualquer requisição (o WSI também libera
-/// pixmap por requisição do núcleo); `BadAccess` só em extensão, que é onde
-/// permissão de GPU se manifesta.
+/// Measured on `sandbox` without a GPU (`docs/DEBUG.md`): the WSI leaves `BadDrawable`
+/// on `Present` **and** `BadAccess` on `DRI3Open` — the second one is what killed
+/// it, because the previous policy only looked at extension requests for the
+/// drawing codes. A drawing code counts on any request (the WSI also frees a
+/// pixmap through a core request); `BadAccess` only on extensions, which is where
+/// GPU permission shows up.
 fn swallow(error_code: u8, request_code: u8) -> bool {
     match error_code {
         BAD_WINDOW | BAD_MATCH | BAD_DRAWABLE => true,
-        BAD_ACCESS => request_code >= EXTENSAO_MIN,
+        BAD_ACCESS => request_code >= MIN_EXTENT,
         _ => false,
     }
 }
 
-static CONTADOS: AtomicU32 = AtomicU32::new(0);
+static COUNTS: AtomicU32 = AtomicU32::new(0);
 
-#[allow(unsafe_code)] // ler o `XErrorEvent` cru é o contrato do hook do winit
+#[allow(unsafe_code)] // reading the raw `XErrorEvent` is the winit hook contract
 fn decide(_display: *mut c_void, event: *mut c_void) -> bool {
     if event.is_null() {
         return false;
     }
-    // SAFETY: o winit passa um `XErrorEvent` válido da Xlib, que tem exatamente
-    // este layout (X11/Xlib.h); só lemos, sem guardar o ponteiro.
+    // SAFETY: winit passes a valid Xlib `XErrorEvent`, which has exactly this
+    // layout (X11/Xlib.h); we only read it, never store the pointer.
     let e = unsafe { &*(event.cast::<XErrorEvent>()) };
     if std::env::var_os("BZMUX_XERR").is_some() {
         eprintln!(
-            "XERR codigo={} requisicao={} menor={} recurso=0x{:x} engolir={}",
+            "XERR code={} request={} minor={} resource=0x{:x} swallow={}",
             e.error_code,
             e.request_code,
             e.minor_code,
@@ -76,12 +76,13 @@ fn decide(_display: *mut c_void, event: *mut c_void) -> bool {
     if !swallow(e.error_code, e.request_code) {
         return false;
     }
-    let n = CONTADOS.fetch_add(1, Ordering::Relaxed);
-    // uma linha nas três primeiras e depois esparso: erro do WSI costuma vir
-    // repetido, e o log não pode virar o problema
+    let n = COUNTS.fetch_add(1, Ordering::Relaxed);
+    // one line for the first three and then sparse: a WSI error usually comes
+    // repeated, and the log cannot become the problem
     if n < 3 || n.is_multiple_of(1000) {
         eprintln!(
-            "bzmux: erro X de extensão ignorado (código {}, requisição {}), ocorrência {} — WSI da GPU; ver docs/DEBUG.md",
+            "bzmux: X extension error ignored (code {}, request {}), occurrence {} \
+             — GPU WSI; see docs/DEBUG.md",
             e.error_code,
             e.request_code,
             n + 1
@@ -90,7 +91,7 @@ fn decide(_display: *mut c_void, event: *mut c_void) -> bool {
     true
 }
 
-/// Instala o hook. Seguro de chamar em qualquer backend (Wayland nunca invoca).
+/// Installs the hook. Safe to call on any backend (Wayland never invokes it).
 pub fn install() {
     winit::platform::x11::register_xlib_error_hook(Box::new(decide));
 }
@@ -100,29 +101,29 @@ mod tests {
     use super::swallow;
 
     #[test]
-    fn error_do_wsi_e_engolido() {
-        // Present (149) e DRI3 (130) são as duas portas do WSI; medido no sandbox
-        assert!(swallow(9, 149), "BadDrawable na Present");
+    fn wsi_error_is_swallowed() {
+        // Present (149) and DRI3 (130) are the two WSI doors; measured on sandbox
+        assert!(swallow(9, 149), "BadDrawable on Present");
         assert!(
             swallow(10, 130),
-            "BadAccess na DRI3Open: o que matava no sandbox"
+            "BadAccess on DRI3Open: the one that killed sandbox"
         );
         assert!(swallow(3, 149));
         assert!(swallow(8, 130));
-        // o WSI também libera pixmap por requisição do núcleo
+        // the WSI also frees a pixmap through a core request
         assert!(swallow(9, 54));
     }
 
     #[test]
-    fn bad_access_fora_de_extensao_not_e_engolido() {
-        // BadAccess é permissão: em requisição do núcleo continua sendo erro
+    fn bad_access_outside_an_extension_is_not_swallowed() {
+        // BadAccess is permission: on a core request it is still an error
         assert!(!swallow(10, 20));
         assert!(!swallow(10, 33));
     }
 
     #[test]
-    fn other_codigo_de_error_not_e_engolido() {
-        // BadAtom, BadValue, BadGC: não é desenho nem permissão de GPU
+    fn other_error_codes_are_not_swallowed() {
+        // BadAtom, BadValue, BadGC: neither drawing nor GPU permission
         assert!(!swallow(5, 149));
         assert!(!swallow(2, 149));
         assert!(!swallow(13, 149));

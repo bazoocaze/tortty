@@ -1,12 +1,13 @@
-//! Checks de fumaça sem display (`bzmux --selftest`).
+//! Display-less smoke checks (`bzmux --selftest`).
 //!
-//! Espelham o que o `checks.py` do bzmux Python verifica, mas aqui rodam no
-//! binário: uma função por área, todas usando só o núcleo (sem janela, GPU ou
-//! pty). O objetivo é ter **um comando** que responda "o emulador ainda está
-//! inteiro?" em qualquer máquina, inclusive no CI e por ssh.
+//! They mirror what the Python bzmux `checks.py` verifies, but here they run in
+//! the binary: one function per area, all using only the core (no window, GPU or
+//! pty). The goal is to have **one command** that answers "is the emulator still
+//! whole?" on any machine, including on CI and over ssh.
 //!
-//! Regra: cada check monta o cenário, exercita e **compara com o esperado** —
-//! nada de "não panicou". Quando falha, devolve o porquê em texto.
+//! Rule: every check builds the scenario, exercises it and **compares against the
+//! expected value** — never "it did not panic". On failure it returns the reason
+//! as text.
 
 use crate::cell::{BOLD, ITALIC, UL_CURLY};
 use crate::color::Color;
@@ -14,13 +15,13 @@ use crate::config::Config;
 use crate::select::Span;
 use crate::term::Term;
 
-/// Um check: nome (o mesmo conceito do `checks.py`) e a função.
+/// One check: name (the same concept as `checks.py`) and the function.
 pub struct Check {
     pub name: &'static str,
     pub run: fn() -> Result<(), String>,
 }
 
-/// Todos os checks, na ordem em que aparecem no relatório.
+/// All checks, in the order they appear in the report.
 #[must_use]
 pub fn all() -> Vec<Check> {
     let mut v = vec![
@@ -81,87 +82,90 @@ pub fn all() -> Vec<Check> {
             run: damage_tracking,
         },
     ];
-    // N2 (config/CLI) e N5 (histórico/rolagem/seleção) moram em módulos
-    // próprios só para o arquivo não virar 3 mil linhas.
+    // N2 (config/CLI) and N5 (history/scroll/selection) live in their own
+    // modules only so this file does not become 3 thousand lines.
     v.extend(crate::checks_n2::all());
     v.extend(crate::checks_n5::all());
     v
 }
 
-/// Roda tudo. Devolve `(passaram, falhas)` com o texto de cada falha.
+/// Runs everything. Returns `(passed, failures)` with the text of each failure.
 #[must_use]
 pub fn run_all() -> (usize, Vec<String>) {
     let mut ok = 0;
-    let mut falhas = Vec::new();
+    let mut failures = Vec::new();
     for c in all() {
         match (c.run)() {
             Ok(()) => ok += 1,
-            Err(e) => falhas.push(format!("{}: {e}", c.name)),
+            Err(e) => failures.push(format!("{}: {e}", c.name)),
         }
     }
-    (ok, falhas)
+    (ok, failures)
 }
 
-/// O `--selftest` também roda no `cargo test`: sem isto os checks só existiam
-/// no binário, e um `cargo test -p bzmux-core` verde não dizia nada sobre eles.
+/// `--selftest` also runs under `cargo test`: without this the checks only
+/// existed in the binary, and a green `cargo test -p bzmux-core` said nothing
+/// about them.
 #[cfg(test)]
 #[test]
 fn selftest_complete() {
-    let (ok, falhas) = run_all();
-    assert!(falhas.is_empty(), "{ok} ok, falhas:\n{}", falhas.join("\n"));
+    let (ok, failures) = run_all();
+    assert!(
+        failures.is_empty(),
+        "{ok} ok, falhas:\n{}",
+        failures.join("\n")
+    );
 }
 
 fn term() -> Term {
     Term::new(20, 5)
 }
 
-// por valor de propósito: quem chama monta o esperado na hora (`"abc".to_string()`)
+// by value on purpose: the caller builds the expected value on the spot (`"abc".to_string()`)
 #[allow(clippy::needless_pass_by_value)]
-fn esperado<T: PartialEq + std::fmt::Debug>(
-    o_que: &str,
+fn expected<T: PartialEq + std::fmt::Debug>(
+    what: &str,
     obtained: T,
-    esperado: T,
+    expected: T,
 ) -> Result<(), String> {
-    if obtained == esperado {
+    if obtained == expected {
         Ok(())
     } else {
-        Err(format!(
-            "{o_que}: esperado {esperado:?}, obtido {obtained:?}"
-        ))
+        Err(format!("{what}: expected {expected:?}, got {obtained:?}"))
     }
 }
 
 fn parser_text_and_cursor() -> Result<(), String> {
     let mut t = term();
     t.feed(b"abc");
-    esperado("texto", t.row_text(0), "abc".to_string())?;
-    esperado("cursor", (t.cy, t.cx), (0, 3))?;
-    // CUP, CR, LF, BS e TAB
+    expected("text", t.row_text(0), "abc".to_string())?;
+    expected("cursor", (t.cy, t.cx), (0, 3))?;
+    // CUP, CR, LF, BS and TAB
     t.feed(b"\x1b[3;5Hxy\r\nz\tw");
-    esperado("CUP+CRLF", t.row_text(3), "z       w".to_string())?;
-    // o cursor está depois do "w" (coluna 9); BS volta para a 8 e sobrescreve
+    expected("CUP+CRLF", t.row_text(3), "z       w".to_string())?;
+    // the cursor is past the "w" (column 9); BS goes back to 8 and overwrites
     t.feed(b"\x08!");
-    esperado("backspace", t.row_text(3), "z       !".to_string())?;
+    expected("backspace", t.row_text(3), "z       !".to_string())?;
     t.feed(b"\x1b[1;1H\x1b[2X");
-    esperado("ECH apaga 2", t.row_text(0), "  c".to_string())?;
+    expected("ECH erases 2", t.row_text(0), "  c".to_string())?;
     Ok(())
 }
 
 fn wrap_and_control() -> Result<(), String> {
     let mut t = Term::new(10, 3);
     t.feed(b"0123456789A");
-    esperado(
-        "quebra",
+    expected(
+        "wrap",
         (t.row_text(0), t.row_text(1)),
         ("0123456789".to_string(), "A".to_string()),
     )?;
     if !t.grid[0].wrapped || t.grid[1].wrapped {
-        return Err("marca de quebra mole errada".to_string());
+        return Err("wrong soft-wrap mark".to_string());
     }
-    // autowrap desligado não quebra: sobrescreve a última coluna
+    // autowrap off does not wrap: it overwrites the last column
     t.feed(b"\x1b[?7l");
     t.feed(b"\x1b[1;1H0123456789XY");
-    esperado("sem autowrap", t.row_text(0), "012345678Y".to_string())?;
+    expected("no autowrap", t.row_text(0), "012345678Y".to_string())?;
     t.feed(b"\x1b[?7h");
     Ok(())
 }
@@ -171,25 +175,25 @@ fn sgr_and_erasing() -> Result<(), String> {
     t.feed(b"\x1b[1;3;4:3;38;2;1;2;3mA");
     let c = t.grid[0].cells[0];
     if c.flags & BOLD == 0 || c.flags & ITALIC == 0 || c.ul != UL_CURLY {
-        return Err("atributos de SGR não subiram".to_string());
+        return Err("SGR attributes did not stick".to_string());
     }
-    esperado("truecolor", c.fg, Color::Rgb(1, 2, 3))?;
+    expected("truecolor", c.fg, Color::Rgb(1, 2, 3))?;
     t.feed(b"\x1b[0m\x1b[2J");
-    esperado("ED2 limpa", t.row_text(0), String::new())?;
-    esperado("ED2 volta o cursor", (t.cy, t.cx), (0, 0))?;
+    expected("ED2 clears", t.row_text(0), String::new())?;
+    expected("ED2 homes the cursor", (t.cy, t.cx), (0, 0))?;
     Ok(())
 }
 
 fn truecolor_and_palette() -> Result<(), String> {
     let (cfg, errs) = Config::parse("color1 #ff0000\nforeground #010203\n");
     if !errs.is_empty() {
-        return Err(format!("config com erro: {errs:?}"));
+        return Err(format!("config with errors: {errs:?}"));
     }
     let pal = cfg.palette256();
-    esperado("paleta do tema", pal[1], (0xff, 0, 0))?;
-    esperado("cubo 6x6x6 intacto", pal[196], (255, 0, 0))?;
+    expected("theme palette", pal[1], (0xff, 0, 0))?;
+    expected("6x6x6 cube intact", pal[196], (255, 0, 0))?;
     let theme = cfg.theme();
-    esperado("fg do tema", theme.rgb(theme.fg, (0, 0, 0)), (1, 2, 3))?;
+    expected("theme fg", theme.rgb(theme.fg, (0, 0, 0)), (1, 2, 3))?;
     Ok(())
 }
 
@@ -197,7 +201,7 @@ fn charset_and_replies() -> Result<(), String> {
     let mut t = term();
     t.feed(b"\x1b(0lqk\x1b(B");
     let s: String = t.grid[0].cells[0..3].iter().map(|c| c.ch).collect();
-    esperado(
+    expected(
         "DEC special graphics",
         s,
         "\u{250c}\u{2500}\u{2510}".to_string(),
@@ -205,12 +209,12 @@ fn charset_and_replies() -> Result<(), String> {
     t.feed(b"\x1b[c");
     let out = String::from_utf8_lossy(&t.take_child_out()).to_string();
     if !out.contains("\x1b[?") {
-        return Err(format!("DA1 não respondeu: {out:?}"));
+        return Err(format!("DA1 did not answer: {out:?}"));
     }
     t.feed(b"\x1b[6n");
     let out = String::from_utf8_lossy(&t.take_child_out()).to_string();
     if !out.contains('R') {
-        return Err(format!("CPR não respondeu: {out:?}"));
+        return Err(format!("CPR did not answer: {out:?}"));
     }
     Ok(())
 }
@@ -220,13 +224,13 @@ fn alt_screen_and_scroll() -> Result<(), String> {
     t.feed(b"um\ndois");
     t.feed(b"\x1b[?1049h");
     if !t.in_alt_screen() {
-        return Err("não entrou na tela alternativa".to_string());
+        return Err("did not enter the alternate screen".to_string());
     }
     t.feed(b"no alt\x1b[?1049l");
-    esperado("volta do alt", t.row_text(0), "um".to_string())?;
-    // região de scroll (DECSTBM): só o miolo rola
+    expected("back from alt", t.row_text(0), "um".to_string())?;
+    // scroll region (DECSTBM): only the middle scrolls
     t.feed(b"\x1b[2;3r\x1b[3;1H\n");
-    esperado("topo intocado", t.row_text(0), "um".to_string())?;
+    expected("top untouched", t.row_text(0), "um".to_string())?;
     t.feed(b"\x1b[r");
     Ok(())
 }
@@ -237,15 +241,15 @@ fn history_and_scrollback() -> Result<(), String> {
         t.feed(format!("l{i}\r\n").as_bytes());
     }
     if t.scrollback.len() < 5 {
-        return Err(format!("histórico curto: {}", t.scrollback.len()));
+        return Err(format!("history too short: {}", t.scrollback.len()));
     }
-    esperado("última linha viva", t.row_text(2), String::new())?;
-    // ED3 esvazia o histórico e sobe a geração (âncora morre)
+    expected("last live line", t.row_text(2), String::new())?;
+    // ED3 empties the history and bumps the generation (the anchor dies)
     let g = t.abs_gen;
     t.feed(b"\x1b[3J");
-    esperado("ED3 esvazia", t.scrollback.len(), 0)?;
+    expected("ED3 empties", t.scrollback.len(), 0)?;
     if t.abs_gen <= g {
-        return Err("ED3 não invalidou as âncoras".to_string());
+        return Err("ED3 did not invalidate the anchors".to_string());
     }
     Ok(())
 }
@@ -260,13 +264,13 @@ fn reflow() -> Result<(), String> {
         .chain(t.grid.iter())
         .map(crate::grid::Row::text)
         .collect::<String>();
-    esperado(
-        "texto preservado",
+    expected(
+        "text preserved",
         together,
         "abcdefghijklmnopqrstuvwxy".to_string(),
     )?;
     t.resize(10, 4);
-    esperado("volta ao tamanho", t.row_text(0), "abcdefghij".to_string())?;
+    expected("back to the size", t.row_text(0), "abcdefghij".to_string())?;
     Ok(())
 }
 
@@ -276,70 +280,70 @@ fn selection_follows_history() -> Result<(), String> {
     let a = t.anchor_at(0, 0, 0);
     let b = t.anchor_at(0, 0, 6);
     let span = Span::new(a, b);
-    // rola a tela: a âncora continua apontando o mesmo texto
+    // scroll the screen: the anchor keeps pointing at the same text
     for _ in 0..3 {
         t.feed(b"\r\n");
     }
-    let found = t.span_text(&span).ok_or("âncora morreu sem motivo")?;
-    esperado("seleção sobrevive ao scroll", found, "linha-a".to_string())?;
+    let found = t.span_text(&span).ok_or("anchor died for no reason")?;
+    expected("selection survives scroll", found, "linha-a".to_string())?;
     Ok(())
 }
 
 fn paste_markers() -> Result<(), String> {
     let mut t = term();
     if t.bracketed_paste {
-        return Err("bracketed paste ligado por padrão".to_string());
+        return Err("bracketed paste on by default".to_string());
     }
     t.feed(b"\x1b[?2004h");
     if !t.bracketed_paste {
-        return Err("?2004 não ligou".to_string());
+        return Err("?2004 did not turn it on".to_string());
     }
     let payload = String::from_utf8_lossy(&t.paste_payload("oi")).to_string();
-    esperado("payload", payload, "\x1b[200~oi\x1b[201~".to_string())?;
+    expected("payload", payload, "\x1b[200~oi\x1b[201~".to_string())?;
     t.feed(b"\x1b[?2004l");
     Ok(())
 }
 
 fn csi_with_intermediate() -> Result<(), String> {
     let mut t = term();
-    // DECSCUSR com intermediário (espaço) e CSI ! p (soft reset)
-    // DECSCUSR: 4 = sublinhado fixo → (forma 1 = underline, pisca false)
+    // DECSCUSR with an intermediate (space) and CSI ! p (soft reset)
+    // DECSCUSR: 4 = steady underline -> (shape 1 = underline, blink false)
     t.feed(b"\x1b[4 q");
-    esperado("cursor underline", t.app_cursor_style, Some((1, false)))?;
+    expected("cursor underline", t.app_cursor_style, Some((1, false)))?;
     t.feed(b"\x1b[1;1;1m\x1b[!p");
-    esperado("soft reset limpa SGR", t.flags, 0)?;
+    expected("soft reset clears SGR", t.flags, 0)?;
     Ok(())
 }
 
 fn config_defaults() -> Result<(), String> {
     let (cfg, errs) = Config::parse("font_size 15\nfont_size 16\nbell visual\n");
     if !errs.is_empty() {
-        return Err(format!("erros inesperados: {errs:?}"));
+        return Err(format!("unexpected errors: {errs:?}"));
     }
-    esperado("repetida vence", cfg.font_size, 16.0)?;
-    esperado("bell", format!("{:?}", cfg.bell), "Visual".to_string())?;
+    expected("the repeated one wins", cfg.font_size, 16.0)?;
+    expected("bell", format!("{:?}", cfg.bell), "Visual".to_string())?;
     let (_, errs) = Config::parse("nao_existe 1\nfont_size abc\n");
     if errs.len() != 2 {
-        return Err(format!("esperava 2 erros, veio {errs:?}"));
+        return Err(format!("expected 2 errors, got {errs:?}"));
     }
     Ok(())
 }
 
 fn theme_osc() -> Result<(), String> {
     let mut t = term();
-    let padrao = t.theme.bg;
+    let default = t.theme.bg;
     t.feed(b"\x1b]11;?\x1b\\");
     let out = String::from_utf8_lossy(&t.take_child_out()).to_string();
     if !out.contains("]11;rgb:") {
-        return Err(format!("OSC 11 não respondeu: {out:?}"));
+        return Err(format!("OSC 11 did not answer: {out:?}"));
     }
     t.feed(b"\x1b]11;#102030\x1b\\");
-    esperado("OSC 11 define", t.theme.bg, Color::Rgb(0x10, 0x20, 0x30))?;
+    expected("OSC 11 sets", t.theme.bg, Color::Rgb(0x10, 0x20, 0x30))?;
     if !t.theme_dirty {
-        return Err("theme_dirty não subiu".to_string());
+        return Err("theme_dirty did not rise".to_string());
     }
     t.feed(b"\x1b]111\x1b\\");
-    esperado("OSC 111 volta", t.theme.bg, padrao)?;
+    expected("OSC 111 restores", t.theme.bg, default)?;
     Ok(())
 }
 
@@ -347,13 +351,13 @@ fn damage_tracking() -> Result<(), String> {
     let mut t = term();
     t.feed(b"a\r\nb");
     if !t.dirty[0] {
-        return Err("linha com texto não está suja".to_string());
+        return Err("line with text is not dirty".to_string());
     }
-    // o marcador de "tudo sujo" existe para resize/RIS
+    // the "everything dirty" marker exists for resize/RIS
     t.dirty_all = false;
     t.resize(12, 5);
     if !t.dirty_all {
-        return Err("resize não marcou a tela toda suja".to_string());
+        return Err("resize did not mark the whole screen dirty".to_string());
     }
     Ok(())
 }

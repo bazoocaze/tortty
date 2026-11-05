@@ -1,41 +1,42 @@
-//! Célula da grade: caractere + caneta (cores e atributos).
+//! Grid cell: character + pen (colors and attributes).
 //!
-//! Os atributos são bits em `flags` e o sublinhado tem campo próprio (`ul`)
-//! porque ele carrega *estilo* além de presença: `4:3` é curvo, `4:2` é duplo.
-//! A cor do sublinhado (`SGR 58`) é um slot separado da cor do texto.
+//! The attributes are bits in `flags` and the underline has a field of its own
+//! (`ul`) because it carries a *style* beyond presence: `4:3` is curly, `4:2` is
+//! double. The underline color (`SGR 58`) is a slot separate from the text color.
 
 use crate::color::Color;
 
-/// Negrito (SGR 1).
+/// Bold (SGR 1).
 pub const BOLD: u8 = 1;
-/// Inverso (SGR 7).
+/// Inverse (SGR 7).
 pub const INV: u8 = 2;
-/// Itálico (SGR 3).
+/// Italic (SGR 3).
 pub const ITALIC: u8 = 4;
-/// Esmaecido (SGR 2).
+/// Faint (SGR 2).
 pub const FAINT: u8 = 8;
-/// Pisca (SGR 5/6). A piscada é do render; aqui é só o atributo.
+/// Blink (SGR 5/6). The blinking belongs to the renderer; here it is the
+/// attribute only.
 pub const BLINK: u8 = 16;
-/// Riscado (SGR 9).
+/// Struck through (SGR 9).
 pub const STRIKE: u8 = 32;
 /// Overline (SGR 53).
 pub const OVERLINE: u8 = 64;
 
-/// Sem sublinhado.
+/// No underline.
 pub const UL_NONE: u8 = 0;
-/// Sublinhado simples (SGR 4).
+/// Single underline (SGR 4).
 pub const UL_SINGLE: u8 = 1;
-/// Sublinhado duplo (SGR 4:2 e SGR 21).
+/// Double underline (SGR 4:2 and SGR 21).
 pub const UL_DOUBLE: u8 = 2;
-/// Sublinhado curvo (SGR 4:3).
+/// Curly underline (SGR 4:3).
 pub const UL_CURLY: u8 = 3;
-/// Sublinhado pontilhado (SGR 4:4).
+/// Dotted underline (SGR 4:4).
 pub const UL_DOTTED: u8 = 4;
-/// Sublinhado tracejado (SGR 4:5).
+/// Dashed underline (SGR 4:5).
 pub const UL_DASHED: u8 = 5;
 
-/// Segunda metade de um caractere largo: não desenha nada, a célula anterior
-/// ocupa o dobro de largura.
+/// Second half of a wide character: draws nothing, the previous cell takes twice
+/// the width.
 pub const WIDE_CONT: char = '\0';
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -43,10 +44,10 @@ pub struct Cell {
     pub ch: char,
     pub fg: Color,
     pub bg: Color,
-    /// `SGR 58`; `Default` = usar a cor do texto.
+    /// `SGR 58`; `Default` = use the text color.
     pub ul_color: Color,
     pub flags: u8,
-    /// Estilo do sublinhado, `UL_*`.
+    /// Underline style, `UL_*`.
     pub ul: u8,
 }
 
@@ -60,7 +61,7 @@ impl Cell {
         ul: UL_NONE,
     };
 
-    /// Célula vazia: nada desenhado além do fundo default.
+    /// Empty cell: nothing drawn beyond the default background.
     #[inline]
     pub fn is_blank(&self) -> bool {
         self.ch == ' ' && self.bg == Color::Default && self.flags == 0 && self.ul == UL_NONE
@@ -71,7 +72,8 @@ impl Cell {
         self.ch == WIDE_CONT
     }
 
-    /// A caneta mudou? Usado por seleção/cópia para decidir o que é "espaço".
+    /// Did the pen change? Used by selection/copy to decide what counts as
+    /// "space".
     #[inline]
     pub fn has_style(&self) -> bool {
         self.flags != 0 || self.ul != UL_NONE || self.bg != Color::Default

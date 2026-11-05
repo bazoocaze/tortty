@@ -1,12 +1,13 @@
-//! Área de transferência (só texto).
+//! Clipboard (text only).
 //!
-//! `arboard` fala X11 (e Wayland, com a feature) falando o protocolo direto:
-//! não linka `libX11`. Só texto, sem imagem — daí `default-features = false`
-//! no `Cargo.toml` (imagem puxaria tiff/png/jpeg para dentro do binário).
+//! `arboard` speaks X11 (and Wayland, with the feature) by speaking the protocol
+//! directly: it does not link `libX11`. Text only, no image — hence
+//! `default-features = false` in `Cargo.toml` (an image would pull
+//! tiff/png/jpeg into the binary).
 //!
-//! O `Clipboard` é criado na primeira vez que alguém usa, não no start: em
-//! sessão sem display (ou com o servidor fora do ar) o app continua abrindo, e
-//! copiar/colar só falha quando é chamado.
+//! The `Clipboard` is created the first time someone uses it, not at start: in a
+//! session without a display (or with the server down) the app still opens, and
+//! copy/paste only fails when it is actually called.
 
 pub struct Clip {
     board: Option<arboard::Clipboard>,
@@ -24,12 +25,12 @@ impl Clip {
         self.board.as_mut()
     }
 
-    /// Texto do CLIPBOARD.
+    /// CLIPBOARD text.
     pub fn text(&mut self) -> Option<String> {
         self.board()?.get_text().ok()
     }
 
-    /// Texto do PRIMARY (seleção do X11). Fora do Linux não existe.
+    /// PRIMARY text (the X11 selection). Outside Linux there is none.
     pub fn primary_text(&mut self) -> Option<String> {
         #[cfg(target_os = "linux")]
         {
@@ -52,14 +53,14 @@ impl Clip {
         }
     }
 
-    /// Põe no PRIMARY (X11) — o "colar com o botão do meio" do Linux.
+    /// Puts it in PRIMARY (X11) — Linux' "paste with the middle button".
     pub fn set_primary(&mut self, text: &str) {
         #[cfg(target_os = "linux")]
         {
             use arboard::{LinuxClipboardKind, SetExtLinux};
             if let Some(b) = self.board() {
-                // `wait()` não: o app segue dono da seleção até a próxima,
-                // que é o comportamento normal de terminal
+                // no `wait()`: the app stays the selection owner until the
+                // next one, which is the normal terminal behaviour
                 let _ = b
                     .set()
                     .clipboard(LinuxClipboardKind::Primary)

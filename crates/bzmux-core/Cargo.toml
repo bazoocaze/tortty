@@ -3,14 +3,14 @@ name = "bzmux-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Núcleo de emulação do bzmux: célula, paleta, parser VT e grade (sem GUI)"
+description = "bzmux emulation core: cell, palette, VT parser and grid (no GUI)"
 
 [lints]
 workspace = true
 
 [dependencies]
 unicode-width = "0.2"
-# gráficos do kitty: base64 do payload e `o=z` (zlib). Ambos puros em Rust.
+# kitty graphics: payload base64 and `o=z` (zlib). Both pure Rust.
 base64 = "0.22"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 

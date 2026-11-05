@@ -1,11 +1,11 @@
-// Um único pipeline para fundo, glifo, sublinhado e cursor: o que muda é o UV.
-// Fundo/sublinhado/cursor apontam para o pixel branco do atlas; glifo aponta
-// para a máscara de cobertura. A ordem das instâncias é a ordem de desenho, o
-// que resolve sobreposição (cursor por cima do texto) sem draw call extra.
+// A single pipeline for background, glyph, underline and cursor: only the UV changes.
+// Background/underline/cursor point at the atlas' white pixel; the glyph points
+// at the coverage mask. Instance order is draw order, which resolves
+// overlap (cursor over text) without an extra draw call.
 
 struct Globals {
     screen: vec2<f32>,
-    // margem em px (`window_padding_width`): a grade é desenhada a partir daqui
+    // margin in px (`window_padding_width`): the grid is drawn from here
     origin: vec2<f32>,
 };
 

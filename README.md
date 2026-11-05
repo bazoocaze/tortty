@@ -1,119 +1,123 @@
-# bzmux em Rust — experimento de viabilidade
+# bzmux in Rust — feasibility experiment
 
-Terminal VT com pty, escrito em Rust: parser VT próprio, grade própria e
-desenho na GPU (`wgpu`) por instâncias. É o experimento da pergunta "reescrever
-o bzmux (Python/GTK) em Rust resolve distribuição e desempenho?" — o andamento,
-os números e as decisões estão em [`TASK-bzmux-in-rust.md`](TASK-bzmux-in-rust.md).
+VT terminal with pty, written in Rust: its own VT parser, its own grid and
+instanced drawing on the GPU (`wgpu`). It is the experiment behind the question
+"does rewriting bzmux (Python/GTK) in Rust solve distribution and performance?"
+— the progress, the numbers and the decisions are in
+[`TASK-bzmux-in-rust.md`](TASK-bzmux-in-rust.md).
 
-Estado: **migração concluída** (2026-11-02). O experimento de viabilidade
-fechou com 8–9,5x o Python em vazão ([`docs/BENCHMARKS.md`](docs/BENCHMARKS.md))
-e a decisão foi migrar; o painel de [`docs/MIGRATION.md`](docs/MIGRATION.md)
-fechou em **195 de 195** linhas de paridade. Está aqui, funcionando: parser VT,
-grade, pty, GPU (Vulkan, GL e CPU), teclado (protocolo do kitty incluso), mouse,
-seleção/clipboard, abas e workspaces, imagens do kitty, configuração em arquivo
-com recarga a quente, reflow, ligaduras, emoji/CJK, busca não. O que vem agora é
-atividade nova, na fila de [`docs/BACKLOG.md`](docs/BACKLOG.md).
+Status: **migration complete** (2026-11-02). The feasibility experiment closed
+at 8–9.5x Python in throughput ([`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)) and
+the decision was to migrate; the panel of
+[`docs/MIGRATION.md`](docs/MIGRATION.md) closed at **195 of 195** parity lines.
+It is here, working: VT parser, grid, pty, GPU (Vulkan, GL and CPU), keyboard
+(kitty protocol included), mouse, selection/clipboard, tabs and workspaces,
+kitty images, file configuration with hot reload, reflow, ligatures, emoji/CJK,
+search: no. What comes now is new activity, in the queue of
+[`docs/BACKLOG.md`](docs/BACKLOG.md).
 
-## Documentação
+## Documentation
 
-| arquivo | para que serve |
+| file | what it is for |
 |---|---|
-| [`docs/MIGRATION.md`](docs/MIGRATION.md) | o registro da migração: funcionalidade, estado final, origem no Python |
-| [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | o único lugar com número (vazão, parse, desenho, pegada) |
-| [`docs/CONFIG.md`](docs/CONFIG.md) | o arquivo de configuração: chaves, padrões e o que é erro |
-| [`docs/INSTALL.md`](docs/INSTALL.md) | instalar, desinstalar, verificar e publicar binário |
-| [`docs/DEBUG.md`](docs/DEBUG.md) | ferramentas, debug socket e armadilhas — ler antes de rodar GUI |
-| [`docs/PORTABILITY.md`](docs/PORTABILITY.md) | Linux/Windows/macOS: o que funciona, o que bloqueia, distribuição |
-| [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) | o que não é feito e por quê (decisão, não fila) |
-| [`docs/BACKLOG.md`](docs/BACKLOG.md) | fila de trabalho |
-| [`docs/HISTORY.md`](docs/HISTORY.md) | registro datado do que foi feito |
-| [`AGENTS.md`](AGENTS.md) | convenções, arquitetura e ferramentas (para agente) |
-| [`TASK-bzmux-in-rust.md`](TASK-bzmux-in-rust.md) | registro datado da fase 1 (o experimento) |
+| [`docs/MIGRATION.md`](docs/MIGRATION.md) | the migration record: feature, final state, origin in Python |
+| [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | the only place with numbers (throughput, parse, drawing, footprint) |
+| [`docs/CONFIG.md`](docs/CONFIG.md) | the configuration file: keys, defaults and what is an error |
+| [`docs/INSTALL.md`](docs/INSTALL.md) | install, uninstall, verify and publish a binary |
+| [`docs/DEBUG.md`](docs/DEBUG.md) | tools, debug socket and pitfalls — read before running the GUI |
+| [`docs/PORTABILITY.md`](docs/PORTABILITY.md) | Linux/Windows/macOS: what works, what blocks, distribution |
+| [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) | what is not done and why (a decision, not a queue) |
+| [`docs/BACKLOG.md`](docs/BACKLOG.md) | work queue |
+| [`docs/HISTORY.md`](docs/HISTORY.md) | dated record of what was done |
+| [`AGENTS.md`](AGENTS.md) | conventions, architecture and tools (for agents) |
+| [`TASK-bzmux-in-rust.md`](TASK-bzmux-in-rust.md) | dated record of phase 1 (the experiment) |
 
-## Instalar
+## Install
 
 ```sh
-./install.sh                 # compila e instala em ~/.local/bin/bzmux
-./install.sh --check         # confere binário, libs e menu
-./install.sh --uninstall     # remove comando, entrada e ícone
+./install.sh                 # builds and installs to ~/.local/bin/bzmux
+./install.sh --check         # checks binary, libs and menu
+./install.sh --uninstall     # removes command, entry and icon
 ```
 
-O bzmux é um binário só (libc/libm + driver da GPU). Detalhes, `--prefix`,
-`--from-release` e a convivência com o bzmux Python (`tortty-python`): `docs/INSTALL.md`.
+bzmux is a single binary (libc/libm + the GPU driver). Details, `--prefix`,
+`--from-release` and coexistence with the Python bzmux (`tortty-python`):
+`docs/INSTALL.md`.
 
-## Rodar
+## Run
 
 ```sh
 cargo build --release
-./target/release/bzmux                          # $SHELL em 80x24
+./target/release/bzmux                          # $SHELL in 80x24
 ./target/release/bzmux --cmd 'mc' --cols 100 --rows 30
 ./target/release/bzmux --cmd 'vim arquivo.rs' --font-size 13
 ./target/release/bzmux --no-vsync --debug-socket auto --prof
 ```
 
-`--font-size` é em **pontos** (como o `font_size` do bzmux Python); `--dpi`
-(default 96) converte para pixels e multiplica pelo `scale_factor` do monitor —
-é o equivalente ao `Xft.dpi` do GTK. `--debug-socket auto` abre
+`--font-size` is in **points** (like the Python bzmux `font_size`); `--dpi`
+(default 96) converts to pixels and multiplies by the monitor `scale_factor` —
+it is the equivalent of GTK's `Xft.dpi`. `--debug-socket auto` opens
 `$XDG_RUNTIME_DIR/bzmux-<pid>.sock`.
 
-## Qualidade
+## Quality
 
 ```sh
-./tools/check.sh          # fmt + clippy (-D warnings) + testes + build + parsebench
-./tools/check.sh --fix    # conserta formatação e o que o clippy corrige sozinho
+./tools/check.sh          # fmt + clippy (-D warnings) + tests + build + parsebench
+./tools/check.sh --fix    # fixes formatting and what clippy fixes on its own
 ```
 
-Roda também no `pre-commit` (`git config core.hooksPath .githooks`) e no CI.
+It also runs in `pre-commit` (`git config core.hooksPath .githooks`) and in CI.
 
-Além disso, dois gates que não precisam da sua tela:
+Besides that, two gates that do not need your screen:
 
 ```sh
-./target/release/bzmux --selftest   # 31 checks sem janela (paridade com o checks.py)
-./tools/visual.sh                   # Xvfb próprio: desenha, captura e compara pixels
+./target/release/bzmux --selftest   # 31 checks without a window (parity with checks.py)
+./tools/visual.sh                   # own Xvfb: draws, captures and compares pixels
 ```
 
-## Medir
+## Measure
 
 ```sh
-cargo run --release -p bzmux-core --bin parsebench        # parser isolado
-./tools/bench.sh                                          # escada Rust x Python
-./tools/benchrun.py --frames 1200                         # uma medição do doom-fire
+cargo run --release -p bzmux-core --bin parsebench        # parser alone
+./tools/bench.sh                                          # Rust x Python ladder
+./tools/benchrun.py --frames 1200                         # one doom-fire measurement
 ```
 
-O gerador é o `tools/doomfire.py` do tortty-python, copiado sem alteração, para os
-dois terminais consumirem exatamente os mesmos bytes.
+The generator is tortty-python's `tools/doomfire.py`, copied unchanged, so both
+terminals consume exactly the same bytes.
 
-## Ferramentas de dev (PID file, nunca `pkill`)
+## Dev tools (PID file, never `pkill`)
 
 ```sh
-./tools/devrun.sh --cmd 'mc' --debug-socket /tmp/bz.sock   # sobe em background
-./tools/devkill.sh                                          # mata SÓ esse PID
+./tools/devrun.sh --cmd 'mc' --debug-socket /tmp/bz.sock   # starts in background
+./tools/devkill.sh                                          # kills THAT PID only
 ```
 
-`pkill -f bzmux` mata o shell que chamou (o padrão está na linha de comando) e
-`pkill -x bzmux` mata o `bzmux` do pipx, que tem o mesmo nome do binário. Já
-aconteceu; por isso aqui só se mata PID registrado, conferindo `/proc/<pid>/exe`.
+`pkill -f bzmux` kills the shell that called it (the pattern is in its command
+line) and `pkill -x bzmux` kills the pipx `bzmux`, which has the same name as
+the binary. It has happened; that is why here you only kill a registered PID,
+checking `/proc/<pid>/exe`.
 
-## Estrutura
+## Structure
 
 ```
-crates/bzmux-core/         emulação pura, sem GUI/pty/GPU (testável sem display)
+crates/bzmux-core/         pure emulation, no GUI/pty/GPU (testable without display)
   src/{cell,color,grid,charset,term}.rs
-  src/bin/parsebench.rs    benchmark do parser: doomfire e arquivo (dmesg)
+  src/bin/parsebench.rs    parser benchmark: doomfire and file (dmesg)
 crates/bzmux/              app
   src/{main,cli,app,pty,keys,glyph,atlas,render,debugsock,prof}.rs
-  src/shader.wgsl          um pipeline para fundo, glifo, sublinhado e cursor
+  src/shader.wgsl          one pipeline for background, glyph, underline and cursor
 tools/{doomfire,benchrun}.py, bench.sh, devrun.sh, devkill.sh
 ```
 
-A regra herdada do projeto Python: `bzmux-core` não conhece janela, pty nem
-GPU. Por isso `cargo test -p bzmux-core` roda sem display e o `parsebench` mede
-o parser, não o toolkit.
+The rule inherited from the Python project: `bzmux-core` knows no window, pty or
+GPU. That is why `cargo test -p bzmux-core` runs without a display and
+`parsebench` measures the parser, not the toolkit.
 
-## Números de hoje (ver o TASK)
+## Today's numbers (see the TASK)
 
-- parser: 0,18–0,20 µs/célula no frame do doom-fire (Python pós-P20: 5,49).
-- `dmesg` (1397 linhas, 100x40): 2,1 ms sem cor / 2,2 ms com cor (Python:
-  42,6 / 78,6 ms).
-- ponta a ponta, 61x18, 1200 frames, mesmo display: 917–968 fps / 39–42 MB/s
-  contra 113–121 fps / 4,9–5,2 MB/s do Python.
+- parser: 0.18–0.20 µs/cell on the doom-fire frame (Python post-P20: 5.49).
+- `dmesg` (1397 lines, 100x40): 2.1 ms without colour / 2.2 ms with colour
+  (Python: 42.6 / 78.6 ms).
+- end to end, 61x18, 1200 frames, same display: 917–968 fps / 39–42 MB/s
+  against 113–121 fps / 4.9–5.2 MB/s for Python.

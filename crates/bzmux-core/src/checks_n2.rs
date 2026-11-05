@@ -1,20 +1,20 @@
-//! N2: configuração e linha de comando (equivalente ao `checks.py:125-287`).
+//! N2: configuration and command line (equivalent to `checks.py:125-287`).
 //!
-//! Um check monta o cenário, exercita e compara com o esperado. Nada aqui
-//! precisa de janela, GPU ou pty.
+//! Each check sets up the scenario, exercises it and compares with the expected
+//! value. Nothing here needs a window, GPU or pty.
 //!
-//! O que **não** tem equivalente no Rust fica de fora de propósito: o Python
-//! valida `shell` executável e resolve `effective_shell`/`tab_command` no
-//! `config.py`, enquanto aqui o `shell` só é resolvido no `pty::spawn` (precisa
-//! de pty e de `$SHELL`), e o Python tem a noção de *warning* (chave repetida),
-//! que o Rust não tem — aqui só existe `Error`.
+//! What has **no** Rust equivalent is left out on purpose: Python validates
+//! that `shell` is executable and resolves `effective_shell`/`tab_command` in
+//! `config.py`, while here `shell` is only resolved in `pty::spawn` (it needs a
+//! pty and `$SHELL`), and Python has the notion of a *warning* (repeated key),
+//! which Rust does not have — here there is only `Error`.
 
 use crate::checks::Check;
 use crate::config::{Bell, Config, CursorShape};
 use crate::grid::Row;
 use crate::term::Term;
 
-/// Checks desta área, na ordem do relatório.
+/// Checks in this area, in report order.
 #[must_use]
 pub fn all() -> Vec<Check> {
     vec![
@@ -33,10 +33,10 @@ pub fn all() -> Vec<Check> {
     ]
 }
 
-/// Todas as chaves de `config::KNOWN` (que é privado). A lista existe para o
-/// `DEFAULT_CONF` não perder uma chave em silêncio: os padrões são a única
-/// fonte dos valores, então toda chave precisa estar escrita lá.
-const CHAVES: &[&str] = &[
+/// Every key of `config::KNOWN` (which is private). The list exists so
+/// `DEFAULT_CONF` does not silently lose a key: the defaults are the only
+/// source of the values, so every key has to be written there.
+const KEYS: &[&str] = &[
     "shell",
     "font_family",
     "font_size",
@@ -68,259 +68,267 @@ const CHAVES: &[&str] = &[
     "color15",
 ];
 
-// por valor de propósito: quem chama monta o esperado na hora (`"abc".to_string()`)
+// by value on purpose: the caller builds the expected value on the spot
+// (`"abc".to_string()`)
 #[allow(clippy::needless_pass_by_value)]
-fn esperado<T: PartialEq + std::fmt::Debug>(
+fn expected<T: PartialEq + std::fmt::Debug>(
     o_que: &str,
     obtained: T,
-    esperado: T,
+    expected: T,
 ) -> Result<(), String> {
-    if obtained == esperado {
+    if obtained == expected {
         Ok(())
     } else {
-        Err(format!(
-            "{o_que}: esperado {esperado:?}, obtido {obtained:?}"
-        ))
+        Err(format!("{o_que}: expected {expected:?}, got {obtained:?}"))
     }
 }
 
-/// `checks.py:config_file` — formato do kitty, merge com os padrões embutidos
-/// e validação com erro por linha.
+/// `checks.py:config_file` — kitty format, merge with the built-in defaults and
+/// validation with per-line errors.
 fn config_file() -> Result<(), String> {
-    // os padrões embarcam no binário como arquivo (o mesmo tratamento do
-    // `DEFAULT_CONF` do kitty): parseiam limpos e são a única fonte
+    // the defaults are embedded in the binary as a file (the same treatment as
+    // kitty's `DEFAULT_CONF`): they parse clean and are the only source
     let (padroes, errs) = Config::parse("");
     if !errs.is_empty() {
-        return Err(format!("DEFAULT_CONF tem erro: {errs:?}"));
+        return Err(format!("DEFAULT_CONF has an error: {errs:?}"));
     }
-    esperado(
-        "padrões = parse do DEFAULT_CONF",
+    expected(
+        "defaults = parse of DEFAULT_CONF",
         padroes.clone(),
         Config::base(),
     )?;
-    let linhas: Vec<&str> = crate::config::DEFAULT_CONF
+    let lines: Vec<&str> = crate::config::DEFAULT_CONF
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .collect();
-    for k in CHAVES {
-        if !linhas
+    for k in KEYS {
+        if !lines
             .iter()
             .any(|l| l.split_whitespace().next() == Some(*k))
         {
-            return Err(format!("DEFAULT_CONF não documenta a chave '{k}'"));
+            return Err(format!("DEFAULT_CONF does not document the key '{k}'"));
         }
     }
-    // vazio = herda o $SHELL do ambiente (o pty resolve; aqui é só `None`)
-    esperado("shell vazio", padroes.shell, None)?;
-    // comentário de linha inteira e no fim da linha, espaço nas pontas, chave
-    // repetida (a última vence) e chave desconhecida no meio
+    // empty = inherits the environment $SHELL (the pty resolves it; here it is
+    // only `None`)
+    expected("empty shell", padroes.shell, None)?;
+    // whole-line and end-of-line comment, spaces at the edges, repeated key (the
+    // last wins) and unknown key in the middle
     let (cfg, errs) =
-        Config::parse("# cabeçalho\n  shell   /bin/sh   # inline\n\nfoo bar\nshell /bin/bash\n");
-    esperado(
-        "última repetida vence",
-        cfg.shell.as_deref(),
-        Some("/bin/bash"),
-    )?;
-    esperado("uma linha inválida", errs.len(), 1)?;
-    esperado(
-        "erro na linha do 'foo'",
+        Config::parse("# header\n  shell   /bin/sh   # inline\n\nfoo bar\nshell /bin/bash\n");
+    expected("last repeat wins", cfg.shell.as_deref(), Some("/bin/bash"))?;
+    expected("one invalid line", errs.len(), 1)?;
+    expected(
+        "error on the 'foo' line",
         (errs[0].line, errs[0].key.as_str()),
         (4, "foo"),
     )?;
-    // merge chave a chave: o usuário só sobrescreve o que escreveu
+    // merge key by key: the user only overrides what they wrote
     let (cfg, errs) = Config::parse("shell /bin/sh\n");
-    esperado("shell do usuário", cfg.shell.as_deref(), Some("/bin/sh"))?;
-    esperado(
-        "fonte segue a de fábrica",
+    expected("user shell", cfg.shell.as_deref(), Some("/bin/sh"))?;
+    expected(
+        "font still the factory one",
         cfg.font_family.as_str(),
         "Monospace",
     )?;
-    esperado("sem arquivo, sem erro", errs.len(), 0)?;
-    // chave desconhecida é erro, mas o resto do arquivo VALE (carga inicial)
+    expected("no file, no error", errs.len(), 0)?;
+    // unknown key is an error, but the rest of the file HOLDS (initial load)
     let (cfg, errs) = Config::parse("foo bar\nshell /bin/sh\n");
-    esperado("o resto aplicou", cfg.shell.as_deref(), Some("/bin/sh"))?;
-    esperado("chave desconhecida é erro", errs.len(), 1)?;
-    // valor inválido fica no padrão (a chave não aplica) e o erro vai pro toast
-    let (cfg, errs) = Config::parse("# nada aqui\nfont_size 200\n");
-    esperado("inválido não aplica", cfg.font_size, padroes.font_size)?;
-    esperado("erro na linha 2", errs.first().map(|e| e.line), Some(2))?;
-    if !errs.iter().any(|e| e.msg.contains("fora da faixa")) {
-        return Err(format!("erro sem o motivo da faixa: {errs:?}"));
+    expected("the rest applied", cfg.shell.as_deref(), Some("/bin/sh"))?;
+    expected("unknown key is an error", errs.len(), 1)?;
+    // invalid value keeps the default (the key does not apply) and the error
+    // goes to the toast
+    let (cfg, errs) = Config::parse("# nothing here\nfont_size 200\n");
+    expected("invalid does not apply", cfg.font_size, padroes.font_size)?;
+    expected("error on line 2", errs.first().map(|e| e.line), Some(2))?;
+    if !errs.iter().any(|e| e.msg.contains("outside the range")) {
+        return Err(format!("error without the range reason: {errs:?}"));
     }
-    // reload: quem chama só aplica com `errs` vazio, então qualquer erro
-    // mantém a configuração que já estava valendo
+    // reload: the caller only applies with `errs` empty, so any error keeps the
+    // configuration that was already in effect
     let (good, _) = Config::parse("font_size 16\n");
-    let (_, errs) = good.over("font_size 18\nbell grita\n");
+    let (_, errs) = good.over("font_size 18\nbell beep\n");
     if errs.len() != 1 {
-        return Err(format!("reload inválido tinha que dar 1 erro: {errs:?}"));
+        return Err(format!("invalid reload had to give 1 error: {errs:?}"));
     }
-    esperado("a base não é mutada pelo reload", good.font_size, 16.0)?;
+    expected(
+        "the base is not mutated by the reload",
+        good.font_size,
+        16.0,
+    )?;
     Ok(())
 }
 
-/// `checks.py:config_options` — fonte, cursor, histórico, padding, bell,
-/// `copy_on_select` e `debug_log`, chave a chave: padrão, valor válido e erro.
+/// `checks.py:config_options` — font, cursor, history, padding, bell,
+/// `copy_on_select` and `debug_log`, key by key: default, valid value and error.
 fn config_options() -> Result<(), String> {
-    // sem arquivo do usuário valem os padrões
+    // with no user file the defaults hold
     let (cfg, errs) = Config::parse("");
     if !errs.is_empty() {
-        return Err(format!("padrões com erro: {errs:?}"));
+        return Err(format!("defaults with error: {errs:?}"));
     }
-    esperado("font_family", cfg.font_family.as_str(), "Monospace")?;
-    esperado("font_size", cfg.font_size, 12.0)?;
-    esperado("cursor_shape", cfg.cursor_shape, CursorShape::Block)?;
-    esperado("cursor_blink", cfg.cursor_blink, false)?;
-    esperado("scrollback", cfg.scrollback, 10_000)?;
-    esperado("window_padding_width", cfg.padding, 0)?;
-    esperado("bell", cfg.bell, Bell::None)?;
-    esperado("copy_on_select", cfg.copy_on_select, false)?;
-    esperado("debug_log", cfg.debug_log.as_deref(), None)?;
-    // valor válido de cada chave: família com espaço e fonte fracionária
+    expected("font_family", cfg.font_family.as_str(), "Monospace")?;
+    expected("font_size", cfg.font_size, 12.0)?;
+    expected("cursor_shape", cfg.cursor_shape, CursorShape::Block)?;
+    expected("cursor_blink", cfg.cursor_blink, false)?;
+    expected("scrollback", cfg.scrollback, 10_000)?;
+    expected("window_padding_width", cfg.padding, 0)?;
+    expected("bell", cfg.bell, Bell::None)?;
+    expected("copy_on_select", cfg.copy_on_select, false)?;
+    expected("debug_log", cfg.debug_log.as_deref(), None)?;
+    // valid value of each key: family with a space and a fractional font size
     let (cfg, errs) = Config::parse(
         "font_family DejaVu Sans Mono\nfont_size 12.5\ncursor_shape beam\n\
          cursor_blink yes\nscrollback 200\nwindow_padding_width 4\n\
          bell visual\ncopy_on_select on\n",
     );
     if !errs.is_empty() {
-        return Err(format!("valores válidos deram erro: {errs:?}"));
+        return Err(format!("valid values gave an error: {errs:?}"));
     }
-    esperado(
-        "família com espaço",
+    expected(
+        "family with a space",
         cfg.font_family.as_str(),
         "DejaVu Sans Mono",
     )?;
-    esperado("fonte fracionária", cfg.font_size, 12.5)?;
-    esperado("cursor beam", cfg.cursor_shape, CursorShape::Beam)?;
-    esperado("blink yes", cfg.cursor_blink, true)?;
-    esperado("scrollback", cfg.scrollback, 200)?;
-    esperado("padding", cfg.padding, 4)?;
-    esperado("bell visual", cfg.bell, Bell::Visual)?;
-    esperado("copy_on_select on", cfg.copy_on_select, true)?;
-    // debug_log: caminho livre e `off` desligando
-    let (cfg, errs) = Config::parse("debug_log /tmp/outro.log\n");
-    esperado(
-        "debug_log caminho",
+    expected("fractional font size", cfg.font_size, 12.5)?;
+    expected("cursor beam", cfg.cursor_shape, CursorShape::Beam)?;
+    expected("blink yes", cfg.cursor_blink, true)?;
+    expected("scrollback", cfg.scrollback, 200)?;
+    expected("padding", cfg.padding, 4)?;
+    expected("bell visual", cfg.bell, Bell::Visual)?;
+    expected("copy_on_select on", cfg.copy_on_select, true)?;
+    // debug_log: a free path and `off` turning it off
+    let (cfg, errs) = Config::parse("debug_log /tmp/other.log\n");
+    expected(
+        "debug_log path",
         cfg.debug_log.as_deref(),
-        Some("/tmp/outro.log"),
+        Some("/tmp/other.log"),
     )?;
-    esperado("debug_log sem erro", errs.len(), 0)?;
+    expected("debug_log with no error", errs.len(), 0)?;
     let (cfg, errs) = Config::parse("debug_log off\n");
-    esperado("debug_log off", cfg.debug_log.as_deref(), None)?;
-    esperado("debug_log off sem erro", errs.len(), 0)?;
-    // erro é por linha: o válido aplica, o inválido fica no padrão anterior
+    expected("debug_log off", cfg.debug_log.as_deref(), None)?;
+    expected("debug_log off with no error", errs.len(), 0)?;
+    // the error is per line: the valid one applies, the invalid one keeps the
+    // previous default
     for (garbage, reason) in [
-        ("font_size abc", "não é número"),
-        ("font_size 0", "fora da faixa"),
-        ("font_family", "família vazia"),
-        ("cursor_shape square", "não é block"),
-        ("cursor_blink talvez", "não é on/off"),
-        ("scrollback -1", "não é número"),
-        ("window_padding_width 8px", "não é número"),
-        ("bell beep", "não é none"),
-        ("copy_on_select 2", "não é on/off"),
+        ("font_size abc", "is not a number"),
+        ("font_size 0", "outside the range"),
+        ("font_family", "empty family"),
+        ("cursor_shape square", "is not block"),
+        ("cursor_blink maybe", "is not on/off"),
+        ("scrollback -1", "is not a number"),
+        ("window_padding_width 8px", "is not a number"),
+        ("bell beep", "is not none"),
+        ("copy_on_select 2", "is not on/off"),
     ] {
         let (cfg, errs) = Config::parse(&format!("font_size 20\n{garbage}\n"));
-        esperado("a linha válida antes do erro aplicou", cfg.font_size, 20.0)?;
+        expected(
+            "the valid line before the error applied",
+            cfg.font_size,
+            20.0,
+        )?;
         match errs.as_slice() {
             [e] if e.line == 2 && e.msg.contains(reason) => {},
             other => {
                 return Err(format!(
-                    "'{garbage}': esperava 1 erro na linha 2 com '{reason}', veio {other:?}"
+                    "'{garbage}': expected 1 error on line 2 with '{reason}', got {other:?}"
                 ));
             },
         }
     }
-    // a carga inicial mostra primeiro erro + contagem dos outros; aqui a lista
-    // sai em ordem de linha e o válido no meio aplica
+    // the initial load shows the first error plus a count of the others; here the
+    // list comes out in line order and the valid line in the middle applies
     let (cfg, errs) = Config::parse("bell beep\nfont_size 20\ncursor_shape square\n");
-    esperado("bell ficou no padrão", cfg.bell, Bell::None)?;
-    esperado("font_size do meio aplicou", cfg.font_size, 20.0)?;
-    esperado(
-        "um erro por linha",
+    expected("bell stayed at the default", cfg.bell, Bell::None)?;
+    expected("the font_size in the middle applied", cfg.font_size, 20.0)?;
+    expected(
+        "one error per line",
         errs.iter().map(|e| e.line).collect::<Vec<_>>(),
         vec![1, 3],
     )?;
-    if !errs[0].msg.contains("não é none") || !errs[1].msg.contains("não é block") {
-        return Err(format!("motivos errados: {errs:?}"));
+    if !errs[0].msg.contains("is not none") || !errs[1].msg.contains("is not block") {
+        return Err(format!("wrong reasons: {errs:?}"));
     }
     Ok(())
 }
 
-/// `checks.py:scrollback_and_bell` — teto de histórico configurável, RIS não é
-/// dono da configuração, BEL contado (não silenciado) e DECSCUSR virando
-/// pedido do app.
+/// `checks.py:scrollback_and_bell` — configurable history ceiling, RIS does not
+/// own the configuration, BEL counted (not silenced) and DECSCUSR becoming an
+/// app request.
 fn scrollback_and_bell() -> Result<(), String> {
     let mut t = Term::new(12, 3);
     t.scrollback_limit = 2;
     for i in 0..20 {
-        t.feed(format!("linha {i}\r\n").as_bytes());
+        t.feed(format!("line {i}\r\n").as_bytes());
     }
-    // corta pela mais antiga, não pela que chega
-    esperado("teto do histórico", t.scrollback.len(), 2)?;
-    esperado(
-        "as duas últimas que saíram",
+    // trims from the oldest, not from the one arriving
+    expected("history ceiling", t.scrollback.len(), 2)?;
+    expected(
+        "the last two that scrolled out",
         t.scrollback.iter().map(Row::text).collect::<Vec<_>>(),
-        vec!["linha 16".to_string(), "linha 17".to_string()],
+        vec!["line 16".to_string(), "line 17".to_string()],
     )?;
-    // o vivo não é afetado pelo teto
-    esperado("linha viva 18", t.row_text(0), "linha 18".to_string())?;
-    esperado("linha viva 19", t.row_text(1), "linha 19".to_string())?;
-    // reduzir o teto corta na rolagem seguinte (o corte imediato é do app,
-    // que mexe no `scrollback_limit` da aba e poda o `VecDeque` na hora)
+    // the live screen is not affected by the ceiling
+    expected("live row 18", t.row_text(0), "line 18".to_string())?;
+    expected("live row 19", t.row_text(1), "line 19".to_string())?;
+    // lowering the ceiling trims on the next scroll (the immediate trim belongs
+    // to the app, which touches the tab's `scrollback_limit` and prunes the
+    // `VecDeque` right away)
     t.scrollback_limit = 0;
     t.feed(b"x\r\n");
-    esperado("teto zero esvazia", t.scrollback.len(), 0)?;
+    expected("zero ceiling empties it", t.scrollback.len(), 0)?;
     t.scrollback_limit = 2;
     for i in 0..10 {
-        t.feed(format!("linha {i}\r\n").as_bytes());
+        t.feed(format!("line {i}\r\n").as_bytes());
     }
-    esperado("histórico encheu de novo", t.scrollback.len(), 2)?;
-    // DECRQM tem que enxergar os modos de mouse que existem: `?1005` estava
-    // fora da tabela e respondia 0 com o modo ligado
+    expected("history filled up again", t.scrollback.len(), 2)?;
+    // DECRQM has to see the mouse modes that exist: `?1005` was outside the
+    // table and answered 0 with the mode on
     let mut q = Term::new(10, 3);
     q.feed(b"\x1b[?1005h");
     q.take_child_out();
     q.feed(b"\x1b[?1005$p");
-    esperado(
-        "DECRQM 1005 ligado",
+    expected(
+        "DECRQM 1005 on",
         q.take_child_out(),
         b"\x1b[?1005;1$y".to_vec(),
     )?;
     q.feed(b"\x1b[?1005l");
     q.take_child_out();
     q.feed(b"\x1b[?1005$p");
-    esperado(
-        "DECRQM 1005 desligado",
+    expected(
+        "DECRQM 1005 off",
         q.take_child_out(),
         b"\x1b[?1005;2$y".to_vec(),
     )?;
-    // RIS (ESC c) limpa a tela mas não é dono da configuração
+    // RIS (ESC c) clears the screen but does not own the configuration
     t.feed(b"\x1bc");
-    esperado("RIS preserva o teto", t.scrollback_limit, 2)?;
-    esperado("RIS limpa o histórico", t.scrollback.len(), 0)?;
-    // BEL é contado, não silenciado: quem decide (visual/audible/none) é a view
-    esperado("sem BEL ainda", t.bells, 0)?;
+    expected("RIS keeps the ceiling", t.scrollback_limit, 2)?;
+    expected("RIS clears the history", t.scrollback.len(), 0)?;
+    // BEL is counted, not silenced: the view decides (visual/audible/none)
+    expected("no BEL yet", t.bells, 0)?;
     t.feed(b"\x07");
-    esperado("BEL contado", t.bells, 1)?;
+    expected("BEL counted", t.bells, 1)?;
     t.feed(b"\x07\x07");
-    esperado("BEL acumula", t.bells, 3)?;
-    // `bell none` na config não impede a contagem: o emulador só conta
+    expected("BEL accumulates", t.bells, 3)?;
+    // `bell none` in the config does not stop the counting: the emulator only
+    // counts
     let (cfg, errs) = Config::parse("bell none\n");
-    esperado("bell none", (cfg.bell, errs.len()), (Bell::None, 0))?;
+    expected("bell none", (cfg.bell, errs.len()), (Bell::None, 0))?;
     t.feed(b"\x07");
-    esperado("config não silencia o contador", t.bells, 4)?;
-    // DECSCUSR (CSI 6 q) vira pedido do app; 0 volta para a config
-    // (0 = block, 1 = underline, 2 = beam; o bool é o "pisca")
+    expected("config does not silence the counter", t.bells, 4)?;
+    // DECSCUSR (CSI 6 q) becomes an app request; 0 goes back to the config
+    // (0 = block, 1 = underline, 2 = beam; the bool is the "blink")
     t.feed(b"\x1b[4 q");
-    esperado(
-        "cursor underline fixo",
+    expected(
+        "steady underline cursor",
         t.app_cursor_style,
         Some((1, false)),
     )?;
     t.feed(b"\x1b[5 q");
-    esperado("cursor beam piscando", t.app_cursor_style, Some((2, true)))?;
+    expected("blinking beam cursor", t.app_cursor_style, Some((2, true)))?;
     t.feed(b"\x1b[0 q");
-    esperado("CSI 0 q volta para a config", t.app_cursor_style, None)?;
+    expected("CSI 0 q goes back to the config", t.app_cursor_style, None)?;
     Ok(())
 }

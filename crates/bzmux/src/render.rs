@@ -1,9 +1,10 @@
-//! Renderizador: monta instâncias e desenha em uma única passada na GPU.
+//! Renderer: builds instances and draws in a single GPU pass.
 //!
-//! O gargalo medido do bzmux Python era a **alternância** de `fill` de fundo e
-//! `show_layout` por run (13,0 ms/frame; 7,9 ms só agrupando). Aqui fundo e
-//! glifo são a mesma instância de quad — não existe alternância para pagar, e
-//! o frame custa o que custa montar vértices (dezenas de µs), não o desenho.
+//! The measured bottleneck of the Python bzmux was the **alternation** of
+//! background `fill` and `show_layout` per run (13.0 ms/frame; 7.9 ms just from
+//! grouping). Here background and glyph are the same quad instance — there is
+//! no alternation to pay for, and a frame costs what building vertices costs
+//! (tens of µs), not the drawing.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -20,8 +21,8 @@ use crate::atlas::{bind_atlas, globals_buffer, globals_layout, Atlas};
 use crate::glyph::{self, Fonts};
 use crate::prof;
 
-/// Fundo e frente usados quando a configuração não diz nada (os mesmos do
-/// bzmux Python, `BG_DEFAULT`/`FG_DEFAULT`).
+/// Background and foreground used when the configuration says nothing (the
+/// same as the Python bzmux, `BG_DEFAULT`/`FG_DEFAULT`).
 pub const BG: (u8, u8, u8) = (0, 0, 0);
 pub const FG: (u8, u8, u8) = (214, 214, 214);
 
@@ -30,12 +31,12 @@ pub const FG: (u8, u8, u8) = (214, 214, 214);
 struct Instance {
     rect: [f32; 4],
     color: [f32; 4],
-    /// u0, v0, u1, v1 — os quatro iguais = quad sólido (pixel branco).
+    /// u0, v0, u1, v1 — all four equal = solid quad (white pixel).
     uv: [f32; 4],
 }
 
-/// A célula está invertida nesta linha/coluna? `SGR 7` inverte sempre; a
-/// seleção inverte o que está dentro dela.
+/// Is the cell inverted on this row/column? `SGR 7` always inverts; the
+/// selection inverts whatever is inside it.
 #[inline]
 fn is_swap(cell: &Cell, sel: Option<(usize, usize, usize, usize)>, y: usize, x: usize) -> bool {
     let inv = cell.flags & INV != 0;
@@ -48,8 +49,8 @@ fn is_swap(cell: &Cell, sel: Option<(usize, usize, usize, usize)>, y: usize, x: 
     inv ^ inside
 }
 
-/// Instâncias de uma linha: a máscara (texto, fundo, decoração) e o emoji
-/// colorido, que vai em draw call própria porque tem atlas RGBA.
+/// Instances of one row: the mask (text, background, decoration) and the colour
+/// emoji, which goes in its own draw call because it has an RGBA atlas.
 #[derive(Default, Clone)]
 struct RowQuads {
     mask: Vec<Instance>,
@@ -63,7 +64,7 @@ struct GlyphQuad {
     w: u32,
     h: u32,
     uv: [f32; 4],
-    /// Veio do atlas RGBA (emoji colorido) em vez da máscara.
+    /// Came from the RGBA atlas (colour emoji) instead of the mask.
     color: bool,
 }
 
@@ -82,99 +83,100 @@ pub struct Renderer {
     pub fonts: Fonts,
     scale_ctx: ScaleContext,
     cache: HashMap<(u8, char), Option<GlyphQuad>>,
-    /// Cache do mesmo glifo resolvido por (face, gid) — é o que o shaping usa.
+    /// Cache of the same glyph resolved by (face, gid) — this is what shaping uses.
     cache_gid: HashMap<(u8, u16), Option<GlyphQuad>>,
-    /// Shaping por trecho de linha (ligaduras e o que mais a fonte fizer).
+    /// Shaping per row run (ligatures and whatever else the font does).
     shaper: crate::shape::Shaper,
-    /// Modo de ligadura vindo da configuração.
+    /// Ligature mode coming from the configuration.
     ligatures: bzmux_core::config::Ligatures,
     instances: Vec<Instance>,
     pub palette: Vec<(u8, u8, u8)>,
-    /// Tema efetivo (config + defaults); o `build` resolve célula por célula.
+    /// Effective theme (config + defaults); `build` resolves cell by cell.
     pub fg: (u8, u8, u8),
     pub bg: (u8, u8, u8),
     pub cursor: (u8, u8, u8),
-    /// Margem em px em volta da grade (`window_padding_width`).
+    /// Margin in px around the grid (`window_padding_width`).
     pub pad: f32,
-    /// Altura da barra de abas em px (0 = uma aba só, sem barra). Ela empurra
-    /// a grade para baixo: o `origin` do shader é `pad + bar`.
+    /// Height of the tab bar in px (0 = a single tab, no bar). It pushes the grid
+    /// down: the shader's `origin` is `pad + bar`.
     bar: f32,
-    /// Largura da sidebar de workspaces em px (0 = um workspace só). Empurra
-    /// a grade para a direita: o `origin` vira `pad + side`.
+    /// Width of the workspace sidebar in px (0 = a single workspace). Pushes the
+    /// grid right: `origin` becomes `pad + side`.
     side: f32,
     pub cursor_shape: CursorShape,
-    /// Onde o texto acaba e as imagens entram (as imagens ficam por cima do
-    /// texto e abaixo do cursor/cromo, como no kitty).
+    /// Where text ends and images come in (images sit above text and below the
+    /// cursor/chrome, as in kitty).
     img_split: usize,
     img_pipeline: wgpu::RenderPipeline,
     img_buf: wgpu::Buffer,
     img_instances: Vec<Instance>,
-    /// Id da imagem de cada instância (a textura é ligada por id).
+    /// Image id of each instance (the texture is bound by id).
     img_ids: Vec<u32>,
     img_layout: wgpu::BindGroupLayout,
     img_sampler: wgpu::Sampler,
-    /// Atlas RGBA dos glifos coloridos (emoji). Prateleira igual à da máscara,
-    /// mas com cor: emoji não aceita tingimento.
+    /// RGBA atlas of the colour glyphs (emoji). Same shelf as the mask, but
+    /// coloured: emoji does not accept tinting.
     emoji: Atlas,
     emoji_bind: wgpu::BindGroup,
     emoji_instances: Vec<Instance>,
     emoji_buf: wgpu::Buffer,
     emoji_cap: usize,
-    /// Quads de emoji da linha em montagem (y relativo, como a máscara).
+    /// Emoji quads of the row being built (relative y, like the mask).
     emoji_row: Vec<Instance>,
-    /// Textura por imagem (id → bind group). O bind group segura a textura viva.
+    /// Texture per image (id → bind group). The bind group keeps the texture alive.
     img_cache: HashMap<u32, ImgTex>,
-    /// Instâncias da grade, guardadas **por linha**: só a linha suja é
-    /// remontada (A17/G17). A lista final (`instances`) é a concatenação delas
-    /// mais as imagens, o cromo e o cursor, na ordem de blend.
+    /// Grid instances, kept **per row**: only the dirty row is rebuilt
+    /// (A17/G17). The final list (`instances`) is their concatenation plus the
+    /// images, the chrome and the cursor, in blend order.
     per_line: Vec<RowQuads>,
-    /// Signature do último frame: o que mudou de tela inteira (ver `dano`).
+    /// Signature of the last frame: what changed on the whole screen (see
+    /// `damage`).
     signature: crate::damage::Signature,
-    /// Geração do tema: sobe a cada `apply_theme` e força rebuild completo.
+    /// Theme generation: bumps on every `apply_theme` and forces a full rebuild.
     theme_gen: u64,
-    /// Contadores de `state` (prof): prova do dano sem olhar a tela.
+    /// `state` counters (prof): proof of the damage without looking at the screen.
     pub draw: u64,
-    /// Resultado do último frame ("drawn"/"skipped"/"occluded"...): a primeira
-    /// pergunta quando a janela não atualiza é se o frame saiu.
+    /// Result of the last frame ("drawn"/"skipped"/"occluded"...): the first
+    /// question when the window does not update is whether the frame went out.
     pub last: &'static str,
-    /// Quantos frames foram recusados pela superfície (`Timeout`/`Occluded`) e
-    /// quantos saíram: separa "o app não desenhou" de "o app desenhou e a
-    /// superfície não apresentou" — o sintoma de ambiente confinado (M-AA).
+    /// How many frames the surface refused (`Timeout`/`Occluded`) and how many
+    /// went out: separates "the app did not draw" from "the app drew and the
+    /// surface did not present" — the symptom of a confined environment (M-AA).
     pub skips: u64,
     pub drawn: u64,
-    /// Já avisou no stderr que a superfície não está apresentando.
+    /// Already warned on stderr that the surface is not presenting.
     avisou_skip: bool,
-    /// Decisão do dano no último frame (`all`/`rows: N`): responde na hora por
-    /// que `rows_built` cresce demais.
+    /// Damage decision of the last frame (`all`/`rows: N`): answers on the spot
+    /// why `rows_built` grows too much.
     pub last_damage: String,
-    /// Quantos frames foram "tudo" e a maior faixa já remontada: separa
-    /// "o dano não decidiu" de "decidiu e o núcleo sujou tudo".
+    /// How many frames were "everything" and the largest span ever rebuilt:
+    /// separates "the damage did not decide" from "it decided and the core
+    /// dirtied everything".
     pub frames_all: u64,
     pub rows_max: usize,
-    /// Por que o último frame foi "tudo": `global` (dano do núcleo) ou
-    /// `signature` (algo de tela inteira mudou). Sem isso o contador só diz
-    /// que aconteceu, não quem pediu.
+    /// Why the last frame was "everything": `global` (core damage) or
+    /// `signature` (something full-screen changed). Without it the counter only
+    /// says it happened, not who asked for it.
     pub all_reason: &'static str,
     pub linhas_remontadas: u64,
     pub celulas_remontadas: u64,
 }
 
 struct ImgTex {
-    versao: u64,
+    version: u64,
     bind: wgpu::BindGroup,
 }
 
-/// Escolhe o adaptador com uma regra explícita, em vez de deixar o `wgpu`
-/// pegar o primeiro que aparecer.
+/// Picks the adapter with an explicit rule instead of letting `wgpu` take the
+/// first one that shows up.
 ///
-/// Regra: adaptador de hardware (discrete/integrated/virtual) ganha de
-/// adaptador de CPU (llvmpipe/lavapipe: VM, X remoto, container sem
-/// `/dev/dri`); empatado, vale a ordem do `wgpu`. A lista existe para o caso de
-/// CPU parar de ser escolhido por acidente — e para registrar o que se aprendeu
-/// de cada backend em DEBUG.md.
+/// Rule: hardware adapter (discrete/integrated/virtual) beats CPU adapter
+/// (llvmpipe/lavapipe: VM, remote X, container without `/dev/dri`); on a tie the
+/// `wgpu` order wins. The list exists so CPU does not get chosen by accident —
+/// and to record what was learned about each backend in DEBUG.md.
 ///
-/// `WGPU_BACKEND` continua mandando: quem pediu um backend explícito recebe
-/// aquele backend, ou o erro de sempre.
+/// `WGPU_BACKEND` still rules: whoever asked for an explicit backend gets that
+/// backend, or the usual error.
 fn choose_adapter(
     instance: &wgpu::Instance,
     surface: &wgpu::Surface<'_>,
@@ -187,11 +189,11 @@ fn choose_adapter(
         .collect();
     let de_cpu = |a: &wgpu::Adapter| a.get_info().device_type == wgpu::DeviceType::Cpu;
     let chosen = if request.is_empty() {
-        // hardware primeiro; sem hardware, a ordem natural do `wgpu`
-        // (Vulkan antes de GL). Não se prefere GL para CPU: em VM sem
-        // `/dev/dri` o GL/llvmpipe depende de MIT-SHM para chegar na janela e,
-        // quando o SHM não vai, a janela fica vazia, enquanto o
-        // Vulkan/llvmpipe desenha pelo Present.
+        // hardware first; with no hardware, the natural `wgpu` order (Vulkan
+        // before GL). GL is not preferred for CPU: in a VM without `/dev/dri`
+        // GL/llvmpipe depends on MIT-SHM to reach the window and, when SHM does
+        // not work, the window stays empty, while Vulkan/llvmpipe draws through
+        // Present.
         candidates
             .iter()
             .find(|a| !de_cpu(a))
@@ -201,16 +203,16 @@ fn choose_adapter(
     };
     let chosen = chosen.ok_or_else(|| {
         if candidates.is_empty() {
-            "adapter: nenhum adaptador serve para a superfície".to_string()
+            "adapter: no adapter supports the surface".to_string()
         } else {
-            "adapter: nenhum adaptador utilizável".to_string()
+            "adapter: no usable adapter".to_string()
         }
     })?;
     Ok(chosen.clone())
 }
 
 impl Renderer {
-    #[allow(clippy::too_many_lines)] // setup de GPU é uma sequência única, partir não ajuda
+    #[allow(clippy::too_many_lines)] // GPU setup is one single sequence; splitting does not help
     pub fn new(
         window: &Arc<Window>,
         fonts: Fonts,
@@ -220,11 +222,11 @@ impl Renderer {
         let size = window.inner_size();
         let (w, h) = (size.width.max(1), size.height.max(1));
 
-        // o display handle não é opcional para todo backend: o EGL (backend
-        // GL) precisa dele para casar a superfície com o display, e sem isto
-        // `WGPU_BACKEND=gl` morre com "gl not compatible with provided
-        // surface". Vulkan não reclama, então o defeito só aparece na máquina
-        // que não tem Vulkan — justamente a que precisava do GL.
+        // the display handle is not optional for every backend: EGL (GL backend)
+        // needs it to match the surface with the display, and without this
+        // `WGPU_BACKEND=gl` dies with "gl not compatible with provided
+        // surface". Vulkan does not complain, so the defect only shows up on the
+        // machine that has no Vulkan — exactly the one that needed GL.
         let instance = wgpu::Instance::new(
             wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(window.clone())),
         );
@@ -232,8 +234,8 @@ impl Renderer {
             .create_surface(window.clone())
             .map_err(|e| format!("surface: {e}"))?;
         let adapter = choose_adapter(&instance, &surface)?;
-        // qual backend/placa foi escolhido: é a primeira pergunta quando a
-        // janela não desenha em outra máquina (ver DEBUG.md)
+        // which backend/board was chosen: it is the first question when the
+        // window does not draw on another machine (see DEBUG.md)
         let info = adapter.get_info();
         eprintln!(
             "bzmux: GPU: {:?} {} (driver {})",
@@ -250,8 +252,8 @@ impl Renderer {
         .map_err(|e| format!("device: {e}"))?;
 
         let caps = surface.get_capabilities(&adapter);
-        // formato não-srgb: as cores da célula já são sRGB e não devem ser
-        // linearizadas de novo pelo alvo
+        // non-srgb format: the cell colours are already sRGB and must not be
+        // linearized again by the target
         let format = caps
             .formats
             .iter()
@@ -270,9 +272,10 @@ impl Renderer {
             width: w,
             height: h,
             present_mode,
-            // `Opaque` explícito: pegar o primeiro da lista deu janela
-            // translúcida no backend GL (visual ARGB com o fundo vazando o que
-            // está atrás). Terminal é opaco; transparência não é paridade.
+            // explicit `Opaque`: taking the first of the list gave a translucent
+            // window on the GL backend (ARGB visual with the background leaking
+            // what is behind it). A terminal is opaque; transparency is not
+            // parity.
             alpha_mode: if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Opaque) {
                 wgpu::CompositeAlphaMode::Opaque
             } else {
@@ -362,16 +365,16 @@ impl Renderer {
             cache: None,
         });
 
-        // pipeline das imagens: mesmo layout de globals/atlas e o mesmo
-        // formato de instância, só troca o shader (amostra RGB em vez da
-        // máscara de cobertura)
+        // image pipeline: same globals/atlas layout and the same instance
+        // format, only the shader changes (samples RGB instead of the coverage
+        // mask)
         let img_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("bzmux-image"),
             source: wgpu::ShaderSource::Wgsl(include_str!("image.wgsl").into()),
         });
         let (img_layout, img_sampler) = crate::atlas::bind_image(&device);
-        // o emoji usa a pipeline de imagem (textura filtrável), então o bind
-        // group dele tem que seguir o mesmo layout, não o do atlas de máscara
+        // emoji uses the image pipeline (filterable texture), so its bind group
+        // has to follow the same layout, not the mask atlas one
         let emoji_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("emoji-bind"),
             layout: &img_layout,
@@ -479,7 +482,7 @@ impl Renderer {
             signature: crate::damage::Signature::default(),
             theme_gen: 0,
             draw: 0,
-            last: "nenhum",
+            last: "none",
             skips: 0,
             drawn: 0,
             avisou_skip: false,
@@ -492,10 +495,10 @@ impl Renderer {
         })
     }
 
-    /// Tema novo sem recriar a GPU (auto-reload e `OSC 4/10/11/12`).
+    /// New theme without recreating the GPU (auto-reload and `OSC 4/10/11/12`).
     pub fn apply_theme(&mut self, t: &Theme) {
-        // qualquer coisa que mude cor de célula invalida o damage: as linhas
-        // limpas ficariam com a paleta velha
+        // anything that changes cell colour invalidates the damage: the clean
+        // rows would keep the old palette
         self.theme_gen = self.theme_gen.wrapping_add(1);
         self.palette = t.palette256();
         self.fg = t.rgb(t.fg, FG);
@@ -504,16 +507,16 @@ impl Renderer {
         self.write_globals();
     }
 
-    /// O que não é cor: forma do cursor, margem e ligaduras (só muda por
-    /// arquivo).
+    /// What is not colour: cursor shape, margin and ligatures (only changes per
+    /// file).
     pub fn apply_layout(&mut self, cfg: &Config) {
         self.cursor_shape = cfg.cursor_shape;
         self.pad = cfg.padding as f32;
         if self.ligatures != cfg.ligatures {
-            // plano shapeado é por modo: trocar o modo invalida o cache
+            // a shaped run is per mode: changing the mode invalidates the cache
             self.ligatures = cfg.ligatures;
             self.shaper = crate::shape::Shaper::new();
-            // o dano compara `tema_gen`: mexer nele força remontar a grade
+            // the damage compares `theme_gen`: touching it forces the grid rebuild
             self.theme_gen = self.theme_gen.wrapping_add(1);
         }
         self.write_globals();
@@ -532,8 +535,8 @@ impl Renderer {
         );
     }
 
-    /// Reserva a faixa da barra de abas (0 = sem barra). Chamar sempre que o
-    /// número de abas muda; a grade já vem com a altura descontada.
+    /// Reserves the tab bar strip (0 = no bar). Call whenever the number of tabs
+    /// changes; the grid already arrives with the height discounted.
     pub fn set_bar(&mut self, h: f32) {
         if (h - self.bar).abs() < 0.01 {
             return;
@@ -542,7 +545,7 @@ impl Renderer {
         self.write_globals();
     }
 
-    /// Reserva a coluna da sidebar de workspaces (0 = um workspace só).
+    /// Reserves the workspace sidebar column (0 = a single workspace).
     pub fn set_side(&mut self, w: f32) {
         if (w - self.side).abs() < 0.01 {
             return;
@@ -580,8 +583,8 @@ impl Renderer {
         ]
     }
 
-    /// Quad a partir do bitmap, no atlas certo (RGBA para emoji, máscara para
-    /// o resto). É o único lugar que escreve nos dois atlas.
+    /// Quad from the bitmap, in the right atlas (RGBA for emoji, mask for the
+    /// rest). It is the only place that writes to both atlases.
     fn quad_of(&mut self, b: &glyph::GlyphBitmap, color: bool) -> Option<GlyphQuad> {
         let uv = if color {
             self.emoji.add(b.w, b.h, &b.data)
@@ -598,8 +601,8 @@ impl Renderer {
         })
     }
 
-    /// Quad de um glifo **já resolvido** pelo shaping. Cache por (face, gid): o
-    /// mesmo glifo pode vir de caracteres diferentes e de trechos diferentes.
+    /// Quad of a glyph **already resolved** by shaping. Cache by (face, gid): the
+    /// same glyph can come from different characters and different runs.
     fn quad_gid(&mut self, face: usize, gid: u16) -> Option<GlyphQuad> {
         let key = (face as u8, gid);
         if let Some(v) = self.cache_gid.get(&key) {
@@ -611,11 +614,11 @@ impl Renderer {
         quad
     }
 
-    /// Quad resolvendo o caractere pela cadeia de fontes (caminho sem shaping:
-    /// trecho de uma célula, ou glifo que o shaping não desenhou).
+    /// Quad resolving the character through the font chain (path without
+    /// shaping: single-cell run, or a glyph that shaping did not draw).
     fn glyph_quad(&mut self, ch: char, bold: bool, italic: bool) -> Option<GlyphQuad> {
-        // a chave é o estilo pedido, não a face escolhida: quem decide a face é
-        // a cadeia de fontes, e o resultado já vem resolvido
+        // the key is the requested style, not the chosen face: the font chain
+        // decides the face, and the result already comes resolved
         let key = (u8::from(bold) | (u8::from(italic) << 1), ch);
         if let Some(v) = self.cache.get(&key) {
             return *v;
@@ -640,16 +643,16 @@ impl Renderer {
         });
     }
 
-    /// Selo de uma linha no canto superior direito (indicador de histórico).
-    /// Desenhado por último: tem que ficar por cima do que estiver lá.
-    /// Texto de cromo: **o único lugar** que desenha texto fora da grade
-    /// (barra de abas, cartão da sidebar, selo de histórico, toast).
+    /// Badge for a row in the top-right corner (history indicator).
+    /// Drawn last: it has to sit on top of whatever is there.
+    /// Chrome text: **the only place** that draws text outside the grid
+    /// (tab bar, sidebar card, history badge, toast).
     ///
-    /// A sanitização mora aqui, não no chamador: assim um elemento de cromo
-    /// novo herda a garantia de não desenhar controle, zero-width nem marca de
-    /// direção no rótulo — era por aí que o título da aba aparecia com lixo
-    /// antes do texto (B4, 2026-11-04). Avanço é sempre uma célula por
-    /// caractere; `largura` = 0 significa sem teto.
+    /// Sanitization lives here, not in the caller: that way a new chrome element
+    /// inherits the guarantee of not drawing control, zero-width or bidi marks
+    /// in the label — that is how the tab title used to show garbage before the
+    /// text (B4, 2026-11-04). Advance is always one cell per character;
+    /// `width` = 0 means no cap.
     fn chrome_text(&mut self, text: &str, x0: f32, y: f32, fg: [f32; 3], width: f32) {
         let cw = self.fonts.cw;
         let ascent = self.fonts.ascent;
@@ -681,30 +684,30 @@ impl Renderer {
         }
     }
 
-    /// Barra de abas: ` 1 zsh │ 2 vim  ` na faixa acima da grade.
+    /// Tab bar: ` 1 zsh │ 2 vim  ` in the strip above the grid.
     ///
-    /// A aba ativa fica invertida (fundo = cor do texto). Aba com BELL recente
-    /// troca a cor de destaque — é o que faz "aquele terminal apitou" ser
-    /// visível sem olhar para ele.
+    /// The active tab is inverted (background = text colour). A tab with a recent
+    /// BELL swaps the highlight colour — that is what makes "that terminal
+    /// beeped" visible without looking at it.
     fn tabbar(&mut self, tabs: &[TabInfo], cols: usize) {
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
-        // a barra começa à direita da sidebar: as duas dividem a linha 1, e a
-        // sidebar não fica com um buraco em cima (o cartão é a altura de 2,4
-        // linhas, então ela passa por baixo da barra de qualquer jeito)
+        // the bar starts to the right of the sidebar: the two share row 1, and
+        // the sidebar does not get a hole on top (the card is 2.4 rows high, so
+        // it passes under the bar anyway)
         let x0 = 0.0;
         let total_w = cols as f32 * cw;
         let bg = self.color(Color::Idx(0), self.bg);
-        // texto sobre a aba ativa usa a cor de fundo da grade (inversão)
+        // text over the active tab uses the grid background colour (inversion)
         let over = self.color(Color::Default, self.bg);
-        // `origin.y` é `pad + bar`: para a barra cair na faixa reservada (e não
-        // sobre a primeira linha da grade) ela é desenhada em y = -bar
+        // `origin.y` is `pad + bar`: so the bar lands in the reserved strip
+        // (and not over the first grid row) it is drawn at y = -bar
         let y0 = -self.bar;
         self.push_rect(x0, y0, total_w, chh, [bg[0], bg[1], bg[2], 1.0]);
         let mut x = x0;
         for (i, t) in tabs.iter().enumerate() {
-            let rotulo = format!(" {} {} ", i + 1, t.titulo);
-            let n = rotulo.chars().count();
+            let label = format!(" {} {} ", i + 1, t.title);
+            let n = label.chars().count();
             let width = (n as f32 * cw).min(total_w - x);
             if width <= 0.0 {
                 break;
@@ -716,17 +719,17 @@ impl Renderer {
             } else {
                 (bg, self.color(Color::Idx(8), self.fg))
             };
-            // um retângulo por aba (não um por letra): o fundo do rótulo é uma
-            // peça só, e o texto é desenhado por cima
+            // one rectangle per tab (not one per letter): the label background is
+            // a single piece, and the text is drawn on top of it
             self.push_rect(x, y0, width, chh, [bg[0], bg[1], bg[2], 1.0]);
-            self.chrome_text(&rotulo, x, y0, fg, width);
+            self.chrome_text(&label, x, y0, fg, width);
             x += width;
         }
     }
 
-    /// Sidebar de workspaces (I6): uma coluna à esquerda com um cartão por
-    /// workspace. Ocupa a faixa que o `origin` reservou (x = -side) e começa na
-    /// linha 1, junto com a barra de abas (y = -bar).
+    /// Workspace sidebar (I6): a column on the left with one card per workspace.
+    /// It occupies the strip the `origin` reserved (x = -side) and starts on row
+    /// 1, together with the tab bar (y = -bar).
     fn sidebar(&mut self, cards: &[WsCard]) {
         if self.side <= 0.0 {
             return;
@@ -747,14 +750,14 @@ impl Renderer {
                 (bg, self.color(Color::Idx(8), self.fg))
             };
             self.push_rect(x0, y0, width, card_h, [bg[0], bg[1], bg[2], 1.0]);
-            // linha 1: "n nome"
+            // row 1: "n name"
             let n = cards.len();
             let name = format!("{} {}", i + 1, c.name);
             self.text_line(x0, y0 + 3.0, &name, fg, width);
-            // linha 2: "titulo (k abas)"
+            // row 2: "title (k tab)"
             let info = format!(
-                "{} ({} aba{})",
-                c.titulo,
+                "{} ({} tab{})",
+                c.title,
                 c.n_tabs,
                 if c.n_tabs == 1 { "" } else { "s" }
             );
@@ -763,11 +766,11 @@ impl Renderer {
         }
     }
 
-    /// Uma linha de texto da sidebar, cortada na largura do cartão.
+    /// One sidebar text row, clipped to the card width.
     fn text_line(&mut self, x0: f32, y: f32, text: &str, fg: [f32; 3], width: f32) {
         let fit = (width / self.fonts.cw).floor().max(1.0) as usize;
-        // reticências em vez de corte seco: o cartão estreito não come o fim
-        // do título sem avisar (o Python faz o mesmo com `ellipsize`)
+        // ellipsis instead of a hard cut: a narrow card does not eat the end of
+        // the title without warning (Python does the same with `ellipsize`)
         let text: String = if text.chars().count() > fit {
             let mut t: String = text.chars().take(fit.saturating_sub(1)).collect();
             t.push('…');
@@ -778,12 +781,12 @@ impl Renderer {
         self.chrome_text(&text, x0 + self.pad, y, fg, 0.0);
     }
 
-    /// Toast (I12): uma faixa na última linha, com as cores invertidas.
+    /// Toast (I12): a strip on the last row, with the colours inverted.
     ///
-    /// Fica embaixo porque em cima está a barra de abas (o cabeçalho é dela);
-    /// o aviso é do terminal, não do programa, então cobre a última linha da
-    /// grade em vez de disputar o topo. O texto é cortado na largura da
-    /// grade — quebra de linha num aviso transitório só confunde.
+    /// It sits at the bottom because the top holds the tab bar (the header is
+    /// its own); the warning belongs to the terminal, not to the program, so it
+    /// covers the last grid row instead of fighting for the top. The text is cut
+    /// to the grid width — wrapping in a transient warning only confuses.
     fn toast(&mut self, text: &str, cols: usize, rows: usize) {
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
@@ -795,7 +798,7 @@ impl Renderer {
         if w == 0 {
             return;
         }
-        // margem de meia célula de cada lado para o texto não tocar a borda
+        // half a cell of margin on each side so the text does not touch the edge
         let x0 = -self.side;
         let y0 = rows.saturating_sub(1) as f32 * chh;
         self.push_rect(x0, y0, (w + 2) as f32 * cw, chh, [bg[0], bg[1], bg[2], 1.0]);
@@ -819,12 +822,12 @@ impl Renderer {
         self.chrome_text(text, x0 as f32 * cw, 0.0, fg, 0.0);
     }
 
-    /// Glifo + decoração de uma célula. A ordem aqui é a ordem de blend:
-    /// tudo do texto sai antes do cursor.
-    /// `glifo` = glifo já resolvido pelo shaping (`face`, `gid`, deslocamento em
-    /// px). `None` manda resolver o caractere pela cadeia — é o caminho de
-    /// trecho de uma célula. Glifo do shaping que não desenha (face que mapeia e
-    /// não tem bitmap) também cai na cadeia.
+    /// Glyph + decoration of one cell. The order here is the blend order:
+    /// everything of the text comes before the cursor.
+    /// `glyph` = glyph already resolved by shaping (`face`, `gid`, offset in
+    /// px). `None` means resolve the character through the chain — that is the
+    /// single-cell run path. A shaping glyph that does not draw (a face that maps
+    /// and has no bitmap) also falls back to the chain.
     fn draw_cell(
         &mut self,
         cell: &Cell,
@@ -841,7 +844,7 @@ impl Renderer {
         let ascent = self.fonts.ascent;
         let fg = if swap { cell.bg } else { cell.fg };
         let mut c = self.color(fg, if swap { self.bg } else { self.fg });
-        // esmaecido: o mesmo tom com menos opacidade (Pango usava alpha 0.55)
+        // faint: the same tone with less opacity (Pango used alpha 0.55)
         let alpha = if cell.flags & FAINT != 0 { 0.55 } else { 1.0 };
 
         if cell.ch != ' ' {
@@ -854,7 +857,7 @@ impl Renderer {
             if let Some(q) = quad {
                 let gx = x as f32 * cw + desloc + q.left as f32;
                 let gy = py + ascent - q.top as f32;
-                // emoji colorido não recebe tingimento: só o alfa da célula
+                // colour emoji gets no tinting: only the cell alpha
                 let (cor, target) = if q.color {
                     ([1.0, 1.0, 1.0, alpha], &mut self.emoji_row)
                 } else {
@@ -868,7 +871,7 @@ impl Renderer {
             }
         }
 
-        // cor da decoração: a do texto, salvo SGR 58 (que não inverte)
+        // decoration colour: the text one, except SGR 58 (which does not invert)
         if cell.ul_color != Color::Default {
             c = self.color(cell.ul_color, self.fg);
         }
@@ -883,8 +886,8 @@ impl Renderer {
                     line(self, x as f32 * cw, cw, base + 2.0, 1.0);
                 },
                 UL_CURLY => {
-                    // aproximação senoidal em 4 pedaços; sem geometria curva
-                    // no pipeline de retângulos
+                    // sinusoidal approximation in 4 pieces; there is no curved
+                    // geometry in the rectangle pipeline
                     for k in 0..4 {
                         let dy = if k % 2 == 0 { 0.0 } else { 1.5 };
                         line(
@@ -914,8 +917,8 @@ impl Renderer {
             }
         }
 
-        // riscado no meio da altura de x (não no meio da célula: o vazio do
-        // descendente deixaria o risco alto demais)
+        // strike at the middle of the x height (not the middle of the cell: the
+        // empty descender would leave the line too high)
         if cell.flags & STRIKE != 0 {
             let y = py + ascent - chh * 0.18;
             self.push_rect(x as f32 * cw, y, cw, 1.0, [c[0], c[1], c[2], 1.0]);
@@ -925,32 +928,32 @@ impl Renderer {
         }
     }
 
-    /// Monta as instâncias do frame. Público para o teste de sanidade do formato.
-    #[allow(clippy::too_many_lines)] // um laço por categoria, na ordem de blend
-    #[allow(clippy::many_single_char_names)] // x/y/cw/ch/k: geometria de célula
-    /// Monta as instâncias das imagens visíveis e garante a textura de cada uma.
+    /// Builds the frame instances. Public for the format sanity test.
+    #[allow(clippy::too_many_lines)] // one loop per category, in blend order
+    #[allow(clippy::many_single_char_names)] // x/y/cw/ch/k: cell geometry
+    /// Builds the instances of the visible images and guarantees each texture.
     ///
-    /// H12: a colocação vive em coordenadas da **grade**, então a linha na tela
-    /// é `linha + view_off` — sem isso a imagem ficava parada enquanto o texto
-    /// rolava por baixo dela.
+    /// H12: placement lives in **grid** coordinates, so the row on screen is
+    /// `row + view_off` — without that the image stood still while the text
+    /// scrolled underneath it.
     fn build_images(&mut self, f: &Frame<'_>) {
         let term = f.term;
         let (cw, chh) = (self.fonts.cw, self.fonts.ch);
         let view = i32::try_from(f.view_off).unwrap_or(0);
-        let linhas = i32::try_from(term.rows).unwrap_or(0);
-        let colunas = term.cols;
+        let lines = i32::try_from(term.rows).unwrap_or(0);
+        let cols = term.cols;
         let mut quads: Vec<(u32, Instance)> = Vec::new();
         for pl in term.graphics.placements() {
             let y = pl.line + view;
-            // fora da tela (por cima ou por baixo) não vira instância
-            if y >= linhas || y + i32::from(pl.rows) <= 0 || usize::from(pl.col) >= colunas {
+            // off screen (above or below) does not become an instance
+            if y >= lines || y + i32::from(pl.rows) <= 0 || usize::from(pl.col) >= cols {
                 continue;
             }
             let Some(img) = term.graphics.images().get(&pl.image_id).cloned() else {
                 continue;
             };
             if !self.ensure_texture(&img) {
-                continue; // imagem ilegível (PNG torto) não derruba o frame
+                continue; // unreadable image (bad PNG) does not bring the frame down
             }
             quads.push((
                 pl.image_id,
@@ -966,7 +969,7 @@ impl Renderer {
                 },
             ));
         }
-        // imagens que o app apagou não precisam de textura viva
+        // images the app deleted do not need a live texture
         self.img_cache
             .retain(|id, _| term.graphics.images().contains_key(id));
         self.img_ids = quads.iter().map(|(id, _)| *id).collect();
@@ -986,17 +989,17 @@ impl Renderer {
         }
     }
 
-    /// Sobe a textura da imagem se ela ainda não está no cache (ou se o app
-    /// reenviou com o mesmo id e a versão mudou).
+    /// Uploads the image texture if it is not in the cache yet (or if the app
+    /// resent it with the same id and the version changed).
     fn ensure_texture(&mut self, img: &bzmux_core::graphics::Image) -> bool {
         if self
             .img_cache
             .get(&img.id)
-            .is_some_and(|t| t.versao == img.versao)
+            .is_some_and(|t| t.version == img.version)
         {
             return true;
         }
-        let Some((w, h, rgba)) = decodifica(img) else {
+        let Some((w, h, rgba)) = decode(img) else {
             return false;
         };
         let tex = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -1050,14 +1053,14 @@ impl Renderer {
         self.img_cache.insert(
             img.id,
             ImgTex {
-                versao: img.versao,
+                version: img.version,
                 bind,
             },
         );
         true
     }
 
-    /// Cursor (bloco, sublinhado ou barra) — por cima do texto e das imagens.
+    /// Cursor (block, underline or beam) — on top of the text and the images.
     fn build_cursor(&mut self, f: &Frame<'_>) {
         let term = f.term;
         let cw = self.fonts.cw;
@@ -1084,7 +1087,7 @@ impl Renderer {
             let cor = self.color(Color::Default, self.cursor);
             match style {
                 1 | 2 => {
-                    // sublinhado / barra
+                    // underline / beam
                     let h = if style == 1 { 2.0 } else { chh };
                     let w = if style == 1 { cw } else { 2.0 };
                     let y = if style == 1 { cy + chh - 3.0 } else { cy };
@@ -1109,7 +1112,8 @@ impl Renderer {
             sidebar,
         } = *f;
         let cols = term.cols;
-        // retângulo da seleção na visão (preso à tela); fora dela nada muda
+        // selection rectangle in the view (stuck to the screen); outside it
+        // nothing changes
         let sel = sel.and_then(|s| s.visible(term, view_off));
         let rows = term.visible_rows(view_off);
         let ctx = RowCtx {
@@ -1119,8 +1123,9 @@ impl Renderer {
             cursor: break_no_cursor(term, view_off, rows.len()),
         };
 
-        // A17/G17: quais linhas remontar. `blink` só entra na assinatura se
-        // houver célula com SGR 5 à vista — o pisca do cursor não mora aqui.
+        // A17/G17: which rows to rebuild. `blink` only enters the signature if
+        // there is a cell with SGR 5 in sight — the cursor blink does not live
+        // here.
         let signature = crate::damage::Signature {
             tab,
             cols,
@@ -1136,9 +1141,9 @@ impl Renderer {
         let damage = crate::damage::decide(
             &signature,
             &mut self.signature,
-            // o conflito de rolagem (subiu e desceu no mesmo frame) não pode
-            // girar o cache: a linha que saiu não volta, então só a tela
-            // inteira resolve (B6)
+            // the scroll conflict (went up and down in the same frame) cannot
+            // rotate the cache: the row that left does not come back, so only the
+            // whole screen solves it (B6)
             term.dirty_all || term.scroll_conflict,
             &term.dirty,
             rows.len(),
@@ -1164,7 +1169,7 @@ impl Renderer {
             crate::damage::Damage::Rows(ls) => format!("rows: {}", ls.len()),
         };
         if self.per_line.len().ne(&rows.len()) {
-            // grade mudou de tamanho: nada de reaproveitar faixa antiga
+            // grid changed size: no reusing the old span
             self.signature = signature;
             self.per_line = vec![RowQuads::default(); rows.len()];
             for (y, row) in rows.iter().enumerate() {
@@ -1179,44 +1184,44 @@ impl Renderer {
             self.rebuild_rows(&damage, &rows, ctx, shift);
         }
 
-        self.concat_linhas();
+        self.concat_lines();
 
-        // aqui acaba o texto da grade: as imagens (H1–H13) entram por cima
-        // dele e abaixo do cromo/cursor, que é a ordem do kitty
+        // here the grid text ends: the images (H1–H13) come on top of it and
+        // below the chrome/cursor, which is kitty's order
         self.img_split = self.instances.len();
         self.build_images(f);
 
-        // 2b) barra de abas: fica na faixa que o `origin` reservou acima da
-        // grade, então não precisa de conta de recorte
+        // 2b) tab bar: it sits in the strip the `origin` reserved above the grid,
+        // so it needs no clipping math
         if let Some(tabs) = tabs {
             self.tabbar(tabs, cols);
         }
-        // 2c) sidebar de workspaces: coluna à esquerda, na faixa reservada
+        // 2c) workspace sidebar: column on the left, in the reserved strip
         if let Some(cards) = sidebar {
             self.sidebar(cards);
         }
 
-        // 3) cursor (por cima; a ordem das instâncias é a ordem de blend)
+        // 3) cursor (on top; instance order is blend order)
         self.build_cursor(f);
 
-        // 4) indicador de histórico (D8): "↑N" — sem ele, rolar para trás é
-        // indistinguível de o app ter parado de escrever
+        // 4) history indicator (D8): "↑N" — without it, scrolling back is
+        // indistinguishable from the app having stopped writing
         if view_off > 0 {
             let txt = format!("↑{view_off}");
             self.badge(&txt, cols);
         }
 
-        // 5) toast (I12/K13): aviso do próprio terminal, por cima de tudo. Some
-        // sozinho; quem controla o tempo é o app.
+        // 5) toast (I12/K13): warning from the terminal itself, on top of
+        // everything. It goes away on its own; the app controls the timing.
         if let Some(t) = toast {
             self.toast(t, cols, rows.len());
         }
     }
 
-    /// Lista final na ordem de blend: grade (por linha) → imagens → cromo →
-    /// cursor → badge → toast. As linhas prontas estão em y = 0; a posição
-    /// vertical entra aqui, e é isso que deixa a rolagem só deslocar linha.
-    fn concat_linhas(&mut self) {
+    /// Final list in blend order: grid (per row) → images → chrome → cursor →
+    /// badge → toast. The finished rows are at y = 0; the vertical position comes
+    /// in here, and that is what lets scrolling only shift rows.
+    fn concat_lines(&mut self) {
         self.instances.clear();
         self.emoji_instances.clear();
         let chh = self.fonts.ch;
@@ -1236,8 +1241,8 @@ impl Renderer {
         }
     }
 
-    /// `true` se alguma célula visível tem SGR 5 (só aí a fase do pisca obriga
-    /// a remontar a grade).
+    /// `true` if any visible cell has SGR 5 (only then does the blink phase force
+    /// the grid to be rebuilt).
     fn has_blink(rows: &[&bzmux_core::grid::Row]) -> bool {
         rows.iter().any(|r| {
             r.cells
@@ -1246,9 +1251,9 @@ impl Renderer {
         })
     }
 
-    /// Monta as instâncias de uma linha sem tocar na lista do frame.
-    /// Remonta o que o dano pediu. Rolagem de tela inteira desloca as linhas
-    /// prontas: só as que entram (topo ou fim) precisam de glifo novo.
+    /// Builds the instances of one row without touching the frame list.
+    /// Rebuilds what the damage asked for. A full-screen scroll shifts the
+    /// finished rows: only the ones coming in (top or bottom) need a new glyph.
     fn rebuild_rows(
         &mut self,
         damage: &crate::damage::Damage,
@@ -1256,13 +1261,13 @@ impl Renderer {
         ctx: RowCtx,
         shift: isize,
     ) {
-        let crate::damage::Damage::Rows(linhas) = damage else {
+        let crate::damage::Damage::Rows(lines) = damage else {
             for (y, row) in rows.iter().enumerate() {
                 self.per_line[y] = self.line(row, y, ctx);
             }
             return;
         };
-        let mut rebuild = linhas.clone();
+        let mut rebuild = lines.clone();
         if shift != 0 {
             let n = shift.unsigned_abs().min(self.per_line.len());
             for _ in 0..n {
@@ -1274,10 +1279,10 @@ impl Renderer {
                     self.per_line.insert(0, RowQuads::default());
                 }
             }
-            // rotacionadas `n` linhas, as `n` que entraram precisam de glifo
-            // novo. Antes era `rebuild.push(len - 1)` **dentro** do laço: o
-            // índice era o mesmo sempre e só a última linha era remontada —
-            // as outras ficavam vazias (faixas em branco no meio da tela)
+            // after rotating by `n` rows, the `n` that came in need a new glyph.
+            // Before, it was `rebuild.push(len - 1)` **inside** the loop: the
+            // index was always the same and only the last row was rebuilt — the
+            // others stayed empty (blank spans in the middle of the screen)
             let end = self.per_line.len();
             if shift > 0 {
                 rebuild.extend(end - n..end);
@@ -1294,36 +1299,36 @@ impl Renderer {
         }
     }
 
-    /// Monta uma linha **relativa ao topo da grade** (y = 0). A posição
-    /// vertical entra na concatenação, e é isso que permite rolar a tela
-    /// deslocando a linha pronta em vez de remontar o glifo.
+    /// Builds one row **relative to the top of the grid** (y = 0). The vertical
+    /// position comes in the concatenation, and that is what allows scrolling the
+    /// screen by shifting the finished row instead of rebuilding the glyphs.
     fn line(&mut self, row: &bzmux_core::grid::Row, y: usize, ctx: RowCtx) -> RowQuads {
-        let guardado = std::mem::take(&mut self.instances);
-        let guardado_cor = std::mem::take(&mut self.emoji_row);
+        let stored = std::mem::take(&mut self.instances);
+        let stored_color = std::mem::take(&mut self.emoji_row);
         self.instances.clear();
         self.emoji_row.clear();
         self.paint_line(row, y, ctx);
         RowQuads {
-            mask: std::mem::replace(&mut self.instances, guardado),
-            emoji: std::mem::replace(&mut self.emoji_row, guardado_cor),
+            mask: std::mem::replace(&mut self.instances, stored),
+            emoji: std::mem::replace(&mut self.emoji_row, stored_color),
         }
     }
 
-    /// Glifos e decoração de uma linha, agrupados em **trechos** de mesma face
-    /// e estilo: é o contexto do trecho que faz a fonte trocar o glifo de cada
-    /// célula pela peça da ligadura (`calt`). Trecho de uma célula não tem
-    /// contexto e vai direto pela cadeia de fontes — é o caso de quem pinta
-    /// célula a célula (doom-fire: 2400 trechos de 1).
-    fn paint_glifos(&mut self, row: &bzmux_core::grid::Row, y: usize, ctx: RowCtx) {
+    /// Glyphs and decoration of one row, grouped into **runs** of the same face
+    /// and style: it is the run context that makes the font swap each cell's
+    /// glyph for the ligature piece (`calt`). A single-cell run has no context
+    /// and goes straight through the font chain — that is the case of whoever
+    /// paints cell by cell (doom-fire: 2400 runs of 1).
+    fn paint_glyphs(&mut self, row: &bzmux_core::grid::Row, y: usize, ctx: RowCtx) {
         let RowCtx {
             cols,
             sel,
             blink,
             cursor,
         } = ctx;
-        // `y` aqui é índice da grade (seleção e cursor), **não** pixel: a
-        // posição vertical entra em `concat_linhas`. Somar `y * ch` nos dois
-        // lugares pintava a linha `r` em `2r` (A17 pós-cache por linha)
+        // `y` here is the grid index (selection and cursor), **not** pixels: the
+        // vertical position comes in `concat_linhas`. Adding `y * ch` in both
+        // places painted row `r` at `2r` (A17 after per-row cache)
         let py = 0.0;
         let limit = cols.min(row.cells.len());
         let mut x = 0usize;
@@ -1341,14 +1346,14 @@ impl Renderer {
             while end < limit {
                 let c2 = row.cells[end];
                 if c2.is_cont() {
-                    // a metade de um caractere largo pertence ao caractere
+                    // half of a wide character belongs to the character
                     end += 1;
                     continue;
                 }
                 if c2.flags & bzmux_core::cell::BLINK != 0 && !blink.phase {
                     break;
                 }
-                // o cursor quebra o trecho (ver `cursor` no build)
+                // the cursor breaks the run (see `cursor` in build)
                 if cursor == Some((end, y)) || cursor == Some((end.wrapping_sub(1), y)) {
                     break;
                 }
@@ -1359,7 +1364,7 @@ impl Renderer {
                 text.push(c2.ch);
                 end += 1;
             }
-            let glifos = match face {
+            let glyphs = match face {
                 Some(face) if cells.len() > 1 => {
                     let cw = self.fonts.cw;
                     let px = self.fonts.px;
@@ -1377,7 +1382,7 @@ impl Renderer {
             };
             for (i, &cx) in cells.iter().enumerate() {
                 let c = row.cells[cx];
-                let glyph = match &glifos {
+                let glyph = match &glyphs {
                     Some((face, plan)) => plan.piece_at(i).map(|p| (*face, p.gid, p.x)),
                     None => None,
                 };
@@ -1387,18 +1392,18 @@ impl Renderer {
         }
     }
 
-    /// Desenha **uma** linha da grade (A17/G17: só roda para as linhas sujas).
+    /// Draws **one** grid row (A17/G17: only runs for dirty rows).
     fn paint_line(&mut self, row: &bzmux_core::grid::Row, y: usize, ctx: RowCtx) {
         let RowCtx { cols, sel, .. } = ctx;
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
-        // relativo ao topo da grade: quem soma `y * ch` é `concat_linhas`
+        // relative to the top of the grid: whoever adds `y * ch` is `concat_linhas`
         let py = 0.0;
 
-        // 1) fundos, agrupados por cor (uma instância por trecho). O inverso
-        // (SGR 7) e a seleção usam a mesma regra: troca fg/bg e resolve o
-        // default pelo *outro* extremo (senão seleção em célula sem cor não
-        // apareceria).
+        // 1) backgrounds, grouped by colour (one instance per run). Inversion
+        // (SGR 7) and the selection use the same rule: swap fg/bg and resolve the
+        // default through the *other* extreme (otherwise a selection over a cell
+        // without colour would not show up).
         let mut x = 0usize;
         while x < cols {
             let cell = match row.cells.get(x) {
@@ -1432,13 +1437,13 @@ impl Renderer {
             x = end;
         }
 
-        self.paint_glifos(row, y, ctx);
+        self.paint_glyphs(row, y, ctx);
         self.linhas_remontadas = self.linhas_remontadas.saturating_add(1);
         self.celulas_remontadas = self.celulas_remontadas.saturating_add(cols as u64);
     }
 
-    /// Face e atributos que definem um trecho de shaping, mais a inversão
-    /// (seleção/SGR 7), que troca a cor e por isso separa trechos.
+    /// Face and attributes that define a shaping run, plus the inversion
+    /// (selection/SGR 7), which swaps the colour and therefore splits runs.
     #[allow(clippy::type_complexity)]
     fn style(
         &self,
@@ -1457,8 +1462,8 @@ impl Renderer {
         )
     }
 
-    /// Sobe os dois buffers de instância (máscara e emoji). Crescem dobrando:
-    /// redimensionar no meio do desenho não pode realocar a cada frame.
+    /// Uploads both instance buffers (mask and emoji). They grow by doubling:
+    /// resizing in the middle of drawing cannot reallocate every frame.
     fn upload_instances(&mut self) {
         let masks = bytemuck::cast_slice::<Instance, u8>(&self.instances);
         if let Some(b) = grow_buffer(
@@ -1488,19 +1493,21 @@ impl Renderer {
         }
     }
 
-    /// A superfície não entregou textura: conta em `skips` e avisa **uma vez**
-    /// no stderr. É o único sinal que o app pode dar de que o problema não é o
-    /// desenho (a grade segue viva no pty e no socket) e sim a apresentação —
-    /// o sintoma de ambiente confinado/sem compositor (`M-AA`).
+    /// The surface did not hand out a texture: counts it in `skips` and warns
+    /// **once** on stderr. It is the only signal the app can give that the
+    /// problem is not the drawing (the grid stays alive in the pty and the
+    /// socket) but the presentation — the symptom of a confined environment /
+    /// no compositor (`M-AA`).
     fn refuse(&mut self) -> FrameOutcome {
         self.last = "skipped (timeout/occluded)";
         self.skips = self.skips.saturating_add(1);
         if !self.avisou_skip {
             self.avisou_skip = true;
             eprintln!(
-                "bzmux: a superfície não apresenta (timeout/occluded) — o app desenha, mas o \
-                 frame não chega à tela. Ambiente confinado sem GPU visível costuma ser isso: \
-                 confira /dev/dri e, no sandbox, use `sandbox @gpu`; ver docs/DEBUG.md"
+                "bzmux: the surface is not presenting (timeout/occluded) — the app draws, but \
+                 the frame does not reach the screen. A confined environment without a visible \
+                 GPU usually looks like this: check /dev/dri and, on sandbox, use `sandbox @gpu`; see \
+                 docs/DEBUG.md"
             );
         }
         FrameOutcome::Skipped
@@ -1566,13 +1573,13 @@ impl Renderer {
             rp.set_bind_group(0, &self.globals_bind, &[]);
             rp.set_bind_group(1, &self.atlas_bind, &[]);
             rp.set_vertex_buffer(0, self.inst_buf.slice(..));
-            // texto da grade → imagens → cromo e cursor. Duas faixas do mesmo
-            // buffer porque a imagem tem pipeline próprio (amostra RGB).
+            // grid text → images → chrome and cursor. Two spans of the same buffer
+            // because the image has its own pipeline (samples RGB).
             let split = self.img_split.min(self.instances.len()) as u32;
             if split > 0 {
                 rp.draw(0..6, 0..split);
             }
-            // emoji colorido: mesma pipeline de imagem, textura é o atlas RGBA
+            // colour emoji: same image pipeline, the texture is the RGBA atlas
             if !self.emoji_instances.is_empty() {
                 rp.set_pipeline(&self.img_pipeline);
                 rp.set_bind_group(1, &self.emoji_bind, &[]);
@@ -1585,7 +1592,7 @@ impl Renderer {
             if !self.img_instances.is_empty() {
                 rp.set_pipeline(&self.img_pipeline);
                 rp.set_vertex_buffer(0, self.img_buf.slice(..));
-                // uma draw call por imagem: cada uma tem a sua textura
+                // one draw call per image: each has its own texture
                 for (i, _) in self.img_instances.iter().enumerate() {
                     let Some(id) = self.img_ids.get(i).copied() else {
                         break;
@@ -1614,11 +1621,11 @@ impl Renderer {
     }
 }
 
-/// Imagem do protocolo → (largura, altura, RGBA8) para a textura.
+/// Protocol image → (width, height, RGBA8) for the texture.
 ///
-/// `f=24` vira RGBA com alfa 255; `f=32` passa direto; `f=100` é PNG, que o app
-/// decodifica aqui (o core não carrega decodificador de PNG).
-fn decodifica(img: &bzmux_core::graphics::Image) -> Option<(u32, u32, Vec<u8>)> {
+/// `f=24` becomes RGBA with alpha 255; `f=32` passes through; `f=100` is PNG,
+/// which the app decodes here (the core does not carry a PNG decoder).
+fn decode(img: &bzmux_core::graphics::Image) -> Option<(u32, u32, Vec<u8>)> {
     use bzmux_core::graphics::Format;
     let (width, height) = (img.width, img.height);
     if width == 0 || height == 0 {
@@ -1666,55 +1673,55 @@ fn decodifica(img: &bzmux_core::graphics::Image) -> Option<(u32, u32, Vec<u8>)> 
                         out.extend_from_slice(&[px[0], px[0], px[0], a]);
                     }
                 },
-                png::ColorType::Indexed => return None, // raro: o icat manda RGBA
+                png::ColorType::Indexed => return None, // rare: icat sends RGBA
             }
             Some((pw, ph, out))
         },
     }
 }
 
-/// O que fazer depois de um frame (o `get_current_texture` do wgpu 30 devolve
-/// um enum em vez de `Result`).
-/// Estado do pisca neste frame (G12).
+/// What to do after a frame (wgpu 30's `get_current_texture` returns an enum
+/// instead of a `Result`).
+/// Blink state in this frame (G12).
 ///
-/// O que o desenho de **uma linha** precisa saber do frame. Existe para não
-/// arrastar cinco parâmetros por `build` → `rebuild_rows` → `linha`.
+/// What the drawing of **one row** needs to know from the frame. It exists so as
+/// not to drag five parameters through `build` → `rebuild_rows` → `line`.
 #[derive(Clone, Copy)]
 struct RowCtx {
     cols: usize,
     sel: Option<(usize, usize, usize, usize)>,
     blink: Blink,
-    /// Célula do cursor, quando ele está nesta visão (quebra ligadura).
+    /// Cursor cell, when it is in this view (breaks the ligature).
     cursor: Option<(usize, usize)>,
 }
 
-/// O cursor quebra a ligadura: a célula dele é shapeada sozinha, senão ele pinta
-/// no meio de um glifo que cobre mais de uma célula — é o
-/// `disable_ligatures=cursor` do kitty. Fora da visão (rolado) não há cursor.
+/// The cursor breaks the ligature: its cell is shaped on its own, otherwise it
+/// paints in the middle of a glyph that covers more than one cell — it is kitty's
+/// `disable_ligatures=cursor`. Outside the view (scrolled) there is no cursor.
 fn break_no_cursor(term: &Term, view_off: usize, rows: usize) -> Option<(usize, usize)> {
     (view_off == 0 && term.cursor_visible && term.cy < rows).then_some((term.cx, term.cy))
 }
 
-/// `fase` alterna a cada 500 ms e vale para o texto com SGR 5; `cursor` já vem
-/// resolvido pelo app (config `cursor_blink` + `CSI 6 q` do programa).
+/// `phase` toggles every 500 ms and applies to text with SGR 5; `cursor` already
+/// comes resolved by the app (config `cursor_blink` + the program's `CSI 6 q`).
 #[derive(Clone, Copy, Default)]
 pub struct Blink {
     pub phase: bool,
     pub cursor: bool,
 }
 
-/// O que a barra precisa saber de cada aba (o renderer não conhece `Tab`).
+/// What the bar needs to know about each tab (the renderer does not know `Tab`).
 pub struct TabInfo {
-    pub titulo: String,
+    pub title: String,
     pub ativa: bool,
-    /// BELL recente: o rótulo ganha destaque por ~800 ms (I13).
+    /// Recent BELL: the label gets a highlight for ~800 ms (I13).
     pub alert: bool,
 }
 
-/// Tudo que um frame precisa, num pacote só: a assinatura de `build`/`render`
-/// crescia um parâmetro por fatia (abas, sidebar, toast...).
+/// Everything a frame needs, in one package: the signature of `build`/`render`
+/// grew one parameter per slice (tabs, sidebar, toast...).
 pub struct Frame<'a> {
-    /// Identidade da aba desenhada (ver `dano`).
+    /// Identity of the drawn tab (see `damage`).
     pub tab: u64,
     pub term: &'a Term,
     pub view_off: usize,
@@ -1725,10 +1732,10 @@ pub struct Frame<'a> {
     pub sidebar: Option<&'a [WsCard]>,
 }
 
-/// O que a sidebar precisa de cada workspace (I6).
+/// What the sidebar needs from each workspace (I6).
 pub struct WsCard {
     pub name: String,
-    pub titulo: String,
+    pub title: String,
     pub n_tabs: usize,
     pub ativa: bool,
 }
@@ -1740,17 +1747,17 @@ pub enum FrameOutcome {
     Fatal,
 }
 
-/// Cor do tema: `Default` cai no padrão do programa, o resto resolve pela
-/// paleta (as 16 primeiras podem vir do arquivo de configuração).
-fn theme(cfg: &Config, c: Color, padrao: (u8, u8, u8)) -> (u8, u8, u8) {
+/// Theme colour: `Default` falls back to the program default, the rest resolves
+/// through the palette (the first 16 can come from the configuration file).
+fn theme(cfg: &Config, c: Color, default: (u8, u8, u8)) -> (u8, u8, u8) {
     match c {
-        Color::Default => padrao,
-        other => bzmux_core::color::resolve(other, &cfg.palette256(), padrao),
+        Color::Default => default,
+        other => bzmux_core::color::resolve(other, &cfg.palette256(), default),
     }
 }
 
-/// Devolve um buffer novo só quando a capacidade não serve; `None` mantém o
-/// atual (evita realocar a cada frame).
+/// Returns a new buffer only when the capacity does not fit; `None` keeps the
+/// current one (avoids reallocating every frame).
 fn grow_buffer(
     device: &wgpu::Device,
     cap: &mut usize,

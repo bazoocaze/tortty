@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# release.sh — empacota o binário para distribuir (o que o CI faz por tag).
+# release.sh — packages the binary for distribution (what CI does per tag).
 #
-# Mesmo script no local e no CI: aqui se monta o `.tar.gz` que o
-# `install.sh --from-release` sabe baixar, com nome previsível:
+# Same script locally and in CI: here it builds the `.tar.gz` that
+# `install.sh --from-release` knows how to download, with a predictable name:
 #
-#   bzmux-<versão>-<triple>.tar.gz   (contém `bzmux`, LICENSE e README.md)
+#   bzmux-<version>-<triple>.tar.gz   (contains `bzmux`, LICENSE and README.md)
 #
-# Uso:
-#   ./tools/release.sh                 compila e empacota para o host
-#   ./tools/release.sh --target TRIPLE cross-compila (precisa do linker certo)
-#   ./tools/release.sh --skip-build    empacota o que já está em target/<triple>/release
-#   ./tools/release.sh --out DIR       onde deixar o pacote (default: dist/)
+# Usage:
+#   ./tools/release.sh                 builds and packages for the host
+#   ./tools/release.sh --target TRIPLE cross-compiles (needs the right linker)
+#   ./tools/release.sh --skip-build    packages what is already in target/<triple>/release
+#   ./tools/release.sh --out DIR       where to leave the package (default: dist/)
 #
-# O `--check-version v1.2.3` confere que a tag casa com a versão do Cargo.toml
-# (o CI usa isso para não publicar tag apontando para outro código).
+# `--check-version v1.2.3` checks that the tag matches the version in Cargo.toml
+# (CI uses it to avoid publishing a tag pointing at other code).
 set -euo pipefail
 
 APP=bzmux
@@ -28,25 +28,25 @@ die()  { printf '%s\n' "$*" >&2; exit 1; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --target)       TARGET=${2:?--target ask um triple}; shift 2 ;;
+        --target)       TARGET=${2:?--target needs a triple}; shift 2 ;;
         --target=*)     TARGET=${1#*=}; shift ;;
-        --out)          OUT=${2:?--out ask um diretório}; shift 2 ;;
+        --out)          OUT=${2:?--out needs a directory}; shift 2 ;;
         --out=*)        OUT=${1#*=}; shift ;;
         --skip-build)   BUILD=0; shift ;;
-        --check-version) CHECK=${2:?--check-version ask a tag}; shift 2 ;;
+        --check-version) CHECK=${2:?--check-version needs the tag}; shift 2 ;;
         --check-version=*) CHECK=${1#*=}; shift ;;
         -h|--help)      awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
-        *) die "opção inválida: $1 (use -h)" ;;
+        *) die "invalid option: $1 (use -h)" ;;
     esac
 done
 
 VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/Cargo.toml" | head -1)
-[ -n "$VERSION" ] || die "não achei a versão em Cargo.toml"
+[ -n "$VERSION" ] || die "could not find the version in Cargo.toml"
 
 if [ -n "$CHECK" ]; then
     tag=${CHECK#v}
-    [ "$tag" = "$VERSION" ] || die "tag $CHECK não bate com Cargo.toml ($VERSION)"
-    say "== tag $CHECK confere com a versão $VERSION"
+    [ "$tag" = "$VERSION" ] || die "tag $CHECK does not match Cargo.toml ($VERSION)"
+    say "== tag $CHECK matches version $VERSION"
 fi
 
 if [ -z "$TARGET" ]; then
@@ -54,7 +54,7 @@ if [ -z "$TARGET" ]; then
 fi
 
 if [ "$BUILD" = 1 ]; then
-    say "== compilando $APP $VERSION para $TARGET"
+    say "== building $APP $VERSION for $TARGET"
     if [ "$TARGET" = "$(rustc -vV | sed -n 's/^host: //p')" ]; then
         cargo build --release --locked --manifest-path "$ROOT/Cargo.toml"
     else
@@ -65,11 +65,11 @@ fi
 HOST=$(rustc -vV | sed -n 's/^host: //p')
 BIN=$ROOT/target/release/$APP
 [ "$TARGET" != "$HOST" ] && BIN=$ROOT/target/$TARGET/release/$APP
-[ -x "$BIN" ] || die "binário não encontrado: $BIN (compilou?)"
+[ -x "$BIN" ] || die "binary not found: $BIN (did it build?)"
 
-# Sanidade: o binário tem que responder. Cross usa qemu se existir (é o que o
-# CI faz); sem qemu, avisa e segue — empacotar sem executar é melhor que não
-# empacotar, mas o aviso fica no log para ninguém confundir com verificação.
+# Sanity: the binary has to answer. Cross builds use qemu when it exists (that is what
+# CI does); without qemu, warn and continue — packaging without executing is better than
+# not packaging, but the warning stays in the log so nobody mistakes it for verification.
 RUN=""
 if [ "$TARGET" != "$HOST" ]; then
     case "$TARGET" in
@@ -80,11 +80,11 @@ if [ "$TARGET" != "$HOST" ]; then
     if [ -n "$QEMU" ] && command -v "$QEMU" >/dev/null 2>&1; then
         RUN=$QEMU
     else
-        say "== aviso: sem ${QEMU:-qemu} — não dá para rodar o binário $TARGET aqui"
+        say "== warning: no ${QEMU:-qemu} — cannot run the $TARGET binary here"
     fi
 fi
 if [ -n "$RUN" ]; then
-    "$RUN" "$BIN" --version || die "$BIN não roda nem no qemu"
+    "$RUN" "$BIN" --version || die "$BIN does not even run under qemu"
 fi
 
 mkdir -p "$OUT"

@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""Doom fire no terminal: carga máxima de escrita para medir o caminho quente.
+"""Doom fire in the terminal: maximum write load to measure the hot path.
 
-O efeito do port de PSX do Doom: buffer de intensidade 0..36 propagado de baixo
-para cima com decaimento aleatório e uma paleta de 37 cores. Desenhado em
-meio-bloco (`▀`, dois pixels por célula) com fg e bg truecolor por célula, sem
-agrupar nada — é o pior caso para o parser e para o desenho.
+The PSX port effect from Doom: intensity buffer 0..36 propagated from the bottom
+up with random decay and a palette of 37 colors. Drawn in a half block (`▀`, two
+pixels per cell) with truecolor fg and bg per cell, grouping nothing — it is the
+worst case for the parser and for drawing.
 
-Medição, não teste: roda à mão dentro do terminal que se quer medir.
+Measurement, not a test: run it by hand inside the terminal you want to measure.
 
-    python3 tools/doomfire.py                 # 30 fps até Ctrl+C
+    python3 tools/doomfire.py                 # 30 fps until Ctrl+C
     python3 tools/doomfire.py --fps 0 --frames 600
     ./debug.sh --cmd 'python3 tools/doomfire.py --fps 0 --frames 600 \
-        --stats-to /tmp/fire-bzmux.txt'      # estatística no arquivo
+        --stats-to /tmp/fire-bzmux.txt'      # statistics into the file
 
-`--fps 0` solta a mão: quem passa a limitar é o terminal, e o fps alcançado (e
-o MB/s de escapes) é a medida de vazão dele. As estatísticas saem ao sair, em
-stderr ou no arquivo pedido, para dar para comparar dois terminais.
+`--fps 0` lets go: the terminal becomes the limiter, and the fps reached (and
+the MB/s of escapes) is its throughput measure. The statistics come out on exit, on
+stderr or in the requested file, so that two terminals can be compared.
 
-MIT (ver LICENSE).
+MIT (see LICENSE).
 """
 
 import argparse
@@ -29,7 +29,7 @@ import time
 
 BLOCK = "▀".encode()
 
-# paleta do doom fire (37 tons, do quase-preto ao branco)
+# doom fire palette (37 shades, from near-black to white)
 PALETTE = [
     (0x07, 0x07, 0x07),
     (0x1F, 0x07, 0x07),
@@ -70,18 +70,18 @@ PALETTE = [
     (0xFF, 0xFF, 0xFF),
 ]
 
-# escapes prontos por tom: montar a string por célula seria medir str, não o
-# terminal, e o formato é o mesmo em todo frame
+# ready-made escapes per shade: building the string per cell would measure str,
+# not the terminal, and the format is the same on every frame
 FG = [b"\033[38;2;%d;%d;%dm" % c for c in PALETTE]
 BG = [b"\033[48;2;%d;%d;%dm" % c for c in PALETTE]
 LAST = len(PALETTE) - 1
 
 
 def update(buf, w):
-    """Um passo do fogo: cada pixel herda do de baixo, com decaimento."""
-    rand = int.from_bytes(os.urandom(1), "big")  # 0..255, barato o bastante
+    """One fire step: each pixel inherits from the one below, with decay."""
+    rand = int.from_bytes(os.urandom(1), "big")  # 0..255, cheap enough
     n = len(buf)
-    seed = rand | 0x100  # garante multiplicador ímpar no xorshift
+    seed = rand | 0x100  # guarantees an odd multiplier in the xorshift
     for src in range(w, n):
         if seed & 1:
             seed = (seed >> 1) ^ 0x8F3F73B5
@@ -91,7 +91,7 @@ def update(buf, w):
         if not pixel:
             buf[src - w] = 0
             continue
-        # deslocamento lateral de -1..+1 e decaimento de 0..1
+        # sideways shift of -1..+1 and decay of 0..1
         dst = src - w + (seed % 3) - 1
         if dst < 0:
             continue
@@ -100,7 +100,7 @@ def update(buf, w):
 
 
 def render(buf, w, h):
-    """Frame inteiro em meio-bloco: fg = pixel de cima, bg = o de baixo."""
+    """Whole frame in a half block: fg = upper pixel, bg = the lower one."""
     out = bytearray(b"\033[H")
     fg, bg, block = FG, BG, BLOCK
     for row in range(0, h, 2):
@@ -114,29 +114,29 @@ def render(buf, w, h):
 
 
 def main(argv):
-    ap = argparse.ArgumentParser(description="doom fire no terminal (medição)")
+    ap = argparse.ArgumentParser(description="doom fire in the terminal (measurement)")
     ap.add_argument(
         "--fps",
         type=float,
         default=30.0,
-        help="frames por segundo; 0 = sem limite (default 30)",
+        help="frames per second; 0 = no limit (default 30)",
     )
     ap.add_argument(
         "--frames",
         type=int,
         default=0,
-        help="para depois de N frames; 0 = até Ctrl+C",
+        help="stop after N frames; 0 = until Ctrl+C",
     )
-    ap.add_argument("--stats-to", default="-", help="arquivo das estatísticas; - = stderr")
+    ap.add_argument("--stats-to", default="-", help="statistics file; - = stderr")
     a = ap.parse_args(argv)
 
     cols, lines = shutil.get_terminal_size((80, 24))
     w, h = cols, lines * 2
     buf = bytearray(w * h)
-    buf[-w:] = bytes([LAST]) * w  # última fileira no fogo máximo
+    buf[-w:] = bytes([LAST]) * w  # last row at maximum fire
 
-    # SIGTERM/SIGINT param o laço (e não matam antes das estatísticas): dá para
-    # medir com `timeout -s TERM 20 python3 tools/doomfire.py --fps 0`
+    # SIGTERM/SIGINT stop the loop (and do not kill before the statistics): you can
+    # measure with `timeout -s TERM 20 python3 tools/doomfire.py --fps 0`
     stop = []
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.append(True))
@@ -154,7 +154,7 @@ def main(argv):
             update(buf, w)
             frame = render(buf, w, h)
             out.write(frame)
-            out.flush()  # sem flush não há vazão a medir
+            out.flush()  # without a flush there is no throughput to measure
             frames += 1
             sent += len(frame)
             if a.fps > 0:
@@ -167,19 +167,19 @@ def main(argv):
     except KeyboardInterrupt:
         pass
     finally:
-        # sem o SGR reset o texto das estatísticas herda a última cor do fogo
+        # without the SGR reset the statistics text inherits the last fire color
         out.write(b"\033[0m\033[?25h\033[?1049l\033[0m")
         out.flush()
 
     dt = time.monotonic() - t0
-    linhas = [
+    lines_out = [
         f"grade       {cols}x{lines} ({w}x{h} pixels)",
-        f"frames      {frames} em {dt:.2f}s",
+        f"frames      {frames} in {dt:.2f}s",
         f"fps         {frames / dt:.1f}",
-        f"escrito     {sent / 1e6:.1f} MB ({sent / dt / 1e6:.1f} MB/s)",
+        f"written     {sent / 1e6:.1f} MB ({sent / dt / 1e6:.1f} MB/s)",
         f"bytes/frame {sent / frames if frames else 0:.0f}",
     ]
-    txt = "\n".join(linhas) + "\n"
+    txt = "\n".join(lines_out) + "\n"
     if a.stats_to == "-":
         sys.stderr.write(txt)
     else:
