@@ -20,10 +20,6 @@ filled both documents with the same work on 2026-11-02 (see `HISTORY.md`).
   diff and breaks the references that [`CONFIG.md`](CONFIG.md),
   [`LIMITATIONS.md`](LIMITATIONS.md) and [`MIGRATION.md`](MIGRATION.md) already
   make.
-- **Registering is just registering.** The investigation (reading code,
-  measuring, reproducing) happens when the item is executed, not when it is
-  written down. The note carries the symptom, the trigger and whatever comes for
-  free along the way; no complete diagnosis ahead of time.
 - **Every item has a trigger.** An improvement without a trigger becomes a wish:
   only what has a sentence of the sort "when X appears" enters the table. An item
   without a trigger is a limitation ([`LIMITATIONS.md`](LIMITATIONS.md)), not a
