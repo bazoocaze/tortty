@@ -24,6 +24,9 @@ const MAX_OSC: usize = 4096;
 /// How many OSC the probe keeps, and how much of each (the socket's `osc` verb).
 const OSC_SEEN: usize = 8;
 const OSC_SEEN_MAX: usize = 256;
+/// Ceiling for the title stack (`CSI 22/23 t`): an app that pushes without
+/// popping must not grow it without bound.
+const TITLE_STACK_MAX: usize = 16;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum State {
@@ -141,6 +144,9 @@ pub struct Term {
     /// Replies to the child (DA, CPR, DECRQM...). The app drains and writes to the pty.
     pub child_out: Vec<u8>,
     pub title: String,
+    /// Titles saved by `CSI 22 t`, restored by `CSI 23 t` — how an app gives the
+    /// title back when it leaves (`mc` pushes, sets its own with OSC 0 and pops).
+    title_stack: Vec<String>,
     /// The last OSC that arrived, oldest to newest.
     pub osc_seen: VecDeque<OscSeen>,
     /// Theme colors: the renderer uses them and `OSC 4/10/11/12` queries/changes them.
@@ -225,6 +231,7 @@ impl Term {
             saved: SavedCursor::default(),
             child_out: Vec::new(),
             title: String::from("tortty"),
+            title_stack: Vec::new(),
             osc_seen: VecDeque::with_capacity(OSC_SEEN),
             theme: Theme::default(),
             theme_dirty: false,
@@ -1362,6 +1369,13 @@ impl Term {
                         format!("\x1b[8;{};{}t", self.rows, self.cols).as_bytes(),
                     );
                 },
+                // the title stack: `Ps` is 0 (icon+title), 1 (icon) or 2 (title)
+                // in xterm, and here there is one title only (`OSC 1` is ignored),
+                // so every Ps saves the same thing and stays symmetric with its
+                // `23` — without this the app that sets a title and pops on exit
+                // left the tab stuck on its title forever (B37)
+                22 if p(1, 0) <= 2 => self.title_push(),
+                23 if p(1, 0) <= 2 => self.title_pop(),
                 _ => {},
             },
             _ => {},
@@ -1398,6 +1412,22 @@ impl Term {
             _ => {},
         }
         self.osc_record(data);
+    }
+
+    /// `CSI 22 ; Ps t`: saves the title for the matching `23`.
+    fn title_push(&mut self) {
+        if self.title_stack.len() < TITLE_STACK_MAX {
+            self.title_stack.push(self.title.clone());
+        }
+    }
+
+    /// `CSI 23 ; Ps t`: gives the saved title back. An empty stack is not an
+    /// error and not a reason to invent one: a `23` with nothing pushed leaves
+    /// the title as it is.
+    fn title_pop(&mut self) {
+        if let Some(t) = self.title_stack.pop() {
+            self.title = t;
+        }
     }
 
     /// Stores the payload in the probe (a ring of `OSC_SEEN`), with the resulting title.
@@ -2666,6 +2696,52 @@ mod tests {
         assert_eq!(t.title, "my title");
         t.feed(b"\x1b]2;other\x1b\\");
         assert_eq!(t.title, "other");
+    }
+
+    #[test]
+    fn title_stack_gives_the_title_back_when_the_app_leaves() {
+        // the sequence `mc` sends: push, pop, push, `OSC 0` with its own title,
+        // and a pop on exit. Without the pop the tab kept the `mc` title forever
+        // and never went back to the cwd fallback (B37).
+        let mut t = term();
+        t.feed(b"\x1b[22;0t\x1b[23;0t\x1b[22;0t");
+        assert_eq!(t.title, "tortty", "the pushes change nothing on their own");
+        t.feed(b"\x1b]0;mc [user@host]:/tmp\x07");
+        assert_eq!(t.title, "mc [user@host]:/tmp");
+        t.feed(b"\x1b[23;0t");
+        assert_eq!(t.title, "tortty");
+    }
+
+    #[test]
+    fn title_stack_nests_like_vim_pushes_it() {
+        // vim 9 saves all three (`0`, `2`, `1`) and restores in the same order
+        let mut t = term();
+        t.feed(b"\x1b]2;before\x07");
+        t.feed(b"\x1b[22;0t\x1b[22;2t\x1b[22;1t");
+        t.feed(b"\x1b]2;[No Name] - vim\x07");
+        t.feed(b"\x1b[23;2t\x1b[23;1t\x1b[23;0t");
+        assert_eq!(t.title, "before");
+        // an extra pop with an empty stack keeps the title instead of clearing it
+        t.feed(b"\x1b[23;0t");
+        assert_eq!(t.title, "before");
+    }
+
+    #[test]
+    fn title_stack_does_not_grow_without_bound() {
+        let mut t = term();
+        let mut pushes = Vec::new();
+        for _ in 0..TITLE_STACK_MAX + 10 {
+            pushes.extend_from_slice(b"\x1b[22;0t");
+        }
+        t.feed(&pushes);
+        assert_eq!(t.title_stack.len(), TITLE_STACK_MAX);
+        // the deepest save is the one that survives a full unwind
+        t.feed(b"\x1b]2;inside\x07");
+        for _ in 0..TITLE_STACK_MAX + 10 {
+            t.feed(b"\x1b[23;0t");
+        }
+        assert_eq!(t.title, "tortty");
+        assert_eq!(t.title_stack.len(), 0);
     }
 
     #[test]

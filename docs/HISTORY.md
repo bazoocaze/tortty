@@ -1386,3 +1386,33 @@ before, `~`+space, `´`+space and `` ` ``+space reached the child as
 the system Compose table (`<dead_acute> <space> : "'"`), not a second bug. Test
 `dead_key_composed_over_space_keeps_the_dead_character` in `keys.rs`;
 `tools/check.sh` green.
+
+## 2026-11-04 — B37: the tab title went back to following the cwd
+
+The title followed the cwd you `cd` into until the first program that set its
+own title: after leaving `mc` (or `vim` with `titlestring`) the tab stayed on the
+last OSC 0/2 for good, though a new program's title still came through.
+
+**Cause, measured rather than guessed.** Apps do not restore the title with an
+OSC — they use xterm's title stack. A pty harness recording the child's bytes
+shows `mc` sending `CSI 22;0t`, `CSI 23;0t`, `CSI 22;0t`, `OSC 0 mc [...]` and a
+`CSI 23;0t` on exit; vim 9 pushes `22;0`, `22;2`, `22;1` and pops them in the
+same order. Both `22` and `23` fell into the parser's `_ => {}`, so the pop never
+happened. There is one title here (`OSC 1`, the icon title, is ignored since
+`C10`), so any `Ps` of 0/1/2 saves and restores the same thing and the sequence
+stays symmetric; the stack is capped at 16 (`TITLE_STACK_MAX`).
+
+No app-side change: the pop restores the initial `tortty`, and the app's rule
+"OSC wins, else the cwd" already treats `tortty` as "no request" — the cwd
+fallback comes back by itself.
+
+**Verified.** Debug binary + Xvfb + `xdotool`, reading the **window** title
+(`xdotool getwindowname`; `state.title` is `Term::title`, a different thing —
+recorded in [`DEBUG.md`](DEBUG.md)). Before: `cd /etc` → `etc — tortty`, `mc` →
+`mc [user@host]:/etc — tortty`, and after leaving `mc` and `cd /tmp` it
+stayed on the `mc` title. After: the exit brought `etc — tortty` back and the
+next `cd` gave `tmp — tortty`. Three tests in `tortty-core`
+(`title_stack_gives_the_title_back_when_the_app_leaves`,
+`title_stack_nests_like_vim_pushes_it`,
+`title_stack_does_not_grow_without_bound`), `tools/check.sh` green,
+`tools/visual.sh` green.
