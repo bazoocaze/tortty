@@ -1,15 +1,15 @@
 [package]
-name = "bzmux"
+name = "tortty"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Terminal with workspaces and tabs (the Rust experiment of bzmux)"
+description = "TorTTY — fast, GPU based terminal"
 
 [lints]
 workspace = true
 
 [dependencies]
-bzmux-core = { path = "../bzmux-core" }
+tortty-core = { path = "../core" }
 winit = "0.30"
 # PNG of the kitty graphics protocol (f=100); pure Rust
 png = "0.17"
@@ -28,5 +28,5 @@ rustybuzz = "0.20.1"
 libc = "0.2"
 
 [[bin]]
-name = "bzmux"
+name = "tortty"
 path = "src/main.rs"

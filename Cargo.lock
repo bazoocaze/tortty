@@ -223,34 +223,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
-name = "bzmux"
-version = "1.0.7"
-dependencies = [
- "arboard",
- "bytemuck",
- "bzmux-core",
- "fontdb",
- "libc",
- "png",
- "pollster",
- "portable-pty",
- "rustybuzz",
- "serde_json",
- "swash",
- "wgpu",
- "winit",
-]
-
-[[package]]
-name = "bzmux-core"
-version = "1.0.7"
-dependencies = [
- "base64",
- "flate2",
- "unicode-width",
-]
-
-[[package]]
 name = "calloop"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2103,6 +2075,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
 dependencies = [
  "winnow",
+]
+
+[[package]]
+name = "tortty"
+version = "1.0.8"
+dependencies = [
+ "arboard",
+ "bytemuck",
+ "fontdb",
+ "libc",
+ "png",
+ "pollster",
+ "portable-pty",
+ "rustybuzz",
+ "serde_json",
+ "swash",
+ "tortty-core",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "tortty-core"
+version = "1.0.8"
+dependencies = [
+ "base64",
+ "flate2",
+ "unicode-width",
 ]
 
 [[package]]

@@ -556,7 +556,7 @@ mod tests {
 #[cfg(test)]
 mod checks_keyboard {
     use super::*;
-    use bzmux_core::term::Term;
+    use tortty_core::term::Term;
 
     const NONE: ModifiersState = ModifiersState::empty();
 

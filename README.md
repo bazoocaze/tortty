@@ -1,10 +1,12 @@
-# bzmux in Rust — feasibility experiment
+# TorTTY — Torbie TTY
+
+**Fast, GPU based terminal.**
 
 VT terminal with pty, written in Rust: its own VT parser, its own grid and
 instanced drawing on the GPU (`wgpu`). It is the experiment behind the question
-"does rewriting bzmux (Python/GTK) in Rust solve distribution and performance?"
+"does rewriting tortty-python (Python/GTK) in Rust solve distribution and performance?"
 — the progress, the numbers and the decisions are in
-[`TASK-bzmux-in-rust.md`](TASK-bzmux-in-rust.md).
+[`TASK-tortty-in-rust.md`](TASK-tortty-in-rust.md).
 
 Status: **migration complete** (2026-11-02). The feasibility experiment closed
 at 8–9.5x Python in throughput ([`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)) and
@@ -30,17 +32,17 @@ search: no. What comes now is new activity, in the queue of
 | [`docs/BACKLOG.md`](docs/BACKLOG.md) | work queue |
 | [`docs/HISTORY.md`](docs/HISTORY.md) | dated record of what was done |
 | [`AGENTS.md`](AGENTS.md) | conventions, architecture and tools (for agents) |
-| [`TASK-bzmux-in-rust.md`](TASK-bzmux-in-rust.md) | dated record of phase 1 (the experiment) |
+| [`TASK-tortty-in-rust.md`](TASK-tortty-in-rust.md) | dated record of phase 1 (the experiment) |
 
 ## Install
 
 ```sh
-./install.sh                 # builds and installs to ~/.local/bin/bzmux
+./install.sh                 # builds and installs to ~/.local/bin/tortty
 ./install.sh --check         # checks binary, libs and menu
 ./install.sh --uninstall     # removes command, entry and icon
 ```
 
-bzmux is a single binary (libc/libm + the GPU driver). Details, `--prefix`,
+tortty is a single binary (libc/libm + the GPU driver). Details, `--prefix`,
 `--from-release` and coexistence with the Python bzmux (`tortty-python`):
 `docs/INSTALL.md`.
 
@@ -48,16 +50,16 @@ bzmux is a single binary (libc/libm + the GPU driver). Details, `--prefix`,
 
 ```sh
 cargo build --release
-./target/release/bzmux                          # $SHELL in 80x24
-./target/release/bzmux --cmd 'mc' --cols 100 --rows 30
-./target/release/bzmux --cmd 'vim arquivo.rs' --font-size 13
-./target/release/bzmux --no-vsync --debug-socket auto --prof
+./target/release/tortty                          # $SHELL in 80x24
+./target/release/tortty --cmd 'mc' --cols 100 --rows 30
+./target/release/tortty --cmd 'vim arquivo.rs' --font-size 13
+./target/release/tortty --no-vsync --debug-socket auto --prof
 ```
 
 `--font-size` is in **points** (like the Python bzmux `font_size`); `--dpi`
 (default 96) converts to pixels and multiplies by the monitor `scale_factor` —
 it is the equivalent of GTK's `Xft.dpi`. `--debug-socket auto` opens
-`$XDG_RUNTIME_DIR/bzmux-<pid>.sock`.
+`$XDG_RUNTIME_DIR/tortty-<pid>.sock`.
 
 ## Quality
 
@@ -71,14 +73,14 @@ It also runs in `pre-commit` (`git config core.hooksPath .githooks`) and in CI.
 Besides that, two gates that do not need your screen:
 
 ```sh
-./target/release/bzmux --selftest   # 31 checks without a window (parity with checks.py)
+./target/release/tortty --selftest   # 31 checks without a window (parity with checks.py)
 ./tools/visual.sh                   # own Xvfb: draws, captures and compares pixels
 ```
 
 ## Measure
 
 ```sh
-cargo run --release -p bzmux-core --bin parsebench        # parser alone
+cargo run --release -p tortty-core --bin parsebench        # parser alone
 ./tools/bench.sh                                          # Rust x Python ladder
 ./tools/benchrun.py --frames 1200                         # one doom-fire measurement
 ```
@@ -89,29 +91,29 @@ terminals consume exactly the same bytes.
 ## Dev tools (PID file, never `pkill`)
 
 ```sh
-./tools/devrun.sh --cmd 'mc' --debug-socket /tmp/bz.sock   # starts in background
+./tools/devrun.sh --cmd 'mc' --debug-socket /tmp/tt.sock   # starts in background
 ./tools/devkill.sh                                          # kills THAT PID only
 ```
 
-`pkill -f bzmux` kills the shell that called it (the pattern is in its command
-line) and `pkill -x bzmux` kills the pipx `bzmux`, which has the same name as
-the binary. It has happened; that is why here you only kill a registered PID,
-checking `/proc/<pid>/exe`.
+`pkill -f tortty` kills the shell that called it (the pattern is in its command
+line); `pkill -x` was worse while the binary and the Python app shared the name
+`bzmux` — it brought down a session. It has happened; that is why here you only
+kill a registered PID, checking `/proc/<pid>/exe`.
 
 ## Structure
 
 ```
-crates/bzmux-core/         pure emulation, no GUI/pty/GPU (testable without display)
+crates/core/     pure emulation, no GUI/pty/GPU (testable without display)
   src/{cell,color,grid,charset,term}.rs
   src/bin/parsebench.rs    parser benchmark: doomfire and file (dmesg)
-crates/bzmux/              app
+crates/app/      app
   src/{main,cli,app,pty,keys,glyph,atlas,render,debugsock,prof}.rs
   src/shader.wgsl          one pipeline for background, glyph, underline and cursor
 tools/{doomfire,benchrun}.py, bench.sh, devrun.sh, devkill.sh
 ```
 
-The rule inherited from the Python project: `bzmux-core` knows no window, pty or
-GPU. That is why `cargo test -p bzmux-core` runs without a display and
+The rule inherited from the Python project: `tortty-core` knows no window, pty or
+GPU. That is why `cargo test -p tortty-core` runs without a display and
 `parsebench` measures the parser, not the toolkit.
 
 ## Today's numbers (see the TASK)

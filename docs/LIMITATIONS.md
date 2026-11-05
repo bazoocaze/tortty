@@ -1,7 +1,7 @@
 # Limits
 
-What bzmux **does not** do and why. Only a **decision** or an accepted
-consequence of scope enters here. Functionality of bzmux Python that has not
+What tortty **does not** do and why. Only a **decision** or an accepted
+consequence of scope enters here. Functionality of tortty-python that has not
 been migrated yet is `missing` in [`MIGRATION.md`](MIGRATION.md) — it is not a
 limit. If a limit stops existing, it leaves here and becomes a completed item in
 [`HISTORY.md`](HISTORY.md).
@@ -45,7 +45,7 @@ limit. If a limit stops existing, it leaves here and becomes a completed item in
 ## Emulation
 
 - **Wide char works, it is a conscious improvement** — and that is why the cell
-  model has a continuation mark (`WIDE_CONT`). bzmux Python does not have it:
+  model has a continuation mark (`WIDE_CONT`). tortty-python does not have it:
   there CJK occupies one cell. Every new grid operation has to respect the pair.
 - **Grapheme combination**: each cell carries a `char`; a combining mark that did
   not come together in the same commit as the text becomes its own cell. Really

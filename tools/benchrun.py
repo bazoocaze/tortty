@@ -30,7 +30,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(HERE)
-DEFAULT_APP = os.path.join(ROOT_DIR, "target", "release", "bzmux")
+DEFAULT_APP = os.path.join(ROOT_DIR, "target", "release", "tortty")
 DOOMFIRE = os.path.join(HERE, "doomfire.py")
 
 
@@ -141,8 +141,8 @@ def main(argv):
     ap.add_argument("--timeout", type=float, default=0)
     a = ap.parse_args(argv)
 
-    tmp = tempfile.mkdtemp(prefix="bzmux-rs-bench-")
-    sock = os.path.join(tmp, "bzmux.sock")
+    tmp = tempfile.mkdtemp(prefix="tortty-rs-bench-")
+    sock = os.path.join(tmp, "tortty.sock")
     stats = os.path.join(tmp, "stats.txt")
     log = os.path.join(tmp, "app.log")
 
@@ -151,7 +151,7 @@ def main(argv):
 
     if a.app.endswith(".py") or a.app.endswith("run.sh"):
         # tortty-python Python app: accepts -c FILE (config) and --debug-log
-        conf = os.path.join(tmp, "bzmux.conf")
+        conf = os.path.join(tmp, "tortty.conf")
         with open(conf, "w", encoding="utf-8") as f:
             f.write("font_size %s\n" % a.font_size)
         cmdline = [a.app, "-c", conf, "--debug-log", "off", "--debug-socket", sock]

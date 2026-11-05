@@ -11,7 +11,7 @@ Measurement, not a test: run it by hand inside the terminal you want to measure.
     python3 tools/doomfire.py                 # 30 fps until Ctrl+C
     python3 tools/doomfire.py --fps 0 --frames 600
     ./debug.sh --cmd 'python3 tools/doomfire.py --fps 0 --frames 600 \
-        --stats-to /tmp/fire-bzmux.txt'      # statistics into the file
+        --stats-to /tmp/fire-tortty.txt'      # statistics into the file
 
 `--fps 0` lets go: the terminal becomes the limiter, and the fps reached (and
 the MB/s of escapes) is its throughput measure. The statistics come out on exit, on

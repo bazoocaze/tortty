@@ -4,7 +4,7 @@
 # Same script locally and in CI: here it builds the `.tar.gz` that
 # `install.sh --from-release` knows how to download, with a predictable name:
 #
-#   bzmux-<version>-<triple>.tar.gz   (contains `bzmux`, LICENSE and README.md)
+#   tortty-<version>-<triple>.tar.gz   (contains `tortty`, LICENSE and README.md)
 #
 # Usage:
 #   ./tools/release.sh                 builds and packages for the host
@@ -16,7 +16,7 @@
 # (CI uses it to avoid publishing a tag pointing at other code).
 set -euo pipefail
 
-APP=bzmux
+APP=tortty
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)
 OUT=$ROOT/dist
 TARGET=""

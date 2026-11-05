@@ -4,7 +4,7 @@
 # session and no human eye on the result.
 #
 #   tools/visual.sh                # runs the battery and says PASSED/FAILED
-#   tools/visual.sh --keep         # keeps the captures in /tmp/bzmux-visual
+#   tools/visual.sh --keep         # keeps the captures in /tmp/tortty-visual
 #   tools/visual.sh --display :77  # uses another display (Xvfb comes up if missing)
 #
 # What it proves, and no headless test proves:
@@ -22,11 +22,11 @@
 set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-APP=${BZMUX_BIN:-$ROOT/target/release/bzmux}
-DISPLAY_XVFB=${BZMUX_DISPLAY:-:77}
-OUT_DIR=${BZMUX_VISUAL_DIR:-/tmp/bzmux-visual}
+APP=${TORTTY_BIN:-$ROOT/target/release/tortty}
+DISPLAY_XVFB=${TORTTY_DISPLAY:-:77}
+OUT_DIR=${TORTTY_VISUAL_DIR:-/tmp/tortty-visual}
 KEEP=0
-SOCK=/tmp/bzmux-visual.sock
+SOCK=/tmp/tortty-visual.sock
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -46,7 +46,7 @@ fail() { step "FAILURE" "$1"; failures=$((failures + 1)); }
 command -v import >/dev/null || { echo "ImageMagick (import) is missing" >&2; exit 2; }
 
 mkdir -p "$OUT_DIR"
-TMP=$(mktemp -d "${TMPDIR:-/tmp}/bzmux-visual.XXXXXX")
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/tortty-visual.XXXXXX")
 XVFB_PID=
 APP_PID=
 APP2_PID=
@@ -79,8 +79,8 @@ else
 fi
 
 # fixed theme: without it the expected color depends on the runner's ~/.config
-mkdir -p "$TMP/home/.config/bzmux"
-cat >"$TMP/home/.config/bzmux/bzmux.conf" <<'CONF'
+mkdir -p "$TMP/home/.config/tortty"
+cat >"$TMP/home/.config/tortty/tortty.conf" <<'CONF'
 background #000000
 foreground #ffffff
 color1 #ff0000

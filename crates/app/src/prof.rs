@@ -1,4 +1,4 @@
-//! Cost counters per stage (the `PYTERM_PROF` of the bzmux Python).
+//! Cost counters per stage (the `PYTERM_PROF` of tortty-python).
 //!
 //! Turned on by `--prof` or by the socket verb `prof`. Atomics because the pty
 //! cost is measured on the reader thread and the parse/draw one on the UI thread.

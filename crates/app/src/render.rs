@@ -10,11 +10,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
-use bzmux_core::cell::{Cell, INV};
-use bzmux_core::config::{Config, CursorShape, Theme};
-use bzmux_core::term::sanitize_title;
-use bzmux_core::{Color, Span, Term};
 use swash::scale::ScaleContext;
+use tortty_core::cell::{Cell, INV};
+use tortty_core::config::{Config, CursorShape, Theme};
+use tortty_core::term::sanitize_title;
+use tortty_core::{Color, Span, Term};
 use winit::window::Window;
 
 use crate::atlas::{bind_atlas, globals_buffer, globals_layout, Atlas};
@@ -88,7 +88,7 @@ pub struct Renderer {
     /// Shaping per row run (ligatures and whatever else the font does).
     shaper: crate::shape::Shaper,
     /// Ligature mode coming from the configuration.
-    ligatures: bzmux_core::config::Ligatures,
+    ligatures: tortty_core::config::Ligatures,
     instances: Vec<Instance>,
     pub palette: Vec<(u8, u8, u8)>,
     /// Effective theme (config + defaults); `build` resolves cell by cell.
@@ -238,11 +238,11 @@ impl Renderer {
         // window does not draw on another machine (see DEBUG.md)
         let info = adapter.get_info();
         eprintln!(
-            "bzmux: GPU: {:?} {} (driver {})",
+            "tortty: GPU: {:?} {} (driver {})",
             info.backend, info.name, info.driver
         );
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("bzmux"),
+            label: Some("tortty"),
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::downlevel_defaults(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
@@ -287,7 +287,7 @@ impl Renderer {
         surface.configure(&device, &config);
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("bzmux"),
+            label: Some("tortty"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
@@ -313,7 +313,7 @@ impl Renderer {
         });
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("bzmux-layout"),
+            label: Some("tortty-layout"),
             bind_group_layouts: &[Some(&gl), Some(&atlas_layout)],
             immediate_size: 0,
         });
@@ -336,7 +336,7 @@ impl Renderer {
             },
         ];
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("bzmux-pipeline"),
+            label: Some("tortty-pipeline"),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -369,7 +369,7 @@ impl Renderer {
         // format, only the shader changes (samples RGB instead of the coverage
         // mask)
         let img_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("bzmux-image"),
+            label: Some("tortty-image"),
             source: wgpu::ShaderSource::Wgsl(include_str!("image.wgsl").into()),
         });
         let (img_layout, img_sampler) = crate::atlas::bind_image(&device);
@@ -390,12 +390,12 @@ impl Renderer {
             ],
         });
         let img_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("bzmux-image-layout"),
+            label: Some("tortty-image-layout"),
             bind_group_layouts: &[Some(&gl), Some(&img_layout)],
             immediate_size: 0,
         });
         let img_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("bzmux-image-pipeline"),
+            label: Some("tortty-image-pipeline"),
             layout: Some(&img_pl),
             vertex: wgpu::VertexState {
                 module: &img_shader,
@@ -460,7 +460,7 @@ impl Renderer {
             cache: HashMap::new(),
             cache_gid: HashMap::new(),
             shaper: crate::shape::Shaper::new(),
-            ligatures: bzmux_core::config::Ligatures::default(),
+            ligatures: tortty_core::config::Ligatures::default(),
             instances: Vec::with_capacity(4096),
             palette: cfg.palette256(),
             fg: theme(cfg, cfg.fg, FG),
@@ -575,7 +575,7 @@ impl Renderer {
 
     #[inline]
     fn color(&self, c: Color, default: (u8, u8, u8)) -> [f32; 3] {
-        let (r, g, b) = bzmux_core::color::resolve(c, &self.palette, default);
+        let (r, g, b) = tortty_core::color::resolve(c, &self.palette, default);
         [
             f32::from(r) / 255.0,
             f32::from(g) / 255.0,
@@ -836,7 +836,7 @@ impl Renderer {
         swap: bool,
         glyph: Option<(usize, u16, f32)>,
     ) {
-        use bzmux_core::cell::{
+        use tortty_core::cell::{
             BOLD, FAINT, ITALIC, OVERLINE, STRIKE, UL_CURLY, UL_DASHED, UL_DOTTED, UL_DOUBLE,
         };
         let cw = self.fonts.cw;
@@ -875,7 +875,7 @@ impl Renderer {
         if cell.ul_color != Color::Default {
             c = self.color(cell.ul_color, self.fg);
         }
-        if cell.ul != bzmux_core::cell::UL_NONE {
+        if cell.ul != tortty_core::cell::UL_NONE {
             let base = py + ascent + 1.0;
             let line = |r: &mut Self, x0: f32, w: f32, y: f32, h: f32| {
                 r.push_rect(x0, y, w, h, [c[0], c[1], c[2], 1.0]);
@@ -991,7 +991,7 @@ impl Renderer {
 
     /// Uploads the image texture if it is not in the cache yet (or if the app
     /// resent it with the same id and the version changed).
-    fn ensure_texture(&mut self, img: &bzmux_core::graphics::Image) -> bool {
+    fn ensure_texture(&mut self, img: &tortty_core::graphics::Image) -> bool {
         if self
             .img_cache
             .get(&img.id)
@@ -1243,11 +1243,11 @@ impl Renderer {
 
     /// `true` if any visible cell has SGR 5 (only then does the blink phase force
     /// the grid to be rebuilt).
-    fn has_blink(rows: &[&bzmux_core::grid::Row]) -> bool {
+    fn has_blink(rows: &[&tortty_core::grid::Row]) -> bool {
         rows.iter().any(|r| {
             r.cells
                 .iter()
-                .any(|c| c.flags & bzmux_core::cell::BLINK != 0)
+                .any(|c| c.flags & tortty_core::cell::BLINK != 0)
         })
     }
 
@@ -1257,7 +1257,7 @@ impl Renderer {
     fn rebuild_rows(
         &mut self,
         damage: &crate::damage::Damage,
-        rows: &[&bzmux_core::grid::Row],
+        rows: &[&tortty_core::grid::Row],
         ctx: RowCtx,
         shift: isize,
     ) {
@@ -1302,7 +1302,7 @@ impl Renderer {
     /// Builds one row **relative to the top of the grid** (y = 0). The vertical
     /// position comes in the concatenation, and that is what allows scrolling the
     /// screen by shifting the finished row instead of rebuilding the glyphs.
-    fn line(&mut self, row: &bzmux_core::grid::Row, y: usize, ctx: RowCtx) -> RowQuads {
+    fn line(&mut self, row: &tortty_core::grid::Row, y: usize, ctx: RowCtx) -> RowQuads {
         let stored = std::mem::take(&mut self.instances);
         let stored_color = std::mem::take(&mut self.emoji_row);
         self.instances.clear();
@@ -1319,7 +1319,7 @@ impl Renderer {
     /// glyph for the ligature piece (`calt`). A single-cell run has no context
     /// and goes straight through the font chain — that is the case of whoever
     /// paints cell by cell (doom-fire: 2400 runs of 1).
-    fn paint_glyphs(&mut self, row: &bzmux_core::grid::Row, y: usize, ctx: RowCtx) {
+    fn paint_glyphs(&mut self, row: &tortty_core::grid::Row, y: usize, ctx: RowCtx) {
         let RowCtx {
             cols,
             sel,
@@ -1334,7 +1334,7 @@ impl Renderer {
         let mut x = 0usize;
         while x < limit {
             let cell = row.cells[x];
-            if cell.is_cont() || (cell.flags & bzmux_core::cell::BLINK != 0 && !blink.phase) {
+            if cell.is_cont() || (cell.flags & tortty_core::cell::BLINK != 0 && !blink.phase) {
                 x += 1;
                 continue;
             }
@@ -1350,7 +1350,7 @@ impl Renderer {
                     end += 1;
                     continue;
                 }
-                if c2.flags & bzmux_core::cell::BLINK != 0 && !blink.phase {
+                if c2.flags & tortty_core::cell::BLINK != 0 && !blink.phase {
                     break;
                 }
                 // the cursor breaks the run (see `cursor` in build)
@@ -1393,7 +1393,7 @@ impl Renderer {
     }
 
     /// Draws **one** grid row (A17/G17: only runs for dirty rows).
-    fn paint_line(&mut self, row: &bzmux_core::grid::Row, y: usize, ctx: RowCtx) {
+    fn paint_line(&mut self, row: &tortty_core::grid::Row, y: usize, ctx: RowCtx) {
         let RowCtx { cols, sel, .. } = ctx;
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
@@ -1447,13 +1447,13 @@ impl Renderer {
     #[allow(clippy::type_complexity)]
     fn style(
         &self,
-        cell: &bzmux_core::cell::Cell,
+        cell: &tortty_core::cell::Cell,
         sel: Option<(usize, usize, usize, usize)>,
         y: usize,
         x: usize,
     ) -> (Option<usize>, bool, bool, bool) {
-        let bold = cell.flags & bzmux_core::cell::BOLD != 0;
-        let italic = cell.flags & bzmux_core::cell::ITALIC != 0;
+        let bold = cell.flags & tortty_core::cell::BOLD != 0;
+        let italic = cell.flags & tortty_core::cell::ITALIC != 0;
         (
             self.fonts.face_of(cell.ch, bold, italic),
             bold,
@@ -1504,7 +1504,7 @@ impl Renderer {
         if !self.avisou_skip {
             self.avisou_skip = true;
             eprintln!(
-                "bzmux: the surface is not presenting (timeout/occluded) — the app draws, but \
+                "tortty: the surface is not presenting (timeout/occluded) — the app draws, but \
                  the frame does not reach the screen. A confined environment without a visible \
                  GPU usually looks like this: check /dev/dri and, on sandbox, use `sandbox @gpu`; see \
                  docs/DEBUG.md"
@@ -1549,7 +1549,7 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         {
             let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("bzmux-pass"),
+                label: Some("tortty-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
@@ -1625,8 +1625,8 @@ impl Renderer {
 ///
 /// `f=24` becomes RGBA with alpha 255; `f=32` passes through; `f=100` is PNG,
 /// which the app decodes here (the core does not carry a PNG decoder).
-fn decode(img: &bzmux_core::graphics::Image) -> Option<(u32, u32, Vec<u8>)> {
-    use bzmux_core::graphics::Format;
+fn decode(img: &tortty_core::graphics::Image) -> Option<(u32, u32, Vec<u8>)> {
+    use tortty_core::graphics::Format;
     let (width, height) = (img.width, img.height);
     if width == 0 || height == 0 {
         return None;
@@ -1752,7 +1752,7 @@ pub enum FrameOutcome {
 fn theme(cfg: &Config, c: Color, default: (u8, u8, u8)) -> (u8, u8, u8) {
     match c {
         Color::Default => default,
-        other => bzmux_core::color::resolve(other, &cfg.palette256(), default),
+        other => tortty_core::color::resolve(other, &cfg.palette256(), default),
     }
 }
 

@@ -56,7 +56,7 @@ if [ "$FAST" = 0 ]; then
     # parsebench is the display-less benchmark: if it breaks, the number in
     # docs/BENCHMARKS.md dies with it
     # `--selftest` is the display-less emulator smoke test: 14 core areas
-    step "selftest" ./target/release/bzmux --selftest
+    step "selftest" ./target/release/tortty --selftest
     step "parsebench" ./target/release/parsebench --frames 100 --cols 40 --rows 12
 fi
 

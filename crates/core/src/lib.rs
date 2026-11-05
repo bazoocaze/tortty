@@ -1,6 +1,6 @@
-//! bzmux emulation core.
+//! tortty emulation core.
 //!
-//! Rule inherited from bzmux Python: **nothing here knows about GUI, pty or
+//! Rule inherited from tortty-python: **nothing here knows about GUI, pty or
 //! GPU**. All this crate does is turn bytes from the child into a grid of cells,
 //! and that is why the parser benchmark runs without a display.
 

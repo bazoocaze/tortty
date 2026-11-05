@@ -1,37 +1,32 @@
 #!/usr/bin/env bash
-# install.sh — installs bzmux (Rust) as the `bzmux` command.
+# install.sh — installs tortty as the `tortty` command.
 #
-# Unlike the bzmux Python installer, there is no dependency step here:
+# Unlike the Python terminal (tortty-python), there is no dependency step here:
 # the binary is single and only needs libc/libm (+ the GPU driver at
 # runtime). Installing = copying one file and, if you want, a menu entry.
 #
 # Usage (from the cloned repository):
-#   ./install.sh                 builds (release) and installs into ~/.local/bin/bzmux
-#   ./install.sh --prefix DIR    another prefix (the command lands in DIR/bin/bzmux)
+#   ./install.sh                 builds (release) and installs into ~/.local/bin/tortty
+#   ./install.sh --prefix DIR    another prefix (the command lands in DIR/bin/tortty)
 #   ./install.sh --binary FILE   installs an already built binary (does not build)
 #   ./install.sh --from-release  downloads the binary from GitHub Releases (no cargo)
-#   ./install.sh --local         command points at target/release/bzmux (dev)
+#   ./install.sh --local         command points at target/release/tortty (dev)
 #   ./install.sh --no-shortcut   does not create the system menu entry
 #   ./install.sh --check         checks the existing installation
 #   ./install.sh --uninstall     removes command, entry and icon
 #   ./install.sh --dry-run       prints every command and executes nothing
 #
-# Living with the bzmux Python: it installs through pipx under the name `bzmux`; this
-# installer takes the name and warns if it finds the pipx shim on the path. After
-# installing the Python one under the new name (`tortty-python`), run `pipx uninstall bzmux`
-# so the old shim does not linger.
-#
 # MIT (see LICENSE).
 set -euo pipefail
 
-APP=bzmux
+APP=tortty
 # Repository the --from-release mode downloads from; change it when the repo goes public.
-REPO=${BZMUX_REPO:-bazoocaze/rust_term}
-PREFIX=${BZMUX_PREFIX:-$HOME/.local}
+REPO=${TORTTY_REPO:-bazoocaze/tortty}
+PREFIX=${TORTTY_PREFIX:-$HOME/.local}
 
 say()  { printf '%s\n' "$*"; }
 warn() { printf '%s\n' "$*" >&2; }
-die()  { warn "bzmux: $*"; exit 1; }
+die()  { warn "tortty: $*"; exit 1; }
 
 DRY=0; SHORTCUT=1; MODE=install; LOCAL=0; FROM_RELEASE=0; BINARY=""
 while [ $# -gt 0 ]; do
@@ -53,8 +48,8 @@ while [ $# -gt 0 ]; do
 done
 
 BINDIR=$PREFIX/bin
-DESKTOP=$PREFIX/share/applications/bzmux.desktop
-ICON=$PREFIX/share/icons/hicolor/scalable/apps/bzmux.svg
+DESKTOP=$PREFIX/share/applications/tortty.desktop
+ICON=$PREFIX/share/icons/hicolor/scalable/apps/tortty.svg
 
 run() {
     if [ "$DRY" = 1 ]; then say "+ $*"; else "$@"; fi
@@ -108,7 +103,7 @@ target_triple() {
     esac
 }
 
-# -- coexistence warnings ------------------------------------------------
+# -- already on the PATH? ------------------------------------------------
 check_conflict() {
     local cur real mine
     cur=$(command -v "$APP" 2>/dev/null || true)
@@ -116,22 +111,15 @@ check_conflict() {
     real=$(readlink -f "$cur" 2>/dev/null || printf %s "$cur")
     mine=$(readlink -f "$BINDIR/$APP" 2>/dev/null || printf %s "$BINDIR/$APP")
     [ "$real" = "$mine" ] && return 0
-    # the pipx shim in ~/.local/bin has no "pipx" in the path: its target does
-    case "$cur$real" in
-        *pipx*) warn "== '$APP' is the **Python** bzmux today ($real)"
-                warn "   this installer takes the name over: install the Python one as 'tortty-python'"
-                warn "   and then run 'pipx uninstall bzmux' (the venv stays in"
-                warn "   ~/.local/share/pipx/venvs/bzmux until you remove it)" ;;
-        *)      warn "== '$APP' already exists at $real; this installation goes to $BINDIR/$APP"
-                warn "   and whoever answers on the PATH is the first one listed (check with: $APP --version)" ;;
-    esac
+    warn "== '$APP' already exists at $real; this installation goes to $BINDIR/$APP"
+    warn "   and whoever answers on the PATH is the first one listed (check with: $APP --version)"
 }
 
 # -- release download ----------------------------------------------------
 fetch_release() {
     local look tag file url tmp
     look=$(version); tag="v$ver"
-    file="bzmux-$ver-$(target_triple).tar.gz"
+    file="tortty-$ver-$(target_triple).tar.gz"
     url="https://github.com/$REPO/releases/download/$tag/$file"
     command -v curl >/dev/null 2>&1 || die "--from-release needs curl"
     tmp=$(mktemp -d)
@@ -186,7 +174,7 @@ do_install() {
     fi
 
     if [ "$SHORTCUT" = 1 ]; then
-        local icon_src="$ROOT/assets/bzmux.svg"
+        local icon_src="$ROOT/assets/tortty.svg"
         if [ -f "$icon_src" ]; then
             run $SUDO mkdir -p "$(dirname "$ICON")"
             run $SUDO command install -m 644 "$icon_src" "$ICON"
@@ -203,9 +191,9 @@ do_install() {
             cat >"$tmpd" <<EOF
 [Desktop Entry]
 Type=Application
-Name=bzmux
+Name=TorTTY
 GenericName=Terminal
-Comment=Terminal with workspaces and tabs
+Comment=Fast, GPU based terminal
 Exec=$BINDIR/$APP
 TryExec=$BINDIR/$APP
 Icon=$APP
@@ -253,7 +241,7 @@ do_check() {
     case "$cur" in
         "$BINDIR/$APP") say "link:     $cur (this prefix, on the PATH)" ;;
         "")             say "link:     (nothing on the PATH: add $BINDIR)" ;;
-        *)              say "link:     $cur (another bzmux: $BINDIR does not come first on the PATH)" ;;
+        *)              say "link:     $cur (another $APP: $BINDIR does not come first on the PATH)" ;;
     esac
     if command -v ldd >/dev/null 2>&1; then
         say "libs:     $(ldd "$bin" | awk '{print $1}' | grep -c . ) entries, missing: $(ldd "$bin" | grep -c 'not found')"
@@ -276,7 +264,7 @@ do_uninstall() {
     for f in "$DESKTOP" "$ICON"; do
         [ -e "$f" ] && { run $SUDO rm -f "$f"; }
     done
-    say "done: '$APP' removed from $PREFIX (no other bzmux was touched)"
+    say "done: '$APP' removed from $PREFIX"
 }
 
 ROOT=$(here)

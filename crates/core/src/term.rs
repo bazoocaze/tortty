@@ -224,7 +224,7 @@ impl Term {
             use_g1: false,
             saved: SavedCursor::default(),
             child_out: Vec::new(),
-            title: String::from("bzmux"),
+            title: String::from("tortty"),
             osc_seen: VecDeque::with_capacity(OSC_SEEN),
             theme: Theme::default(),
             theme_dirty: false,

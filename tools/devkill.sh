@@ -1,11 +1,11 @@
 #!/bin/sh
 # devkill.sh — kills this repository's dev instance (and leftovers).
 #
-# The criterion is `/proc/<pid>/exe` pointing at `target/{release,debug}/bzmux`
-# of **this** checkout. That is specific enough not to touch the pipx `bzmux`
-# (the user's Python app) nor another checkout. Never use
-# `pkill -f bzmux` (it matches the shell that called it) nor `pkill -x bzmux` (it matches
-# the pipx console script).
+# The criterion is `/proc/<pid>/exe` pointing at `target/{release,debug}/tortty`
+# of **this** checkout. That is specific enough not to touch the Python app
+# (`tortty-python`) nor another checkout. Never use `pkill -f tortty` (it matches the
+# shell that called it); `pkill -x` is only as safe as the name being unique,
+# and names change — the exe check does not.
 #
 # It also sweeps the leftovers: the PID file only keeps the last instance, and having
 # two running on the same socket gives phantom debugging (the one that answers is not
@@ -13,15 +13,15 @@
 set -eu
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-PIDFILE=${BZMUX_RS_PIDFILE:-/tmp/bzmux-rs.pid}
+PIDFILE=${TORTTY_RS_PIDFILE:-/tmp/tortty-rs.pid}
 
 is_dev() {
     exe=$(readlink "/proc/$1/exe" 2>/dev/null || true)
     # `cargo build` replaces the file: the old process shows up as
-    # `.../bzmux (deleted)` — that is exactly the leftover worth killing
+    # `.../tortty (deleted)` — that is exactly the leftover worth killing
     exe=${exe% (deleted)}
     case "$exe" in
-        "$HERE"/target/release/bzmux|"$HERE"/target/debug/bzmux) return 0 ;;
+        "$HERE"/target/release/tortty|"$HERE"/target/debug/tortty) return 0 ;;
         *) return 1 ;;
     esac
 }

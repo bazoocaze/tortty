@@ -1,6 +1,6 @@
-# Migration: bzmux Python → bzmux Rust
+# Migration: tortty-python (Python) → tortty (Rust)
 
-Record of the migration from bzmux Python to Rust: one line per Python feature,
+Record of the migration from tortty-python (Python) to tortty (Rust): one line per Python feature,
 with its state here and the `arquivo:linha` of origin. While it was running,
 this file was how "how much is left" was answered — not by estimate. Today it
 answers "what Python did, and where that is here".
@@ -41,7 +41,7 @@ total here is parity only: an improvement Python does not have lives in
 
 ## Closing of the migration (2026-11-02)
 
-**The migration from bzmux Python to bzmux Rust is finished.** The panel above is
+**The migration from tortty-python to tortty is finished.** The panel above is
 the proof: 195 parity lines, no `missing`, no `partial`, no `blocked`. What
 Python does, this repository does.
 
@@ -122,7 +122,7 @@ the Rust repo (no line, so it does not age with every commit).
 | A21 | Absolute anchor (`scrolled` + map/clear generation) | `term.py:99-108.1026-1078` → `select.rs` (`gen`) | done: reflow/ED3/RIS bump `abs_gen` and kill the anchor |
 | A22 | Reflow on resize (main buffer, joins/splits soft line) | `term.py:219-332` → `term.rs` `reflow()` | done |
 | A23 | Reflow preserves colored bg (cuts only blanks with default bg) | `term.py:270-280` → `Cell::is_blank` in the cut | done |
-| A24 | Core without I/O, without GUI, without clock (headless testable) | Python's decision (`AGENTS.md`) → `bzmux-core` | done |
+| A24 | Core without I/O, without GUI, without clock (headless testable) | Python's decision (`AGENTS.md`) → `tortty-core` | done |
 
 ## 2. Parser: controls, CSI, modes
 
@@ -271,7 +271,7 @@ the Rust repo (no line, so it does not age with every commit).
 | I1 | Tab = term + pty with its own lifecycle | `window.py:140-211` → `app.rs:Tab` | done: `Tab` has term/pty/rx/view/selection; `drain` reads them all |
 | I2 | New tab inherits the cwd of the current tab (last descendant of the pty) | `window.py:140-153.904-919` | done: `/proc/<pid>/cwd` of the deepest descendant; `cd /tmp` → new tab in `/tmp` |
 | I3 | Close tab (closes pty, removes the page, picks the next) | `window.py:184-201` | done: `Ctrl+Shift+W`; a dead-shell tab closes by itself |
-| I4 | Tab title by OSC 0/2, else `basename(cwd)`, else `bzmux` | `window.py:277-286` | done: `Tab::title` (OSC → cwd → `bzmux`) |
+| I4 | Tab title by OSC 0/2, else `basename(cwd)`, else `tortty` | `window.py:277-286` | done: `Tab::title` (OSC → cwd → `tortty`) |
 | I5 | Workspace = set of tabs, with name and renumbering | `window.py:798-848` → `app.rs:Workspace` | done: `parked` keeps the other integers (pty alive); switching is a swap; logical order is stable |
 | I6 | Sidebar with cards (`n`, name, title, k tabs) | `window.py:289-301` → `render.rs:sidebar` | done: 18-cell column; active card inverted; title truncates with `…` |
 | I7 | Sidebar hidden with 1 workspace | `window.py:396-400` | done: `side_w` = 0 with one workspace; the grid gets the columns back |
@@ -284,7 +284,7 @@ the Rust repo (no line, so it does not age with every commit).
 | I14 | Audible bell (`beep`) | `window.py:666-669` | done (`bell audible` writes BEL to stdout; no toolkit `beep`) |
 | I15 | Tab/workspace shortcuts (Ctrl+Shift+T/W/N/Q/F2, Alt+N, Super+N/Q) | `window.py:854-898` | done: Ctrl+Shift+T/W/N/Q/F2, Ctrl+Shift+1..9, Alt+1..9, Super+N/Q/1..9 |
 | I16 | Shortcut digit by raw keycode (survives ABNT2) | `window.py:70-84` → `digit_of` (physical key) | done |
-| I17 | Window title = active tab title | `window.py:375.921-926` | done: `<title> — bzmux`, only when it changes |
+| I17 | Window title = active tab title | `window.py:375.921-926` | done: `<title> — tortty`, only when it changes |
 | I20 | Closing the last tab closes the workspace; the last workspace closes the app | `window.py:196-197.836-845` | done: the shortcut and the **child exit** enter the same path (`close_tab_at` → `drop_empty_workspace`). Verified live: 2 workspaces × 1 tab, `exit` in the visible one → parked one promoted and app alive; 1 workspace × 1 tab → app closes |
 
 ## 10. Window: lifecycle, geometry, state
@@ -293,7 +293,7 @@ the Rust repo (no line, so it does not age with every commit).
 |---|---|---|---|
 | J1 | Closes the window when the shell ends | `window.py:250-253` → `app.rs` | done |
 | J2 | Initial geometry 980×640 and size restoration | `window.py:24-31.467-478` | done: without state it opens 980×640 (checked with `xdotool`: `Geometry: 980x640`); with state it restores the size (900×600 requested → 900×600). Whoever requests a grid (`--cols/--rows`) does **not** restore or save — that is the role of `PYTERM_GEOM` there, and it is what automation and bench need |
-| J3 | Geometry persistence (`$XDG_STATE_HOME/bzmux/window.json`) | `state.py:16-63` | done: `state.rs` (pure), atomic write (tmp + rename, no tmp left over — tested), `XDG_STATE_HOME` with `~/.local/state` as fallback and I/O error swallowed on close |
+| J3 | Geometry persistence (`$XDG_STATE_HOME/tortty/window.json`) | `state.py:16-63` | done: `state.rs` (pure), atomic write (tmp + rename, no tmp left over — tested), `XDG_STATE_HOME` with `~/.local/state` as fallback and I/O error swallowed on close |
 | J4 | Reject invalid geometry (disconnected monitor, garbage) | `state.py:46-63` | done: `state::fit` requires `w/h` ≥ 320×200 and the corner **inside some monitor**. Live: 100×80 → 980×640, corner at 9000,9000 → 980×640, crooked JSON → 980×640, and the file is rewritten sane |
 | J5 | Maximized is state separate from the normal size | `window.py:1009-1012` | done: `Resized` only updates the normal size when the window is **not** maximized; the file stores `max` next to `w/h`. Live: maximized 1920×985 → file `{w:900,h:600,max:true}` → reopens maximized → unmaximizing goes back to 900×600 |
 | J6 | Wayland: do not save x/y | `window.py:975-978` | done: `backend_x11()` decides by `WAYLAND_DISPLAY`/`DISPLAY`; without X11 the position is neither requested nor written, and `state::save` simply omits `x`/`y` (tested). Caveat: there is no Wayland session on this machine, so this line is code + test, not live verification |
@@ -323,7 +323,7 @@ the Rust repo (no line, so it does not age with every commit).
 | K15 | `--quit-after`, `--dump-to`, `--selftest`, `--install-shortcut` | `cli.py:35-96` | done: `--selftest`, `--quit-after`, `--dump-to` (the desktop shortcut belongs to `install.sh`) |
 | K16 | `--version`, `--help`, code 2 for invalid usage | `cli.py:85-101` → `cli.rs` | done |
 | K18 | `.desktop` + icon (`--install-shortcut`) | `shortcut.py:34-136` | done: `.desktop` + SVG come out of `install.sh` (with `StartupWMClass`); there is no `--install-shortcut` as a binary flag — the installer owns it, having both would be a second source |
-| K19 | Stable WM_CLASS (`StartupWMClass`) | `cli.py:130-131` | done: explicit `WM_CLASS` (`with_name("bzmux","bzmux")`), not inherited from the executable — checked by running the renamed binary (`/tmp/fz…`): `WM_CLASS(STRING) = "bzmux", "bzmux"` |
+| K19 | Stable WM_CLASS (`StartupWMClass`) | `cli.py:130-131` | done: explicit `WM_CLASS` (`with_name("tortty","tortty")`), not inherited from the executable — checked by running the renamed binary (`/tmp/fz…`): `WM_CLASS(STRING) = "tortty", "tortty"` |
 
 ## 12. Debug socket and instrumentation
 
@@ -338,7 +338,7 @@ the Rust repo (no line, so it does not age with every commit).
 | L7 | `prof` (counters per stage) | `debugsock.py:104-105` | done: `draw`/`parse`/`pty` + `writes`/`write_kb`/`eagain` (counter on the pty write) |
 | L8 | `log` (turn logging on/off at runtime) | `debugsock.py:112-113` | done: `log` turns on, turns off (`off`) and swaps the path at runtime, also counting as the current config |
 | L9 | `quit` (the response leaves before closing) | `debugsock.py:114-115` | done |
-| L10 | `--debug-socket auto` (`$XDG_RUNTIME_DIR/bzmux-<pid>.sock`) | `debugsock.py:33-43` → `debugsock.rs` | done |
+| L10 | `--debug-socket auto` (`$XDG_RUNTIME_DIR/tortty-<pid>.sock`) | `debugsock.py:33-43` → `debugsock.rs` | done |
 | L11 | Socket `0600` + `SO_PEERCRED` (same uid) | `debugsock.py:146-157,180` → `debugsock.rs` | done |
 | L12 | Do not delete someone else's file; an orphan socket only goes away with `ECONNREFUSED` | `debugsock.py:122-144` | done: a file that is not a socket is never deleted (error `path exists and is not a socket`) and the orphan only goes away when `connect` refuses |
 | L13 | Error always `{"ok":false,"err":...}`, never takes the app down | `debugsock.py:70-119` → `debugsock.rs` | done |
@@ -350,7 +350,7 @@ the Rust repo (no line, so it does not age with every commit).
 |---|---|---|---|
 | M2 | POSIX pty through a single API (`PtySize`, `spawn`, `read`, `write`) | `pty.fork` (POSIX only) → `pty.rs` | done |
 | M3 | Linux X11 + Vulkan | dev environment | done |
-| M10 | Installer: `bzmux` command, menu, icon, `--uninstall`, `--check` | `install.sh` (pipx + system deps) → `install.sh` (copies 1 binary) | done |
+| M10 | Installer: `tortty` command, menu, icon, `--uninstall`, `--check` | `install.sh` (pipx + system deps) → `install.sh` (copies 1 binary) | done |
 
 ## 14. Tests and verification
 
@@ -361,7 +361,7 @@ the Rust repo (no line, so it does not age with every commit).
 | N3 | Keyboard/mouse checks | `checks.py:325-343.554-562` | done: 6 kitty keyboard tests (push/pop/set/query, flags 1/2/8/16, `:2`/`:3`, DECCKM, flag 16 text) and 3 mouse ones (modes 1000/1002/1003/1005/1006, SGR vs X10, wheel and modifiers) |
 | N4 | Socket checks | `checks.py:702-810` | done: `DebugServer` accepts a `Sink` (the `EventLoopProxy` in the app, a channel in the test), so 8 tests run without a window: one-line JSON framing, `ok`/`err`, several requests on the same connection and in a single `write`, `0600`, orphan vs live socket vs a file that is not a socket, `resolve("auto")` |
 | N5 | Reflow/selection/anchor checks | `checks.py:380-520` | done: `history`, `scroll_anchor`, `redraw_keeps_history_position`, `draw_damage`, `selection`, `truecolor` and `style_contrast` in `--selftest` (`paste_markers` and `selection_follows_history` already existed) |
-| N6 | `--selftest` in the binary (runs N1..N5 without display) | `cli.py:92` → `checks.rs` + `checks_app.rs` | done: `bzmux --selftest` (**31 checks**), in `check.sh` and in CI |
+| N6 | `--selftest` in the binary (runs N1..N5 without display) | `cli.py:92` → `checks.rs` + `checks_app.rs` | done: `tortty --selftest` (**31 checks**), in `check.sh` and in CI |
 | N7 | Automated visual verification (capture + comparison) | `tools/pixel.py`, `xtest.py` → `tools/pixel.py`, `tools/visual.sh` | done: `tools/visual.sh` opens the window in its own `Xvfb`, waits for the first frame, captures and **compares** — new content has to change a pixel, SGR 41/42 has to paint `color1`/`color2`, text has to fall inside the cell and a still screen cannot repaint differently. Exits 0/1, so it works as a gate |
 | N8 | Reproducible benchmark with a locked grid | `tools/benchrun.py` → `tools/benchrun.py` | done |
 | N9 | Rust x Python ladder | `bench.sh` → `tools/bench.sh` | done |

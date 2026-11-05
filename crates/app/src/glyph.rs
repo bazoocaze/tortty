@@ -466,7 +466,7 @@ mod tests {
         db.load_system_fonts();
         assert!(query(
             &db,
-            "Bzmux Font That Does Not Exist",
+            "Tortty Font That Does Not Exist",
             400,
             fontdb::Style::Normal
         )

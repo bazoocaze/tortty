@@ -101,7 +101,7 @@ impl Pty {
         };
         // portable-pty falls back to $HOME when there is no cwd; Python inherits
         // the process cwd (pty.fork), and that is what the user expects. A new tab
-        // passes the cwd of the tab it was born from (I2), not the bzmux one.
+        // passes the cwd of the tab it was born from (I2), not the tortty one.
         let dir = cwd
             .map(std::path::Path::to_path_buf)
             .or_else(|| std::env::current_dir().ok());
@@ -110,7 +110,7 @@ impl Pty {
         }
         cb.env("TERM", "xterm-256color");
         cb.env("COLORTERM", "truecolor");
-        cb.env("TERM_PROGRAM", "bzmux");
+        cb.env("TERM_PROGRAM", "tortty");
         cb.env("SHELL", &shell);
 
         let child = pair

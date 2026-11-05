@@ -1,9 +1,9 @@
 [package]
-name = "bzmux-core"
+name = "tortty-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "bzmux emulation core: cell, palette, VT parser and grid (no GUI)"
+description = "TorTTY emulation core: cell, palette, VT parser and grid (no GUI)"
 
 [lints]
 workspace = true

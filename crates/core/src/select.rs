@@ -3,7 +3,7 @@
 //! The anchor is `(absolute line, column)` and **not** a pair of screen
 //! coordinates: that way the selection survives scrolling the history and output
 //! arriving (the text moves, the selection moves with it). It is the same model
-//! as Python `bzmux` (`term.py:1050-1075`), with one difference: `scrolled` and
+//! as Python `tortty` (`term.py:1050-1075`), with one difference: `scrolled` and
 //! `abs_gen` are counters here, not objects.
 //!
 //! `abs_gen` is the generation of the absolute space: anything that rewrites the

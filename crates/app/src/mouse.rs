@@ -144,7 +144,7 @@ pub fn encode(ev: Ev, proto: Proto) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bzmux_core::term::Term;
+    use tortty_core::term::Term;
 
     fn ev(button: u8, col: usize, row: usize) -> Ev {
         Ev {

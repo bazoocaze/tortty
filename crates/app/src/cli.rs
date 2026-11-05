@@ -1,12 +1,12 @@
 //! Command line and configuration file.
 //!
 //! Precedence: **CLI > user file > built-in defaults**
-//! (`bzmux_core::config::DEFAULT_CONF`). `--config FILE` replaces the path of the
-//! user file; without it `$XDG_CONFIG_HOME/bzmux/bzmux.conf` applies.
+//! (`tortty_core::config::DEFAULT_CONF`). `--config FILE` replaces the path of the
+//! user file; without it `$XDG_CONFIG_HOME/tortty/tortty.conf` applies.
 
 use std::path::PathBuf;
 
-use bzmux_core::config::{Config, Error};
+use tortty_core::config::{Config, Error};
 
 /// What came from the command line: only what was written (`None` = absent).
 #[derive(Default, Clone)]
@@ -33,7 +33,7 @@ pub struct Options {
     pub cols: usize,
     pub rows: usize,
     pub font_family: String,
-    /// Size in POINTS, like `font_size` in the bzmux Python.
+    /// Size in POINTS, like `font_size` in tortty-python.
     pub font_size_pt: f32,
     /// DPI used for pt -> px (the Python `Xft.dpi`). 96 = X11 default.
     pub dpi: f32,
@@ -44,7 +44,7 @@ pub struct Options {
     pub prof: bool,
     /// Seconds until self-close (`--quit-after`), used by automation.
     pub quit_after: Option<u64>,
-    /// Where the dump writes (`--dump-to`); `None` = /tmp/bzmux-dump.txt.
+    /// Where the dump writes (`--dump-to`); `None` = /tmp/tortty-dump.txt.
     pub dump_to: Option<PathBuf>,
     /// The theme that is not the grid: palette, colors, bell, padding, cursor.
     pub cfg: Config,
@@ -109,25 +109,25 @@ impl Options {
     }
 }
 
-/// `$XDG_CONFIG_HOME/bzmux/bzmux.conf` (or `~/.config/...`).
+/// `$XDG_CONFIG_HOME/tortty/tortty.conf` (or `~/.config/...`).
 #[must_use]
 pub fn default_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join("bzmux").join("bzmux.conf"))
+    Some(base.join("tortty").join("tortty.conf"))
 }
 
 pub const HELP: &str = "\
-bzmux (Rust) — terminal with workspaces and tabs
+tortty — fast, GPU based terminal
 
 USAGE:
-  bzmux [options]
+  tortty [options]
 
 OPTIONS:
   --cmd CMD             initial command (empty = $SHELL)
   --cols N --rows N     initial grid (default 80x24)
-  -c, --config FILE     configuration file (default ~/.config/bzmux/bzmux.conf)
+  -c, --config FILE     configuration file (default ~/.config/tortty/tortty.conf)
   --font-family NAME    family (file default: Monospace)
   --font-size POINTS    size in points (file default: 12)
   --dpi N               dpi to convert points into pixels (default 96)
@@ -153,7 +153,7 @@ pub fn parse(args: Vec<String>) -> Result<Overrides, String> {
         match a.as_str() {
             "-h" | "--help" => return Err(HELP.to_string()),
             "-V" | "--version" => {
-                return Err(format!("bzmux {}", env!("CARGO_PKG_VERSION")));
+                return Err(format!("tortty {}", env!("CARGO_PKG_VERSION")));
             },
             "--cmd" => o.cmd = Some(need(&mut it, "--cmd")?),
             "--cols" => o.cols = Some(num(&mut it, "--cols")?),
@@ -211,7 +211,7 @@ pub fn exit_code(msg: &str) -> i32 {
     // `--help` and `--version` **start** with the program name; the usage error
     // message also carries the help glued at the end, so looking for "USAGE:" in
     // the text classified an error as help
-    let informative = msg.starts_with("bzmux ");
+    let informative = msg.starts_with("tortty ");
     if informative {
         0
     } else {
@@ -221,7 +221,7 @@ pub fn exit_code(msg: &str) -> i32 {
 
 #[cfg(test)]
 mod checks_cli {
-    use bzmux_core::config::Bell;
+    use tortty_core::config::Bell;
 
     use super::*;
 
@@ -250,7 +250,7 @@ mod checks_cli {
     }
 
     fn temp_conf(name: &str, text: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("bzmux-{}-{name}.conf", std::process::id()));
+        let p = std::env::temp_dir().join(format!("tortty-{}-{name}.conf", std::process::id()));
         std::fs::write(&p, text).expect("write the test config");
         p
     }
@@ -369,11 +369,11 @@ mod checks_cli {
     fn argv_help_and_version() {
         // --help and --version leave through the same path (Err), without a window
         let h = error(&["--help"]);
-        assert!(h.starts_with("bzmux"), "{h}");
+        assert!(h.starts_with("tortty"), "{h}");
         assert!(h.contains("USAGE:") && h.contains("--selftest"), "{h}");
         assert_eq!(error(&["-h"]), h);
         let v = error(&["--version"]);
-        assert_eq!(v, format!("bzmux {}", env!("CARGO_PKG_VERSION")));
+        assert_eq!(v, format!("tortty {}", env!("CARGO_PKG_VERSION")));
         assert_eq!(error(&["-V"]), v);
     }
 

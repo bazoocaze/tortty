@@ -1,4 +1,4 @@
-//! Display-less smoke checks (`bzmux --selftest`).
+//! Display-less smoke checks (`tortty --selftest`).
 //!
 //! They mirror what the Python bzmux `checks.py` verifies, but here they run in
 //! the binary: one function per area, all using only the core (no window, GPU or
@@ -104,7 +104,7 @@ pub fn run_all() -> (usize, Vec<String>) {
 }
 
 /// `--selftest` also runs under `cargo test`: without this the checks only
-/// existed in the binary, and a green `cargo test -p bzmux-core` said nothing
+/// existed in the binary, and a green `cargo test -p tortty-core` said nothing
 /// about them.
 #[cfg(test)]
 #[test]

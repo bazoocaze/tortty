@@ -8,7 +8,7 @@
 use std::fmt;
 
 /// Color of a cell. `Default` counts as default fg in the fg slot and default bg
-/// in the bg slot — it is the same convention as bzmux Python (`DEF_FG`/`DEF_BG`).
+/// in the bg slot — it is the same convention as tortty-python (`DEF_FG`/`DEF_BG`).
 #[derive(Copy, Clone, PartialEq, Eq, Default, Debug, Hash)]
 pub enum Color {
     #[default]
@@ -42,7 +42,7 @@ impl fmt::Display for Color {
     }
 }
 
-/// The first 16 shades (the classic ANSI palette of bzmux Python).
+/// The first 16 shades (the classic ANSI palette of tortty-python).
 pub const PALETTE: [(u8, u8, u8); 16] = [
     (0, 0, 0),
     (205, 0, 0),

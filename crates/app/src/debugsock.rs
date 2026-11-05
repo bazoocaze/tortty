@@ -107,7 +107,7 @@ impl Drop for DebugServer {
     }
 }
 
-/// `auto` = `$XDG_RUNTIME_DIR/bzmux-<pid>.sock` (the same name as the Python).
+/// `auto` = `$XDG_RUNTIME_DIR/tortty-<pid>.sock` (the same name as the Python).
 pub fn resolve(value: &str) -> String {
     if value == "auto" {
         auto_path()
@@ -126,7 +126,7 @@ fn auto_path() -> String {
 /// touch the environment (which is global and would fight the tests running in
 /// parallel).
 fn auto_path_in(base: &str) -> String {
-    format!("{base}/bzmux-{}.sock", std::process::id())
+    format!("{base}/tortty-{}.sock", std::process::id())
 }
 
 fn clear_stale(path: &str) -> Result<(), String> {
@@ -512,7 +512,7 @@ mod checks_socket {
     #[test]
     fn resolve_auto_uses_xdg_runtime_dir_and_the_pid() {
         let pid = std::process::id();
-        let name = format!("bzmux-{pid}.sock");
+        let name = format!("tortty-{pid}.sock");
         // explicit base: pure, without touching the process environment
         assert_eq!(auto_path_in("/run/user/7"), format!("/run/user/7/{name}"));
 

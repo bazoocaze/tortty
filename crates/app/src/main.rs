@@ -1,4 +1,5 @@
-//! bzmux in Rust — feasibility experiment (see TASK-bzmux-in-rust.md).
+//! TorTTY — fast, GPU based terminal. The feasibility record is in
+//! TASK-tortty-in-rust.md.
 // the `state` `json!` goes past the macro's default expansion limit
 #![recursion_limit = "256"]
 
@@ -39,7 +40,7 @@ fn main() {
     // CLI wins over the file; the file wins over the built-in defaults
     let (opts, cfg_errors) = cli::Options::build(over.clone());
     for e in &cfg_errors {
-        eprintln!("bzmux: config: {e}");
+        eprintln!("tortty: config: {e}");
     }
     if opts.prof {
         prof::set_on(true);
@@ -50,7 +51,7 @@ fn main() {
     let event_loop = match EventLoop::<UserEvent>::with_user_event().build() {
         Ok(e) => e,
         Err(e) => {
-            eprintln!("bzmux: event loop: {e}");
+            eprintln!("tortty: event loop: {e}");
             std::process::exit(1);
         },
     };
@@ -59,7 +60,7 @@ fn main() {
     let mut app = App::new(opts, over, proxy);
     app.startup_errors(cfg_errors);
     if let Err(e) = event_loop.run_app(&mut app) {
-        eprintln!("bzmux: {e}");
+        eprintln!("tortty: {e}");
         std::process::exit(1);
     }
 }
@@ -68,7 +69,7 @@ fn main() {
 /// a display, without a GPU and without a pty. It is what Python's `checks.py`
 /// did separately.
 fn selftest() -> i32 {
-    // `bzmux --selftest | head` closes the pipe in the middle of the list: with
+    // `tortty --selftest | head` closes the pipe in the middle of the list: with
     // SIGPIPE ignored (the Rust default) the next `println!` becomes a panic. Here
     // it goes back to the Unix default only on this path — the app itself writes
     // BEL to stdout and must not die because of a closed pipe.
@@ -78,7 +79,7 @@ fn selftest() -> i32 {
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
-    let all: Vec<_> = bzmux_core::checks::all()
+    let all: Vec<_> = tortty_core::checks::all()
         .into_iter()
         .chain(checks_app::all())
         .collect();

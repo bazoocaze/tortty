@@ -3,3 +3,4 @@ target/
 .pi/
 docs/NAMING.md
 tools/.sandbox-cargo-scratch/
+__pycache__/

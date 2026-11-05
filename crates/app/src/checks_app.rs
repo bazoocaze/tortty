@@ -1,6 +1,6 @@
 //! Smoke checks that use the app side, but **do not** need a window.
 //!
-//! `bzmux-core` does not know `cli.rs`, `keys.rs`, `mouse.rs`, `state.rs` or
+//! `tortty-core` does not know `cli.rs`, `keys.rs`, `mouse.rs`, `state.rs` or
 //! `debugsock.rs` — so the core `checks::all()` does not reach those five, and
 //! Python's `checks.py` covers all five (`argv_parsing`, `kitty_keyboard`,
 //! `mouse_modes_and_sgr`, `window_state`, `debug_socket`). This list closes the
@@ -11,7 +11,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::sync::mpsc;
 
-use bzmux_core::checks::Check;
+use tortty_core::checks::Check;
 use winit::keyboard::{ModifiersState, NamedKey};
 
 use crate::cli;
@@ -25,7 +25,7 @@ const NONE: ModifiersState = ModifiersState::empty();
 /// The installer and the icon go into the binary: the desktop shortcut check
 /// also holds for the already installed binary, far from the repo tree.
 const INSTALL_SH: &str = include_str!("../../../install.sh");
-const ICON: &str = include_str!("../../../assets/bzmux.svg");
+const ICON: &str = include_str!("../../../assets/tortty.svg");
 
 pub fn all() -> Vec<Check> {
     vec![
@@ -92,7 +92,7 @@ fn argv_parsing() -> Result<(), String> {
         ));
     }
     // precedence CLI > file > defaults, without opening a window
-    let conf = std::env::temp_dir().join(format!("bzmux-check-{}.conf", std::process::id()));
+    let conf = std::env::temp_dir().join(format!("tortty-check-{}.conf", std::process::id()));
     std::fs::write(&conf, "font_size 20\nscrollback 1234\n")
         .map_err(|e| format!("{}: {e}", conf.display()))?;
     let path = conf.to_string_lossy().to_string();
@@ -258,7 +258,7 @@ fn mouse_modes_and_sgr() -> Result<(), String> {
 }
 
 fn window_state() -> Result<(), String> {
-    let dir = std::env::temp_dir().join(format!("bzmux-check-state-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("tortty-check-state-{}", std::process::id()));
     let file = dir.join("window.json");
     let _ = std::fs::remove_file(&file);
     let g = state::Geometry {
@@ -316,7 +316,7 @@ fn test_sink(line: String, response: mpsc::Sender<String>) -> bool {
 
 fn debug_socket() -> Result<(), String> {
     let path = std::env::temp_dir()
-        .join(format!("bzmux-check-sock-{}.sock", std::process::id()))
+        .join(format!("tortty-check-sock-{}.sock", std::process::id()))
         .to_string_lossy()
         .to_string();
     let _ = std::fs::remove_file(&path);
@@ -379,7 +379,7 @@ fn desktop_shortcut() -> Result<(), String> {
             ));
         }
     }
-    if !INSTALL_SH.contains("share/applications/bzmux.desktop") {
+    if !INSTALL_SH.contains("share/applications/tortty.desktop") {
         return Err("install.sh does not install the .desktop under the prefix".into());
     }
     // uninstalling has to take the installed chrome along
@@ -393,7 +393,7 @@ fn desktop_shortcut() -> Result<(), String> {
         }
     }
     if !ICON.contains("<svg") || !ICON.contains("viewBox") {
-        return Err("assets/bzmux.svg is not a valid SVG".into());
+        return Err("assets/tortty.svg is not a valid SVG".into());
     }
     Ok(())
 }

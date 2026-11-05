@@ -1,4 +1,4 @@
-# TASK — bzmux in Rust (feasibility experiment)
+# TASK — tortty in Rust (feasibility experiment)
 
 Progress document for this experiment. Source analyzed:
 `/home/user/tortty-python` (pure Python, GTK3 + cairo + Pango).
@@ -83,7 +83,7 @@ What is **not** needed in this phase: kitty images (`graphics.py`), tabs/workspa
 `bzmux/debugsock.py`: Unix socket, **one JSON line per request and per response**,
 `{"ok":true,...}` or `{"ok":false,"err":...}`, same uid only
 (`SO_PEERCRED`), `0600`. Verbs: `state`, `text`, `write`, `keys`, `resize`,
-`prof`, `log`, `quit`. `--debug-socket auto` = `$XDG_RUNTIME_DIR/bzmux-<pid>.sock`.
+`prof`, `log`, `quit`. `--debug-socket auto` = `$XDG_RUNTIME_DIR/tortty-<pid>.sock`.
 
 `tools/benchrun.py` depends on that: it starts the app, asks for the grid, uses
 `resize` until it hits the target (61×18), and **only then** types the load into the
@@ -211,8 +211,8 @@ store? Does a GitHub Release work?
   via `curl`/Homebrew (US$ 99/year only to open without a warning coming from the browser);
   Windows with the SmartScreen warning. No per-download fee, no store.
 - **Packaging plan** (future phase, not this one): CI matrix with
-  `bzmux-linux-x86_64`, `bzmux-macos-arm64`, `bzmux-macos-x86_64`, universal via
-  `lipo`, `bzmux-windows-x86_64.exe` + `SHA256SUMS` in the Release.
+  `tortty-linux-x86_64`, `tortty-macos-arm64`, `tortty-macos-x86_64`, universal via
+  `lipo`, `tortty-windows-x86_64.exe` + `SHA256SUMS` in the Release.
 
 ---
 
@@ -220,23 +220,23 @@ store? Does a GitHub Release work?
 
 ```
 rust_term/
-├── TASK-bzmux-in-rust.md      (this file)
+├── TASK-tortty-in-rust.md      (this file)
 ├── Cargo.toml                 workspace
-├── crates/bzmux-core/         pure emulation: cell, palette, parser, grid
+├── crates/core/         pure emulation: cell, palette, parser, grid
 │   ├── src/{lib,color,cell,grid,charset,term}.rs
 │   └── src/bin/parsebench.rs  headless parser benchmark (µs/cell)
-├── crates/bzmux/              app: window, GPU, pty, keyboard, debug socket
+├── crates/app/          app: window, GPU, pty, keyboard, debug socket
 │   └── src/{main,cli,app,keys,pty,prof,debugsock,render,glyph,atlas}.rs
 └── tools/                     doomfire.py, benchrun.py, bench.sh (comparison)
 ```
 
-A rule inherited from Python and kept: **`bzmux-core` does not know about the GUI** (not
-winit, not wgpu, not pty). That is what lets `cargo test -p bzmux-core` run without a
+A rule inherited from Python and kept: **`tortty-core` does not know about the GUI** (not
+winit, not wgpu, not pty). That is what lets `cargo test -p tortty-core` run without a
 display — and what guarantees the parser benchmark measures the parser.
 
 Decisions with reasons:
 
-- **Our own parser**, not `vte`/`alacritty_terminal`: bzmux was born from its own VT
+- **Our own parser**, not `vte`/`alacritty_terminal`: tortty was born from its own VT
   parser and compatibility (kitty/ghostty) is the product. A third-party dependency here
   would freeze exactly what we want to evolve.
 - **GPU (`wgpu`) instead of cairo/softbuffer**: the measured bottleneck in Python is
@@ -254,7 +254,7 @@ Decisions with reasons:
 ## 5. Phases
 
 - [x] 1. Analysis of the Python project (term/view/palette/debugsock/BENCHMARKS/PORTABILITY)
-- [x] 2. Workspace + `bzmux-core`: cell, 256 palette, DEC charset, grid
+- [x] 2. Workspace + `tortty-core`: cell, 256 palette, DEC charset, grid
 - [x] 3. VT parser: ground/CSI/OSC/ESC, truecolor SGR, modes, queries
 - [x] 4. Core tests (23 tests) + headless `parsebench`
 - [x] 5. App: pty (`portable-pty`), window (`winit`), keyboard, resize

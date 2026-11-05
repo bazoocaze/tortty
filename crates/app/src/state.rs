@@ -45,14 +45,14 @@ impl Default for Geometry {
 /// Monitor rectangle, as `winit` delivers it: (x, y, width, height).
 pub type Monitor = (i32, i32, u32, u32);
 
-/// `$XDG_STATE_HOME/bzmux/window.json`, with `~/.local/state` as fallback.
+/// `$XDG_STATE_HOME/tortty/window.json`, with `~/.local/state` as fallback.
 #[must_use]
 pub fn state_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .filter(|p| !p.as_os_str().is_empty())
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
-    Some(base.join("bzmux").join("window.json"))
+    Some(base.join("tortty").join("window.json"))
 }
 
 /// Reads the file; `None` for missing, unreadable, crooked JSON or wrong type.
@@ -97,7 +97,7 @@ pub fn save_to(path: &std::path::Path, g: &Geometry) {
         // has to run confined (sandbox, read-only home). It just cannot be
         // silent, or nobody understands why the window is not remembered
         if let Err(e) = std::fs::create_dir_all(dir) {
-            eprintln!("bzmux: no remembered geometry ({}: {e})", dir.display());
+            eprintln!("tortty: no remembered geometry ({}: {e})", dir.display());
             return;
         }
     }
@@ -112,7 +112,7 @@ pub fn save_to(path: &std::path::Path, g: &Geometry) {
     let tmp = path.with_extension("json.tmp");
     let Ok(mut f) = std::fs::File::create(&tmp) else {
         eprintln!(
-            "bzmux: no remembered geometry ({} not writable)",
+            "tortty: no remembered geometry ({} not writable)",
             tmp.display()
         );
         return;
@@ -188,7 +188,7 @@ mod checks_state {
     fn tmp(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("bz-estado-{name}"));
         let _ = std::fs::remove_dir_all(&d);
-        d.join("bzmux").join("window.json")
+        d.join("tortty").join("window.json")
     }
 
     #[test]
@@ -246,8 +246,8 @@ mod checks_state {
         // `state_path` is the only part that reads the environment; the assembly is what matters
         let p = std::env::temp_dir().join("bz-xdg");
         assert_eq!(
-            p.join("bzmux").join("window.json"),
-            PathBuf::from(format!("{}/bzmux/window.json", p.display()))
+            p.join("tortty").join("window.json"),
+            PathBuf::from(format!("{}/tortty/window.json", p.display()))
         );
     }
 
@@ -284,7 +284,7 @@ mod checks_state {
     fn save_in_impossible_place_does_not_blow_up() {
         // sandbox/read-only home: the app has to stay up (and say it on stderr,
         // not vanish silently)
-        let path = std::path::Path::new("/proc/bzmux-does-not-exist/window.json");
+        let path = std::path::Path::new("/proc/tortty-does-not-exist/window.json");
         save_to(
             path,
             &Geometry {

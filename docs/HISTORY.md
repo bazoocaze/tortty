@@ -13,7 +13,7 @@ Question: does rewriting in Rust solve distribution and performance? The
 decision to abort was "if it does not do ≥3× the Python's MB/s and does not open
 vim/mc, it does not pay".
 
-- **Core + app from scratch** (`bzmux-core` without GUI/pty/GPU, `bzmux` with
+- **Core + app from scratch** (`tortty-core` without GUI/pty/GPU, `tortty` with
   `portable-pty` + `winit` + `wgpu` + `swash`). Verified with 23 core tests,
   `vim`, `mc` and `dmesg` on screen.
 - **Measurement**: 8–9.5× the Python in fps and MB/s on doom-fire, 29–46× in
@@ -21,9 +21,10 @@ vim/mc, it does not pay".
   condition in [`BENCHMARKS.md`](BENCHMARKS.md).
 - **Debug socket** with the same JSON protocol as the Python, so the same
   `benchrun.py` measures both.
-- **Pitfall recorded**: `pkill -x bzmux` kills the pipx `bzmux` (same name) and
-  `pkill -f bzmux` kills the shell that called it. Hence `tools/devrun.sh` +
-  `tools/devkill.sh` by PID file with a `/proc/<pid>/exe` check.
+- **Pitfall recorded**: `pkill -x bzmux` killed the pipx `bzmux` (then the same
+  name as this binary) and `pkill -f bzmux` kills the shell that called it. Hence
+  `tools/devrun.sh` + `tools/devkill.sh` by PID file with a `/proc/<pid>/exe`
+  check.
 - **Pitfall recorded**: `request_inner_size` is a suggestion to the WM; without
   correcting in cell steps the benchmark measures 60x18 thinking it measured
   61x18 (it is the `want`/`adjust_left` in `app.rs`).
@@ -83,7 +84,7 @@ vim/mc, it does not pay".
 
 ## 2026-11-02 — selection, clipboard and paste (F8, F9, F12-F16, G14, D5-D7)
 
-- `bzmux-core/select.rs`: absolute anchor (`(line, column, generation)`) and text
+- `crates/core/src/select.rs`: absolute anchor (`(line, column, generation)`) and text
   by `span`, like the Python — the selection survives scrolling and incoming
   output, and dies when the history is rewritten (`CSI 3J`/RIS/reflow), instead
   of copying the wrong text.
@@ -116,7 +117,7 @@ vim/mc, it does not pay".
   text); verified with `xdotool key dead_tilde a` → `ãéù`.
 - **Tooling**: `tools/devkill.sh` now sweeps the leftovers of this checkout (the
   PID file only keeps the last one). `cargo build` replaces the file, so the old
-  process shows up as `bzmux (deleted)` — the suffix must be stripped before
+  process shows up as `tortty (deleted)` — the suffix must be stripped before
   comparing, otherwise the leftover survives and answers in place of the new
   build.
 
@@ -136,7 +137,7 @@ Verified: `--cols 100 --rows 10` → `stty size` = `10 100` and a 250-character
 line breaks at 100/100/50. (My initial suspicion of "interleaved text" was a
 misreading on my part: lines 17 and 18 of `keys.rs` broke in the right places.)
 
-## 2026-11-02 — installer: `bzmux` is the Rust one, `tortty-python` is the Python one
+## 2026-11-02 — installer: `tortty` is the Rust one, `tortty-python` is the Python one
 
 The Python was already renamed in pipx (`~/.local/bin/tortty-python`), so the short
 name was free and this repo's `install.sh` takes it over.
@@ -144,17 +145,17 @@ name was free and this repo's `install.sh` takes it over.
 The installer is the opposite of the Python one in size: there it is distro
 packages (`python3-gi`, `gir1.2-gtk-3.0`, cairo, pipx) and a pipx step; here it
 is **copying one file**. What it actually does is what breaks when it is
-missing: it warns if `bzmux` already exists in `PATH` (the pipx shim does not
-have "pipx" in the name, the target does), installs with `install` instead of a
+missing: it warns if the command is already in `PATH` and is not this one,
+installs with `install` instead of a
 symlink to `target/` (otherwise `cargo clean` leaves the command broken), writes
 the `.desktop` + SVG icon, and checks `--version` + `ldd` without "not found"
 before saying it worked.
 
 A detail that only showed up later: the first version of the Python installer
 (`tortty-python/shortcut.py`) deleted `bzmux.desktop`/`bzmux.svg` as "old name" — and
-those names became the Rust ones, so running that installer deleted this repo's
-menu entry. Proven in a temporary `XDG_DATA_HOME` (`install()` removed both
-files), reported and fixed in `tortty-python`; revalidated here with
+those were the Rust ones, so running that installer deleted this repo's menu
+entry. Proven in a temporary `XDG_DATA_HOME` (`install()` removed both files),
+reported and fixed in `tortty-python`; revalidated here with
 `--install-shortcut`/`--remove-shortcut` over the real files (same md5), and the
 case became a test in `bzmux/checks.py`.
 
@@ -214,7 +215,7 @@ The deviation stays on record: reflow kills the selection instead of remapping
 the anchor (same behaviour as the Python). Remapping is improvement M-P, because
 `reflow` already knows the `(paragraph, offset)` of each old line.
 
-## 2026-11-02 — `bzmux --selftest` (N6)
+## 2026-11-02 — `tortty --selftest` (N6)
 
 A command that answers "is the emulator still whole?" without display, without
 GPU and without pty: 14 checks in the core (`checks.rs`), each one building the
@@ -237,13 +238,13 @@ path. It:
 
 - checks `--check-version vX.Y.Z` against `Cargo.toml` (a tag pointing at other
   code is the easiest mistake to make and the nastiest to discover);
-- runs `bzmux --version` **on the packaged binary** — on cross, via
+- runs `tortty --version` **on the packaged binary** — on cross, via
   `qemu-user-static`; without qemu, it says so in the log instead of pretending
   it verified;
-- builds `bzmux-<version>-<triple>.tar.gz` with binary + LICENSE + README and
+- builds `tortty-<version>-<triple>.tar.gz` with binary + LICENSE + README and
   prints the `sha256`, which is the format `install.sh --from-release` expects.
 
-Tested locally: 3.9 MB package, extracts, runs and answers `bzmux 0.1.0`; a
+Tested locally: 3.9 MB package, extracts, runs and answers `tortty 0.1.0`; a
 wrong tag (`v0.2.0` with `Cargo.toml` at `0.1.0`) exits with code 1.
 
 Still missing to really close M8: `windows-latest` and `macos-14`/`macos-13` in
@@ -286,7 +287,7 @@ documented range, no regression.
 
 ## 2026-11-02 — tabs (F4a: I1-I4, I13, I15-I17, I20)
 
-Rust stopped being "a terminal" and became bzmux: `Tab` holds `term` + `pty` +
+Rust stopped being "a terminal" and became tortty: `Tab` holds `term` + `pty` +
 what is about looking (view, selection, drag), and `App` has `tabs: Vec<Tab>`
 with one active.
 
@@ -296,7 +297,7 @@ What came with it:
 |---|---|
 | draining **all** tabs | the channel is not unbounded: a `yes` in a hidden tab would fill memory. What is reserved to the active one is only the blink and the view |
 | cwd of the new tab | `/proc/<pid>/cwd` of the **deepest descendant** (via `task/<pid>/children`), not of the shell: whoever is in front, `vim`/`mc`, decides. Verified: `cd /tmp` → new tab born in `/tmp` |
-| title | OSC 0/2 → `basename(cwd)` → `bzmux`; the window follows the active tab (`rust_term — bzmux`), only when it changes |
+| title | OSC 0/2 → `basename(cwd)` → `tortty`; the window follows the active tab (`rust_term — tortty`), only when it changes |
 | tab bar | one line above the grid (the shader `origin` is `pad + bar`), and the grid of **all** tabs shrinks by one line; with a single tab there is no bar |
 | BEL | the tab label keeps `color3` for 800 ms — including on a background tab, which is the point |
 | shortcut digit | **physical** key (`Digit1..0`): `Ctrl+Shift+1` arrives as `!` and on ABNT2 every shifted digit is another symbol |
@@ -399,7 +400,7 @@ and combining) and `M-V` (context menu, which is the declared trigger of `M-Q`).
 
 Consolidation, not new work: what Python does **not** do and was already done
 here leaves the parity panel and is recorded only in this line. The verification
-is what ran on top of them — `cargo test` (52 in `bzmux-core`), `--selftest`
+is what ran on top of them — `cargo test` (52 in `tortty-core`), `--selftest`
 14/14, `mc`/`vim`/`dmesg` in the manual script, plus the specific proofs cited
 (item by item, when there was one).
 
@@ -546,7 +547,7 @@ the board to 93 tests. Each area got its own module (`checks_n2.rs`,
 
 **A seam that was missing in the infrastructure:** the `--selftest` checks did
 not run under `cargo test` — only in the binary. A green
-`cargo test -p bzmux-core` said nothing about them. Now there is a
+`cargo test -p tortty-core` said nothing about them. Now there is a
 `selftest_completo` that runs `run_all()` and shows the failures, and the
 verification was done by mutation: breaking `view_after_output` makes
 `scroll_anchor` fail with "expected 7, got 2"; removing the "not a socket" guard
@@ -577,11 +578,11 @@ but **only** when the app asked for disambiguation or all keys: with flag 2 alon
 **`?1005` outside DECRQM.** `CSI ? 1005 $ p` answered 0 with the mode on: the
 mode existed in the parser and not in the query table.
 
-**Usage error exit code.** `bzmux --cols abc` exited with **0**: `main` only
+**Usage error exit code.** `tortty --cols abc` exited with **0**: `main` only
 mapped two message prefixes to 2 and the rest fell to 0, so an automation script
 walked over an invalid command. The rule went to `cli.rs` (owner of the
 messages) in a function with a test: only `--help`/`--version` exit with 0,
-everything else with 2. The distinction is by **prefix** ("bzmux …"), not by
+everything else with 2. The distinction is by **prefix** ("tortty …"), not by
 content — the usage error message brings the help glued at the end, and looking
 for "USAGE:" in the text classified an error as help.
 
@@ -625,7 +626,7 @@ The app drew once per pty read. Under a continuous dump that was one drawing per
 read chunk — and since drawing competes with reading, the total cost went up
 without the screen getting any faster.
 
-Now there is `frame::Gate` (`crates/bzmux/src/frame.rs`), a pure type, without
+Now there is `frame::Gate` (`crates/app/src/frame.rs`), a pure type, without
 `winit`, with four tests:
 
 - **rhythm**: whoever already has a scheduled time does not reschedule → at most
@@ -652,8 +653,8 @@ ceiling, as designed — and the whole final state on the grid after the close.
 
 ## 2026-11-02 — Wave 3: the window remembers where it was (J2–J6)
 
-`crates/bzmux/src/state.rs`, as pure as the `state.py` over there: JSON file in
-`$XDG_STATE_HOME/bzmux/window.json` (with `~/.local/state` as fallback), atomic
+`crates/app/src/state.rs`, as pure as the `state.py` over there: JSON file in
+`$XDG_STATE_HOME/tortty/window.json` (with `~/.local/state` as fallback), atomic
 write by tmp + rename, and no state failure disturbs the close. Nine tests,
 without display: `fit` accepts a sane rectangle, rejects garbage size
 (`< 320×200`), rejects a corner outside every monitor (disconnected monitor),
@@ -692,12 +693,12 @@ Live verification (X11 + `xdotool`): no state → `980x640`; state `900×600` at
 The file schema is **the same** as the Python's (`x`, `y`, `w`, `h`, `max`), in
 the same path, on purpose: the two terminals read each other's state — what
 changes is only the formatting of whoever wrote last (the Python writes with
-spaces, Rust in compact JSON). This machine's `~/.local/state/bzmux/window.json`,
+spaces, Rust in compact JSON). This machine's `~/.local/state/tortty/window.json`,
 for example, was written by tortty-python and is read by Rust without conversion.
 
 ## 2026-11-02 — Wave 5: the kitty images (H1–H13)
 
-The last big block of visible functionality. `crates/bzmux-core/src/graphics.rs`
+The last big block of visible functionality. `crates/core/src/graphics.rs`
 is the analogue of `graphics.py` over there: APC, base64, zlib, PNG (only the
 IHDR, the decoder stays in the app), `a=t/T/p/d/q`, `m=1`, `C=1`, `q=`, `c/r/X/Y`,
 placements on the screen line and the lifecycle (scroll, reflow, `ED 3`). Twelve
@@ -765,7 +766,7 @@ queue). `PORTABILITY.md` remains the place for the **how** of each target; the
 Two fronts, both with the same problem: **this sandbox stopped drawing**. I
 record first what was verified, then what was left unverified.
 
-**A17 — drawing uses the core's damage.** `crates/bzmux/src/damage.rs` (new, 11
+**A17 — drawing uses the core's damage.** `crates/app/src/damage.rs` (new, 11
 tests without display) decides, per frame, between "everything" and "these
 lines". The rule lives in one place only, and it is the `Assinatura`: tab
 (monotonic identity — the index does not work, closing and opening brings the
@@ -797,7 +798,7 @@ good") and different causes:
 | translucent window (the terminal behind showed through) | `alpha_mode: caps.alpha_modes[0]` picked `PreMultiplied` on GL | explicit `CompositeAlphaMode::Opaque` |
 | adapter chosen "by accident" | `request_adapter` returned the first one | `choose_adapter`: hardware beats CPU; a tie follows `wgpu`'s order |
 
-The line `bzmux: GPU: <backend> <board>` also went into stderr (the first
+The line `tortty: GPU: <backend> <board>` also went into stderr (the first
 question when the window does not draw on another machine) and the `last_frame`
 field in `state`.
 
@@ -811,7 +812,7 @@ logic covered by tests and the counters exposed in `state`, but the
 that is in `DEBUG.md` ("degraded sandbox"), which is where the next session will
 look first.
 
-## 2026-11-02 — Confinement: what bzmux has to withstand
+## 2026-11-02 — Confinement: what tortty has to withstand
 
 We ran a whole session inside `sandbox` (bubblewrap, `~/sandbox`). Three
 things appeared, and the heaviest one became queue (`M-AA`), not a last-minute
@@ -903,7 +904,7 @@ No regression in performance on doom-fire (no emoji in the load): 872–963 fps 
 along with the container's `/dev/dri`. Running under `sandbox @gpu,dev`, with the
 device nodes visible, `WGPU_BACKEND=gl` comes up on `Gl AMD Radeon Graphics
 (radeonsi, renoir, ACO)` and draws: `last_frame: drawn`, text, colors, cursor and
-`mc -V` in the screenshot. Without the `BZMUX_NO_TITLE` probe — the pending X
+`mc -V` in the screenshot. Without the `TORTTY_NO_TITLE` probe — the pending X
 error panic was llvmpipe's, not GL's.
 
 It is recorded in [`DEBUG.md`](DEBUG.md) that the first question in the face of
@@ -934,7 +935,7 @@ reordering bidi is not done here.
 
 How it turned out:
 
-- `crates/bzmux/src/shape.rs` — shaping per run of the same face and style,
+- `crates/app/src/shape.rs` — shaping per run of the same face and style,
   cluster → cell map, cache by `(face, mode, text)`. The plan speaks position
   **inside the run** (it was a bug: with an absolute column, every run outside
   column 0 drew the wrong glyph — caught in the capture, fixed with a test).
@@ -969,7 +970,7 @@ Three pending items that seemed to depend on a display. None did.
 about `cli.rs`, `keys.rs`, `mouse.rs`, `state.rs` or `debugsock.rs`; six
 `checks.py` checks were out of reach (`argv_parsing`, `kitty_keyboard`,
 `mouse_modes_and_sgr`, `window_state`, `debug_socket`, `desktop_shortcut`). Now
-there is `crates/bzmux/src/checks_app.rs` with the six, and `--selftest` runs
+there is `crates/app/src/checks_app.rs` with the six, and `--selftest` runs
 **31** (25 + 6). `cargo test` runs the same list (`app_checks_pass`), so a
 new check does not stay in the binary only.
 
@@ -1088,7 +1089,7 @@ migration count; what it has is there, all `done`.
 
 ## 2026-11-03 — B4: drawing painted every line at `2r`
 
-The owner's symptom was about use, not about tests: in the real bzmux every
+The owner's symptom was about use, not about tests: in the real tortty every
 `Enter` "jumped two lines" and the cursor appeared far from the prompt. The first
 reproduction attempt failed because it used `bash` on a roomy grid — and the
 report was about `zsh` with the screen already full of history.
@@ -1166,12 +1167,12 @@ by line; red on the previous binary, green here.
 
 ## 2026-11-03 — B7: `StartupNotify=false` in the shortcut
 
-Opening from the system shortcut showed **two** entries in the taskbar — `bzmux`
-and a **"Starting bzmux"** — with the pointer in busy mode for many seconds,
+Opening from the system shortcut showed **two** entries in the taskbar — `tortty`
+and a **"Starting tortty"** — with the pointer in busy mode for many seconds,
 until the ghost disappeared by itself. The menu entry asked for
 `StartupNotify=true`: whoever launches opens the startup notification and waits
 for the app to say it finished (`DESKTOP_STARTUP_ID` + `_NET_STARTUP_INFO`).
-bzmux never said it, so the panel kept the entry and the busy cursor until the
+tortty never said it, so the panel kept the entry and the busy cursor until the
 timeout — which explains exactly the "many seconds" and the fact that the
 symptom does not exist when running from the terminal.
 
@@ -1184,13 +1185,13 @@ when creating the window), the key goes back to `true` along with the code.
 
 ## 2026-11-03 — B5: an X error from the WSI no longer kills the app
 
-`sandbox bzmux` exited with **134** in `set_window_title` and, past that, the window
+`sandbox tortty` exited with **134** in `set_window_title` and, past that, the window
 stayed black. B5 was noted with two stages and a cost; today both were measured
 and one of them closed.
 
 **Where the process died.** `winit` keeps the last X error of the connection and
 `expect()`s it on the next call that flushes (`x11/window.rs:1028`, inside
-`set_window_title` itself). With `BZMUX_XERR=1` (new probe) the hook printed what
+`set_window_title` itself). With `TORTTY_XERR=1` (new probe) the hook printed what
 Mesa's WSI leaves pending in the sandbox without a GPU:
 
 ```
@@ -1200,10 +1201,10 @@ XERR codigo=10 requisicao=130 (DRI3Open)    -> BadAccess
 
 The `DRI3` `BadAccess` was **the** one that killed it — the first version of the
 policy swallowed only the drawing codes when the request was an extension and the
-process still aborted. `crates/bzmux/src/xguard.rs` registers winit's public hook
+process still aborted. `crates/app/src/xguard.rs` registers winit's public hook
 (`register_xlib_error_hook`) and swallows `BadDrawable`/`BadWindow`/`BadMatch` in
 any request and `BadAccess` only in an extension; everything goes to stderr (the
-first three occurrences and then sparsely). Measured: `sandbox bzmux` without GPU
+first three occurrences and then sparsely). Measured: `sandbox tortty` without GPU
 **stays alive** 12 s, answers on the socket and keeps drawing.
 
 **Stage 2 is environment, not code.** Measured on the same day, with the test that
@@ -1249,7 +1250,7 @@ which picks the face by cmap.
 
 **Fixes.**
 
-- `bzmux-core`: `0x9c` closes OSC and also DCS/APC/PM/SOS, with a guard against a
+- `tortty-core`: `0x9c` closes OSC and also DCS/APC/PM/SOS, with a guard against a
   UTF-8 continuation byte (`М` is `d0 9c`; cutting there would lose the rest of
   the title); an `ESC` that is not ST **ends** the sequence instead of going back
   into the body.
@@ -1272,7 +1273,7 @@ which picks the face by cmap.
   truncated, resulting title), because the question "what bytes did the child
   send" only the parser can answer.
 
-**Verified.** 8 new tests in `bzmux-core` (8-bit ST pure and in UTF-8, `ESC` in
+**Verified.** 8 new tests in `tortty-core` (8-bit ST pure and in UTF-8, `ESC` in
 the body, control and direction mark in the title, `sanitize_title` over a
 directory name, DCS with `0x9c`, `М` not cut, probe ring) + 1 in `glyph.rs`
 (digit comes from the primary in mask). Live in Xvfb, with three tabs: the 12 OSC
@@ -1283,12 +1284,12 @@ cases of the battery gave the expected title and the bar capture shows
 
 Owner's request: translate everything — file names, symbols, comments, docs.
 
-- **Symbols**: 322 identifiers (`bzmux-core` and `bzmux`) renamed by a curated
+- **Symbols**: 322 identifiers (`tortty-core` and `tortty`) renamed by a curated
   part map (`linha`→`row`, `tela`→`screen`, `desenha`→`paint`…), then the
   leftovers the dictionaries could not see were hunted by name.
 - **Prose**: comments, doc comments, user-facing strings, test names (now
   sentences: `reflow_narrows_and_widens_preserving_the_text`), the 12 docs,
-  `README`, `AGENTS.md`, `TASK-bzmux-in-rust.md`, the scripts, the CI workflows,
+  `README`, `AGENTS.md`, `TASK-tortty-in-rust.md`, the scripts, the CI workflows,
   the hook, the shaders, both `Cargo.toml` and `rustfmt.toml`.
 - **What was not touched**, on purpose: the `DEFAULT_CONF` keys (a test reads the
   name of each one in `CONFIG.md`, so key and doc have to keep the spelling),
@@ -1326,3 +1327,38 @@ one of them the compiler saw:
 - Hygiene: `.gitignore` ignored `pi/` while the session directory is `.pi/`, so
   two session files had been committed. The pattern is now `.pi/` and the two
   files left the index (they stay on disk).
+
+## 2026-11-04 — rebrand: `bzmux` → `tortty` (TorTTY — Torbie TTY)
+
+Symbolic name `tortty`, friendly name **TorTTY — Torbie TTY**, headline *Fast,
+GPU based terminal*, repository `bazoocaze/tortty`. The name research (why this
+one, and what it beat) is in `docs/NAMING.md`, which is not versioned.
+
+- **Directories carry no project name**: `crates/bzmux-core` → `crates/core`
+  (package `tortty-core`) and `crates/bzmux` → `crates/app` (package `tortty`,
+  binary `tortty`). That is the vocabulary the architecture already used.
+- 449 occurrences renamed: crates and `bzmux_core::` → `tortty_core::`, binary,
+  `BZMUX_*` probes → `TORTTY_*`, config `~/.config/tortty/tortty.conf`, state
+  `~/.local/state/tortty/window.json`, socket and dump paths, `WM_CLASS`, wgpu
+  labels, the desktop entry (`Name=TorTTY`, `Comment=Fast, GPU based terminal`),
+  the icon (`assets/tortty.svg`), `TASK-tortty-in-rust.md`, the installer, the
+  tools, the CI and the release packaging.
+- **Not renamed, on purpose**: `tortty-python` (the Python project), `Python bzmux` in
+  prose, and the citations `bzmux/term.py`, `bzmux/keys.py`, `bzmux/checks.py`…
+  Renaming them would falsify the history and break the `arquivo:linha` of the
+  other repository.
+- **Transition left out of the installer** (owner's call: only he had it
+  installed). The pipx warnings and the "the installer takes the name over"
+  block are gone; the old `bzmux.desktop`/`bzmux.svg`/binary and the old
+  `~/.config/bzmux` are removed by hand, once.
+
+**Pitfall recorded** — the rename script protected `bzmux/<file>.py` with a
+pattern that swallowed the slash (`bzmuxterms.py`), and it also rewrote the
+places where `bzmux` was the *subject* rather than the app: the entry where
+`tortty-python/shortcut.py` deleted `bzmux.desktop` as an "old name", and the
+`pkill -x` warning (with the name unique, `pkill -x tortty` no longer hits the
+Python app). Both classes only show up on a read of the diff, not on a grep.
+
+**Verified.** 83 + 90 tests, `tools/check.sh` green, `tools/visual.sh` green,
+`install.sh` installing and uninstalling on a temporary prefix (binary, entry,
+icon), `devrun`/`devkill` in Xvfb, `--version` printing `tortty <version>`.

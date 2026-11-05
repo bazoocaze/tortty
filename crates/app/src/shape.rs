@@ -23,9 +23,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bzmux_core::config::Ligatures;
 use rustybuzz::ttf_parser::Tag;
 use rustybuzz::{Face, Feature, UnicodeBuffer};
+use tortty_core::config::Ligatures;
 
 use crate::glyph::Face as GlyphFace;
 

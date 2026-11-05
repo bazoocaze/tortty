@@ -1,7 +1,7 @@
 //! Configuration: kitty format (`key value`), built-in defaults and per-line
 //! errors.
 //!
-//! The rule is the bzmux Python one (`config.py`): **merge key by key**, with
+//! The rule is tortty-python one (`config.py`): **merge key by key**, with
 //! the defaults written as a file (`DEFAULT_CONF`) and the user file on top.
 //! The error is per line, not per file: whatever validated holds, the invalid
 //! key keeps the previous default and the error comes out with the line number
@@ -18,7 +18,7 @@ use crate::color::Color;
 /// source of them: `Config::base()` is the result of parsing this text, and the
 /// test `defaults_parse_clean` guarantees it has no error.
 pub const DEFAULT_CONF: &str = "\
-# bzmux — built-in defaults (your ~/.config/bzmux/bzmux.conf goes on top)
+# tortty — built-in defaults (your ~/.config/tortty/tortty.conf goes on top)
 
 # tab program. Empty = $SHELL from the environment. --cmd beats this value.
 shell
@@ -52,7 +52,7 @@ copy_on_select off
 debug_log off
 
 # colours: foreground/background/cursor and the 16-colour ANSI palette.
-# The defaults are the classic xterm palette (the same as bzmux Python): mc,
+# The defaults are the classic xterm palette (the same as tortty-python): mc,
 # htop and ls --color were calibrated on it, and swapping it for a \"pretty
 # theme\" changes the meaning of the colours the program picked.
 foreground #d6d6d6

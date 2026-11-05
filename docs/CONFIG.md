@@ -7,11 +7,11 @@ is at the start of the line or after a space — that is what makes
 wins.
 
 ```sh
-~/.config/bzmux/bzmux.conf          # or $XDG_CONFIG_HOME/bzmux/bzmux.conf
+~/.config/tortty/tortty.conf          # or $XDG_CONFIG_HOME/tortty/tortty.conf
 ```
 
 You do not need to create it: **the defaults are built in** in
-`crates/bzmux-core/src/config.rs` (`DEFAULT_CONF`) and your file goes on top,
+`crates/core/src/config.rs` (`DEFAULT_CONF`) and your file goes on top,
 key by key. A test guarantees the defaults parse clean and that every key of
 them appears on this page — the documentation does not age silently.
 

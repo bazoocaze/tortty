@@ -5,8 +5,8 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use bzmux_core::config::Bell;
-use bzmux_core::{Anchor, Span, Term};
+use tortty_core::config::Bell;
+use tortty_core::{Anchor, Span, Term};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
@@ -109,7 +109,7 @@ const TOAST_DUR: Duration = Duration::from_millis(3500);
 /// Text of the configuration notice (K13). Deliberately fits in ~60 columns:
 /// the toast is cut at the width of the grid, and "line and key" is what one
 /// needs to see, not the count spelled out.
-fn notice_config(errs: &[bzmux_core::config::Error]) -> String {
+fn notice_config(errs: &[tortty_core::config::Error]) -> String {
     let Some(first) = errs.first() else {
         return String::new();
     };
@@ -219,14 +219,14 @@ impl Tab {
         }
         match self.cwd_name() {
             Some(cwd) => cwd,
-            None => "bzmux".to_string(),
+            None => "tortty".to_string(),
         }
     }
 
     /// `basename` of the child process cwd (`/proc/<pid>/cwd`); nothing without it.
     fn cwd_name(&self) -> Option<String> {
         let cwd = self.cwd()?;
-        let name = bzmux_core::term::sanitize_title(&cwd.file_name()?.to_string_lossy());
+        let name = tortty_core::term::sanitize_title(&cwd.file_name()?.to_string_lossy());
         if name.is_empty() {
             None
         } else {
@@ -347,7 +347,7 @@ pub struct App {
     toast: Option<Toast>,
     /// File errors at startup, which can only become a toast once the window
     /// exists (in the terminal `stderr` is gone; in a graphical session, same).
-    startup_errs: Vec<bzmux_core::config::Error>,
+    startup_errs: Vec<tortty_core::config::Error>,
     /// Config errors in force right now (the `state` `errors` field): a refused
     /// file keeps the previous config, but the error is a fact.
     cfg_errors: Vec<String>,
@@ -489,13 +489,13 @@ impl App {
         s
     }
 
-    /// Writes the dump where `--dump-to` said (else /tmp/bzmux-dump.txt).
+    /// Writes the dump where `--dump-to` said (else /tmp/tortty-dump.txt).
     fn dump(&mut self) {
         let path = self
             .opts
             .dump_to
             .clone()
-            .unwrap_or_else(|| std::path::PathBuf::from("/tmp/bzmux-dump.txt"));
+            .unwrap_or_else(|| std::path::PathBuf::from("/tmp/tortty-dump.txt"));
         match std::fs::write(&path, self.dump_text()) {
             Ok(()) => {
                 self.dumped = true;
@@ -1311,11 +1311,11 @@ impl App {
                 }
             }
             // I4: title via OSC 0/2 (the shell puts "~/project" and `vim` the
-            // file name); `bzmux` is the default and does not count as a request
+            // file name); `tortty` is the default and does not count as a request
             let title = self.tabs[i].term.title.clone();
             if title != self.tabs[i].osc_title {
                 let was = i == self.active;
-                self.tabs[i].osc_title = if title == "bzmux" {
+                self.tabs[i].osc_title = if title == "tortty" {
                     String::new()
                 } else {
                     title
@@ -1336,7 +1336,7 @@ impl App {
                 self.blink_text = self.tabs[i].term.grid.iter().any(|r| {
                     r.cells
                         .iter()
-                        .any(|c| c.flags & bzmux_core::cell::BLINK != 0)
+                        .any(|c| c.flags & tortty_core::cell::BLINK != 0)
                 });
             }
             if self.tabs[i].view_off > 0 {
@@ -1360,7 +1360,7 @@ impl App {
     }
 
     /// File errors read at startup: they become a toast on the first tick.
-    pub fn startup_errors(&mut self, errs: Vec<bzmux_core::config::Error>) {
+    pub fn startup_errors(&mut self, errs: Vec<tortty_core::config::Error>) {
         self.cfg_errors = errs.iter().map(std::string::ToString::to_string).collect();
         self.startup_errs = errs;
     }
@@ -1983,7 +1983,7 @@ impl App {
                 self.tabs[i].rx = Some(rx);
             },
             Err(e) => {
-                eprintln!("bzmux: {e}");
+                eprintln!("tortty: {e}");
                 self.exiting = true;
             },
         }
@@ -2195,7 +2195,7 @@ impl App {
         // the name goes to the card and to the `dump` header: same rule as the
         // tab title (control, zero-width, direction) — the field is free typing,
         // not terminal payload
-        let new = bzmux_core::term::sanitize_title(&text).trim().to_string();
+        let new = tortty_core::term::sanitize_title(&text).trim().to_string();
         if new.is_empty() {
             self.redraw();
             return;
@@ -2236,7 +2236,7 @@ impl App {
                 // a key that only produces something invisible (or control)
                 // does not enter the field: the name being edited is drawn on the
                 // card as it is
-                let clean = bzmux_core::term::sanitize_title(s);
+                let clean = tortty_core::term::sanitize_title(s);
                 if clean.is_empty() {
                     return true;
                 }
@@ -2377,16 +2377,16 @@ impl App {
             return;
         }
         self.last_title.clone_from(&title);
-        // `BZMUX_NO_TITLE=1`: debug probe, not configuration. It exists because
+        // `TORTTY_NO_TITLE=1`: debug probe, not configuration. It exists because
         // of a winit stumble on X11: any pending X error on the connection
         // becomes a `panic` on the next property call, and the Mesa WSI may
         // leave one there (see DEBUG.md). Without touching the title, one can
         // still use the terminal and investigate.
-        if std::env::var_os("BZMUX_NO_TITLE").is_some() {
+        if std::env::var_os("TORTTY_NO_TITLE").is_some() {
             return;
         }
         if let Some(w) = self.window.as_ref() {
-            w.set_title(&format!("{title} — bzmux"));
+            w.set_title(&format!("{title} — tortty"));
         }
     }
 }
@@ -2506,7 +2506,7 @@ impl ApplicationHandler<UserEvent> for App {
         let fonts = match Fonts::new(&self.opts.font_family, self.font_px(scale)) {
             Ok(f) => f,
             Err(e) => {
-                eprintln!("bzmux: {e}");
+                eprintln!("tortty: {e}");
                 event_loop.exit();
                 return;
             },
@@ -2519,7 +2519,7 @@ impl ApplicationHandler<UserEvent> for App {
         instala_sinais();
         let (w, h, pos, maximized) = self.geometry_initial(event_loop, &fonts);
         let mut attrs = Window::default_attributes()
-            .with_title("bzmux")
+            .with_title("tortty")
             .with_inner_size(PhysicalSize::new(w, h))
             .with_maximized(maximized);
         if let Some((x, y)) = pos {
@@ -2527,16 +2527,16 @@ impl ApplicationHandler<UserEvent> for App {
         }
         // K19: explicit `WM_CLASS`, not inherited from the executable name — it
         // is what the `.desktop` `StartupWMClass` looks for to group the window
-        // in the dock. A renamed binary (`bzmux-rs`) cannot change WM_CLASS.
+        // in the dock. A renamed binary (`tortty-rs`) cannot change WM_CLASS.
         #[cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))]
         let attrs = {
             use winit::platform::x11::WindowAttributesExtX11 as _;
-            attrs.with_name("bzmux", "bzmux")
+            attrs.with_name("tortty", "tortty")
         };
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
             Err(e) => {
-                eprintln!("bzmux: window: {e}");
+                eprintln!("tortty: window: {e}");
                 event_loop.exit();
                 return;
             },
@@ -2551,7 +2551,7 @@ impl ApplicationHandler<UserEvent> for App {
         let renderer = match Renderer::new(&window, fonts, self.opts.vsync, &self.opts.cfg) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("bzmux: GPU: {e}");
+                eprintln!("tortty: GPU: {e}");
                 event_loop.exit();
                 return;
             },
@@ -2581,7 +2581,7 @@ impl ApplicationHandler<UserEvent> for App {
                 Err(e) => {
                     // whoever opened the debug surface has to know it is not up
                     // (Python shows it in the toast)
-                    eprintln!("bzmux: debug socket: {e}");
+                    eprintln!("tortty: debug socket: {e}");
                     self.toast(format!("debug socket: {e}"));
                 },
             }
@@ -2590,7 +2590,7 @@ impl ApplicationHandler<UserEvent> for App {
             set_log(&path);
         }
         logln(&format!(
-            "bzmux {} — {}x{} cells, cell {}x{}, font {} {}px",
+            "tortty {} — {}x{} cells, cell {}x{}, font {} {}px",
             env!("CARGO_PKG_VERSION"),
             cols,
             rows,

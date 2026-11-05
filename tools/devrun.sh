@@ -1,22 +1,23 @@
 #!/bin/sh
-# devrun.sh — starts the bzmux Rust development instance (PID file).
+# devrun.sh — starts the tortty Rust development instance (PID file).
 #
-# Why a PID file and not `pkill -f bzmux`: the caller's command line
-# contains the pattern, so `pkill -f` kills the shell itself; and `pkill -x bzmux`
-# kills the pipx `bzmux` (the installed Python app), because the console
-# script name is the same as the dev binary. It has already happened. Here the PID is the `$!`
-# of the process itself, and devkill checks `/proc/<pid>/exe` before killing.
+# Why a PID file and not `pkill -f tortty`: the caller's command line
+# contains the pattern, so `pkill -f` kills the shell itself. `pkill -x` on the
+# old name (`bzmux`) killed the installed Python app instead of the dev binary,
+# because both answered to the same name; it has already happened. Here the PID
+# is the `$!` of the process itself, and devkill checks `/proc/<pid>/exe` before
+# killing.
 #
-# Usage: tools/devrun.sh [bzmux args...]
+# Usage: tools/devrun.sh [tortty args...]
 set -eu
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-BIN="$HERE/target/release/bzmux"
-[ -x "$BIN" ] || BIN="$HERE/target/debug/bzmux"
+BIN="$HERE/target/release/tortty"
+[ -x "$BIN" ] || BIN="$HERE/target/debug/tortty"
 [ -x "$BIN" ] || { echo "build first: cargo build" >&2; exit 1; }
 
-PIDFILE=${BZMUX_RS_PIDFILE:-/tmp/bzmux-rs.pid}
-LOGFILE=${BZMUX_RS_LOG:-/tmp/bzmux-rs.log}
+PIDFILE=${TORTTY_RS_PIDFILE:-/tmp/tortty-rs.pid}
+LOGFILE=${TORTTY_RS_LOG:-/tmp/tortty-rs.log}
 
 if [ -f "$PIDFILE" ]; then
     old=$(cat "$PIDFILE")

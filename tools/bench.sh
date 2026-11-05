@@ -11,7 +11,7 @@
 #   tools/bench.sh --frames 300 --shots 1
 #   tools/bench.sh --only-rust        # without the Python reference
 #
-# The Python app comes from $PYBZMUZ (default: the sibling repo in ~).
+# The Python app comes from $PYTHON_APP (default: the sibling repo in ~).
 set -eu
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
@@ -19,7 +19,7 @@ FRAMES=1200
 SHOTS=3
 GRIDS="61x18 70x21"
 ONLY_RUST=0
-PYBZMUZ=${PYBZMUZ:-$HOME/data/desenv/gh/tortty-python}
+PYTHON_APP=${PYTHON_APP:-$HOME/tortty-python}
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -32,7 +32,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-[ -x "$HERE/target/release/bzmux" ] || { echo "build first: cargo build --release" >&2; exit 1; }
+[ -x "$HERE/target/release/tortty" ] || { echo "build first: cargo build --release" >&2; exit 1; }
 
 GOV=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || echo '?')
 echo "# frames=$FRAMES shots=$SHOTS governor=$GOV display=${DISPLAY:-?}"
@@ -69,8 +69,8 @@ for g in $GRIDS; do
     run "" "$g" "rust"
 done
 if [ "$ONLY_RUST" = 0 ]; then
-    [ -x "$PYBZMUZ/run.sh" ] || { echo "# no $PYBZMUZ/run.sh: skipping Python" >&2; exit 0; }
+    [ -x "$PYTHON_APP/run.sh" ] || { echo "# no $PYTHON_APP/run.sh: skipping Python" >&2; exit 0; }
     for g in $GRIDS; do
-        run "$PYBZMUZ/run.sh" "$g" "python"
+        run "$PYTHON_APP/run.sh" "$g" "python"
     done
 fi

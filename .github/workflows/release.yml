@@ -1,7 +1,7 @@
 name: release
 
 # Per `v*` tag: packages and publishes the binary that `install.sh --from-release`
-# knows how to download (`bzmux-<version>-<triple>.tar.gz`). The packaging is
+# knows how to download (`tortty-<version>-<triple>.tar.gz`). The packaging is
 # `tools/release.sh` — the same one that runs on the developer's machine, so what
 # comes out of here is not a separate path.
 #

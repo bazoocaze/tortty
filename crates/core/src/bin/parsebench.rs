@@ -2,17 +2,17 @@
 //! reports µs/cell, MB/s and ns/escape.
 //!
 //! Same load as `tools/doomfire.py` (truecolor fg + truecolor bg + `▀` per cell,
-//! with no grouping), so the number is comparable with the bzmux Python one
+//! with no grouping), so the number is comparable with tortty-python one
 //! measured in docs/BENCHMARKS.md (~35 µs/cell before P20, 5,5 after).
 //!
 //! ```sh
-//! cargo run --release -p bzmux-core --bin parsebench
-//! cargo run --release -p bzmux-core --bin parsebench -- --cols 61 --rows 18 --frames 500
+//! cargo run --release -p tortty-core --bin parsebench
+//! cargo run --release -p tortty-core --bin parsebench -- --cols 61 --rows 18 --frames 500
 //! ```
 
 use std::time::Instant;
 
-use bzmux_core::Term;
+use tortty_core::Term;
 
 /// The 37 doom-fire tones (the generator picks one per cell, so the color varies
 /// from cell to cell — that is what stresses SGR).

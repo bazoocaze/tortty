@@ -51,7 +51,7 @@ Ordered by severity. None of them is architectural; all are boundary ones.
 
 1. **Debug socket is a Unix socket** (`UnixListener`). On Windows it does not
    exist: it needs a named pipe or TCP on `127.0.0.1`. Decision: keep the Unix
-   socket on POSIX systems and use a named pipe (`\\.\pipe\bzmux-<pid>`) on
+   socket on POSIX systems and use a named pipe (`\\.\pipe\tortty-<pid>`) on
    Windows, with the same one-line JSON framing. `tools/benchrun.py` starts
    choosing the transport by the path.
 2. **`$XDG_RUNTIME_DIR`** for `--debug-socket auto`: on Windows it is
@@ -65,7 +65,7 @@ Ordered by severity. None of them is architectural; all are boundary ones.
    macOS the default monospaced font is Menlo/SF Mono; on Windows, Consolas and
    Cascadia Mono. It is a list per `cfg(target_os)`.
 5. **Configuration path** (`$XDG_CONFIG_HOME`): on Windows
-   `%APPDATA%\bzmux`, on macOS `~/Library/Application Support/bzmux`. It only
+   `%APPDATA%\tortty`, on macOS `~/Library/Application Support/tortty`. It only
    exists once the config file is migrated (see MIGRATION).
 6. **Clipboard and IME**: when they come in, they are platform-specific
    (`arboard`/`winit::Ime`); `winit` already exposes IME on all targets.
@@ -81,7 +81,7 @@ Recommended path, in this order:
 1. **GitHub Actions with a matrix** — **it already exists for Linux**
    (`.github/workflows/release.yml`, tag `v*`): `x86_64` and `aarch64`, using
    `tools/release.sh` (the same command as locally) and publishing
-   `bzmux-<version>-<triple>.tar.gz` + `SHA256SUMS`, which is exactly what
+   `tortty-<version>-<triple>.tar.gz` + `SHA256SUMS`, which is exactly what
    `./install.sh --from-release` downloads. `aarch64` runs under
    `qemu-user-static` in CI so that `--version` counts as verification. When
    M6/M7 close, `windows-latest` and `macos-14`/`macos-13` enter as two more

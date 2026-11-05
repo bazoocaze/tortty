@@ -4,7 +4,7 @@
 //! next call that flushes (`flush_requests`). An error that is **not ours** — the
 //! Mesa WSI leaves `BadDrawable` pending while creating and destroying pixmaps to
 //! present — kills the process on the next window property (that is how
-//! `sandbox bzmux` exited with 134 in `set_window_title`; see `docs/BACKLOG.md`, B5).
+//! `sandbox tortty` exited with 134 in `set_window_title`; see `docs/BACKLOG.md`, B5).
 //! GLFW (kitty) records the error and moves on; here the winit public hook does
 //! the same, without touching the X handler from outside.
 //!
@@ -63,7 +63,7 @@ fn decide(_display: *mut c_void, event: *mut c_void) -> bool {
     // SAFETY: winit passes a valid Xlib `XErrorEvent`, which has exactly this
     // layout (X11/Xlib.h); we only read it, never store the pointer.
     let e = unsafe { &*(event.cast::<XErrorEvent>()) };
-    if std::env::var_os("BZMUX_XERR").is_some() {
+    if std::env::var_os("TORTTY_XERR").is_some() {
         eprintln!(
             "XERR code={} request={} minor={} resource=0x{:x} swallow={}",
             e.error_code,
@@ -81,7 +81,7 @@ fn decide(_display: *mut c_void, event: *mut c_void) -> bool {
     // repeated, and the log cannot become the problem
     if n < 3 || n.is_multiple_of(1000) {
         eprintln!(
-            "bzmux: X extension error ignored (code {}, request {}), occurrence {} \
+            "tortty: X extension error ignored (code {}, request {}), occurrence {} \
              — GPU WSI; see docs/DEBUG.md",
             e.error_code,
             e.request_code,

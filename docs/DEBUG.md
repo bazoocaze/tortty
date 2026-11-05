@@ -5,16 +5,18 @@ below already cost someone their work terminal.
 
 ## Never `pkill` — PID file, always
 
-`pkill -f bzmux` kills the **shell that called** the command, because the
-pattern appears in its command line. `pkill -x bzmux` kills the **pipx** `bzmux`,
-which has exactly the same name as this repository's dev binary — that is how a
-`pkill` here brought down the user's terminal session.
+`pkill -f tortty` kills the **shell that called** the command, because the
+pattern appears in its command line. `pkill -x` was the one that hurt: while the
+binary and the Python app shared the name `bzmux`, `pkill -x bzmux` killed the
+installed app and not the dev binary — that is how a `pkill` here brought down
+the user's terminal session. The rename to `tortty` removed the collision, but
+the rule stands: nothing here kills by name.
 
 The tools only kill a registered PID, checking `/proc/<pid>/exe` first:
 
 ```sh
-./tools/devrun.sh --cmd 'mc' --cols 100 --rows 30 --debug-socket /tmp/bz.sock
-./tools/devkill.sh            # kills only the PID from /tmp/bzmux-rs.pid
+./tools/devrun.sh --cmd 'mc' --cols 100 --rows 30 --debug-socket /tmp/tt.sock
+./tools/devkill.sh            # kills only the PID from /tmp/tortty-rs.pid
 ./tools/devkill.sh --status   # shows life/exe without killing
 ```
 
@@ -31,7 +33,7 @@ exists (it avoids two instances fighting over the same socket).
 | `--scrollback N` | cap on history lines |
 | `--no-vsync` | draws as fast as possible (measure throughput) |
 | `--prof` | turns on the `draw`/`parse`/`pty` counters (queried by `prof`) |
-| `--debug-socket PATH\|auto` | JSON introspection socket (`auto` = `$XDG_RUNTIME_DIR/bzmux-<pid>.sock`) |
+| `--debug-socket PATH\|auto` | JSON introspection socket (`auto` = `$XDG_RUNTIME_DIR/tortty-<pid>.sock`) |
 | `--debug-log FILE` | event log (`logln!`) |
 | `WGPU_BACKEND=gl\|vulkan` | forces the `wgpu` backend (escape valve for a problematic GPU) |
 | `WGPU_ADAPTER_NAME=…` | picks the adapter (useful to test llvmpipe) |
@@ -46,10 +48,10 @@ anyone's screen:
 
 ```sh
 ./tools/visual.sh            # Xvfb + fixed theme + capture + comparison; exits 0/1
-./tools/visual.sh --keep     # keeps the captures in /tmp/bzmux-visual
+./tools/visual.sh --keep     # keeps the captures in /tmp/tortty-visual
 ```
 
-`tools/visual.sh` owns that recipe (display, fake `HOME` with a `bzmux.conf` of
+`tools/visual.sh` owns that recipe (display, fake `HOME` with a `tortty.conf` of
 the fixed theme, wait for the first frame, capture through `state`/`xid`, and
 the four pixel checks via [`tools/pixel.py`](../tools/pixel.py)). To probe a
 capture by hand: `tools/pixel.py shot.png 100,50` (colour of one point),
@@ -58,7 +60,7 @@ changed and where).
 
 Details that save time:
 
-- **The `xid` comes from `state`**, not from `xdotool search --class bzmux`: on
+- **The `xid` comes from `state`**, not from `xdotool search --class tortty`: on
   a display with more than one instance the search picks the wrong window and
   the capture comes out empty.
 - **A fake `HOME`** is what installs a test font or configuration without
@@ -74,8 +76,8 @@ Details that save time:
 ## Verification with a window (without relying on an eye)
 
 ```sh
-./tools/devrun.sh --cmd 'mc' --cols 90 --rows 24 --debug-socket /tmp/bz.sock
-PID=$(cat /tmp/bzmux-rs.pid)
+./tools/devrun.sh --cmd 'mc' --cols 90 --rows 24 --debug-socket /tmp/tt.sock
+PID=$(cat /tmp/tortty-rs.pid)
 WID=$(wmctrl -lp | awk -v p=$PID '$3==p {print $1; exit}')
 xwd -id "$WID" -out /tmp/x.xwd && convert /tmp/x.xwd /tmp/x.png   # look
 xdotool windowactivate "$WID"; xdotool mousemove --window "$WID" 200 200
@@ -197,7 +199,7 @@ result — the client is the one that checks, with `state`, and that is why
   title and the tab bar showed garbage before the text (B4, 2026-11-04). The
   probe is the socket `osc` verb, which returns the raw payloads.
 - **Chrome text is not a terminal sequence**: the rule is a single one,
-  `bzmux_core::term::sanitize_title` (control, zero-width, direction marks and
+  `tortty_core::term::sanitize_title` (control, zero-width, direction marks and
   BOM out), and it holds at **two levels**:
   - *drawing*: `Renderer::chrome_text` is the only place that draws text outside
     the grid (tab bar, sidebar card, history badge, toast) and sanitizes there —
@@ -235,7 +237,7 @@ mouse on.
 Probe that closes the loop (what the app *received*, not what it did):
 
 ```sh
-./tools/devrun.sh --cmd 'python3 /tmp/mtest.py' --cols 60 --rows 12 --debug-socket /tmp/bz.sock
+./tools/devrun.sh --cmd 'python3 /tmp/mtest.py' --cols 60 --rows 12 --debug-socket /tmp/tt.sock
 # mtest.py does tty.setraw(0), turns on ?1000/?1006 and prints the hex of what arrives
 xdotool mousemove $((X+120)) $((Y+60)) click 1
 # read the screen: {"cmd":"text","where":"view"} -> 1b5b3c303b31313b344d = ESC[<0;11;4M
@@ -273,7 +275,7 @@ Two pitfalls together, and both look like "scrambled text in the first second":
    the old width. Now `apply_size` runs first and `spawn_shell` only happens at
    the first applied size.
 
-Probe: `bzmux --cmd 'stty size'` has to print exactly `<rows> <cols>` of the
+Probe: `tortty --cmd 'stty size'` has to print exactly `<rows> <cols>` of the
 request, with no resize afterwards.
 
 ### Keyboard
@@ -283,7 +285,7 @@ in hex, which is how you check `Ctrl+Space` (NUL), `Alt+←` (`CSI 1;3D`) and `F
 (`CSI 15~`) without guessing:
 
 ```sh
-python3 -c 'import socket,json; s=socket.socket(socket.AF_UNIX); s.connect("/tmp/bz.sock");
+python3 -c 'import socket,json; s=socket.socket(socket.AF_UNIX); s.connect("/tmp/tt.sock");
 s.sendall(b"{\"cmd\":\"keys\",\"data\":\"alt+left\"}\n"); print(s.recv(999))'
 ```
 
@@ -320,7 +322,7 @@ even though it is healthy, and the error is not its fault.
 How to confirm: `RUST_BACKTRACE=1` shows `sync_title` in the stack, and the app
 **runs normally** with the probe below.
 
-Probe: `BZMUX_NO_TITLE=1 bzmux` (does not touch the window title). It is a
+Probe: `TORTTY_NO_TITLE=1 tortty` (does not touch the window title). It is a
 debugging probe, not configuration — it only exists so you can use the terminal
 while investigating.
 
@@ -339,7 +341,7 @@ Two things that only show up in the GL backend:
 The backend and the board chosen appear in the first line of the log:
 
 ```
-bzmux: GPU: Vulkan llvmpipe (LLVM 20.1.2, 256 bits) (driver llvmpipe)
+tortty: GPU: Vulkan llvmpipe (LLVM 20.1.2, 256 bits) (driver llvmpipe)
 ```
 
 ## Degraded sandbox: a window that paints nothing
@@ -356,7 +358,7 @@ The first field to look at is the pair that separates the two causes:
 |---|---|---|---|
 | > 0 | 0 | `drawn` | it drew and presented |
 | 0 | > 0 | `skipped (timeout/occluded)` | drawing runs, the **surface** refuses: environment (compositor/WM/sandbox), not the app |
-| 0 | 0 | `none` | the app did not even get to draw: see the log (`bzmux: GPU:`), pty and config |
+| 0 | 0 | `none` | the app did not even get to draw: see the log (`tortty: GPU:`), pty and config |
 
 **`drawn > 0` does not prove the screen drew.** Measured on 2026-11-03 on `sandbox`
 without a GPU: with `WGPU_BACKEND=gl` the counter went up (`drawn 5`, `skips 0`)
@@ -374,7 +376,7 @@ cmp -s /tmp/a.xwd /tmp/b.xwd && echo "does not paint" || echo "paints"
 When the surface refuses the frame, the app writes **once** to stderr:
 
 ```
-bzmux: the surface is not presenting (timeout/occluded) — the app draws, but the
+tortty: the surface is not presenting (timeout/occluded) — the app draws, but the
 frame does not reach the screen. A confined environment without a visible GPU
 usually looks like this: check /dev/dri and, on sandbox, use `sandbox @gpu`; see docs/DEBUG.md
 ```
@@ -408,10 +410,10 @@ is error policy, not the capacity of the environment:
 |---|---|---|
 | `kitty 0.48.2` | **opens and draws**; it only complains about DBus | `xdotool` finds the window; the log only has `glfw error 65544` (DBus) |
 | `ghostty 1.3.1` | opens the window, but GL degrades: `MESA: error: Failed to attach to x11 shm` in a loop | it does not exit; the window exists and the log repeats the SHM error |
-| `bzmux` (Vulkan/lavapipe), up to 1.0.4 | **aborted** (134) in `set_window_title` | winit panic at `x11/window.rs:1028` |
-| `bzmux` since 1.0.5 | **does not abort**: the X error that is not ours is recorded and the app goes on (hook below) | `sandbox bzmux` alive for 12 s, answering on the socket |
-| `bzmux` with `WGPU_BACKEND=gl` | also does not abort, but **does not paint** (silent no-op present) | `xwd` of the window identical before/after |
-| `sandbox @gpu bzmux` | **really paints** (`RADV RENOIR`, pixmap changes) | `xwd` before/after different |
+| `tortty` (Vulkan/lavapipe), up to 1.0.4 | **aborted** (134) in `set_window_title` | winit panic at `x11/window.rs:1028` |
+| `tortty` since 1.0.5 | **does not abort**: the X error that is not ours is recorded and the app goes on (hook below) | `sandbox tortty` alive for 12 s, answering on the socket |
+| `tortty` with `WGPU_BACKEND=gl` | also does not abort, but **does not paint** (silent no-op present) | `xwd` of the window identical before/after |
+| `sandbox @gpu tortty` | **really paints** (`RADV RENOIR`, pixmap changes) | `xwd` before/after different |
 
 That is: without `/dev/dri` this X server does not present a GPU surface —
 neither through Vulkan nor through GL. The way out is the sandbox `@gpu`
@@ -422,7 +424,7 @@ profile, not a different backend; the app warns about it in one line on stderr.
 `winit` keeps the last X error of the connection and `expect()`s it on the next
 call that flushes (`x11/window.rs:1028`, in `set_window_title`). An error that
 **is not ours** — the Mesa WSI leaves it pending while creating/destroying a
-pixmap — killed the process. `crates/bzmux/src/xguard.rs` registers winit's
+pixmap — killed the process. `crates/app/src/xguard.rs` registers winit's
 public hook (`platform::x11::register_xlib_error_hook`) and swallows it,
 recording it on stderr:
 
@@ -431,7 +433,7 @@ recording it on stderr:
 | `BadDrawable` (9), `BadWindow` (3), `BadMatch` (8) | any request | drawing: the WSI touches pixmap/window, including on request from the core |
 | `BadAccess` (10) | extension only (`request_code >= 128`) | it is `DRI3Open` denied in the sandbox — **this was the one that killed it** |
 
-With `BZMUX_XERR=1` the hook prints **every** X error it sees, with code,
+With `TORTTY_XERR=1` the hook prints **every** X error it sees, with code,
 request and whether it swallowed it — that is how the `BadAccess` on `DRI3`
 showed up:
 
@@ -439,7 +441,7 @@ showed up:
 XERR code=10 request=130 minor=1 resource=0x4000002 swallow=false
 ```
 
-`BZMUX_NO_TITLE=1` still exists as a probe (it does not touch the title), but
+`TORTTY_NO_TITLE=1` still exists as a probe (it does not touch the title), but
 since the hook it is no longer needed for the app to survive.
 
 ### Screen capture is not neutral
