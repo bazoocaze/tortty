@@ -78,11 +78,12 @@ per category, in order).
 
 ## Code conventions
 
-- Version: bump the patch in `Cargo.toml` (root, `workspace.package`) when you
-  **close an item** of `docs/MIGRATION.md` or `docs/BACKLOG.md` — the commit that
-  closes the item carries the bump, not every commit. A docs, test or one-off
-  adjustment commit does not bump. It is the single source: both crates inherit
-  it (`version.workspace = true`) and `--version` shows it
+- Version: bump the patch in `Cargo.toml` (root, `workspace.package`) in **every
+  commit that changes code** (`crates/`, `tools/`, `install.sh`) — closing an item
+  of `docs/MIGRATION.md` or `docs/BACKLOG.md` is one of those cases, not a
+  separate one. The bump rides in the commit that earns it. A commit that only
+  touches docs or tests does not bump. It is the single source: both crates
+  inherit it (`version.workspace = true`) and `--version` shows it
   (`env!("CARGO_PKG_VERSION")`, compiled at build).
 - Comment and message explain **why**; no comment narrates the obvious.
 - Use Conventional Commits (`<type>(<scope>): <description>`; types: feat, fix, chore, docs, style,
