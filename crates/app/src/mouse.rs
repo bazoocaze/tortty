@@ -141,10 +141,40 @@ pub fn encode(ev: Ev, proto: Proto) -> Vec<u8> {
     out
 }
 
+/// Lines scrolled by one axis of a `MouseScrollDelta::LineDelta`.
+///
+/// A wheel notch arrives as exactly ±1.0 and is worth 3 lines (D4, the same as
+/// the Python bzmux). A touchpad arrives as a *fraction* of a line — the X11
+/// smooth valuators divided by the scroll increment — and there the fraction is
+/// the distance the finger asked for, so it is kept as sent (the rest
+/// accumulates in `scroll_frac`).
+// an exact compare on purpose: winit turns the wheel buttons into exactly ±1.0,
+// and a touchpad never lands there
+#[allow(clippy::float_cmp)]
+pub fn wheel_lines(v: f32) -> f32 {
+    if v.abs() == 1.0 {
+        v * 3.0
+    } else {
+        v
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tortty_core::term::Term;
+
+    #[test]
+    fn a_wheel_notch_is_three_lines_and_a_touchpad_fraction_is_kept() {
+        // wheel notch: the buttons 4/5 of X11 arrive as exactly ±1.0
+        assert_eq!(wheel_lines(1.0), 3.0);
+        assert_eq!(wheel_lines(-1.0), -3.0);
+        assert_eq!(wheel_lines(0.0), 0.0);
+        // touchpad: the fraction is the distance, and the tab accumulates it
+        assert_eq!(wheel_lines(0.4), 0.4);
+        assert_eq!(wheel_lines(-0.7), -0.7);
+        assert_eq!(wheel_lines(2.5), 2.5);
+    }
 
     fn ev(button: u8, col: usize, row: usize) -> Ev {
         Ev {

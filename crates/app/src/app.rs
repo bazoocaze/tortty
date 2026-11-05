@@ -1007,9 +1007,12 @@ impl App {
             return;
         }
         // one notch is worth 3 lines (the same as the Python bzmux); a trackpad
-        // sends pixels (or fractions) and the rest accumulates in `scroll_frac`
+        // sends a fraction of a line per event and the rest accumulates in
+        // `scroll_frac`
         let (hx, lines) = match delta {
-            MouseScrollDelta::LineDelta(x, y) => (x * 3.0, y * 3.0),
+            MouseScrollDelta::LineDelta(x, y) => {
+                (crate::mouse::wheel_lines(x), crate::mouse::wheel_lines(y))
+            },
             MouseScrollDelta::PixelDelta(p) => {
                 let ch = self.renderer.as_ref().map_or(19.0, |r| r.fonts.ch);
                 (0.0, p.y as f32 / ch)
@@ -1257,7 +1260,13 @@ impl App {
         let sb = self.tabs[self.active].term.scrollback.len() as i64;
         self.tabs[self.active].view_off =
             (self.tabs[self.active].view_off as i64 + n).clamp(0, sb) as usize;
-        self.redraw();
+        // A touchpad delivers up to ~125 wheel events per second, and drawing a
+        // frame per event made the app consume slower than X delivers: the
+        // queue kept draining after the finger left the pad, which reads as
+        // inertia. The frame is requested, not drawn (one draw per frame).
+        if let Some(w) = self.window.as_ref() {
+            w.request_redraw();
+        }
     }
 
     /// Reads what the pty of **every** tab produced.

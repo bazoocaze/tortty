@@ -1443,3 +1443,25 @@ write `{"max":true,...}` and the next launch is born maximized; new step 8 of
 [`tools/visual.sh`](../tools/visual.sh) ("the shell ending the session exits
 cleanly and saves the window state") fails on the old code with `rc=101`.
 `tools/check.sh` green, `tools/visual.sh` green.
+
+## 2026-11-04 — touchpad scroll: the view kept moving after the finger left
+
+Reported as "smooth scroll is weird" and then as inertia. Two defects, found
+with a probe that logged every wheel event and, in parallel, the driver's side
+(`xinput test-xi2 --root`):
+
+- `scroll_view()` drew a frame **inline** (`redraw()` → `renderer.render`) for
+  every wheel event, and a touchpad delivers up to ~125 events/s. The app
+  consumed ~37/s, so the rest queued in the X server and kept draining after the
+  finger stopped: the "inertia" was backlog. The frame is now requested
+  (`request_redraw`), and one draw per frame comes from `RedrawRequested`.
+- The wheel's 3-line notch factor (D4) was applied to the touchpad too. The X11
+  smooth valuators arrive as `LineDelta(delta / scroll increment)`, a *fraction*
+  of a line, so every ~15 px of finger scrolled 3 lines. The factor now applies
+  only to a notch (exactly ±1.0); the fraction is kept as sent and accumulates
+  in `scroll_frac` (`mouse::wheel_lines`, with a test).
+
+Measured in one 9 s gesture: 337 events, ~37/s, delta 0.58–2.06 lines per event
+(22–132 lines/s). The event rate stays put and the magnitude carries the finger
+speed — which is why a fixed step per event was tried and rejected: it pins the
+speed at ~37 lines/s and loses the control.

@@ -328,6 +328,16 @@ For a probe of the socket or of the keyboard (`xdotool`, `state`, `text`) the
 `bench.sh` is the one that needs `release`; [`visual.sh`](../tools/visual.sh)
 runs the **debug** binary by default (`TORTTY_BIN` overrides).
 
+## Pitfall: drawing inside an input handler turns the event queue into inertia
+
+`scroll_view()` drew a frame inline (`redraw()` → `renderer.render`) for every
+wheel event. One line of code, and it does not look expensive — but a touchpad
+delivers up to ~125 events/s, so the app consumed slower than X delivered, the
+server queue grew, and the view kept scrolling after the finger left the pad.
+That reads as smooth-scroll inertia and is not: it is backlog. Any path that
+mutates the view must `request_redraw()` and let `RedrawRequested` draw, which
+is what the pty path and the frame gate already do.
+
 ## Pitfall: a pending X error kills the app in `set_title`
 
 Symptom, on X11:
