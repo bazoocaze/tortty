@@ -12,8 +12,10 @@
 set -eu
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-BIN="$HERE/target/release/tortty"
-[ -x "$BIN" ] || BIN="$HERE/target/debug/tortty"
+# the debug binary unless there is none: nothing in the socket/xdotool probes
+# and in manual poking depends on the profile, and building release costs ~50 s
+BIN="$HERE/target/debug/tortty"
+[ -x "$BIN" ] || BIN="$HERE/target/release/tortty"
 [ -x "$BIN" ] || { echo "build first: cargo build" >&2; exit 1; }
 
 PIDFILE=${TORTTY_RS_PIDFILE:-/tmp/tortty-rs.pid}
