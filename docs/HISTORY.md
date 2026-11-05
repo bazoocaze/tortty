@@ -1362,3 +1362,27 @@ Python app). Both classes only show up on a read of the diff, not on a grep.
 **Verified.** 83 + 90 tests, `tools/check.sh` green, `tools/visual.sh` green,
 `install.sh` installing and uninstalling on a temporary prefix (binary, entry,
 icon), `devrun`/`devkill` in Xvfb, `--version` printing `tortty <version>`.
+
+## 2026-11-04 — B36: dead key followed by space lost the accent
+
+`~` then space came out as a bare space, while `~`+`a` correctly produced `ã`.
+The two halves of the pair do not arrive the same way: the composition is done by
+`xkbcommon` inside winit, the dead key is `Key::Dead` (no byte) and the result
+lands in `event.text` — but `~`+space arrives with `logical_key` still
+`Named(Space)`. The encoder read the named table (`" "`) and threw the composed
+text away. The `Character` path already preferred `text`, which is why only space
+(and the other dead keys whose second half is space) was affected.
+
+Fix in `keys.rs`: on the named path, a `text` that differs from the key's own
+base and carries a printable character wins, keeping the ESC prefix for Alt.
+Control characters are not composition — `Backspace` brings `\x08` and still
+goes out as `DEL`.
+
+**Verified.** Xvfb + `xdotool` (XTest: the real path through winit) with the
+child recording its own stdin (`--cmd 'cat > file'`) and a `Return` to flush:
+before, `~`+space, `´`+space and `` ` ``+space reached the child as
+`c3 a3 20 20 20 5a 0a` (three spaces replacing the three accents); after,
+`c3 a3 7e 27 60 5a 0a` (`ã` `~` `'` `` ` ``). The `'` for `dead_acute`+space is
+the system Compose table (`<dead_acute> <space> : "'"`), not a second bug. Test
+`dead_key_composed_over_space_keeps_the_dead_character` in `keys.rs`;
+`tools/check.sh` green.

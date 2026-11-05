@@ -384,6 +384,19 @@ pub fn encode_parts(
             return Some(if alt { vec![0x1b, 0x00] } else { vec![0x00] });
         }
         let base = named_base(n, app_cursor)?;
+        // a dead key resolved over a named key: `xkbcommon` composes into `text`
+        // and keeps the logical key as the base, so `~`+space arrives as
+        // `Named(Space)` with text `~` and the table would send the bare space
+        // (B36). Control characters are not composition: `Backspace` brings
+        // `\x08` and has to keep going out as `DEL`.
+        if let Some(t) = text.filter(|t| *t != base && t.chars().any(|c| !c.is_control())) {
+            let mut v = Vec::with_capacity(t.len() + 1);
+            if alt {
+                v.push(0x1b);
+            }
+            v.extend_from_slice(t.as_bytes());
+            return Some(v);
+        }
         return Some(with_mods(base, ctrl, alt, shift));
     }
 
@@ -546,6 +559,48 @@ mod tests {
         assert_eq!(
             ev(None, Some("a"), F_ALL_KEYS | F_EVENT_TYPES, REPEAT).as_deref(),
             Some("\x1b[97;1:2u")
+        );
+    }
+
+    #[test]
+    fn dead_key_composed_over_space_keeps_the_dead_character() {
+        // winit (xkbcommon) resolves the composition but keeps the logical key
+        // as the base: `~`+space arrives as Named(Space) with text `~`
+        let composed = |t: &str| {
+            encode_parts(Some(NamedKey::Space), None, Some(t), NONE, false, 0)
+                .map(|v| String::from_utf8_lossy(&v).to_string())
+        };
+        assert_eq!(composed("~").as_deref(), Some("~"));
+        assert_eq!(composed("´").as_deref(), Some("´"));
+        assert_eq!(composed("`").as_deref(), Some("`"));
+        // Alt keeps its ESC prefix
+        assert_eq!(
+            encode_parts(
+                Some(NamedKey::Space),
+                None,
+                Some("~"),
+                ModifiersState::ALT,
+                false,
+                0
+            )
+            .as_deref(),
+            Some(&b"\x1b~"[..])
+        );
+        // an uncomposed space is still one space
+        assert_eq!(composed(" ").as_deref(), Some(" "));
+        // and a control character in `text` is not a composition: Backspace
+        // brings `\x08` and has to keep going out as DEL
+        assert_eq!(
+            encode_parts(
+                Some(NamedKey::Backspace),
+                None,
+                Some("\x08"),
+                NONE,
+                false,
+                0
+            )
+            .as_deref(),
+            Some(&b"\x7f"[..])
         );
     }
 }

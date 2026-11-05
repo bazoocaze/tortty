@@ -132,6 +132,13 @@ result — the client is the one that checks, with `state`, and that is why
   event.
 - **Keyboard**: `logical_key` matters for text; `physical_key` for modifiers and
   function keys. Using only one of the two gets accents or shortcuts wrong.
+- **A composed dead key keeps the base key as `logical_key`**: `xkbcommon` (in
+  winit) does the composition, the dead key itself is `Key::Dead` (no byte) and
+  the result lands in `event.text` — but `~`+space arrives as `Named(Space)`, so
+  whoever reads only the named table throws the `~` away (B36: the child got a
+  bare space). The composed text wins over the named table whenever it differs
+  and is printable; a control character (`Backspace` brings `\x08`) is not
+  composition.
 
 ### wgpu
 
@@ -295,7 +302,11 @@ that ignores the signals (`sh -c 'trap "" INT QUIT; sleep 200'`).
 
 Dead keys have no code of ours: `winit` delivers `Key::Dead` (which generates no
 byte) and then the composed text in `event.text`. Test with
-`xdotool key dead_tilde a` and read the screen through `text`.
+`xdotool key dead_tilde a` and read the screen through `text`. The second key
+still travels as the base key: `dead_tilde space` arrives as `Named(Space)` with
+text `~`, which is why a child that records its stdin (`--cmd 'cat > file'`) and
+a `Return` at the end is the probe that shows the bytes and not just the screen
+(B36).
 
 ## Measurement
 
