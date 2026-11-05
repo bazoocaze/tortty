@@ -72,13 +72,15 @@ const CHAVES: &[&str] = &[
 #[allow(clippy::needless_pass_by_value)]
 fn esperado<T: PartialEq + std::fmt::Debug>(
     o_que: &str,
-    obtido: T,
+    obtained: T,
     esperado: T,
 ) -> Result<(), String> {
-    if obtido == esperado {
+    if obtained == esperado {
         Ok(())
     } else {
-        Err(format!("{o_que}: esperado {esperado:?}, obtido {obtido:?}"))
+        Err(format!(
+            "{o_que}: esperado {esperado:?}, obtido {obtained:?}"
+        ))
     }
 }
 
@@ -148,12 +150,12 @@ fn config_file() -> Result<(), String> {
     }
     // reload: quem chama só aplica com `errs` vazio, então qualquer erro
     // mantém a configuração que já estava valendo
-    let (bom, _) = Config::parse("font_size 16\n");
-    let (_, errs) = bom.over("font_size 18\nbell grita\n");
+    let (good, _) = Config::parse("font_size 16\n");
+    let (_, errs) = good.over("font_size 18\nbell grita\n");
     if errs.len() != 1 {
         return Err(format!("reload inválido tinha que dar 1 erro: {errs:?}"));
     }
-    esperado("a base não é mutada pelo reload", bom.font_size, 16.0)?;
+    esperado("a base não é mutada pelo reload", good.font_size, 16.0)?;
     Ok(())
 }
 
@@ -207,7 +209,7 @@ fn config_options() -> Result<(), String> {
     esperado("debug_log off", cfg.debug_log.as_deref(), None)?;
     esperado("debug_log off sem erro", errs.len(), 0)?;
     // erro é por linha: o válido aplica, o inválido fica no padrão anterior
-    for (lixo, motivo) in [
+    for (garbage, reason) in [
         ("font_size abc", "não é número"),
         ("font_size 0", "fora da faixa"),
         ("font_family", "família vazia"),
@@ -218,13 +220,13 @@ fn config_options() -> Result<(), String> {
         ("bell beep", "não é none"),
         ("copy_on_select 2", "não é on/off"),
     ] {
-        let (cfg, errs) = Config::parse(&format!("font_size 20\n{lixo}\n"));
+        let (cfg, errs) = Config::parse(&format!("font_size 20\n{garbage}\n"));
         esperado("a linha válida antes do erro aplicou", cfg.font_size, 20.0)?;
         match errs.as_slice() {
-            [e] if e.line == 2 && e.msg.contains(motivo) => {},
-            outro => {
+            [e] if e.line == 2 && e.msg.contains(reason) => {},
+            other => {
                 return Err(format!(
-                    "'{lixo}': esperava 1 erro na linha 2 com '{motivo}', veio {outro:?}"
+                    "'{garbage}': esperava 1 erro na linha 2 com '{reason}', veio {other:?}"
                 ));
             },
         }

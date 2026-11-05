@@ -72,17 +72,17 @@ fn digit_of(event: &winit::event::KeyEvent) -> Option<usize> {
 /// plano: o shell, ou o `vim`/`mc` que ele lançou). `/proc/<pid>/task/<pid>/
 /// children` lista os filhos diretos; descer até o fim é o que dá o processo
 /// que a pessoa está usando.
-fn descendente(pid: u32) -> u32 {
+fn descendant(pid: u32) -> u32 {
     let mut cur = pid;
     for _ in 0..8 {
         let path = format!("/proc/{cur}/task/{cur}/children");
         let Ok(txt) = std::fs::read_to_string(path) else {
             break;
         };
-        let Some(filho) = txt.split_whitespace().next().and_then(|s| s.parse().ok()) else {
+        let Some(child) = txt.split_whitespace().next().and_then(|s| s.parse().ok()) else {
             break;
         };
-        cur = filho;
+        cur = child;
     }
     cur
 }
@@ -96,7 +96,7 @@ pub enum UserEvent {
 
 /// Aviso transitório do próprio terminal (I12): "config: 3 erros — ...".
 struct Toast {
-    texto: String,
+    text: String,
     desde: std::time::Instant,
     /// Quantas mensagens iguais chegaram seguidas (o toast soma, não empilha).
     vezes: u32,
@@ -108,14 +108,14 @@ const TOAST_DUR: Duration = Duration::from_millis(3500);
 /// Texto do aviso de configuração (K13). Cabe em ~60 colunas de propósito: o
 /// toast é cortado na largura da grade, e "linha e chave" é o que se precisa
 /// ver, não a contagem escrita por extenso.
-fn aviso_config(errs: &[bzmux_core::config::Error]) -> String {
-    let Some(primeiro) = errs.first() else {
+fn notice_config(errs: &[bzmux_core::config::Error]) -> String {
+    let Some(first) = errs.first() else {
         return String::new();
     };
     if errs.len() > 1 {
-        format!("config mantida — {primeiro} (+{})", errs.len() - 1)
+        format!("config mantida — {first} (+{})", errs.len() - 1)
     } else {
-        format!("config mantida — {primeiro}")
+        format!("config mantida — {first}")
     }
 }
 
@@ -194,9 +194,9 @@ pub struct Tab {
 
 impl Tab {
     fn new(cols: usize, rows: usize) -> Tab {
-        static PROXIMA: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Tab {
-            id: PROXIMA.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             term: Term::new(cols, rows),
             pty: None,
             rx: None,
@@ -225,11 +225,11 @@ impl Tab {
     /// `basename` do cwd do processo filho (`/proc/<pid>/cwd`); sem isso, nada.
     fn cwd_name(&self) -> Option<String> {
         let cwd = self.cwd()?;
-        let nome = bzmux_core::term::sanitize_title(&cwd.file_name()?.to_string_lossy());
-        if nome.is_empty() {
+        let name = bzmux_core::term::sanitize_title(&cwd.file_name()?.to_string_lossy());
+        if name.is_empty() {
             None
         } else {
-            Some(nome)
+            Some(name)
         }
     }
 
@@ -238,8 +238,8 @@ impl Tab {
     /// `fork` do Python fazia ao olhar o último descendente).
     fn cwd(&self) -> Option<std::path::PathBuf> {
         let pid = self.pty.as_ref()?.child_pid()?;
-        let alvo = descendente(pid);
-        std::fs::read_link(format!("/proc/{alvo}/cwd")).ok()
+        let target = descendant(pid);
+        std::fs::read_link(format!("/proc/{target}/cwd")).ok()
     }
 }
 
@@ -247,10 +247,10 @@ impl Tab {
 struct Rename {
     /// Índice lógico do workspace.
     ws: usize,
-    texto: String,
+    text: String,
     /// O nome antigo está inteiro no campo e ainda não foi tocado: a primeira
     /// tecla o substitui, como o "selecionado" do `Gtk.Entry` do Python.
-    substituir: bool,
+    replace: bool,
 }
 
 /// Um conjunto de abas com nome próprio (I5).
@@ -335,7 +335,7 @@ pub struct App {
     /// daí por aritmética: sem acumular estado, sem `sleep`.
     blink_epoch: std::time::Instant,
     /// Fase atual do pisca, para só redesenhar quando ela vira.
-    blink_fase: bool,
+    blink_phase: bool,
     /// Há célula com SGR 5 na tela. Recalculado a cada `feed`: perguntar isso
     /// ao grid em cada tique custaria uma varredura por evento.
     blink_text: bool,
@@ -359,7 +359,7 @@ pub struct App {
     last_title: String,
     exiting: bool,
     /// `--quit-after`: instante em que fecha sozinho (automação).
-    prazo: Option<std::time::Instant>,
+    deadline: Option<std::time::Instant>,
     /// Um dump já foi escrito nesta execução (SIGUSR1 pode vir várias vezes).
     dumpou: bool,
     /// Tamanho normal da janela (J5: maximizado **não** sobrescreve este).
@@ -367,7 +367,7 @@ pub struct App {
     /// Última posição externa vista (moldura, como o `get_position()` do Python).
     geom_pos: Option<(i32, i32)>,
     /// O estado lembrado só vale se ninguém pediu grade na linha de comando.
-    lembrar_geom: bool,
+    remember_geom: bool,
 }
 
 /// O WM aqui é X11? É ele que aceita posição de janela; no Wayland ela não
@@ -394,7 +394,7 @@ impl App {
             .as_deref()
             .and_then(|p| std::fs::metadata(p).ok())
             .and_then(|m| m.modified().ok());
-        let prazo = opts
+        let deadline = opts
             .quit_after
             .map(|seg| std::time::Instant::now() + std::time::Duration::from_secs(seg));
         App {
@@ -422,7 +422,7 @@ impl App {
             cfg_mtime,
             cfg_checked: std::time::Instant::now(),
             blink_epoch: std::time::Instant::now(),
-            blink_fase: true,
+            blink_phase: true,
             blink_text: false,
             gate: crate::frame::Gate::default(),
             toast: None,
@@ -434,11 +434,11 @@ impl App {
             eof: false,
             last_title: String::new(),
             exiting: false,
-            prazo,
+            deadline,
             dumpou: false,
             geom_normal: crate::state::PADRAO,
             geom_pos: None,
-            lembrar_geom: true,
+            remember_geom: true,
         }
     }
 
@@ -452,13 +452,13 @@ impl App {
         // a ordem lógica: os estacionados nas suas posições e o corrente no
         // lugar dele (o `parked` guarda os outros inteiros, na ordem)
         let mut i_ws = 0usize;
-        let mut empurra = |tabs: &[Tab], active: usize, nome: &str, partes: &mut Vec<String>| {
+        let mut empurra = |tabs: &[Tab], active: usize, name: &str, partes: &mut Vec<String>| {
             if multi_ws {
-                partes.push(format!("=== workspace {}: {nome} ===", i_ws + 1));
+                partes.push(format!("=== workspace {}: {name} ===", i_ws + 1));
             }
-            let multi_aba = tabs.len() > 1;
+            let multi_tab = tabs.len() > 1;
             for (i, t) in tabs.iter().enumerate() {
-                if multi_aba {
+                if multi_tab {
                     partes.push(format!("=== aba {}: {} ===", i + 1, t.title()));
                 }
                 partes.extend(dump_tab(t, i == active));
@@ -550,10 +550,10 @@ impl App {
                 .rename
                 .as_ref()
                 .filter(|r| r.ws == i)
-                .map(|r| format!("{}|", r.texto));
+                .map(|r| format!("{}|", r.text));
             if i == self.ws_idx {
                 cards.push(crate::render::WsCard {
-                    nome: em_edicao.unwrap_or_else(|| self.ws_name.clone()),
+                    name: em_edicao.unwrap_or_else(|| self.ws_name.clone()),
                     titulo: self.tabs[self.active].title(),
                     n_tabs: self.tabs.len(),
                     ativa: true,
@@ -562,7 +562,7 @@ impl App {
                 let slot = if i < self.ws_idx { i } else { i - 1 };
                 let w = &self.parked[slot];
                 cards.push(crate::render::WsCard {
-                    nome: em_edicao.unwrap_or_else(|| w.name.clone()),
+                    name: em_edicao.unwrap_or_else(|| w.name.clone()),
                     titulo: w.tabs[w.active].title(),
                     n_tabs: w.tabs.len(),
                     ativa: false,
@@ -583,16 +583,16 @@ impl App {
 
     /// O que a barra mostra: número, título e alerta de BEL de cada aba.
     fn tabinfo(&self) -> Vec<crate::render::TabInfo> {
-        let agora = std::time::Instant::now();
+        let now = std::time::Instant::now();
         self.tabs
             .iter()
             .enumerate()
             .map(|(i, t)| crate::render::TabInfo {
                 titulo: t.title(),
                 ativa: i == self.active,
-                alerta: t
+                alert: t
                     .bell_at
-                    .is_some_and(|quando| agora.duration_since(quando) < FLASH_DUR),
+                    .is_some_and(|when| now.duration_since(when) < FLASH_DUR),
             })
             .collect()
     }
@@ -650,11 +650,11 @@ impl App {
         let mut x = f64::from(pad) + f64::from(self.side_w(cw));
         for (i, t) in info.iter().enumerate() {
             let rotulo = format!(" {} {} ", i + 1, t.titulo);
-            let largura = rotulo.chars().count() as f64 * f64::from(cw);
-            if px >= x && px < x + largura {
+            let width = rotulo.chars().count() as f64 * f64::from(cw);
+            if px >= x && px < x + width {
                 return Some(i);
             }
-            x += largura;
+            x += width;
         }
         None
     }
@@ -670,12 +670,12 @@ impl App {
             return None;
         }
         // a sidebar começa na linha 1, ao lado da barra de abas (não abaixo)
-        let topo = f64::from(pad);
-        if py < topo {
+        let top = f64::from(pad);
+        if py < top {
             return None;
         }
         let card_h = f64::from(ch) * 2.4;
-        let i = ((py - topo) / card_h) as usize;
+        let i = ((py - top) / card_h) as usize;
         if i < self.ws_count() {
             Some(i)
         } else {
@@ -978,15 +978,15 @@ impl App {
             };
             // press e release do mesmo entalhe chegam quase juntos (1 ms) e
             // têm o mesmo sentido; duas voltas de verdade ficam a >10 ms
-            let agora = std::time::Instant::now();
-            let sentido: i8 = if dir > 0.0 { 1 } else { -1 };
-            let repetido = self.bar_wheel.is_some_and(|(quando, anterior)| {
-                anterior == sentido && agora.duration_since(quando).as_millis() < 10
+            let now = std::time::Instant::now();
+            let direction: i8 = if dir > 0.0 { 1 } else { -1 };
+            let repetido = self.bar_wheel.is_some_and(|(when, previous)| {
+                previous == direction && now.duration_since(when).as_millis() < 10
             });
             if repetido {
                 return;
             }
-            self.bar_wheel = Some((agora, sentido));
+            self.bar_wheel = Some((now, direction));
             let n = self.tabs.len();
             let at = if dir > 0.0 {
                 (self.active + n - 1) % n
@@ -1041,11 +1041,11 @@ impl App {
                 // duplo clique edita o nome no lugar (I8)
                 if let Some(i) = self.card_at(self.cursor_px.0, self.cursor_px.1) {
                     self.bar_press = None;
-                    let duplo = self
+                    let double = self
                         .card_click
-                        .is_some_and(|(j, quando)| j == i && quando.elapsed().as_millis() < 400);
+                        .is_some_and(|(j, when)| j == i && when.elapsed().as_millis() < 400);
                     self.card_click = Some((i, std::time::Instant::now()));
-                    if duplo {
+                    if double {
                         self.card_click = None;
                         self.start_rename(i);
                     } else {
@@ -1139,28 +1139,27 @@ impl App {
         let info = self.tabinfo();
         // onde o press começou e onde estamos: x pixel da aba i no arrasto
         let mut x = f64::from(pad);
-        let mut hoje = None;
+        let mut today = None;
         for (k, t) in info.iter().enumerate() {
-            let largura =
-                format!(" {} {} ", k + 1, t.titulo).chars().count() as f64 * f64::from(cw);
+            let width = format!(" {} {} ", k + 1, t.titulo).chars().count() as f64 * f64::from(cw);
             if k == i {
-                hoje = Some((x, largura));
+                today = Some((x, width));
                 break;
             }
-            x += largura;
+            x += width;
         }
-        let Some((_, largura)) = hoje else {
+        let Some((_, width)) = today else {
             return;
         };
         let dx = self.cursor_px.0 - x0;
-        let passo = largura.max(f64::from(cw));
-        let n = ((dx / passo).round() as i64).unsigned_abs() as usize;
-        if n == 0 || dx.abs() < passo / 2.0 {
+        let step = width.max(f64::from(cw));
+        let n = ((dx / step).round() as i64).unsigned_abs() as usize;
+        if n == 0 || dx.abs() < step / 2.0 {
             return;
         }
-        let destino = if dx > 0.0 { i + n } else { i.saturating_sub(n) };
-        self.move_tab(i, destino);
-        self.bar_press = Some((destino, x0));
+        let dest = if dx > 0.0 { i + n } else { i.saturating_sub(n) };
+        self.move_tab(i, dest);
+        self.bar_press = Some((dest, x0));
         self.redraw();
     }
 
@@ -1192,14 +1191,14 @@ impl App {
             return;
         }
         let (col, row) = self.cell_at(x, y);
-        let novo = Span::new(
+        let new = Span::new(
             anchor,
             self.tabs[self.active]
                 .term
                 .anchor_at(self.tabs[self.active].view_off, row, col),
         );
-        if self.tabs[self.active].sel != Some(novo) {
-            self.tabs[self.active].sel = Some(novo);
+        if self.tabs[self.active].sel != Some(new) {
+            self.tabs[self.active].sel = Some(new);
             self.redraw();
         }
     }
@@ -1293,22 +1292,22 @@ impl App {
             // para qualquer aba: o tema é do emulador, não da aba.
             if self.tabs[i].term.theme_dirty {
                 self.tabs[i].term.theme_dirty = false;
-                let tema = self.tabs[i].term.theme.clone();
+                let theme = self.tabs[i].term.theme.clone();
                 if let Some(r) = self.renderer.as_mut() {
-                    r.apply_theme(&tema);
+                    r.apply_theme(&theme);
                 }
             }
             // I4: título por OSC 0/2 (o shell põe "~/projeto" e o `vim` o nome
             // do arquivo); o `bzmux` é o padrão e não conta como pedido
             let titulo = self.tabs[i].term.title.clone();
             if titulo != self.tabs[i].osc_title {
-                let era = i == self.active;
+                let was = i == self.active;
                 self.tabs[i].osc_title = if titulo == "bzmux" {
                     String::new()
                 } else {
                     titulo
                 };
-                if era {
+                if was {
                     self.sync_title();
                 }
             }
@@ -1357,8 +1356,8 @@ impl App {
     /// Sem isto o cursor pode "sumir" no exato instante em que a pessoa olha.
     fn blink_reset(&mut self) {
         self.blink_epoch = std::time::Instant::now();
-        if !self.blink_fase {
-            self.blink_fase = true;
+        if !self.blink_phase {
+            self.blink_phase = true;
             if let Some(w) = self.window.as_ref() {
                 w.request_redraw();
             }
@@ -1371,10 +1370,10 @@ impl App {
     /// por `CSI 6 q` (4/6 = fixo). O texto com SGR 5 pisca sempre — é o
     /// programa que pediu, não a config.
     fn blink(&self) -> crate::render::Blink {
-        let fase = self.blink_fase;
+        let phase = self.blink_phase;
         crate::render::Blink {
-            fase,
-            cursor: !self.cursor_pisca() || fase,
+            phase,
+            cursor: !self.cursor_pisca() || phase,
         }
     }
 
@@ -1390,46 +1389,46 @@ impl App {
 
     /// Tem alguma coisa piscando na tela (cursor ou texto com SGR 5)? Só nesse
     /// caso o loop precisa acordar no meio do período.
-    fn pisca_ativo(&self) -> bool {
+    fn pisca_active(&self) -> bool {
         (self.cursor_pisca() && self.tabs[self.active].term.cursor_visible)
-            || self.tem_texto_piscando()
+            || self.has_text_piscando()
     }
 
     /// Há célula com SGR 5 na tela? Sem isto o loop não teria por que acordar
     /// no meio do período do pisca quando o cursor está fixo.
-    fn tem_texto_piscando(&self) -> bool {
+    fn has_text_piscando(&self) -> bool {
         self.blink_text
     }
 
     /// Mostra um aviso na tela. Mensagem igual seguida vira contagem ("×3"),
     /// não uma fila — quem salva o arquivo dez vezes não quer dez avisos.
     #[allow(clippy::needless_pass_by_value)] // quem chama monta o texto na hora
-    fn toast(&mut self, texto: String) {
+    fn toast(&mut self, text: String) {
         let vezes = match self.toast.take() {
-            Some(t) if t.texto == texto => t.vezes + 1,
+            Some(t) if t.text == text => t.vezes + 1,
             _ => 1,
         };
         self.toast = Some(Toast {
-            texto: texto.clone(),
+            text: text.clone(),
             desde: std::time::Instant::now(),
             vezes,
         });
-        logln(&format!("toast: {texto}"));
+        logln(&format!("toast: {text}"));
         if let Some(w) = self.window.as_ref() {
             w.request_redraw();
         }
     }
 
     /// Texto do toast para o renderer (com a contagem quando houve repetição).
-    fn toast_texto(&self) -> Option<String> {
+    fn toast_text(&self) -> Option<String> {
         let t = self.toast.as_ref()?;
         if t.desde.elapsed() > TOAST_DUR {
             return None;
         }
         Some(if t.vezes > 1 {
-            format!("{} (×{})", t.texto, t.vezes)
+            format!("{} (×{})", t.text, t.vezes)
         } else {
-            t.texto.clone()
+            t.text.clone()
         })
     }
 
@@ -1456,8 +1455,8 @@ impl App {
     /// `mtime`; mudou, reparseia. **Qualquer** erro mantém a configuração que
     /// já estava valendo — meia configuração é pior que nenhuma.
     fn check_config(&mut self) {
-        const INTERVALO: Duration = Duration::from_millis(250);
-        if self.cfg_checked.elapsed() < INTERVALO {
+        const INTERVAL: Duration = Duration::from_millis(250);
+        if self.cfg_checked.elapsed() < INTERVAL {
             return;
         }
         self.cfg_checked = std::time::Instant::now();
@@ -1474,7 +1473,7 @@ impl App {
         let Ok(text) = std::fs::read_to_string(&path) else {
             return;
         };
-        let (novo, errs) = crate::cli::Options::build(self.over.clone());
+        let (new, errs) = crate::cli::Options::build(self.over.clone());
         self.cfg_errors = errs.iter().map(std::string::ToString::to_string).collect();
         if !errs.is_empty() {
             logln(&format!(
@@ -1485,7 +1484,7 @@ impl App {
             ));
             // K13: o arquivo é editado num editor, que não mostra o nosso log —
             // o aviso tem que aparecer na tela, com a primeira linha e a conta.
-            self.toast(aviso_config(&errs));
+            self.toast(notice_config(&errs));
             return;
         }
         logln(&format!("config: {} recarregada", path.display()));
@@ -1494,43 +1493,43 @@ impl App {
         if self
             .toast
             .as_ref()
-            .is_some_and(|t| t.texto.starts_with("config"))
+            .is_some_and(|t| t.text.starts_with("config"))
         {
             self.toast("config recarregada".to_string());
         }
-        self.apply_options(novo, &text);
+        self.apply_options(new, &text);
     }
 
     /// Aplica configuração nova no que já está rodando.
-    fn apply_options(&mut self, novo: Options, text: &str) {
-        let fonte_mudou = novo.font_family != self.opts.font_family
-            || (novo.font_size_pt - self.opts.font_size_pt).abs() > f32::EPSILON
-            || (novo.dpi - self.opts.dpi).abs() > f32::EPSILON;
-        let log_mudou = novo.debug_log != self.opts.debug_log;
-        self.tabs[self.active].term.scrollback_limit = novo.scrollback;
+    fn apply_options(&mut self, new: Options, text: &str) {
+        let font_mudou = new.font_family != self.opts.font_family
+            || (new.font_size_pt - self.opts.font_size_pt).abs() > f32::EPSILON
+            || (new.dpi - self.opts.dpi).abs() > f32::EPSILON;
+        let log_mudou = new.debug_log != self.opts.debug_log;
+        self.tabs[self.active].term.scrollback_limit = new.scrollback;
         while self.tabs[self.active].term.scrollback.len()
             > self.tabs[self.active].term.scrollback_limit
         {
             self.tabs[self.active].term.scrollback.pop_front();
         }
-        self.opts.cfg = novo.cfg.clone();
-        self.opts.scrollback = novo.scrollback;
-        self.tabs[self.active].term.theme = novo.cfg.theme();
+        self.opts.cfg = new.cfg.clone();
+        self.opts.scrollback = new.scrollback;
+        self.tabs[self.active].term.theme = new.cfg.theme();
         if let Some(r) = self.renderer.as_mut() {
             r.apply_theme(&self.tabs[self.active].term.theme);
-            r.apply_layout(&novo.cfg);
+            r.apply_layout(&new.cfg);
         }
-        if let Some(path) = novo.debug_log.as_deref() {
+        if let Some(path) = new.debug_log.as_deref() {
             set_log(path);
         }
         let _ = text;
-        if fonte_mudou {
-            self.opts.font_family = novo.font_family;
-            self.opts.font_size_pt = novo.font_size_pt;
-            self.opts.dpi = novo.dpi;
+        if font_mudou {
+            self.opts.font_family = new.font_family;
+            self.opts.font_size_pt = new.font_size_pt;
+            self.opts.dpi = new.dpi;
             self.rebuild_renderer();
         }
-        if log_mudou && novo.debug_log.is_none() {
+        if log_mudou && new.debug_log.is_none() {
             set_log("");
         }
         // a margem mudou: o grid é outro, então pede o tamanho de novo
@@ -1548,7 +1547,7 @@ impl App {
     /// Fonte mudou: o atlas é outro, então refaz fonte + renderer (a janela e
     /// o pty continuam os mesmos).
     fn rebuild_renderer(&mut self) {
-        let (Some(window), Some(velho)) = (self.window.clone(), self.renderer.take()) else {
+        let (Some(window), Some(old)) = (self.window.clone(), self.renderer.take()) else {
             return;
         };
         let scale = window.scale_factor();
@@ -1556,11 +1555,11 @@ impl App {
             Ok(f) => f,
             Err(e) => {
                 logln(&format!("fonte: {e}"));
-                self.renderer = Some(velho);
+                self.renderer = Some(old);
                 return;
             },
         };
-        drop(velho);
+        drop(old);
         match Renderer::new(&window, fonts, self.opts.vsync, &self.opts.cfg) {
             Ok(r) => self.renderer = Some(r),
             Err(e) => logln(&format!("GPU ao trocar de fonte: {e}")),
@@ -1572,7 +1571,7 @@ impl App {
     fn redraw(&mut self) {
         self.drain();
         let blink = self.blink();
-        let toast = self.toast_texto();
+        let toast = self.toast_text();
         let tabs = if self.tabs.len() > 1 {
             Some(self.tabinfo())
         } else {
@@ -1585,7 +1584,7 @@ impl App {
             None
         };
         let frame = crate::render::Frame {
-            aba: self.tabs[self.active].id,
+            tab: self.tabs[self.active].id,
             term: &self.tabs[self.active].term,
             view_off: self.tabs[self.active].view_off,
             sel: self.tabs[self.active].sel,
@@ -1719,8 +1718,8 @@ impl App {
                     // dano (A17/G17): quantas linhas/células foram remontadas
                     // desde o início. É a prova de que o desenho parcial
                     // funciona — sem depender de olhar a tela.
-                    "draws": self.renderer.as_ref().map_or(0, |r| r.draws),
-                    "last_frame": self.renderer.as_ref().map_or("", |r| r.ultimo),
+                    "draws": self.renderer.as_ref().map_or(0, |r| r.draw),
+                    "last_frame": self.renderer.as_ref().map_or("", |r| r.last),
                     "drawn": self.renderer.as_ref().map_or(0, |r| r.drawn),
                     "skips": self.renderer.as_ref().map_or(0, |r| r.skips),
                     "last_damage": self.renderer.as_ref().map_or("", |r| r.last_damage.as_str()),
@@ -1745,7 +1744,7 @@ impl App {
                             serde_json::json!({
                                 "id": p.image_id,
                                 "col": p.col,
-                                "row": p.linha,
+                                "row": p.line,
                                 "cols": p.cols,
                                 "rows": p.rows,
                                 "dx": p.dx,
@@ -1757,7 +1756,7 @@ impl App {
                     "tab_titles": self.tabs.iter().map(Tab::title).collect::<Vec<_>>(),
                     "workspaces": self.ws_count(),
                     "ws": self.ws_idx,
-                    "ws_names": self.wscards().into_iter().map(|c| c.nome).collect::<Vec<_>>(),
+                    "ws_names": self.wscards().into_iter().map(|c| c.name).collect::<Vec<_>>(),
                     "errors": self.cfg_errors,
                     "xid": self.xid(),
                     "config": self.opts.cfg_path.as_ref().map_or_else(String::new, |p| p.display().to_string()),
@@ -1836,7 +1835,7 @@ impl App {
                         self.select_tab(n);
                     },
                     "state" => {},
-                    outro => return debugsock::err(format!("op de tab: {outro:?}")),
+                    other => return debugsock::err(format!("op de tab: {other:?}")),
                 }
                 debugsock::ok(serde_json::json!({
                     "tabs": self.tabs.len(),
@@ -2053,7 +2052,7 @@ impl App {
     /// Ordem: grade pedida na linha de comando (é medição) desliga o lembrar;
     /// sem ela decide o estado lembrado, se passar pelo `state::fit`; e o
     /// último recurso é o tamanho relativo à grade pedida.
-    fn geometria_inicial(
+    fn geometry_initial(
         &mut self,
         event_loop: &ActiveEventLoop,
         fonts: &Fonts,
@@ -2064,8 +2063,8 @@ impl App {
             ((self.opts.rows as f32 * fonts.ch + pad).ceil() as u32).max(1),
         );
         self.geom_normal = padrao;
-        self.lembrar_geom = !self.opts.grid_explicito;
-        if !self.lembrar_geom {
+        self.remember_geom = !self.opts.grid_explicito;
+        if !self.remember_geom {
             return (padrao.0, padrao.1, None, false);
         }
         let monitores: Vec<crate::state::Monitor> = event_loop
@@ -2093,8 +2092,8 @@ impl App {
 
     /// Grava posição, tamanho normal e maximizado (J2–J6). Falhar aqui não pode
     /// atrapalhar o fechamento — o `state::save` já engole erro de I/O.
-    fn salva_geometria(&mut self) {
-        if !self.lembrar_geom {
+    fn save_geometry(&mut self) {
+        if !self.remember_geom {
             return; // grade pedida na linha de comando: não lembra (é medição)
         }
         let maximizado = self.window.as_ref().is_some_and(|w| w.is_maximized());
@@ -2150,7 +2149,7 @@ impl App {
         if i >= self.ws_count() {
             return;
         }
-        let atual = if i == self.ws_idx {
+        let current = if i == self.ws_idx {
             self.ws_name.clone()
         } else {
             let slot = if i < self.ws_idx { i } else { i - 1 };
@@ -2158,15 +2157,15 @@ impl App {
         };
         self.rename = Some(Rename {
             ws: i,
-            texto: atual,
-            substituir: true,
+            text: current,
+            replace: true,
         });
         self.redraw();
     }
 
     /// Aplica (ou descarta) o nome em edição. `keep=false` é o Esc.
     fn finish_rename(&mut self, keep: bool) {
-        let Some(Rename { ws: i, texto, .. }) = self.rename.take() else {
+        let Some(Rename { ws: i, text, .. }) = self.rename.take() else {
             return;
         };
         if !keep {
@@ -2176,16 +2175,16 @@ impl App {
         // o nome vai para o cartão e para o cabeçalho do `dump`: mesma regra do
         // título de aba (controle, zero-width, direção) — o campo é digitação
         // livre, não payload de terminal
-        let novo = bzmux_core::term::sanitize_title(&texto).trim().to_string();
-        if novo.is_empty() {
+        let new = bzmux_core::term::sanitize_title(&text).trim().to_string();
+        if new.is_empty() {
             self.redraw();
             return;
         }
         if i == self.ws_idx {
-            self.ws_name = novo;
+            self.ws_name = new;
         } else {
             let slot = if i < self.ws_idx { i } else { i - 1 };
-            self.parked[slot].name = novo;
+            self.parked[slot].name = new;
         }
         self.redraw();
     }
@@ -2201,11 +2200,11 @@ impl App {
             Some(NamedKey::Escape) => self.finish_rename(false),
             Some(NamedKey::Backspace) => {
                 if let Some(r) = self.rename.as_mut() {
-                    if r.substituir {
-                        r.texto.clear();
-                        r.substituir = false;
+                    if r.replace {
+                        r.text.clear();
+                        r.replace = false;
                     } else {
-                        r.texto.pop();
+                        r.text.pop();
                     }
                 }
                 self.redraw();
@@ -2216,18 +2215,18 @@ impl App {
                 };
                 // tecla que só produz invisível (ou controle) não entra no
                 // campo: o nome em edição é desenhado no cartão como está
-                let limpo = bzmux_core::term::sanitize_title(s);
-                if limpo.is_empty() {
+                let clean = bzmux_core::term::sanitize_title(s);
+                if clean.is_empty() {
                     return true;
                 }
                 if let Some(r) = self.rename.as_mut() {
-                    if r.substituir {
-                        r.texto.clear();
-                        r.substituir = false;
+                    if r.replace {
+                        r.text.clear();
+                        r.replace = false;
                     }
                     // só o que cabe no cartão; o resto seria invisível
-                    if r.texto.chars().count() + limpo.chars().count() <= 40 {
-                        r.texto.push_str(&limpo);
+                    if r.text.chars().count() + clean.chars().count() <= 40 {
+                        r.text.push_str(&clean);
                     }
                 }
                 self.redraw();
@@ -2254,7 +2253,7 @@ impl App {
             .map(|j| if j == old { None } else { parked.next() })
             .collect();
         all[old] = Some(cur);
-        let novo = all[i].take().expect("workspace do índice lógico");
+        let new = all[i].take().expect("workspace do índice lógico");
         self.ws_idx = i;
         self.parked = all
             .into_iter()
@@ -2262,7 +2261,7 @@ impl App {
             .filter(|(j, _)| *j != i)
             .map(|(_, w)| w.expect("só o slot alvo fica vazio"))
             .collect();
-        novo.into_current(self);
+        new.into_current(self);
         self.after_ws_change();
     }
 
@@ -2303,8 +2302,8 @@ impl App {
             self.redraw();
             return;
         }
-        let novo = self.parked.remove(0);
-        novo.into_current(self);
+        let new = self.parked.remove(0);
+        new.into_current(self);
         self.ws_idx = 0;
         self.after_ws_change();
     }
@@ -2495,7 +2494,7 @@ impl ApplicationHandler<UserEvent> for App {
         // a margem entra no pedido: a grade é `cols*cw` e o resto é padding
         // sinais: `SIGUSR1` (dump) e `SIGTERM` (sair limpo), como no Python
         instala_sinais();
-        let (w, h, pos, maximizado) = self.geometria_inicial(event_loop, &fonts);
+        let (w, h, pos, maximizado) = self.geometry_initial(event_loop, &fonts);
         let mut attrs = Window::default_attributes()
             .with_title("bzmux")
             .with_inner_size(PhysicalSize::new(w, h))
@@ -2594,7 +2593,7 @@ impl ApplicationHandler<UserEvent> for App {
                     .tabs
                     .get(self.active)
                     .is_some_and(|t| t.term.sync_output);
-                self.gate.pedir(std::time::Instant::now(), sync);
+                self.gate.request(std::time::Instant::now(), sync);
             },
             UserEvent::Debug(line, reply) => {
                 let out = self.debug_dispatch(&line);
@@ -2666,36 +2665,36 @@ impl ApplicationHandler<UserEvent> for App {
         self.check_config();
         if !self.startup_errs.is_empty() {
             let errs = std::mem::take(&mut self.startup_errs);
-            self.toast(aviso_config(&errs));
+            self.toast(notice_config(&errs));
         }
 
-        let agora = std::time::Instant::now();
+        let now = std::time::Instant::now();
         // o reload precisa de um tique mesmo sem evento nenhum
-        let mut quando = agora + Duration::from_millis(250);
+        let mut when = now + Duration::from_millis(250);
         // frame coalescido: venceu → um pedido de desenho; senão acorda nele
-        if self.gate.venceu(agora) {
+        if self.gate.venceu(now) {
             if let Some(w) = self.window.as_ref() {
                 w.request_redraw();
             }
         }
-        if let Some(t) = self.gate.quando() {
-            quando = quando.min(t);
+        if let Some(t) = self.gate.when() {
+            when = when.min(t);
         }
 
         // sinais: o handler só levanta a bandeira, quem age é aqui
-        let (dump, terminar) = sinais();
+        let (dump, finish) = sinais();
         if dump {
             self.dump();
         }
-        if terminar {
+        if finish {
             self.dump();
             self.exiting = true;
             event_loop.exit();
             return;
         }
         // `--quit-after`: fecha sozinho (automação) e deixa o dump
-        if self.prazo.is_some_and(|p| agora >= p) {
-            self.prazo = None;
+        if self.deadline.is_some_and(|p| now >= p) {
+            self.deadline = None;
             self.dump();
             self.exiting = true;
             event_loop.exit();
@@ -2716,27 +2715,27 @@ impl ApplicationHandler<UserEvent> for App {
 
         // pisca: acorda na virada seguinte da fase; redesenha só quando ela
         // vira de verdade (um redesenho a cada 500 ms, não a cada tique)
-        if self.pisca_ativo() {
+        if self.pisca_active() {
             let e = self.blink_epoch.elapsed().as_millis() as u64;
-            let proxima = (e / BLINK_MS + 1) * BLINK_MS;
-            quando = quando.min(self.blink_epoch + Duration::from_millis(proxima));
-            let fase = (e / BLINK_MS).is_multiple_of(2);
-            if fase != self.blink_fase {
-                self.blink_fase = fase;
+            let next = (e / BLINK_MS + 1) * BLINK_MS;
+            when = when.min(self.blink_epoch + Duration::from_millis(next));
+            let phase = (e / BLINK_MS).is_multiple_of(2);
+            if phase != self.blink_phase {
+                self.blink_phase = phase;
                 if let Some(w) = self.window.as_ref() {
                     w.request_redraw();
                 }
             }
         }
 
-        event_loop.set_control_flow(ControlFlow::WaitUntil(quando));
+        event_loop.set_control_flow(ControlFlow::WaitUntil(when));
         // flash do BEL (I13): acorda quando o primeiro rótulo apaga e
         // redesenha uma vez para tirar o destaque
-        let agora = std::time::Instant::now();
+        let now = std::time::Instant::now();
         let mut apagou = false;
         for t in &mut self.tabs {
             if t.bell_at
-                .is_some_and(|b| agora.duration_since(b) >= FLASH_DUR)
+                .is_some_and(|b| now.duration_since(b) >= FLASH_DUR)
             {
                 t.bell_at = None;
                 apagou = true;
@@ -2747,13 +2746,13 @@ impl ApplicationHandler<UserEvent> for App {
                 w.request_redraw();
             }
         }
-        let proximo_flash = self
+        let next_flash = self
             .tabs
             .iter()
             .filter_map(|t| t.bell_at)
             .map(|b| b + FLASH_DUR)
             .min();
-        if let Some(q) = proximo_flash {
+        if let Some(q) = next_flash {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 q.min(std::time::Instant::now() + Duration::from_millis(250)),
             ));
@@ -2780,7 +2779,7 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        self.salva_geometria();
+        self.save_geometry();
         if prof::enabled() || self.opts.prof {
             let summary = prof::summary();
             eprintln!("prof: {summary}");
@@ -2811,9 +2810,9 @@ fn dump_tab(t: &Tab, ativa: bool) -> Vec<String> {
     } else {
         String::new()
     };
-    let marca = if ativa { "" } else { " [fundo]" };
+    let mark = if ativa { "" } else { " [fundo]" };
     out.push(format!(
-        "=== viewport {}x{}{off}{marca} ===",
+        "=== viewport {}x{}{off}{mark} ===",
         t.term.cols, t.term.rows
     ));
     for y in 0..t.term.rows {
@@ -2825,15 +2824,15 @@ fn dump_tab(t: &Tab, ativa: bool) -> Vec<String> {
 // ------------------------------------------------------------ sinais
 
 /// `SIGUSR1` pediu um dump; `SIGTERM` pediu sair limpo (dump + fechar).
-static SINAL_DUMP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-static SINAL_TERM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SIGNAL_DUMP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SIGNAL_TERM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-extern "C" fn ao_usr1(_: libc::c_int) {
-    SINAL_DUMP.store(true, std::sync::atomic::Ordering::Relaxed);
+extern "C" fn on_usr1(_: libc::c_int) {
+    SIGNAL_DUMP.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
-extern "C" fn ao_term(_: libc::c_int) {
-    SINAL_TERM.store(true, std::sync::atomic::Ordering::Relaxed);
+extern "C" fn on_term(_: libc::c_int) {
+    SIGNAL_TERM.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Instala `SIGUSR1`/`SIGTERM`. O handler só levanta um `AtomicBool`: `store`
@@ -2845,8 +2844,8 @@ extern "C" fn ao_term(_: libc::c_int) {
 #[allow(unsafe_code)]
 pub fn instala_sinais() {
     unsafe {
-        libc::signal(libc::SIGUSR1, ao_usr1 as *const () as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, ao_term as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGUSR1, on_usr1 as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, on_term as *const () as libc::sighandler_t);
     }
 }
 
@@ -2854,7 +2853,7 @@ pub fn instala_sinais() {
 fn sinais() -> (bool, bool) {
     use std::sync::atomic::Ordering::Relaxed;
     (
-        SINAL_DUMP.swap(false, Relaxed),
-        SINAL_TERM.swap(false, Relaxed),
+        SIGNAL_DUMP.swap(false, Relaxed),
+        SIGNAL_TERM.swap(false, Relaxed),
     )
 }

@@ -106,7 +106,7 @@ pub fn run_all() -> (usize, Vec<String>) {
 /// no binário, e um `cargo test -p bzmux-core` verde não dizia nada sobre eles.
 #[cfg(test)]
 #[test]
-fn selftest_completo() {
+fn selftest_complete() {
     let (ok, falhas) = run_all();
     assert!(falhas.is_empty(), "{ok} ok, falhas:\n{}", falhas.join("\n"));
 }
@@ -119,13 +119,15 @@ fn term() -> Term {
 #[allow(clippy::needless_pass_by_value)]
 fn esperado<T: PartialEq + std::fmt::Debug>(
     o_que: &str,
-    obtido: T,
+    obtained: T,
     esperado: T,
 ) -> Result<(), String> {
-    if obtido == esperado {
+    if obtained == esperado {
         Ok(())
     } else {
-        Err(format!("{o_que}: esperado {esperado:?}, obtido {obtido:?}"))
+        Err(format!(
+            "{o_que}: esperado {esperado:?}, obtido {obtained:?}"
+        ))
     }
 }
 
@@ -186,8 +188,8 @@ fn truecolor_and_palette() -> Result<(), String> {
     let pal = cfg.palette256();
     esperado("paleta do tema", pal[1], (0xff, 0, 0))?;
     esperado("cubo 6x6x6 intacto", pal[196], (255, 0, 0))?;
-    let tema = cfg.theme();
-    esperado("fg do tema", tema.rgb(tema.fg, (0, 0, 0)), (1, 2, 3))?;
+    let theme = cfg.theme();
+    esperado("fg do tema", theme.rgb(theme.fg, (0, 0, 0)), (1, 2, 3))?;
     Ok(())
 }
 
@@ -252,7 +254,7 @@ fn reflow() -> Result<(), String> {
     let mut t = Term::new(10, 4);
     t.feed(b"abcdefghijklmnopqrstuvwxy");
     t.resize(5, 4);
-    let junto: String = t
+    let together: String = t
         .scrollback
         .iter()
         .chain(t.grid.iter())
@@ -260,7 +262,7 @@ fn reflow() -> Result<(), String> {
         .collect::<String>();
     esperado(
         "texto preservado",
-        junto,
+        together,
         "abcdefghijklmnopqrstuvwxy".to_string(),
     )?;
     t.resize(10, 4);
@@ -278,8 +280,8 @@ fn selection_follows_history() -> Result<(), String> {
     for _ in 0..3 {
         t.feed(b"\r\n");
     }
-    let achado = t.span_text(&span).ok_or("âncora morreu sem motivo")?;
-    esperado("seleção sobrevive ao scroll", achado, "linha-a".to_string())?;
+    let found = t.span_text(&span).ok_or("âncora morreu sem motivo")?;
+    esperado("seleção sobrevive ao scroll", found, "linha-a".to_string())?;
     Ok(())
 }
 

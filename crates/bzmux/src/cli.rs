@@ -237,25 +237,25 @@ mod checks_cli {
         }
     }
 
-    fn erro(v: &[&str]) -> String {
+    fn error(v: &[&str]) -> String {
         match parse(args(v)) {
             Ok(_) => panic!("{v:?} devia ser erro de uso"),
             Err(e) => e,
         }
     }
 
-    fn perto(a: f32, b: f32) -> bool {
+    fn near(a: f32, b: f32) -> bool {
         (a - b).abs() < f32::EPSILON
     }
 
-    fn conf_temporario(nome: &str, texto: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("bzmux-{}-{nome}.conf", std::process::id()));
-        std::fs::write(&p, texto).expect("escrever o config de teste");
+    fn conf_temporario(name: &str, text: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("bzmux-{}-{name}.conf", std::process::id()));
+        std::fs::write(&p, text).expect("escrever o config de teste");
         p
     }
 
     #[test]
-    fn argv_vazio_nao_pede_nada() {
+    fn argv_empty_not_asks_nada() {
         // sem argumento nada é sobrescrito: os padrões entram no `build`
         let o = ok(&[]);
         assert!(o.cmd.is_none(), "cmd");
@@ -269,7 +269,7 @@ mod checks_cli {
     }
 
     #[test]
-    fn argv_comando_e_grade() {
+    fn argv_command_e_grade() {
         let o = ok(&["--cmd", "mc", "--quit-after", "2"]);
         assert_eq!(o.cmd.as_deref(), Some("mc"));
         assert_eq!(o.quit_after, Some(2));
@@ -281,10 +281,10 @@ mod checks_cli {
     }
 
     #[test]
-    fn argv_config_tem_dois_nomes() {
-        for nome in ["-c", "--config"] {
-            let o = ok(&[nome, "/tmp/x.conf"]);
-            assert_eq!(o.config.as_deref(), Some("/tmp/x.conf"), "{nome}");
+    fn argv_config_has_two_nomes() {
+        for name in ["-c", "--config"] {
+            let o = ok(&[name, "/tmp/x.conf"]);
+            assert_eq!(o.config.as_deref(), Some("/tmp/x.conf"), "{name}");
         }
     }
 
@@ -303,7 +303,7 @@ mod checks_cli {
     }
 
     #[test]
-    fn argv_resto_das_opcoes() {
+    fn argv_rest_of_opcoes() {
         let o = ok(&[
             "--font-family",
             "Hack",
@@ -320,8 +320,8 @@ mod checks_cli {
             "/tmp/d.txt",
         ]);
         assert_eq!(o.font_family.as_deref(), Some("Hack"));
-        assert!(o.font_size_pt.is_some_and(|v| perto(v, 13.5)));
-        assert!(o.dpi.is_some_and(|v| perto(v, 120.0)));
+        assert!(o.font_size_pt.is_some_and(|v| near(v, 13.5)));
+        assert!(o.dpi.is_some_and(|v| near(v, 120.0)));
         assert_eq!(o.scrollback, Some(500));
         assert!(o.no_vsync && o.prof && o.selftest);
         assert_eq!(o.dump_to.as_deref(), Some("/tmp/d.txt"));
@@ -329,30 +329,30 @@ mod checks_cli {
     }
 
     #[test]
-    fn argv_erro_de_uso() {
+    fn argv_error_de_uso() {
         // valor faltando: a mensagem nomeia a opção
-        let e = erro(&["--cmd"]);
+        let e = error(&["--cmd"]);
         assert!(e.contains("--cmd") && e.starts_with("falta"), "{e}");
-        let e = erro(&["--debug-socket"]);
+        let e = error(&["--debug-socket"]);
         assert!(e.contains("--debug-socket"), "{e}");
         // opção desconhecida: erro de uso com a ajuda junto
-        let e = erro(&["--nada"]);
+        let e = error(&["--nada"]);
         assert!(e.starts_with("opção desconhecida"), "{e}");
         assert!(e.contains("--nada") && e.contains("--cmd"), "{e}");
         // valor que não é número
-        let e = erro(&["--quit-after", "abc"]);
+        let e = error(&["--quit-after", "abc"]);
         assert!(e.contains("--quit-after") && e.contains("abc"), "{e}");
-        let e = erro(&["--font-size", "grande"]);
+        let e = error(&["--font-size", "grande"]);
         assert!(e.contains("--font-size") && e.contains("grande"), "{e}");
-        let e = erro(&["--rows", "-1"]);
+        let e = error(&["--rows", "-1"]);
         assert!(e.contains("--rows"), "{e}");
     }
 
     #[test]
     fn codigo_de_saida_do_uso() {
         // informativa = 0 (quem canaliza `--help` num script não vê erro)
-        assert_eq!(exit_code(&erro(&["--help"])), 0);
-        assert_eq!(exit_code(&erro(&["--version"])), 0);
+        assert_eq!(exit_code(&error(&["--help"])), 0);
+        assert_eq!(exit_code(&error(&["--version"])), 0);
         // erro de uso = 2, inclusive valor que não é número (saía 0 antes)
         for v in [
             &["--cols", "abc"][..],
@@ -360,24 +360,24 @@ mod checks_cli {
             &["--nada"][..],
             &["--cmd"][..],
         ] {
-            assert_eq!(exit_code(&erro(v)), 2, "{v:?}");
+            assert_eq!(exit_code(&error(v)), 2, "{v:?}");
         }
     }
 
     #[test]
     fn argv_help_e_version() {
         // --help e --version saem pelo mesmo caminho (Err), sem abrir janela
-        let h = erro(&["--help"]);
+        let h = error(&["--help"]);
         assert!(h.starts_with("bzmux"), "{h}");
         assert!(h.contains("USO:") && h.contains("--selftest"), "{h}");
-        assert_eq!(erro(&["-h"]), h);
-        let v = erro(&["--version"]);
+        assert_eq!(error(&["-h"]), h);
+        let v = error(&["--version"]);
         assert_eq!(v, format!("bzmux {}", env!("CARGO_PKG_VERSION")));
-        assert_eq!(erro(&["-V"]), v);
+        assert_eq!(error(&["-V"]), v);
     }
 
     #[test]
-    fn merge_do_arquivo_e_cli_vence() {
+    fn merge_do_file_e_cli_vence() {
         // o usuário só sobrescreve o que escreveu; a CLI vence chave a chave
         let p = conf_temporario(
             "merge",
@@ -391,7 +391,7 @@ mod checks_cli {
         let (opts, errs) = Options::build(base.clone());
         assert!(errs.is_empty(), "{errs:?}");
         assert_eq!(opts.font_family, "DejaVu Sans Mono");
-        assert!(perto(opts.font_size_pt, 14.0));
+        assert!(near(opts.font_size_pt, 14.0));
         assert_eq!(opts.scrollback, 200);
         assert_eq!(opts.cfg.bell, Bell::Visual);
         // `shell` é dado, não resolução: quem decide é o `pty::spawn`
@@ -399,7 +399,7 @@ mod checks_cli {
         assert_eq!(opts.cfg_path.as_deref(), Some(p.as_path()));
         // o que nem arquivo nem CLI trazem cai no padrão do código
         assert_eq!((opts.cols, opts.rows), (80, 24));
-        assert!(perto(opts.dpi, 96.0) && opts.vsync);
+        assert!(near(opts.dpi, 96.0) && opts.vsync);
         assert_eq!(opts.cmd, None);
 
         let cli = Overrides {
@@ -411,7 +411,7 @@ mod checks_cli {
         let (opts, errs) = Options::build(cli);
         assert!(errs.is_empty(), "{errs:?}");
         assert_eq!(opts.font_family, "Hack");
-        assert!(perto(opts.font_size_pt, 20.0));
+        assert!(near(opts.font_size_pt, 20.0));
         assert_eq!(opts.scrollback, 50);
         // a chave que a CLI não tocou continua vindo do arquivo
         assert_eq!(opts.cfg.bell, Bell::Visual);
@@ -431,17 +431,17 @@ mod checks_cli {
 
         // erro é por linha: o válido antes do erro aplica, o inválido fica no
         // padrão; quem loga/mostra é o `main` (aqui a lista vem com a linha)
-        let ruim = conf_temporario("ruim", "font_size 20\nbell beep\n");
+        let bad = conf_temporario("ruim", "font_size 20\nbell beep\n");
         let (opts, errs) = Options::build(Overrides {
-            config: Some(ruim.to_string_lossy().into_owned()),
+            config: Some(bad.to_string_lossy().into_owned()),
             ..Overrides::default()
         });
         assert_eq!(errs.len(), 1, "{errs:?}");
         assert_eq!(errs[0].line, 2);
-        assert!(perto(opts.font_size_pt, 20.0));
+        assert!(near(opts.font_size_pt, 20.0));
         assert_eq!(opts.cfg.bell, Bell::None);
 
-        for f in [&p, &ruim] {
+        for f in [&p, &bad] {
             let _ = std::fs::remove_file(f);
         }
     }

@@ -185,13 +185,13 @@ fn kitty_functional(n: NamedKey) -> Option<(u32, char)> {
 
 /// `CSI chave ; mods[:evento] [;texto] trailer`, sem campo que o terminal não
 /// precisa ver (é o mesmo cuidado do `_csi` do Python).
-fn kitty_csi(chave: u32, mods: u8, trailer: char, evento: Option<u8>, texto: &str) -> Vec<u8> {
-    let evento = evento.filter(|e| *e != PRESS);
+fn kitty_csi(key: u32, mods: u8, trailer: char, event: Option<u8>, text: &str) -> Vec<u8> {
+    let event = event.filter(|e| *e != PRESS);
     let mut out = String::from("\x1b[");
-    if chave != 1 || mods != 1 || evento.is_some() || !texto.is_empty() {
-        out.push_str(&chave.to_string());
+    if key != 1 || mods != 1 || event.is_some() || !text.is_empty() {
+        out.push_str(&key.to_string());
     }
-    if mods != 1 || evento.is_some() {
+    if mods != 1 || event.is_some() {
         out.push(';');
         if mods == 1 {
             out.push('1'); // sem modificador o campo ainda existe
@@ -199,11 +199,11 @@ fn kitty_csi(chave: u32, mods: u8, trailer: char, evento: Option<u8>, texto: &st
             out.push_str(&mods.to_string());
         }
     }
-    if let Some(e) = evento {
+    if let Some(e) = event {
         let _ = write!(out, ":{e}");
     }
-    if !texto.is_empty() {
-        let cps: Vec<String> = texto.chars().map(|c| (c as u32).to_string()).collect();
+    if !text.is_empty() {
+        let cps: Vec<String> = text.chars().map(|c| (c as u32).to_string()).collect();
         out.push(';');
         out.push_str(&cps.join(":"));
     }
@@ -226,7 +226,7 @@ fn kitty_encode(
     text: &str,
     mods: ModifiersState,
     flags: u32,
-    evento: u8,
+    event: u8,
 ) -> Kitty {
     let dis = flags & F_DISAMBIGUATE != 0;
     let ev_types = flags & F_EVENT_TYPES != 0;
@@ -234,7 +234,7 @@ fn kitty_encode(
     let embed = flags & F_TEXT != 0;
 
     // sem a flag 2 não existe release: o legado só sabe "a tecla saiu"
-    if evento == RELEASE && !ev_types {
+    if event == RELEASE && !ev_types {
         return Kitty::Legacy;
     }
     let m = 1
@@ -242,11 +242,11 @@ fn kitty_encode(
         + 2 * u8::from(mods.alt_key())
         + 4 * u8::from(mods.control_key())
         + 8 * u8::from(mods.super_key());
-    let texto = if embed { text } else { "" };
-    let ev = ev_types.then_some(evento);
+    let text = if embed { text } else { "" };
+    let ev = ev_types.then_some(event);
 
     if let Some(n) = named {
-        let Some((chave, trailer)) = kitty_functional(n) else {
+        let Some((key, trailer)) = kitty_functional(n) else {
             return Kitty::Legacy;
         };
         let especial = matches!(
@@ -267,7 +267,7 @@ fn kitty_encode(
         if especial && m == 1 && !(dis || all_keys) {
             return Kitty::Legacy; // ESC, CR, TAB, DEL clássicos
         }
-        return Kitty::Seq(kitty_csi(chave, m, trailer, ev, texto));
+        return Kitty::Seq(kitty_csi(key, m, trailer, ev, text));
     }
 
     let Some(cp) = character.and_then(|s| s.chars().next()) else {
@@ -287,7 +287,7 @@ fn kitty_encode(
     if !(dis || all_keys) {
         return Kitty::Legacy; // modificador sem disambiguate: xterm clássico
     }
-    Kitty::Seq(kitty_csi(cp, m, 'u', ev, texto))
+    Kitty::Seq(kitty_csi(cp, m, 'u', ev, text))
 }
 
 /// Traduz o evento. `None` = não manda nada (modificador, Super do WM, etc.).
@@ -297,7 +297,7 @@ pub fn encode(
     app_cursor: bool,
     kbd_flags: u32,
 ) -> Option<Vec<u8>> {
-    let evento = if ev.state == ElementState::Released {
+    let event = if ev.state == ElementState::Released {
         RELEASE
     } else if ev.repeat {
         REPEAT
@@ -320,7 +320,7 @@ pub fn encode(
         mods,
         app_cursor,
         kbd_flags,
-        evento,
+        event,
     )
 }
 
@@ -333,17 +333,10 @@ pub fn encode_event(
     mods: ModifiersState,
     app_cursor: bool,
     kbd_flags: u32,
-    evento: u8,
+    event: u8,
 ) -> Option<Vec<u8>> {
     if kbd_flags != 0 {
-        match kitty_encode(
-            named,
-            character,
-            text.unwrap_or(""),
-            mods,
-            kbd_flags,
-            evento,
-        ) {
+        match kitty_encode(named, character, text.unwrap_or(""), mods, kbd_flags, event) {
             Kitty::Seq(v) => return Some(v),
             Kitty::Legacy => {},
         }
@@ -351,7 +344,7 @@ pub fn encode_event(
     // release sem forma do kitty: não sai nada (E19 — senão o `pi`, que liga a
     // flag 2, recebia o texto duas vezes: o legado não sabe "a tecla saiu" e
     // mandava o texto de novo)
-    if evento == RELEASE {
+    if event == RELEASE {
         return None;
     }
     encode_parts(named, character, text, mods, app_cursor, kbd_flags)
@@ -446,14 +439,14 @@ mod tests {
     }
 
     #[test]
-    fn sem_flags_o_caminho_e_o_legado() {
+    fn without_flags_o_path_e_o_legado() {
         assert_eq!(enc(Some(NamedKey::Escape), None, NONE, 0), "\x1b");
         assert_eq!(enc(None, Some("a"), NONE, 0), "a");
         assert_eq!(enc(None, Some("a"), ModifiersState::CONTROL, 0), "\x01");
     }
 
     #[test]
-    fn flag_1_desambigua_escape_e_ctrl() {
+    fn flag_1_disambiguate_escape_e_ctrl() {
         let f = F_DISAMBIGUATE;
         // ESC vira CSI 27u (o "ESC sozinho" que o vim distingue de Alt+[)
         assert_eq!(enc(Some(NamedKey::Escape), None, NONE, f), "\x1b[27u");
@@ -475,7 +468,7 @@ mod tests {
     }
 
     #[test]
-    fn flag_8_manda_tudo_como_csi_u() {
+    fn flag_8_sends_all_como_csi_u() {
         let f = F_ALL_KEYS;
         assert_eq!(enc(None, Some("a"), NONE, f), "\x1b[97u");
         // Shift+letra deixa de ser texto puro. O código sai como 65 ('A') e não
@@ -501,7 +494,7 @@ mod tests {
     }
 
     #[test]
-    fn f3_usa_a_forma_do_kitty_e_nao_o_typo_do_python() {
+    fn f3_usa_a_shape_do_kitty_e_not_o_typo_do_python() {
         // `CSI 1;2R` (kitty) e não `CSI 13;2~` (o `kitty_kbd.py` tinha F3 como
         // 13~, que é Shift+F3 do xterm)
         assert_eq!(
@@ -516,7 +509,7 @@ mod tests {
     }
 
     #[test]
-    fn flag_16_embute_o_texto() {
+    fn flag_16_embute_o_text() {
         let f = F_ALL_KEYS | F_TEXT;
         assert_eq!(
             encode_parts(None, Some("a"), Some("a"), NONE, false, f)
@@ -526,13 +519,13 @@ mod tests {
         );
     }
 
-    fn ev(named: Option<NamedKey>, ch: Option<&str>, flags: u32, evento: u8) -> Option<String> {
-        encode_event(named, ch, ch, NONE, false, flags, evento)
+    fn ev(named: Option<NamedKey>, ch: Option<&str>, flags: u32, event: u8) -> Option<String> {
+        encode_event(named, ch, ch, NONE, false, flags, event)
             .map(|v| String::from_utf8_lossy(&v).to_string())
     }
 
     #[test]
-    fn release_e_repeat_seguem_a_flag_2() {
+    fn release_e_repeat_follow_a_flag_2() {
         // E19: release sem a flag 2 não manda nada (era o bug do `pi`, que
         // recebia o texto de novo porque o legado não sabe "a tecla saiu")
         assert_eq!(ev(None, Some("a"), F_DISAMBIGUATE, RELEASE), None);
@@ -558,7 +551,7 @@ mod tests {
 /// `Term` liga as flags (`CSI > u`, `CSI = u`, `CSI < u`, `CSI ? u`) e o encoder
 /// deste arquivo produz os bytes que vão para o filho.
 #[cfg(test)]
-mod checks_teclado {
+mod checks_keyboard {
     use super::*;
     use bzmux_core::term::Term;
 
@@ -581,8 +574,8 @@ mod checks_teclado {
     }
 
     /// Com texto associado diferente do caractere — é o caso da flag 16.
-    fn enc_texto(t: &Term, ch: &str, texto: &str) -> Option<String> {
-        encode_parts(None, Some(ch), Some(texto), NONE, t.app_cursor, t.kbd_flags)
+    fn enc_text(t: &Term, ch: &str, text: &str) -> Option<String> {
+        encode_parts(None, Some(ch), Some(text), NONE, t.app_cursor, t.kbd_flags)
             .map(|v| String::from_utf8_lossy(&v).to_string())
     }
 
@@ -592,14 +585,14 @@ mod checks_teclado {
         named: Option<NamedKey>,
         ch: Option<&str>,
         mods: ModifiersState,
-        evento: u8,
+        event: u8,
     ) -> Option<String> {
-        encode_event(named, ch, ch, mods, t.app_cursor, t.kbd_flags, evento)
+        encode_event(named, ch, ch, mods, t.app_cursor, t.kbd_flags, event)
             .map(|v| String::from_utf8_lossy(&v).to_string())
     }
 
     #[test]
-    fn push_pop_set_e_consulta_do_teclado_pelo_term() {
+    fn push_pop_set_e_consulta_do_keyboard_by_term() {
         let mut t = term();
         assert_eq!(t.kbd_flags, 0);
         // `CSI > 1 u`: empilha o estado atual (0) e passa a desambiguar
@@ -633,7 +626,7 @@ mod checks_teclado {
     }
 
     #[test]
-    fn flag_1_do_term_desambigua_escape_e_modificadores() {
+    fn flag_1_do_term_disambiguate_escape_e_modificadores() {
         let mut t = term();
         t.feed(b"\x1b[>1u");
         // ESC, Enter, Tab e Backspace saem como `CSI codigo u`
@@ -690,7 +683,7 @@ mod checks_teclado {
     }
 
     #[test]
-    fn decckm_decide_o_legado_e_nao_a_forma_do_kitty() {
+    fn decckm_decide_o_legado_e_not_a_shape_do_kitty() {
         let mut t = term();
         assert!(!t.app_cursor);
         assert_eq!(
@@ -739,7 +732,7 @@ mod checks_teclado {
     }
 
     #[test]
-    fn flag_8_manda_tudo_inclusive_super() {
+    fn flag_8_sends_all_inclusive_super() {
         let mut t = term();
         t.feed(b"\x1b[>8u");
         assert_eq!(enc(&t, None, Some("a"), NONE).as_deref(), Some("\x1b[97u"));
@@ -766,15 +759,15 @@ mod checks_teclado {
             Some("\x1b[97;9u")
         );
         // e sem flag nenhuma o Super continua não indo para o filho
-        let sem_flags = term();
+        let without_flags = term();
         assert_eq!(
-            enc(&sem_flags, None, Some("a"), ModifiersState::SUPER),
+            enc(&without_flags, None, Some("a"), ModifiersState::SUPER),
             None
         );
     }
 
     #[test]
-    fn flag_2_tecla_segurada_e_soltura() {
+    fn flag_2_key_segurada_e_release() {
         let mut t = term();
         t.feed(b"\x1b[>10u"); // 2|8
         assert_eq!(
@@ -797,33 +790,33 @@ mod checks_teclado {
         );
         // só a flag 2: texto continua texto e a soltura não sai duas vezes
         // (E19 — o legado não sabe "a tecla saiu")
-        let mut so_eventos = term();
-        so_eventos.feed(b"\x1b[>2u");
+        let mut only_eventos = term();
+        only_eventos.feed(b"\x1b[>2u");
         assert_eq!(
-            enc_ev(&so_eventos, None, Some("a"), NONE, PRESS).as_deref(),
+            enc_ev(&only_eventos, None, Some("a"), NONE, PRESS).as_deref(),
             Some("a")
         );
-        assert_eq!(enc_ev(&so_eventos, None, Some("a"), NONE, RELEASE), None);
+        assert_eq!(enc_ev(&only_eventos, None, Some("a"), NONE, RELEASE), None);
         // ESC sem disambiguate também não tem release
         assert_eq!(
-            enc_ev(&so_eventos, Some(NamedKey::Escape), None, NONE, RELEASE),
+            enc_ev(&only_eventos, Some(NamedKey::Escape), None, NONE, RELEASE),
             None
         );
         // com a flag 1 junto (1|2) o ESC ganha `:3` e o press perde o sufixo
-        so_eventos.feed(b"\x1b[=1;2u");
-        assert_eq!(so_eventos.kbd_flags, F_DISAMBIGUATE | F_EVENT_TYPES);
+        only_eventos.feed(b"\x1b[=1;2u");
+        assert_eq!(only_eventos.kbd_flags, F_DISAMBIGUATE | F_EVENT_TYPES);
         assert_eq!(
-            enc_ev(&so_eventos, Some(NamedKey::Escape), None, NONE, RELEASE).as_deref(),
+            enc_ev(&only_eventos, Some(NamedKey::Escape), None, NONE, RELEASE).as_deref(),
             Some("\x1b[27;1:3u")
         );
         assert_eq!(
-            enc_ev(&so_eventos, Some(NamedKey::Escape), None, NONE, PRESS).as_deref(),
+            enc_ev(&only_eventos, Some(NamedKey::Escape), None, NONE, PRESS).as_deref(),
             Some("\x1b[27u")
         );
     }
 
     #[test]
-    fn ctrl_space_depende_da_flag_e_nao_do_atalho() {
+    fn ctrl_space_depende_da_flag_e_not_do_shortcut() {
         // só a flag 2 (eventos): o Ctrl+Space continua NUL — readline/vim
         // dependem disso e trocar por `CSI 32;5u` quebraria quem liga a flag 2
         let mut t = term();
@@ -846,26 +839,26 @@ mod checks_teclado {
         // com a flag 8, todas as teclas: espaço vira `CSI 32u`
         t.feed(b"\x1b[=24;1u");
         assert_eq!(t.kbd_flags, F_ALL_KEYS | F_TEXT);
-        assert_eq!(enc_texto(&t, " ", " ").as_deref(), Some("\x1b[32;32u"));
+        assert_eq!(enc_text(&t, " ", " ").as_deref(), Some("\x1b[32;32u"));
     }
 
     #[test]
-    fn flag_16_embute_o_texto_da_tecla() {
+    fn flag_16_embute_o_text_da_key() {
         let mut t = term();
         t.feed(b"\x1b[>24u"); // 8|16
         assert_eq!(t.kbd_flags, F_ALL_KEYS | F_TEXT);
-        assert_eq!(enc_texto(&t, "a", "a").as_deref(), Some("\x1b[97;97u"));
+        assert_eq!(enc_text(&t, "a", "a").as_deref(), Some("\x1b[97;97u"));
         // 'é' = U+00E9 = 233: a tecla e o texto são o mesmo codepoint
-        assert_eq!(enc_texto(&t, "é", "é").as_deref(), Some("\x1b[233;233u"));
+        assert_eq!(enc_text(&t, "é", "é").as_deref(), Some("\x1b[233;233u"));
         // texto com mais de um codepoint sai separado por ':'
-        assert_eq!(enc_texto(&t, "a", "aé").as_deref(), Some("\x1b[97;97:233u"));
+        assert_eq!(enc_text(&t, "a", "aé").as_deref(), Some("\x1b[97;97:233u"));
         // sem a flag 16 o texto não viaja junto
         t.feed(b"\x1b[=16;3u");
         assert_eq!(t.kbd_flags, F_ALL_KEYS);
-        assert_eq!(enc_texto(&t, "a", "a").as_deref(), Some("\x1b[97u"));
+        assert_eq!(enc_text(&t, "a", "a").as_deref(), Some("\x1b[97u"));
         // e com as flags nenhuma o texto é o caminho legado de sempre
         t.feed(b"\x1b[=8;3u");
         assert_eq!(t.kbd_flags, 0);
-        assert_eq!(enc_texto(&t, "a", "a").as_deref(), Some("a"));
+        assert_eq!(enc_text(&t, "a", "a").as_deref(), Some("a"));
     }
 }

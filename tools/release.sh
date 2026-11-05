@@ -28,12 +28,12 @@ die()  { printf '%s\n' "$*" >&2; exit 1; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --target)       TARGET=${2:?--target pede um triple}; shift 2 ;;
+        --target)       TARGET=${2:?--target ask um triple}; shift 2 ;;
         --target=*)     TARGET=${1#*=}; shift ;;
-        --out)          OUT=${2:?--out pede um diretório}; shift 2 ;;
+        --out)          OUT=${2:?--out ask um diretório}; shift 2 ;;
         --out=*)        OUT=${1#*=}; shift ;;
         --skip-build)   BUILD=0; shift ;;
-        --check-version) CHECK=${2:?--check-version pede a tag}; shift 2 ;;
+        --check-version) CHECK=${2:?--check-version ask a tag}; shift 2 ;;
         --check-version=*) CHECK=${1#*=}; shift ;;
         -h|--help)      awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
         *) die "opção inválida: $1 (use -h)" ;;

@@ -26,7 +26,7 @@ eh_dev() {
     esac
 }
 
-matar() {
+kill() {
     pid=$1
     kill "$pid" 2>/dev/null || true
     for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -36,16 +36,16 @@ matar() {
     [ -d "/proc/$pid" ] && kill -9 "$pid" 2>/dev/null || true
 }
 
-morto=0
+dead=0
 
 # 1) o PID registrado (confere antes: PID pode ter sido reciclado)
 if [ -f "$PIDFILE" ]; then
     pid=$(cat "$PIDFILE" 2>/dev/null || true)
     if [ -n "${pid:-}" ] && [ -d "/proc/$pid" ]; then
         if eh_dev "$pid"; then
-            matar "$pid"
+            kill "$pid"
             echo "morto: pid $pid"
-            morto=1
+            dead=1
         else
             echo "recusando matar pid $pid: exe=$(readlink "/proc/$pid/exe" 2>/dev/null)" >&2
         fi
@@ -58,9 +58,9 @@ for d in /proc/[0-9]*; do
     pid=${d#/proc/}
     [ "$pid" = "$$" ] && continue
     if eh_dev "$pid"; then
-        matar "$pid"
+        kill "$pid"
         echo "morto (sobra): pid $pid"
-        morto=1
+        dead=1
     fi
 done
 

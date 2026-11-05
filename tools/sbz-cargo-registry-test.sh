@@ -12,8 +12,8 @@
 # Saida: 0 = sandbox ok para cargo   1 = falta correção (o motivo é impresso)
 
 SANDBOX=${SANDBOX:-sandbox}
-AQUI=$(cd "$(dirname "$0")" && pwd)
-SCRATCH=${SCRATCH_DIR:-$AQUI/.sandbox-cargo-scratch}
+HERE=$(cd "$(dirname "$0")" && pwd)
+SCRATCH=${SCRATCH_DIR:-$HERE/.sandbox-cargo-scratch}
 VERB=""
 case "$1" in
     -v) VERB="-v" ;;
@@ -22,9 +22,9 @@ esac
 
 falhas=0
 ok() { printf '  ok      %s\n' "$1"; }
-nao() { printf '  FALHA   %s\n' "$1"; [ -n "$2" ] && printf '          %s\n' "$2"; falhas=$((falhas + 1)); }
+not() { printf '  FAILURE   %s\n' "$1"; [ -n "$2" ] && printf '          %s\n' "$2"; falhas=$((falhas + 1)); }
 # o cargo imprime um warning de cache e só depois o erro fatal: pega o fatal
-motivo() {
+reason() {
     printf '%s\n' "$1" | grep -m1 'error: failed to open' ||
         printf '%s\n' "$1" | grep -m1 'Read-only file system'
 }
@@ -61,7 +61,7 @@ crate app
 out=$($SANDBOX $VERB -w "$SCRATCH" -- sh -c \
     "cd $SCRATCH/app && cargo add -q $CRATE && cargo build" 2>&1)
 if [ $? -eq 0 ]; then
-    printf '  aviso   %s\n' "build passou SEM grant: cache quente ou grant global (reprodução inconclusiva)"
+    printf '  notice   %s\n' "build passou SEM grant: cache quente ou grant global (reprodução inconclusiva)"
 else
     ok "sem grant falha, como esperado ($(motivo "$out" | cut -c1-60)...)"
 fi
@@ -71,7 +71,7 @@ if $SANDBOX -w "$SCRATCH" -w ~/.cargo/registry -- \
     sh -c 'touch ~/.cargo/registry/.probe && rm -f ~/.cargo/registry/.probe' 2>/dev/null; then
     ok "~/.cargo/registry gravável dentro do sandbox com -w"
 else
-    nao "~/.cargo/registry continua somente leitura com -w" \
+    not "~/.cargo/registry continua somente leitura com -w" \
         "se \$HOME está montado ro no host, o bind herda ro: nenhuma política do sandbox resolve"
 fi
 
@@ -80,14 +80,14 @@ if $SANDBOX -w "$SCRATCH" -w ~/.cargo/registry -- \
     sh -c 'touch ~/.cargo/.package-cache.probe && rm -f ~/.cargo/.package-cache.probe' 2>/dev/null; then
     ok "~/.cargo/.package-cache gravável"
 else
-    printf '  aviso   %s\n' "~/.cargo/.package-cache não gravável (lock do cargo; só importa se o build reclamar)"
+    printf '  notice   %s\n' "~/.cargo/.package-cache não gravável (lock do cargo; só importa se o build reclamar)"
 fi
 
 echo "== E. o bind é emitido pelo sandbox? (política ok, montagem não)"
 if printf '%s' "$($SANDBOX -v -w ~/.cargo/registry -- true 2>&1)" | grep -q "$HOME/.cargo/registry"; then
     ok "sandbox emite --bind $HOME/.cargo/registry"
 else
-    nao "sandbox não emite o bind de ~/.cargo/registry" "verifique o cap write(\"~/.cargo/registry\")"
+    not "sandbox não emite o bind de ~/.cargo/registry" "verifique o cap write(\"~/.cargo/registry\")"
 fi
 
 echo "== F. build de verdade com o grant (o teste que tem de passar)"
@@ -97,7 +97,7 @@ out=$($SANDBOX $VERB -w "$SCRATCH" -w ~/.cargo/registry -- sh -c \
 if [ $? -eq 0 ]; then
     ok "cargo build com dependência nova passou"
 else
-    nao "cargo build com dependência nova falhou" "$(motivo "$out")"
+    not "cargo build com dependência nova falhou" "$(motivo "$out")"
     # o scratch fica para inspeção: Cargo.toml, alvo de build, etc.
     echo "          scratch preservado em $SCRATCH"
 fi
@@ -109,7 +109,7 @@ out=$($SANDBOX $VERB @dev -w "$SCRATCH" -- sh -c \
 if [ $? -eq 0 ]; then
     ok "cargo build passou com @dev (perfil resolvido)"
 else
-    nao "cargo build falhou com @dev" "$(motivo "$out")"
+    not "cargo build falhou com @dev" "$(motivo "$out")"
 fi
 
 echo

@@ -39,13 +39,13 @@ struct Instance {
 #[inline]
 fn is_swap(cell: &Cell, sel: Option<(usize, usize, usize, usize)>, y: usize, x: usize) -> bool {
     let inv = cell.flags & INV != 0;
-    let dentro = sel.is_some_and(|(r1, c1, r2, c2)| {
+    let inside = sel.is_some_and(|(r1, c1, r2, c2)| {
         y >= r1
             && y <= r2
             && x >= (if y == r1 { c1 } else { 0 })
             && x <= (if y == r2 { c2 } else { usize::MAX })
     });
-    inv ^ dentro
+    inv ^ inside
 }
 
 /// Instâncias de uma linha: a máscara (texto, fundo, decoração) e o emoji
@@ -127,16 +127,16 @@ pub struct Renderer {
     /// Instâncias da grade, guardadas **por linha**: só a linha suja é
     /// remontada (A17/G17). A lista final (`instances`) é a concatenação delas
     /// mais as imagens, o cromo e o cursor, na ordem de blend.
-    por_linha: Vec<RowQuads>,
+    per_line: Vec<RowQuads>,
     /// Signature do último frame: o que mudou de tela inteira (ver `dano`).
-    assinatura: crate::damage::Signature,
+    signature: crate::damage::Signature,
     /// Geração do tema: sobe a cada `apply_theme` e força rebuild completo.
-    tema_gen: u64,
+    theme_gen: u64,
     /// Contadores de `state` (prof): prova do dano sem olhar a tela.
-    pub draws: u64,
+    pub draw: u64,
     /// Resultado do último frame ("drawn"/"skipped"/"occluded"...): a primeira
     /// pergunta quando a janela não atualiza é se o frame saiu.
-    pub ultimo: &'static str,
+    pub last: &'static str,
     /// Quantos frames foram recusados pela superfície (`Timeout`/`Occluded`) e
     /// quantos saíram: separa "o app não desenhou" de "o app desenhou e a
     /// superfície não apresentou" — o sintoma de ambiente confinado (M-AA).
@@ -175,38 +175,38 @@ struct ImgTex {
 ///
 /// `WGPU_BACKEND` continua mandando: quem pediu um backend explícito recebe
 /// aquele backend, ou o erro de sempre.
-fn escolhe_adaptador(
+fn choose_adapter(
     instance: &wgpu::Instance,
     surface: &wgpu::Surface<'_>,
 ) -> Result<wgpu::Adapter, String> {
-    let pedido = std::env::var("WGPU_BACKEND").unwrap_or_default();
-    let todos = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
-    let candidatos: Vec<wgpu::Adapter> = todos
+    let request = std::env::var("WGPU_BACKEND").unwrap_or_default();
+    let all = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+    let candidates: Vec<wgpu::Adapter> = all
         .into_iter()
         .filter(|a| a.is_surface_supported(surface))
         .collect();
     let de_cpu = |a: &wgpu::Adapter| a.get_info().device_type == wgpu::DeviceType::Cpu;
-    let escolhido = if pedido.is_empty() {
+    let chosen = if request.is_empty() {
         // hardware primeiro; sem hardware, a ordem natural do `wgpu`
         // (Vulkan antes de GL). Não se prefere GL para CPU: em VM sem
         // `/dev/dri` o GL/llvmpipe depende de MIT-SHM para chegar na janela e,
         // quando o SHM não vai, a janela fica vazia, enquanto o
         // Vulkan/llvmpipe desenha pelo Present.
-        candidatos
+        candidates
             .iter()
             .find(|a| !de_cpu(a))
-            .or_else(|| candidatos.first())
+            .or_else(|| candidates.first())
     } else {
-        candidatos.first()
+        candidates.first()
     };
-    let escolhido = escolhido.ok_or_else(|| {
-        if candidatos.is_empty() {
+    let chosen = chosen.ok_or_else(|| {
+        if candidates.is_empty() {
             "adapter: nenhum adaptador serve para a superfície".to_string()
         } else {
             "adapter: nenhum adaptador utilizável".to_string()
         }
     })?;
-    Ok(escolhido.clone())
+    Ok(chosen.clone())
 }
 
 impl Renderer {
@@ -231,7 +231,7 @@ impl Renderer {
         let surface = instance
             .create_surface(window.clone())
             .map_err(|e| format!("surface: {e}"))?;
-        let adapter = escolhe_adaptador(&instance, &surface)?;
+        let adapter = choose_adapter(&instance, &surface)?;
         // qual backend/placa foi escolhido: é a primeira pergunta quando a
         // janela não desenha em outra máquina (ver DEBUG.md)
         let info = adapter.get_info();
@@ -460,9 +460,9 @@ impl Renderer {
             ligatures: bzmux_core::config::Ligatures::default(),
             instances: Vec::with_capacity(4096),
             palette: cfg.palette256(),
-            fg: tema(cfg, cfg.fg, FG),
-            bg: tema(cfg, cfg.bg, BG),
-            cursor: tema(cfg, cfg.cursor, FG),
+            fg: theme(cfg, cfg.fg, FG),
+            bg: theme(cfg, cfg.bg, BG),
+            cursor: theme(cfg, cfg.cursor, FG),
             pad: cfg.padding as f32,
             bar: 0.0,
             side: 0.0,
@@ -475,11 +475,11 @@ impl Renderer {
             img_layout,
             img_sampler,
             img_cache: HashMap::new(),
-            por_linha: Vec::new(),
-            assinatura: crate::damage::Signature::default(),
-            tema_gen: 0,
-            draws: 0,
-            ultimo: "nenhum",
+            per_line: Vec::new(),
+            signature: crate::damage::Signature::default(),
+            theme_gen: 0,
+            draw: 0,
+            last: "nenhum",
             skips: 0,
             drawn: 0,
             avisou_skip: false,
@@ -496,7 +496,7 @@ impl Renderer {
     pub fn apply_theme(&mut self, t: &Theme) {
         // qualquer coisa que mude cor de célula invalida o damage: as linhas
         // limpas ficariam com a paleta velha
-        self.tema_gen = self.tema_gen.wrapping_add(1);
+        self.theme_gen = self.theme_gen.wrapping_add(1);
         self.palette = t.palette256();
         self.fg = t.rgb(t.fg, FG);
         self.bg = t.rgb(t.bg, BG);
@@ -514,7 +514,7 @@ impl Renderer {
             self.ligatures = cfg.ligatures;
             self.shaper = crate::shape::Shaper::new();
             // o dano compara `tema_gen`: mexer nele força remontar a grade
-            self.tema_gen = self.tema_gen.wrapping_add(1);
+            self.theme_gen = self.theme_gen.wrapping_add(1);
         }
         self.write_globals();
     }
@@ -650,17 +650,17 @@ impl Renderer {
     /// direção no rótulo — era por aí que o título da aba aparecia com lixo
     /// antes do texto (B4, 2026-11-04). Avanço é sempre uma célula por
     /// caractere; `largura` = 0 significa sem teto.
-    fn chrome_text(&mut self, texto: &str, x0: f32, y: f32, fg: [f32; 3], largura: f32) {
+    fn chrome_text(&mut self, text: &str, x0: f32, y: f32, fg: [f32; 3], width: f32) {
         let cw = self.fonts.cw;
         let ascent = self.fonts.ascent;
-        let limite = if largura > 0.0 {
-            largura.floor()
+        let limit = if width > 0.0 {
+            width.floor()
         } else {
             f32::INFINITY
         };
-        for (i, ch) in sanitize_title(texto).chars().enumerate() {
+        for (i, ch) in sanitize_title(text).chars().enumerate() {
             let px = x0 + i as f32 * cw;
-            if px + cw > x0 + limite {
+            if px + cw > x0 + limit {
                 break;
             }
             if ch == ' ' {
@@ -693,34 +693,34 @@ impl Renderer {
         // sidebar não fica com um buraco em cima (o cartão é a altura de 2,4
         // linhas, então ela passa por baixo da barra de qualquer jeito)
         let x0 = 0.0;
-        let largo = cols as f32 * cw;
-        let fundo = self.color(Color::Idx(0), self.bg);
+        let total_w = cols as f32 * cw;
+        let bg = self.color(Color::Idx(0), self.bg);
         // texto sobre a aba ativa usa a cor de fundo da grade (inversão)
-        let sobre = self.color(Color::Default, self.bg);
+        let over = self.color(Color::Default, self.bg);
         // `origin.y` é `pad + bar`: para a barra cair na faixa reservada (e não
         // sobre a primeira linha da grade) ela é desenhada em y = -bar
         let y0 = -self.bar;
-        self.push_rect(x0, y0, largo, chh, [fundo[0], fundo[1], fundo[2], 1.0]);
+        self.push_rect(x0, y0, total_w, chh, [bg[0], bg[1], bg[2], 1.0]);
         let mut x = x0;
         for (i, t) in tabs.iter().enumerate() {
             let rotulo = format!(" {} {} ", i + 1, t.titulo);
             let n = rotulo.chars().count();
-            let largura = (n as f32 * cw).min(largo - x);
-            if largura <= 0.0 {
+            let width = (n as f32 * cw).min(total_w - x);
+            if width <= 0.0 {
                 break;
             }
             let (bg, fg) = if t.ativa {
-                (self.color(Color::Default, self.fg), sobre)
-            } else if t.alerta {
-                (self.color(Color::Idx(3), self.fg), sobre)
+                (self.color(Color::Default, self.fg), over)
+            } else if t.alert {
+                (self.color(Color::Idx(3), self.fg), over)
             } else {
-                (fundo, self.color(Color::Idx(8), self.fg))
+                (bg, self.color(Color::Idx(8), self.fg))
             };
             // um retângulo por aba (não um por letra): o fundo do rótulo é uma
             // peça só, e o texto é desenhado por cima
-            self.push_rect(x, y0, largura, chh, [bg[0], bg[1], bg[2], 1.0]);
-            self.chrome_text(&rotulo, x, y0, fg, largura);
-            x += largura;
+            self.push_rect(x, y0, width, chh, [bg[0], bg[1], bg[2], 1.0]);
+            self.chrome_text(&rotulo, x, y0, fg, width);
+            x += width;
         }
     }
 
@@ -734,23 +734,23 @@ impl Renderer {
         let chh = self.fonts.ch;
         let card_h = chh * 2.4;
         let x0 = -self.side;
-        let largura = self.side - self.pad;
-        let fundo = self.color(Color::Idx(0), self.bg);
-        let sobre = self.color(Color::Default, self.bg);
-        let topo = -self.bar;
+        let width = self.side - self.pad;
+        let bg = self.color(Color::Idx(0), self.bg);
+        let over = self.color(Color::Default, self.bg);
+        let top = -self.bar;
         for (i, c) in cards.iter().enumerate() {
-            let y0 = topo + i as f32 * card_h;
-            let ativo = c.ativa;
-            let (bg, fg) = if ativo {
-                (self.color(Color::Default, self.fg), sobre)
+            let y0 = top + i as f32 * card_h;
+            let active = c.ativa;
+            let (bg, fg) = if active {
+                (self.color(Color::Default, self.fg), over)
             } else {
-                (fundo, self.color(Color::Idx(8), self.fg))
+                (bg, self.color(Color::Idx(8), self.fg))
             };
-            self.push_rect(x0, y0, largura, card_h, [bg[0], bg[1], bg[2], 1.0]);
+            self.push_rect(x0, y0, width, card_h, [bg[0], bg[1], bg[2], 1.0]);
             // linha 1: "n nome"
             let n = cards.len();
-            let nome = format!("{} {}", i + 1, c.nome);
-            self.text_line(x0, y0 + 3.0, &nome, fg, largura);
+            let name = format!("{} {}", i + 1, c.name);
+            self.text_line(x0, y0 + 3.0, &name, fg, width);
             // linha 2: "titulo (k abas)"
             let info = format!(
                 "{} ({} aba{})",
@@ -758,24 +758,24 @@ impl Renderer {
                 c.n_tabs,
                 if c.n_tabs == 1 { "" } else { "s" }
             );
-            self.text_line(x0, y0 + chh + 3.0, &info, fg, largura);
+            self.text_line(x0, y0 + chh + 3.0, &info, fg, width);
             let _ = n;
         }
     }
 
     /// Uma linha de texto da sidebar, cortada na largura do cartão.
-    fn text_line(&mut self, x0: f32, y: f32, texto: &str, fg: [f32; 3], largura: f32) {
-        let cabe = (largura / self.fonts.cw).floor().max(1.0) as usize;
+    fn text_line(&mut self, x0: f32, y: f32, text: &str, fg: [f32; 3], width: f32) {
+        let fit = (width / self.fonts.cw).floor().max(1.0) as usize;
         // reticências em vez de corte seco: o cartão estreito não come o fim
         // do título sem avisar (o Python faz o mesmo com `ellipsize`)
-        let texto: String = if texto.chars().count() > cabe {
-            let mut t: String = texto.chars().take(cabe.saturating_sub(1)).collect();
+        let text: String = if text.chars().count() > fit {
+            let mut t: String = text.chars().take(fit.saturating_sub(1)).collect();
             t.push('…');
             t
         } else {
-            texto.to_string()
+            text.to_string()
         };
-        self.chrome_text(&texto, x0 + self.pad, y, fg, 0.0);
+        self.chrome_text(&text, x0 + self.pad, y, fg, 0.0);
     }
 
     /// Toast (I12): uma faixa na última linha, com as cores invertidas.
@@ -790,8 +790,8 @@ impl Renderer {
         let bg = self.color(Color::Default, self.fg);
         let fg = self.color(Color::Default, self.bg);
         let n = cols.saturating_sub(2);
-        let curto: String = text.chars().take(n).collect();
-        let w = curto.chars().count();
+        let short: String = text.chars().take(n).collect();
+        let w = short.chars().count();
         if w == 0 {
             return;
         }
@@ -799,7 +799,7 @@ impl Renderer {
         let x0 = -self.side;
         let y0 = rows.saturating_sub(1) as f32 * chh;
         self.push_rect(x0, y0, (w + 2) as f32 * cw, chh, [bg[0], bg[1], bg[2], 1.0]);
-        self.chrome_text(&curto, x0 + cw, y0, fg, 0.0);
+        self.chrome_text(&short, x0 + cw, y0, fg, 0.0);
     }
 
     fn badge(&mut self, text: &str, cols: usize) {
@@ -831,7 +831,7 @@ impl Renderer {
         x: usize,
         py: f32,
         swap: bool,
-        glifo: Option<(usize, u16, f32)>,
+        glyph: Option<(usize, u16, f32)>,
     ) {
         use bzmux_core::cell::{
             BOLD, FAINT, ITALIC, OVERLINE, STRIKE, UL_CURLY, UL_DASHED, UL_DOTTED, UL_DOUBLE,
@@ -847,20 +847,20 @@ impl Renderer {
         if cell.ch != ' ' {
             let bold = cell.flags & BOLD != 0;
             let italic = cell.flags & ITALIC != 0;
-            let quad = glifo
+            let quad = glyph
                 .and_then(|(face, gid, _)| self.quad_gid(face, gid))
                 .or_else(|| self.glyph_quad(cell.ch, bold, italic));
-            let desloc = glifo.map_or(0.0, |(_, _, dx)| dx);
+            let desloc = glyph.map_or(0.0, |(_, _, dx)| dx);
             if let Some(q) = quad {
                 let gx = x as f32 * cw + desloc + q.left as f32;
                 let gy = py + ascent - q.top as f32;
                 // emoji colorido não recebe tingimento: só o alfa da célula
-                let (cor, alvo) = if q.color {
+                let (cor, target) = if q.color {
                     ([1.0, 1.0, 1.0, alpha], &mut self.emoji_row)
                 } else {
                     ([c[0], c[1], c[2], alpha], &mut self.instances)
                 };
-                alvo.push(Instance {
+                target.push(Instance {
                     rect: [gx, gy, q.w as f32, q.h as f32],
                     color: cor,
                     uv: q.uv,
@@ -941,7 +941,7 @@ impl Renderer {
         let colunas = term.cols;
         let mut quads: Vec<(u32, Instance)> = Vec::new();
         for pl in term.graphics.placements() {
-            let y = pl.linha + view;
+            let y = pl.line + view;
             // fora da tela (por cima ou por baixo) não vira instância
             if y >= linhas || y + i32::from(pl.rows) <= 0 || usize::from(pl.col) >= colunas {
                 continue;
@@ -949,7 +949,7 @@ impl Renderer {
             let Some(img) = term.graphics.images().get(&pl.image_id).cloned() else {
                 continue;
             };
-            if !self.garante_textura(&img) {
+            if !self.ensure_texture(&img) {
                 continue; // imagem ilegível (PNG torto) não derruba o frame
             }
             quads.push((
@@ -988,7 +988,7 @@ impl Renderer {
 
     /// Sobe a textura da imagem se ela ainda não está no cache (ou se o app
     /// reenviou com o mesmo id e a versão mudou).
-    fn garante_textura(&mut self, img: &bzmux_core::graphics::Image) -> bool {
+    fn ensure_texture(&mut self, img: &bzmux_core::graphics::Image) -> bool {
         if self
             .img_cache
             .get(&img.id)
@@ -1099,7 +1099,7 @@ impl Renderer {
 
     pub fn build(&mut self, f: &Frame<'_>) {
         let Frame {
-            aba,
+            tab,
             term,
             view_off,
             sel,
@@ -1116,26 +1116,26 @@ impl Renderer {
             cols,
             sel,
             blink,
-            cursor: quebra_no_cursor(term, view_off, rows.len()),
+            cursor: break_no_cursor(term, view_off, rows.len()),
         };
 
         // A17/G17: quais linhas remontar. `blink` só entra na assinatura se
         // houver célula com SGR 5 à vista — o pisca do cursor não mora aqui.
-        let assinatura = crate::damage::Signature {
-            aba,
+        let signature = crate::damage::Signature {
+            tab,
             cols,
             rows: rows.len(),
             view_off,
             sel,
-            blink: blink.fase && Self::tem_blink(&rows),
-            tema: self.tema_gen,
+            blink: blink.phase && Self::has_blink(&rows),
+            theme: self.theme_gen,
             fg: self.fg,
             bg: self.bg,
         };
-        let changed = self.assinatura != assinatura;
-        let dano = crate::damage::decide(
-            &assinatura,
-            &mut self.assinatura,
+        let changed = self.signature != signature;
+        let damage = crate::damage::decide(
+            &signature,
+            &mut self.signature,
             // o conflito de rolagem (subiu e desceu no mesmo frame) não pode
             // girar o cache: a linha que saiu não volta, então só a tela
             // inteira resolve (B6)
@@ -1143,7 +1143,7 @@ impl Renderer {
             &term.dirty,
             rows.len(),
         );
-        if matches!(dano, crate::damage::Damage::All) {
+        if matches!(damage, crate::damage::Damage::All) {
             self.frames_all = self.frames_all.saturating_add(1);
             self.all_reason = if term.dirty_all {
                 "global"
@@ -1153,7 +1153,7 @@ impl Renderer {
                 "?"
             };
         }
-        self.last_damage = match &dano {
+        self.last_damage = match &damage {
             crate::damage::Damage::All => "all".to_string(),
             crate::damage::Damage::Rows(ls) if ls.is_empty() => "rows: 0".to_string(),
             #[allow(clippy::cast_precision_loss)]
@@ -1163,12 +1163,12 @@ impl Renderer {
             },
             crate::damage::Damage::Rows(ls) => format!("rows: {}", ls.len()),
         };
-        if self.por_linha.len().ne(&rows.len()) {
+        if self.per_line.len().ne(&rows.len()) {
             // grade mudou de tamanho: nada de reaproveitar faixa antiga
-            self.assinatura = assinatura;
-            self.por_linha = vec![RowQuads::default(); rows.len()];
+            self.signature = signature;
+            self.per_line = vec![RowQuads::default(); rows.len()];
             for (y, row) in rows.iter().enumerate() {
-                self.por_linha[y] = self.linha(row, y, ctx);
+                self.per_line[y] = self.line(row, y, ctx);
             }
         } else {
             let shift = if term.scroll_conflict {
@@ -1176,7 +1176,7 @@ impl Renderer {
             } else {
                 term.scroll_shift
             };
-            self.rebuild_rows(&dano, &rows, ctx, shift);
+            self.rebuild_rows(&damage, &rows, ctx, shift);
         }
 
         self.concat_linhas();
@@ -1220,25 +1220,25 @@ impl Renderer {
         self.instances.clear();
         self.emoji_instances.clear();
         let chh = self.fonts.ch;
-        for (y, linha) in self.por_linha.iter().enumerate() {
+        for (y, line) in self.per_line.iter().enumerate() {
             #[allow(clippy::cast_precision_loss)]
             let dy = y as f32 * chh;
-            for inst in &linha.mask {
-                let mut copia = *inst;
-                copia.rect[1] += dy;
-                self.instances.push(copia);
+            for inst in &line.mask {
+                let mut copies = *inst;
+                copies.rect[1] += dy;
+                self.instances.push(copies);
             }
-            for inst in &linha.emoji {
-                let mut copia = *inst;
-                copia.rect[1] += dy;
-                self.emoji_instances.push(copia);
+            for inst in &line.emoji {
+                let mut copies = *inst;
+                copies.rect[1] += dy;
+                self.emoji_instances.push(copies);
             }
         }
     }
 
     /// `true` se alguma célula visível tem SGR 5 (só aí a fase do pisca obriga
     /// a remontar a grade).
-    fn tem_blink(rows: &[&bzmux_core::grid::Row]) -> bool {
+    fn has_blink(rows: &[&bzmux_core::grid::Row]) -> bool {
         rows.iter().any(|r| {
             r.cells
                 .iter()
@@ -1251,36 +1251,36 @@ impl Renderer {
     /// prontas: só as que entram (topo ou fim) precisam de glifo novo.
     fn rebuild_rows(
         &mut self,
-        dano: &crate::damage::Damage,
+        damage: &crate::damage::Damage,
         rows: &[&bzmux_core::grid::Row],
         ctx: RowCtx,
         shift: isize,
     ) {
-        let crate::damage::Damage::Rows(linhas) = dano else {
+        let crate::damage::Damage::Rows(linhas) = damage else {
             for (y, row) in rows.iter().enumerate() {
-                self.por_linha[y] = self.linha(row, y, ctx);
+                self.per_line[y] = self.line(row, y, ctx);
             }
             return;
         };
         let mut rebuild = linhas.clone();
         if shift != 0 {
-            let n = shift.unsigned_abs().min(self.por_linha.len());
+            let n = shift.unsigned_abs().min(self.per_line.len());
             for _ in 0..n {
                 if shift > 0 {
-                    self.por_linha.remove(0);
-                    self.por_linha.push(RowQuads::default());
+                    self.per_line.remove(0);
+                    self.per_line.push(RowQuads::default());
                 } else {
-                    self.por_linha.pop();
-                    self.por_linha.insert(0, RowQuads::default());
+                    self.per_line.pop();
+                    self.per_line.insert(0, RowQuads::default());
                 }
             }
             // rotacionadas `n` linhas, as `n` que entraram precisam de glifo
             // novo. Antes era `rebuild.push(len - 1)` **dentro** do laço: o
             // índice era o mesmo sempre e só a última linha era remontada —
             // as outras ficavam vazias (faixas em branco no meio da tela)
-            let fim = self.por_linha.len();
+            let end = self.per_line.len();
             if shift > 0 {
-                rebuild.extend(fim - n..fim);
+                rebuild.extend(end - n..end);
             } else {
                 rebuild.extend(0..n);
             }
@@ -1289,7 +1289,7 @@ impl Renderer {
         rebuild.dedup();
         for y in rebuild {
             if let Some(row) = rows.get(y) {
-                self.por_linha[y] = self.linha(row, y, ctx);
+                self.per_line[y] = self.line(row, y, ctx);
             }
         }
     }
@@ -1297,12 +1297,12 @@ impl Renderer {
     /// Monta uma linha **relativa ao topo da grade** (y = 0). A posição
     /// vertical entra na concatenação, e é isso que permite rolar a tela
     /// deslocando a linha pronta em vez de remontar o glifo.
-    fn linha(&mut self, row: &bzmux_core::grid::Row, y: usize, ctx: RowCtx) -> RowQuads {
+    fn line(&mut self, row: &bzmux_core::grid::Row, y: usize, ctx: RowCtx) -> RowQuads {
         let guardado = std::mem::take(&mut self.instances);
         let guardado_cor = std::mem::take(&mut self.emoji_row);
         self.instances.clear();
         self.emoji_row.clear();
-        self.pinta_linha(row, y, ctx);
+        self.paint_line(row, y, ctx);
         RowQuads {
             mask: std::mem::replace(&mut self.instances, guardado),
             emoji: std::mem::replace(&mut self.emoji_row, guardado_cor),
@@ -1314,7 +1314,7 @@ impl Renderer {
     /// célula pela peça da ligadura (`calt`). Trecho de uma célula não tem
     /// contexto e vai direto pela cadeia de fontes — é o caso de quem pinta
     /// célula a célula (doom-fire: 2400 trechos de 1).
-    fn pinta_glifos(&mut self, row: &bzmux_core::grid::Row, y: usize, ctx: RowCtx) {
+    fn paint_glifos(&mut self, row: &bzmux_core::grid::Row, y: usize, ctx: RowCtx) {
         let RowCtx {
             cols,
             sel,
@@ -1325,45 +1325,45 @@ impl Renderer {
         // posição vertical entra em `concat_linhas`. Somar `y * ch` nos dois
         // lugares pintava a linha `r` em `2r` (A17 pós-cache por linha)
         let py = 0.0;
-        let limite = cols.min(row.cells.len());
+        let limit = cols.min(row.cells.len());
         let mut x = 0usize;
-        while x < limite {
+        while x < limit {
             let cell = row.cells[x];
-            if cell.is_cont() || (cell.flags & bzmux_core::cell::BLINK != 0 && !blink.fase) {
+            if cell.is_cont() || (cell.flags & bzmux_core::cell::BLINK != 0 && !blink.phase) {
                 x += 1;
                 continue;
             }
-            let (face, bold, italic, swap) = self.estilo(&cell, sel, y, x);
+            let (face, bold, italic, swap) = self.style(&cell, sel, y, x);
             let mut cells = vec![x];
             let mut text = String::new();
             text.push(cell.ch);
-            let mut fim = x + 1;
-            while fim < limite {
-                let c2 = row.cells[fim];
+            let mut end = x + 1;
+            while end < limit {
+                let c2 = row.cells[end];
                 if c2.is_cont() {
                     // a metade de um caractere largo pertence ao caractere
-                    fim += 1;
+                    end += 1;
                     continue;
                 }
-                if c2.flags & bzmux_core::cell::BLINK != 0 && !blink.fase {
+                if c2.flags & bzmux_core::cell::BLINK != 0 && !blink.phase {
                     break;
                 }
                 // o cursor quebra o trecho (ver `cursor` no build)
-                if cursor == Some((fim, y)) || cursor == Some((fim.wrapping_sub(1), y)) {
+                if cursor == Some((end, y)) || cursor == Some((end.wrapping_sub(1), y)) {
                     break;
                 }
-                if self.estilo(&c2, sel, y, fim) != (face, bold, italic, swap) {
+                if self.style(&c2, sel, y, end) != (face, bold, italic, swap) {
                     break;
                 }
-                cells.push(fim);
+                cells.push(end);
                 text.push(c2.ch);
-                fim += 1;
+                end += 1;
             }
             let glifos = match face {
                 Some(face) if cells.len() > 1 => {
                     let cw = self.fonts.cw;
                     let px = self.fonts.px;
-                    let plano = self.shaper.plan(
+                    let plan = self.shaper.plan(
                         self.fonts.face(face),
                         &text,
                         &cells,
@@ -1371,24 +1371,24 @@ impl Renderer {
                         cw,
                         px,
                     );
-                    plano.map(|p| (face, p))
+                    plan.map(|p| (face, p))
                 },
                 _ => None,
             };
             for (i, &cx) in cells.iter().enumerate() {
                 let c = row.cells[cx];
-                let glifo = match &glifos {
-                    Some((face, plano)) => plano.piece_at(i).map(|p| (*face, p.gid, p.x)),
+                let glyph = match &glifos {
+                    Some((face, plan)) => plan.piece_at(i).map(|p| (*face, p.gid, p.x)),
                     None => None,
                 };
-                self.draw_cell(&c, cx, py, is_swap(&c, sel, y, cx), glifo);
+                self.draw_cell(&c, cx, py, is_swap(&c, sel, y, cx), glyph);
             }
-            x = fim;
+            x = end;
         }
     }
 
     /// Desenha **uma** linha da grade (A17/G17: só roda para as linhas sujas).
-    fn pinta_linha(&mut self, row: &bzmux_core::grid::Row, y: usize, ctx: RowCtx) {
+    fn paint_line(&mut self, row: &bzmux_core::grid::Row, y: usize, ctx: RowCtx) {
         let RowCtx { cols, sel, .. } = ctx;
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
@@ -1432,7 +1432,7 @@ impl Renderer {
             x = end;
         }
 
-        self.pinta_glifos(row, y, ctx);
+        self.paint_glifos(row, y, ctx);
         self.linhas_remontadas = self.linhas_remontadas.saturating_add(1);
         self.celulas_remontadas = self.celulas_remontadas.saturating_add(cols as u64);
     }
@@ -1440,7 +1440,7 @@ impl Renderer {
     /// Face e atributos que definem um trecho de shaping, mais a inversão
     /// (seleção/SGR 7), que troca a cor e por isso separa trechos.
     #[allow(clippy::type_complexity)]
-    fn estilo(
+    fn style(
         &self,
         cell: &bzmux_core::cell::Cell,
         sel: Option<(usize, usize, usize, usize)>,
@@ -1492,8 +1492,8 @@ impl Renderer {
     /// no stderr. É o único sinal que o app pode dar de que o problema não é o
     /// desenho (a grade segue viva no pty e no socket) e sim a apresentação —
     /// o sintoma de ambiente confinado/sem compositor (`M-AA`).
-    fn recusa(&mut self) -> FrameOutcome {
-        self.ultimo = "skipped (timeout/occluded)";
+    fn refuse(&mut self) -> FrameOutcome {
+        self.last = "skipped (timeout/occluded)";
         self.skips = self.skips.saturating_add(1);
         if !self.avisou_skip {
             self.avisou_skip = true;
@@ -1511,22 +1511,22 @@ impl Renderer {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                return self.recusa();
+                return self.refuse();
             },
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.ultimo = "reconfigure";
+                self.last = "reconfigure";
                 return FrameOutcome::Reconfigure;
             },
             wgpu::CurrentSurfaceTexture::Validation => {
-                self.ultimo = "fatal";
+                self.last = "fatal";
                 return FrameOutcome::Fatal;
             },
         };
 
         let t0 = std::time::Instant::now();
-        self.draws = self.draws.saturating_add(1);
+        self.draw = self.draw.saturating_add(1);
         self.drawn = self.drawn.saturating_add(1);
-        self.ultimo = "drawn";
+        self.last = "drawn";
         self.build(f);
         self.atlas.flush(&self.queue);
         self.emoji.flush(&self.queue);
@@ -1619,33 +1619,33 @@ impl Renderer {
 /// `f=24` vira RGBA com alfa 255; `f=32` passa direto; `f=100` é PNG, que o app
 /// decodifica aqui (o core não carrega decodificador de PNG).
 fn decodifica(img: &bzmux_core::graphics::Image) -> Option<(u32, u32, Vec<u8>)> {
-    use bzmux_core::graphics::Formato;
-    let (largura, altura) = (img.width, img.height);
-    if largura == 0 || altura == 0 {
+    use bzmux_core::graphics::Format;
+    let (width, height) = (img.width, img.height);
+    if width == 0 || height == 0 {
         return None;
     }
-    match img.formato {
-        Formato::Rgba => {
-            let need = (largura as usize) * (altura as usize) * 4;
-            (img.data.len() >= need).then(|| (largura, altura, img.data[..need].to_vec()))
+    match img.format {
+        Format::Rgba => {
+            let need = (width as usize) * (height as usize) * 4;
+            (img.data.len() >= need).then(|| (width, height, img.data[..need].to_vec()))
         },
-        Formato::Rgb => {
-            let need = (largura as usize) * (altura as usize) * 3;
+        Format::Rgb => {
+            let need = (width as usize) * (height as usize) * 3;
             if img.data.len() < need {
                 return None;
             }
-            let mut out = Vec::with_capacity((largura as usize) * (altura as usize) * 4);
+            let mut out = Vec::with_capacity((width as usize) * (height as usize) * 4);
             for px in img.data[..need].as_chunks::<3>().0 {
                 out.extend_from_slice(&[px[0], px[1], px[2], 255]);
             }
-            Some((largura, altura, out))
+            Some((width, height, out))
         },
-        Formato::Png => {
-            let mut leitor = png::Decoder::new(std::io::Cursor::new(&img.data))
+        Format::Png => {
+            let mut reader = png::Decoder::new(std::io::Cursor::new(&img.data))
                 .read_info()
                 .ok()?;
-            let mut buf = vec![0; leitor.output_buffer_size()];
-            let info = leitor.next_frame(&mut buf).ok()?;
+            let mut buf = vec![0; reader.output_buffer_size()];
+            let info = reader.next_frame(&mut buf).ok()?;
             let (pw, ph) = (info.width, info.height);
             let mut out = Vec::with_capacity((pw as usize) * (ph as usize) * 4);
             match info.color_type {
@@ -1691,7 +1691,7 @@ struct RowCtx {
 /// O cursor quebra a ligadura: a célula dele é shapeada sozinha, senão ele pinta
 /// no meio de um glifo que cobre mais de uma célula — é o
 /// `disable_ligatures=cursor` do kitty. Fora da visão (rolado) não há cursor.
-fn quebra_no_cursor(term: &Term, view_off: usize, rows: usize) -> Option<(usize, usize)> {
+fn break_no_cursor(term: &Term, view_off: usize, rows: usize) -> Option<(usize, usize)> {
     (view_off == 0 && term.cursor_visible && term.cy < rows).then_some((term.cx, term.cy))
 }
 
@@ -1699,7 +1699,7 @@ fn quebra_no_cursor(term: &Term, view_off: usize, rows: usize) -> Option<(usize,
 /// resolvido pelo app (config `cursor_blink` + `CSI 6 q` do programa).
 #[derive(Clone, Copy, Default)]
 pub struct Blink {
-    pub fase: bool,
+    pub phase: bool,
     pub cursor: bool,
 }
 
@@ -1708,14 +1708,14 @@ pub struct TabInfo {
     pub titulo: String,
     pub ativa: bool,
     /// BELL recente: o rótulo ganha destaque por ~800 ms (I13).
-    pub alerta: bool,
+    pub alert: bool,
 }
 
 /// Tudo que um frame precisa, num pacote só: a assinatura de `build`/`render`
 /// crescia um parâmetro por fatia (abas, sidebar, toast...).
 pub struct Frame<'a> {
     /// Identidade da aba desenhada (ver `dano`).
-    pub aba: u64,
+    pub tab: u64,
     pub term: &'a Term,
     pub view_off: usize,
     pub sel: Option<Span>,
@@ -1727,7 +1727,7 @@ pub struct Frame<'a> {
 
 /// O que a sidebar precisa de cada workspace (I6).
 pub struct WsCard {
-    pub nome: String,
+    pub name: String,
     pub titulo: String,
     pub n_tabs: usize,
     pub ativa: bool,
@@ -1742,10 +1742,10 @@ pub enum FrameOutcome {
 
 /// Cor do tema: `Default` cai no padrão do programa, o resto resolve pela
 /// paleta (as 16 primeiras podem vir do arquivo de configuração).
-fn tema(cfg: &Config, c: Color, padrao: (u8, u8, u8)) -> (u8, u8, u8) {
+fn theme(cfg: &Config, c: Color, padrao: (u8, u8, u8)) -> (u8, u8, u8) {
     match c {
         Color::Default => padrao,
-        outro => bzmux_core::color::resolve(outro, &cfg.palette256(), padrao),
+        other => bzmux_core::color::resolve(other, &cfg.palette256(), padrao),
     }
 }
 

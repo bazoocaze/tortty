@@ -36,9 +36,9 @@ die()  { warn "bzmux: $*"; exit 1; }
 DRY=0; SHORTCUT=1; MODE=install; LOCAL=0; FROM_RELEASE=0; BINARY=""
 while [ $# -gt 0 ]; do
     case "$1" in
-        --prefix)      PREFIX=${2:?--prefix pede um diretório}; shift 2 ;;
+        --prefix)      PREFIX=${2:?--prefix ask um diretório}; shift 2 ;;
         --prefix=*)    PREFIX=${1#*=}; shift ;;
-        --binary)      BINARY=${2:?--binary pede um arquivo}; shift 2 ;;
+        --binary)      BINARY=${2:?--binary ask um file}; shift 2 ;;
         --binary=*)    BINARY=${1#*=}; shift ;;
         --from-release) FROM_RELEASE=1; shift ;;
         --local)       LOCAL=1; shift ;;
@@ -129,8 +129,8 @@ check_conflict() {
 
 # -- download do release --------------------------------------------------
 fetch_release() {
-    local ver tag file url tmp
-    ver=$(version); tag="v$ver"
+    local look tag file url tmp
+    look=$(version); tag="v$ver"
     file="bzmux-$ver-$(target_triple).tar.gz"
     url="https://github.com/$REPO/releases/download/$tag/$file"
     command -v curl >/dev/null 2>&1 || die "--from-release precisa de curl"
@@ -205,7 +205,7 @@ do_install() {
 Type=Application
 Name=bzmux
 GenericName=Terminal
-Comment=Terminal com workspaces e abas
+Comment=Terminal with workspaces e abas
 Exec=$BINDIR/$APP
 TryExec=$BINDIR/$APP
 Icon=$APP

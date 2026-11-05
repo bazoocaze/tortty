@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 /// ponteiro cru no hook; ler a struct é a única forma de saber o que falhou.
 #[repr(C)]
 struct XErrorEvent {
-    tipo: i32,
+    kind: i32,
     display: *mut c_void,
     resource_id: u64,
     serial: u64,
@@ -45,7 +45,7 @@ const EXTENSAO_MIN: u8 = 128;
 /// desenho. Código de desenho vale em qualquer requisição (o WSI também libera
 /// pixmap por requisição do núcleo); `BadAccess` só em extensão, que é onde
 /// permissão de GPU se manifesta.
-fn engolir(error_code: u8, request_code: u8) -> bool {
+fn swallow(error_code: u8, request_code: u8) -> bool {
     match error_code {
         BAD_WINDOW | BAD_MATCH | BAD_DRAWABLE => true,
         BAD_ACCESS => request_code >= EXTENSAO_MIN,
@@ -56,13 +56,13 @@ fn engolir(error_code: u8, request_code: u8) -> bool {
 static CONTADOS: AtomicU32 = AtomicU32::new(0);
 
 #[allow(unsafe_code)] // ler o `XErrorEvent` cru é o contrato do hook do winit
-fn decidir(_display: *mut c_void, evento: *mut c_void) -> bool {
-    if evento.is_null() {
+fn decide(_display: *mut c_void, event: *mut c_void) -> bool {
+    if event.is_null() {
         return false;
     }
     // SAFETY: o winit passa um `XErrorEvent` válido da Xlib, que tem exatamente
     // este layout (X11/Xlib.h); só lemos, sem guardar o ponteiro.
-    let e = unsafe { &*(evento.cast::<XErrorEvent>()) };
+    let e = unsafe { &*(event.cast::<XErrorEvent>()) };
     if std::env::var_os("BZMUX_XERR").is_some() {
         eprintln!(
             "XERR codigo={} requisicao={} menor={} recurso=0x{:x} engolir={}",
@@ -70,10 +70,10 @@ fn decidir(_display: *mut c_void, evento: *mut c_void) -> bool {
             e.request_code,
             e.minor_code,
             e.resource_id,
-            engolir(e.error_code, e.request_code)
+            swallow(e.error_code, e.request_code)
         );
     }
-    if !engolir(e.error_code, e.request_code) {
+    if !swallow(e.error_code, e.request_code) {
         return false;
     }
     let n = CONTADOS.fetch_add(1, Ordering::Relaxed);
@@ -91,40 +91,40 @@ fn decidir(_display: *mut c_void, evento: *mut c_void) -> bool {
 }
 
 /// Instala o hook. Seguro de chamar em qualquer backend (Wayland nunca invoca).
-pub fn instalar() {
-    winit::platform::x11::register_xlib_error_hook(Box::new(decidir));
+pub fn install() {
+    winit::platform::x11::register_xlib_error_hook(Box::new(decide));
 }
 
 #[cfg(test)]
 mod tests {
-    use super::engolir;
+    use super::swallow;
 
     #[test]
-    fn erro_do_wsi_e_engolido() {
+    fn error_do_wsi_e_engolido() {
         // Present (149) e DRI3 (130) são as duas portas do WSI; medido no sandbox
-        assert!(engolir(9, 149), "BadDrawable na Present");
+        assert!(swallow(9, 149), "BadDrawable na Present");
         assert!(
-            engolir(10, 130),
+            swallow(10, 130),
             "BadAccess na DRI3Open: o que matava no sandbox"
         );
-        assert!(engolir(3, 149));
-        assert!(engolir(8, 130));
+        assert!(swallow(3, 149));
+        assert!(swallow(8, 130));
         // o WSI também libera pixmap por requisição do núcleo
-        assert!(engolir(9, 54));
+        assert!(swallow(9, 54));
     }
 
     #[test]
-    fn bad_access_fora_de_extensao_nao_e_engolido() {
+    fn bad_access_fora_de_extensao_not_e_engolido() {
         // BadAccess é permissão: em requisição do núcleo continua sendo erro
-        assert!(!engolir(10, 20));
-        assert!(!engolir(10, 33));
+        assert!(!swallow(10, 20));
+        assert!(!swallow(10, 33));
     }
 
     #[test]
-    fn outro_codigo_de_erro_nao_e_engolido() {
+    fn other_codigo_de_error_not_e_engolido() {
         // BadAtom, BadValue, BadGC: não é desenho nem permissão de GPU
-        assert!(!engolir(5, 149));
-        assert!(!engolir(2, 149));
-        assert!(!engolir(13, 149));
+        assert!(!swallow(5, 149));
+        assert!(!swallow(2, 149));
+        assert!(!swallow(13, 149));
     }
 }

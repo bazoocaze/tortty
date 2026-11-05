@@ -167,7 +167,7 @@ impl Fonts {
     /// querem saber ("de onde veio este glifo"). Só existe em teste — o desenho
     /// usa `glyph_bitmap`, que decide pela bitmap, não pelo cmap.
     #[cfg(test)]
-    pub fn origem(&self, ch: char) -> (usize, u16) {
+    pub fn origin(&self, ch: char) -> (usize, u16) {
         let idx = self.face_of(ch, false, false).unwrap_or(FACE_PRIMARY);
         let gid = self.face(idx).font().map_or(0, |ft| ft.charmap().map(ch));
         (idx, gid)
@@ -275,15 +275,15 @@ fn fallback_chain(db: &fontdb::Database, primary: &Face, family: &str) -> Vec<Fa
     ];
     let mut out: Vec<Face> = Vec::new();
     // a própria primária pode cobrir o que as outras não cobrem: não repetir
-    let mut vistos: Vec<(u32, String)> = vec![(primary.index, family.to_string())];
-    for nome in QUERIES {
-        let Some((face, real)) = query(db, nome, 400, fontdb::Style::Normal) else {
+    let mut seen: Vec<(u32, String)> = vec![(primary.index, family.to_string())];
+    for name in QUERIES {
+        let Some((face, real)) = query(db, name, 400, fontdb::Style::Normal) else {
             continue;
         };
-        if vistos.iter().any(|(i, f)| *i == face.index && *f == real) {
+        if seen.iter().any(|(i, f)| *i == face.index && *f == real) {
             continue;
         }
-        vistos.push((face.index, real));
+        seen.push((face.index, real));
         out.push(face);
     }
     out
@@ -306,11 +306,11 @@ fn query(
         "fantasy" => Some(fontdb::Family::Fantasy),
         _ => None,
     };
-    let alvo = match generica {
+    let target = match generica {
         Some(g) => vec![g],
         None => vec![fontdb::Family::Name(family)],
     };
-    query_one(db, &alvo, weight, style)
+    query_one(db, &target, weight, style)
 }
 
 fn query_one(
@@ -411,10 +411,10 @@ mod tests {
     /// Caixa (DEC/Unicode) tem de sair da primária: vindo de fallback
     /// proporcional ela não fecha a moldura (achado em 2026-11-02).
     #[test]
-    fn caixa_vem_da_primaria() {
+    fn box_comes_da_primaria() {
         let f = fontes();
         for ch in ['┌', '─', '┐', '│', '└', '┘'] {
-            let (face, gid) = f.origem(ch);
+            let (face, gid) = f.origin(ch);
             assert_ne!(gid, 0, "{ch} sem glifo");
             assert_eq!(face, FACE_PRIMARY, "{ch} veio da face {face}");
         }
@@ -424,7 +424,7 @@ mod tests {
     /// bitmap colorido de 19x18, e ganhava da máscara da primária — o número
     /// da aba saía como um retângulo largo no lugar do dígito (B4).
     #[test]
-    fn digito_vem_da_primaria_em_mascara() {
+    fn digito_comes_da_primaria_em_mascara() {
         let f = fontes();
         let mut ctx = ScaleContext::new();
         for ch in ['0', '1', '2', '4', '9'] {
@@ -441,7 +441,7 @@ mod tests {
     /// mapeia o caractere: DejaVu Sans mapeia U+1F600 e não desenha nada, e o
     /// emoji ficava em branco na tela.
     #[test]
-    fn emoji_sai_colorido() {
+    fn emoji_exits_colorido() {
         let f = fontes();
         let mut ctx = ScaleContext::new();
         for ch in ['\u{1F600}', '\u{1F525}', '\u{1F680}', '\u{1F44D}'] {
@@ -456,7 +456,7 @@ mod tests {
     /// Fonte de socorro que não existe não pode virar outra fonte: era assim
     /// que "Noto Sans Symbols 2" virava FreeMono e desenhava emoji como risco.
     #[test]
-    fn fonte_ausente_nao_vira_outra() {
+    fn font_missing_not_becomes_other() {
         let mut db = fontdb::Database::new();
         db.load_system_fonts();
         assert!(query(
@@ -472,10 +472,10 @@ mod tests {
 
     /// CJK e emoji não estão na primária: a cadeia de socorro tem de achar.
     #[test]
-    fn cjk_e_emoji_caem_na_cadeia() {
+    fn cjk_e_emoji_caem_na_chain() {
         let f = fontes();
         for ch in ['日', '😀'] {
-            let (face, gid) = f.origem(ch);
+            let (face, gid) = f.origin(ch);
             assert_ne!(gid, 0, "{ch} não achou face");
             assert!(face >= FACE_FALLBACK, "{ch} devia vir de fallback");
         }
@@ -489,7 +489,7 @@ mod metrics_probe {
     /// Só roda com `--nocapture`: mostra a métrica do glifo de caixa contra a
     /// célula, que é o que decide se a moldura fecha.
     #[test]
-    fn imprime_metrica_da_caixa() {
+    fn imprime_metrica_da_box() {
         let f = Fonts::new("DejaVu Sans Mono", 17.0).expect("fonte");
         let mut ctx = ScaleContext::new();
         println!(
@@ -497,7 +497,7 @@ mod metrics_probe {
             f.cw, f.ch, f.ascent, f.px
         );
         for ch in ['─', '│', '┌', '┼', 'M', '日'] {
-            let (face, gid) = f.origem(ch);
+            let (face, gid) = f.origin(ch);
             let b = rasterize(&mut ctx, f.face(face), f.px, gid);
             match b {
                 Some(b) => println!(

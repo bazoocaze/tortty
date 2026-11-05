@@ -27,10 +27,10 @@ for arg in "$@"; do
 done
 
 falhou=0
-passo() {
-    nome=$1
+step() {
+    name=$1
     shift
-    printf '%-22s' "$nome"
+    printf '%-22s' "$name"
     if saida=$("$@" 2>&1); then
         echo "ok"
     else
@@ -47,17 +47,17 @@ if [ "$FIX" = 1 ]; then
         --workspace --release >/dev/null 2>&1 || true
 fi
 
-passo "cargo fmt --check" cargo fmt --all -- --check
-passo "clippy -D warnings" cargo clippy --workspace --all-targets --release -- -D warnings
-passo "cargo test" cargo test --workspace --quiet
+step "cargo fmt --check" cargo fmt --all -- --check
+step "clippy -D warnings" cargo clippy --workspace --all-targets --release -- -D warnings
+step "cargo test" cargo test --workspace --quiet
 
 if [ "$FAST" = 0 ]; then
-    passo "build --release" cargo build --release --workspace
+    step "build --release" cargo build --release --workspace
     # parsebench é o benchmark sem display: se ele quebra, o número do
     # docs/BENCHMARKS.md morre junto
     # `--selftest` é o smoke do emulador sem display: 14 áreas do núcleo
-    passo "selftest" ./target/release/bzmux --selftest
-    passo "parsebench" ./target/release/parsebench --frames 100 --cols 40 --rows 12
+    step "selftest" ./target/release/bzmux --selftest
+    step "parsebench" ./target/release/parsebench --frames 100 --cols 40 --rows 12
 fi
 
 if [ "$falhou" = 0 ]; then

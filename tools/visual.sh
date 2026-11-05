@@ -21,16 +21,16 @@
 # falha aqui — antes isso só aparecia como "a janela abriu e ficou morta".
 set -u
 
-RAIZ=$(cd "$(dirname "$0")/.." && pwd)
-APP=${BZMUX_BIN:-$RAIZ/target/release/bzmux}
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+APP=${BZMUX_BIN:-$ROOT/target/release/bzmux}
 DISPLAY_XVFB=${BZMUX_DISPLAY:-:77}
 SAIDA=${BZMUX_VISUAL_DIR:-/tmp/bzmux-visual}
-MANTER=0
+KEEP=0
 SOCK=/tmp/bzmux-visual.sock
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --keep) MANTER=1; shift ;;
+        --keep) KEEP=1; shift ;;
         --display) DISPLAY_XVFB=$2; shift 2 ;;
         -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "opção desconhecida: $1" >&2; exit 2 ;;
@@ -38,9 +38,9 @@ while [ $# -gt 0 ]; do
 done
 
 falhas=0
-passo() { printf '%s %s\n' "$1" "$2"; }
-ok() { passo "ok   " "$1"; }
-falhou() { passo "FALHA" "$1"; falhas=$((falhas + 1)); }
+step() { printf '%s %s\n' "$1" "$2"; }
+ok() { step "ok   " "$1"; }
+falhou() { step "FALHA" "$1"; falhas=$((falhas + 1)); }
 
 [ -x "$APP" ] || { echo "sem binário em $APP (cargo build --release)" >&2; exit 2; }
 command -v import >/dev/null || { echo "falta ImageMagick (import)" >&2; exit 2; }
@@ -51,7 +51,7 @@ XVFB_PID=
 APP_PID=
 APP2_PID=
 
-limpar() {
+clear() {
     [ -n "$APP2_PID" ] && kill "$APP2_PID" 2>/dev/null
     [ -n "$APP_PID" ] && kill "$APP_PID" 2>/dev/null
     # espera o app sair: sem isso o Xvfb pode cair com cliente conectado
@@ -61,7 +61,7 @@ limpar() {
     rm -f "$SOCK"
     [ "$MANTER" -eq 1 ] || rm -rf "$TMP"
 }
-trap limpar EXIT INT TERM
+trap clear EXIT INT TERM
 
 # display isolado: ninguém vê, ninguém perde o foco
 if DISPLAY=$DISPLAY_XVFB xdpyinfo >/dev/null 2>&1; then
@@ -105,7 +105,7 @@ python3 - "$SOCK" <<'PY' || { echo "nenhum frame apresentado (surface morto?)" >
 import json, socket, sys, time
 s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); f = s.makefile()
 def q(o):
-    s.sendall((json.dumps(o) + "\n").encode()); return json.loads(f.readline())
+    s.sendall((json.dumps(o) + "\n").encode()); return json.load(f.readline())
 for _ in range(100):
     st = q({"cmd": "state"})
     if st.get("last_frame") == "drawn" and st.get("draws", 0) > 0:
@@ -122,7 +122,7 @@ XID=$(python3 - "$SOCK" <<'PY'
 import json, socket, sys
 s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); f = s.makefile()
 s.sendall(b'{"cmd":"state"}\n')
-print(json.loads(f.readline()).get("xid") or "")
+print(json.load(f.readline()).get("xid") or "")
 PY
 )
 [ -n "$XID" ] || { echo "a instância não reportou xid no state" >&2; exit 1; }
@@ -131,7 +131,7 @@ PY
 CEL=$(python3 - "$SOCK" <<'PY'
 import json, socket, sys
 s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); f = s.makefile()
-s.sendall(b'{"cmd":"state"}\n'); st = json.loads(f.readline())
+s.sendall(b'{"cmd":"state"}\n'); st = json.load(f.readline())
 print(f"{int(round(st['cell'][0]))}x{int(round(st['cell'][1]))}")
 PY
 )
@@ -139,29 +139,29 @@ PY
 CWL=${CEL%x*}
 CHL=${CEL#*x}
 
-tirar() { # tirar <arquivo>
+take() { # tirar <arquivo>
     DISPLAY=$DISPLAY_XVFB import -window "$XID" "$1" 2>/dev/null
     [ -s "$1" ] || { echo "captura vazia em $1" >&2; return 1; }
 }
 
 # com a barra de 1 aba, a grade começa na linha 1 (barra escondida)
-tirar "$SAIDA/a.png" || { falhou "captura"; exit 1; }
+take "$SAIDA/a.png" || { falhou "captura"; exit 1; }
 
 # 1. desenho vivo: mudar o conteúdo tem de mudar pixels
 python3 - "$SOCK" <<'PY'
 import json, socket, sys
 s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); f = s.makefile()
 s.sendall((json.dumps({"cmd": "write", "data": "\r\nMUDOU"}) + "\n").encode())
-json.loads(f.readline())
+json.load(f.readline())
 PY
 # resumo do `state` para o diagnóstico: separa "o app não desenhou" de
 # "desenhou e a superfície não apresentou" (o sintoma do M-AA)
-estado_resumo() {
+state_summary() {
     python3 - "$SOCK" <<'PY'
 import json, socket, sys
 s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); f = s.makefile()
 s.sendall(b'{"cmd":"state"}\n')
-st = json.loads(f.readline())
+st = json.load(f.readline())
 print(
     "drawn={} skips={} last_frame={!r}".format(
         st.get("drawn"), st.get("skips"), st.get("last_frame")
@@ -171,7 +171,7 @@ PY
 }
 
 sleep 0.4
-tirar "$SAIDA/b.png" || falhou "captura 2"
+take "$SAIDA/b.png" || falhou "captura 2"
 if ./tools/pixel.py --diff "$SAIDA/a.png" "$SAIDA/b.png" --max 0 >/dev/null 2>&1; then
     falhou "conteúdo mudou e nenhum pixel mudou ($(estado_resumo))"
 else
@@ -197,7 +197,7 @@ else
 fi
 
 # 4. tela parada: duas capturas seguidas têm de ser idênticas
-tirar "$SAIDA/c.png" || falhou "captura 3"
+take "$SAIDA/c.png" || falhou "captura 3"
 if ./tools/pixel.py --diff "$SAIDA/b.png" "$SAIDA/c.png" --max 0 >/dev/null 2>&1; then
     ok "tela parada não repinta diferente"
 else
@@ -225,7 +225,7 @@ def q(**kw):
     f = c.makefile("rwb")
     f.write(json.dumps(kw).encode() + b"\n")
     f.flush()
-    r = json.loads(f.readline())
+    r = json.load(f.readline())
     c.close()
     return r["ok"] if isinstance(r.get("ok"), dict) else r
 
@@ -259,10 +259,10 @@ def cor(i):
     return (LV[idx // 36], LV[(idx % 36) // 6], LV[idx % 6])
 
 
-erros, vistas = [], 0
+errors, seen = [], 0
 
 
-def claro(px, y):
+def light(px, y):
     """ha pixel de texto (brilhante) na faixa vertical [y, y+ch)?"""
     for yy in range(y, min(int(y + ch), h)):
         for xx in range(0, min(int(cw * 8), w)):
@@ -276,15 +276,15 @@ for r, ln in enumerate(grid):
     y = int(r * ch)
     if y + ch > h:
         break
-    tem = claro(buf, y)
+    has = light(buf, y)
     if ln.strip():
-        vistas += 1
-        if not tem:
-            erros.append(f"linha {r} tem texto na grade e nenhum pixel na faixa")
-if vistas < 5:
-    erros.append(f"poucas linhas conferidas ({vistas})")
-print("; ".join(erros))
-sys.exit(1 if erros else 0)
+        seen += 1
+        if not has:
+            errors.append(f"linha {r} tem texto na grade e nenhum pixel na faixa")
+if seen < 5:
+    errors.append(f"poucas linhas conferidas ({vistas})")
+print("; ".join(errors))
+sys.exit(1 if errors else 0)
 PY
 then
     ok "linha r é pintada na faixa r (espaçamento de 1 célula)"
@@ -321,30 +321,30 @@ def q(**kw):
     f = c.makefile("rwb")
     f.write(json.dumps(kw).encode() + b"\n")
     f.flush()
-    r = json.loads(f.readline())
+    r = json.load(f.readline())
     c.close()
     return r["ok"] if isinstance(r.get("ok"), dict) else r
 
 
-def estado():
+def state():
     st = q(cmd="state")
     g = q(cmd="text", where="view", count=st["rows"]).get("lines") or []
-    com = [i for i, l in enumerate(g) if l.strip()]
-    return (com[0] if com else None), st["cursor"][0], st
+    with = [i for i, l in enumerate(g) if l.strip()]
+    return (with[0] if with else None), st["cursor"][0], st
 
 
 time.sleep(0.6)
-antes, cy_antes, st = estado()
+antes, cy_antes, st = state()
 cols, rows = st["cols"], st["rows"]
 for r in (rows + 12, rows, rows + 12):
     q(cmd="resize", cols=cols, rows=r)
     time.sleep(0.5)
-depois, cy_depois, st = estado()
+after, cy_after, st = state()
 print(
     f"grade {st['cols']}x{st['rows']} texto antes={antes} depois={depois} "
     f"cursor antes={cy_antes} depois={cy_depois}"
 )
-sys.exit(0 if (antes, cy_antes) == (0, 0) == (depois, cy_depois) else 1)
+sys.exit(0 if (antes, cy_antes) == (0, 0) == (after, cy_after) else 1)
 PY
 then
     ok "cursor e conteúdo ficam na linha 1 ao encolher e crescer"
@@ -368,7 +368,7 @@ def q(**kw):
     f = c.makefile("rwb")
     f.write(json.dumps(kw).encode() + b"\n")
     f.flush()
-    r = json.loads(f.readline())
+    r = json.load(f.readline())
     c.close()
     return r["ok"] if isinstance(r.get("ok"), dict) else r
 
@@ -400,14 +400,14 @@ with open(png + ".ppm", "rb") as f:
     f.readline()
     buf = f.read()
 
-erros, vistas = [], 0
+errors, seen = [], 0
 for r, ln in enumerate(grid):
     y0, y1 = int(r * ch), min(int((r + 1) * ch), h)
     if y0 >= h:
         break
     if not ln.strip():
         continue
-    vistas += 1
+    seen += 1
     achou = any(
         buf[(y * w + x) * 3] > 90
         and buf[(y * w + x) * 3 + 1] > 90
@@ -416,11 +416,11 @@ for r, ln in enumerate(grid):
         for x in range(0, min(int(cw * len(ln)), w))
     )
     if not achou:
-        erros.append(f"linha {r} tem texto na grade e nenhum pixel: {ln.strip()[:20]!r}")
-if vistas < 5:
-    erros.append(f"poucas linhas conferidas ({vistas})")
-print("; ".join(erros))
-sys.exit(1 if erros else 0)
+        errors.append(f"linha {r} tem texto na grade e nenhum pixel: {ln.strip()[:20]!r}")
+if seen < 5:
+    errors.append(f"poucas linhas conferidas ({vistas})")
+print("; ".join(errors))
+sys.exit(1 if errors else 0)
 PY
 then
     ok "rolagem não deixa linha com texto e sem pixel"

@@ -61,11 +61,11 @@ pub fn add_pty(ns: u64, bytes: usize) {
     PTY_BYTES.fetch_add(bytes as u64, Ordering::Relaxed);
 }
 
-fn ms(ns: u64, calls: u64) -> f64 {
-    if calls == 0 {
+fn ms(ns: u64, call: u64) -> f64 {
+    if call == 0 {
         0.0
     } else {
-        ns as f64 / calls as f64 / 1e6
+        ns as f64 / call as f64 / 1e6
     }
 }
 

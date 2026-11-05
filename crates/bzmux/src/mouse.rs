@@ -176,7 +176,7 @@ mod tests {
     }
 
     #[test]
-    fn sgr_com_modificadores_e_movimento() {
+    fn sgr_with_modificadores_e_movement() {
         // shift+ctrl+alt = 4+16+8 = 28; movimento = 32
         let mut e = ev(MIDDLE, 0, 0);
         e.mods = MOD_SHIFT | MOD_CTRL | MOD_ALT;
@@ -185,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn antigo_release_vira_tres_e_coordenada_satura() {
+    fn legacy_release_becomes_three_e_coord_satura() {
         // release do esquerdo no protocolo antigo: botão 3 (não 0)
         let mut e = ev(LEFT, 0, 0);
         e.pressed = false;
@@ -201,11 +201,11 @@ mod tests {
     }
 
     #[test]
-    fn roda_no_protocolo_antigo_nao_manda_release() {
+    fn run_no_protocol_legacy_not_sends_release() {
         let mut released = ev(WHEEL_UP, 1, 1);
         released.pressed = false;
-        let vazio = encode(released, old());
-        assert_eq!(vazio.len(), 0);
+        let empty = encode(released, old());
+        assert_eq!(empty.len(), 0);
         assert_eq!(
             encode(ev(WHEEL_UP, 0, 0), old()),
             vec![0x1b, b'[', b'M', 32 + WHEEL_UP, 33, 33]
@@ -215,7 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn utf8_codifica_coordenada_acima_de_222() {
+    fn utf8_codifica_coord_acima_de_222() {
         let v = encode(
             ev(LEFT, 300, 0),
             Proto {
@@ -240,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn modos_do_term_e_o_byte_de_cada_evento() {
+    fn modos_do_term_e_o_byte_de_each_event() {
         let mut t = Term::new(80, 24);
         // `?1002` reporta press/release e arrasto com botão; `?1006` pede SGR
         t.feed(b"\x1b[?1002h\x1b[?1006h");
@@ -274,12 +274,12 @@ mod tests {
     }
 
     #[test]
-    fn roda_e_modificadores_em_cada_protocolo() {
+    fn run_e_modificadores_em_each_protocol() {
         // no SGR a roda tem release, e ele sai em minúsculo
         assert_eq!(encode(ev(WHEEL_UP, 9, 4), sgr()), b"\x1b[<64;10;5M");
-        let mut baixo = ev(WHEEL_DOWN, 9, 4);
-        baixo.pressed = false;
-        assert_eq!(encode(baixo, sgr()), b"\x1b[<65;10;5m");
+        let mut low = ev(WHEEL_DOWN, 9, 4);
+        low.pressed = false;
+        assert_eq!(encode(low, sgr()), b"\x1b[<65;10;5m");
         // ctrl+shift+roda: 64 | 16 | 4 = 84
         let mut mods = ev(WHEEL_UP, 0, 0);
         mods.mods = MOD_SHIFT | MOD_CTRL;

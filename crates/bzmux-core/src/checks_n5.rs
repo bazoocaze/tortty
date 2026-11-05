@@ -56,13 +56,15 @@ pub fn all() -> Vec<Check> {
 #[allow(clippy::needless_pass_by_value)]
 fn esperado<T: PartialEq + std::fmt::Debug>(
     o_que: &str,
-    obtido: T,
+    obtained: T,
     esperado: T,
 ) -> Result<(), String> {
-    if obtido == esperado {
+    if obtained == esperado {
         Ok(())
     } else {
-        Err(format!("{o_que}: esperado {esperado:?}, obtido {obtido:?}"))
+        Err(format!(
+            "{o_que}: esperado {esperado:?}, obtido {obtained:?}"
+        ))
     }
 }
 
@@ -71,7 +73,7 @@ fn linhas(v: &[&str]) -> Vec<String> {
 }
 
 /// Texto das `rows` linhas da visão com `off` linhas de histórico.
-fn texto_da_visao(t: &Term, off: usize) -> Vec<String> {
+fn text_da_visao(t: &Term, off: usize) -> Vec<String> {
     t.visible_rows(off).iter().map(|r| r.text()).collect()
 }
 
@@ -82,8 +84,8 @@ fn texto_da_visao(t: &Term, off: usize) -> Vec<String> {
 /// então a conta absoluta não derrapa linha a linha como a diferença de
 /// tamanho derrapava. O clamp é no tamanho do histórico: se a linha morreu
 /// (CSI 3J) não há o que segurar e a visão volta para o vivo.
-fn off_da_ancora(t: &Term, linha: i64) -> usize {
-    (t.scrolled as i64 - linha).clamp(0, t.scrollback.len() as i64) as usize
+fn off_da_ancora(t: &Term, line: i64) -> usize {
+    (t.scrolled as i64 - line).clamp(0, t.scrollback.len() as i64) as usize
 }
 
 /// Dano no molde do Python: `None` = a grade inteira, `Some(linhas)` = só elas.
@@ -110,10 +112,10 @@ fn history() -> Result<(), String> {
     let mut t = Term::new(10, 3);
     t.feed(b"a\r\nb\r\nc\r\nd\r\ne\r\n");
     // a tela é uma janela: `off`=0 é o vivo, `off`>0 puxa o histórico para cima
-    esperado("vivo", texto_da_visao(&t, 0), linhas(&["d", "e", ""]))?;
+    esperado("vivo", text_da_visao(&t, 0), linhas(&["d", "e", ""]))?;
     esperado(
         "uma linha acima",
-        texto_da_visao(&t, 1),
+        text_da_visao(&t, 1),
         linhas(&["c", "d", "e"]),
     )?;
     esperado("três linhas fora do topo", t.scrolled, 3)?;
@@ -129,7 +131,7 @@ fn history() -> Result<(), String> {
     // fundo do histórico: pedir demais clampa no mais antigo, não no vivo
     esperado(
         "fundo do histórico",
-        texto_da_visao(&t, 99),
+        text_da_visao(&t, 99),
         linhas(&["a", "b", "c"]),
     )?;
     esperado("histórico tem 3", t.scrollback.len(), 3)?;
@@ -143,8 +145,8 @@ fn scroll_anchor() -> Result<(), String> {
     }
     // o usuário subiu duas linhas e parou de ler: a âncora é a linha do topo
     let ancora = t.scrolled as i64 - 2;
-    let topo = t.visible_rows(2)[0].text();
-    esperado("topo lido", topo.clone(), "6".to_string())?;
+    let top = t.visible_rows(2)[0].text();
+    esperado("topo lido", top.clone(), "6".to_string())?;
     let (antes_scrolled, antes_hist) = (t.scrolled, t.scrollback.len());
     for i in 10..15 {
         t.feed(format!("{i}\r\n").as_bytes());
@@ -153,7 +155,7 @@ fn scroll_anchor() -> Result<(), String> {
     esperado(
         "a visão acompanha o output",
         t.visible_rows(off_da_ancora(&t, ancora))[0].text(),
-        topo.clone(),
+        top.clone(),
     )?;
     // e a conta incremental do app (D10) chega no mesmo offset
     esperado(
@@ -168,8 +170,8 @@ fn scroll_anchor() -> Result<(), String> {
     }
     esperado("histórico no teto", t.scrollback.len(), 1000)?;
     let ancora = t.scrolled as i64 - 3;
-    let topo = t.visible_rows(3)[0].text();
-    let (teto_scrolled, teto_hist) = (t.scrolled, t.scrollback.len());
+    let top = t.visible_rows(3)[0].text();
+    let (cap_scrolled, cap_hist) = (t.scrolled, t.scrollback.len());
     for i in 1100..1110 {
         t.feed(format!("{i}\r\n").as_bytes());
     }
@@ -180,16 +182,16 @@ fn scroll_anchor() -> Result<(), String> {
     // uma linha de conteúdo por linha nova, o oposto do D10
     esperado(
         "view_after_output no teto",
-        t.view_after_output(3, teto_scrolled, teto_hist),
+        t.view_after_output(3, cap_scrolled, cap_hist),
         off,
     )?;
     esperado(
         "mesma linha no topo",
         t.visible_rows(off)[0].text(),
-        topo.clone(),
+        top.clone(),
     )?;
     // a conta antiga (offset fixo em 3) mostraria outra linha: 10 de deriva
-    if t.visible_rows(3)[0].text() == topo {
+    if t.visible_rows(3)[0].text() == top {
         return Err(
             "offset fixo em 3 devolveu a mesma linha: o teste não separa as contas".to_string(),
         );
@@ -391,7 +393,7 @@ fn style_contrast() -> Result<(), String> {
     // Mesma conta do `style.contrast` do Python (WCAG 2.1): luminância
     // relativa e razão (L1+0.05)/(L2+0.05). O cromo da GUI (cards, abas,
     // toast) não existe no núcleo — o que existe aqui é o tema do terminal.
-    fn canal(v: u8) -> f64 {
+    fn channel(v: u8) -> f64 {
         let v = f64::from(v) / 255.0;
         if v <= 0.039_28 {
             v / 12.92
@@ -400,22 +402,22 @@ fn style_contrast() -> Result<(), String> {
         }
     }
     fn luminancia((r, g, b): (u8, u8, u8)) -> f64 {
-        0.2126 * canal(r) + 0.7152 * canal(g) + 0.0722 * canal(b)
+        0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
     }
-    fn contraste(fg: (u8, u8, u8), bg: (u8, u8, u8)) -> f64 {
+    fn contrast(fg: (u8, u8, u8), bg: (u8, u8, u8)) -> f64 {
         let (a, b) = (luminancia(fg), luminancia(bg));
-        let (claro, escuro) = if a > b { (a, b) } else { (b, a) };
-        (claro + 0.05) / (escuro + 0.05)
+        let (light, dark) = if a > b { (a, b) } else { (b, a) };
+        (light + 0.05) / (dark + 0.05)
     }
-    let tema = Theme::default();
-    let fundo = tema.rgb(tema.bg, (0, 0, 0));
+    let theme = Theme::default();
+    let bg = theme.rgb(theme.bg, (0, 0, 0));
     // texto normal pede 4.5:1; cursor é componente de UI (WCAG 1.4.11: 3:1)
-    let pares = [
-        ("fg sobre o fundo", tema.fg, 4.5),
-        ("cursor sobre o fundo", tema.cursor, 3.0),
+    let pairs = [
+        ("fg sobre o fundo", theme.fg, 4.5),
+        ("cursor sobre o fundo", theme.cursor, 3.0),
     ];
-    for (o_que, cor, minimo) in pares {
-        let razao = contraste(tema.rgb(cor, fundo), fundo);
+    for (o_que, cor, minimo) in pairs {
+        let razao = contrast(theme.rgb(cor, bg), bg);
         if razao < minimo {
             return Err(format!(
                 "{o_que}: contraste {razao:.2} abaixo do mínimo {minimo:.1}"
@@ -442,7 +444,7 @@ fn graphics_kitty() -> Result<(), String> {
     let p = t.graphics.placements()[0];
     esperado(
         "colocação",
-        (p.image_id, p.col, p.linha, p.cols, p.rows),
+        (p.image_id, p.col, p.line, p.cols, p.rows),
         (3, 0, 0, 1, 1),
     )?;
     // H10: sem `C=1` o cursor desce as linhas da imagem
@@ -452,11 +454,8 @@ fn graphics_kitty() -> Result<(), String> {
         t.feed(b"\r\n");
     }
     let p = t.graphics.placements()[0];
-    if p.linha >= 0 {
-        return Err(format!(
-            "imagem devia estar no histórico: linha {}",
-            p.linha
-        ));
+    if p.line >= 0 {
+        return Err(format!("imagem devia estar no histórico: linha {}", p.line));
     }
     // H13: `ED 3` limpa imagem e histórico
     t.feed(b"\x1b[3J");

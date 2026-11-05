@@ -170,7 +170,7 @@ impl Theme {
     pub fn rgb(&self, c: Color, default: (u8, u8, u8)) -> (u8, u8, u8) {
         match c {
             Color::Default => default,
-            outro => crate::color::resolve(outro, &self.palette256(), default),
+            other => crate::color::resolve(other, &self.palette256(), default),
         }
     }
 }
@@ -307,14 +307,14 @@ impl Config {
         let mut errors: Vec<Error> = Vec::new();
         for (n, raw) in text.lines().enumerate() {
             let line = n + 1;
-            let sem = raw.trim();
+            let without = raw.trim();
             // linha em branco ou comentário de linha inteira
-            if sem.is_empty() || sem.starts_with('#') {
+            if without.is_empty() || without.starts_with('#') {
                 continue;
             }
-            let (key, rest) = match sem.split_once(char::is_whitespace) {
+            let (key, rest) = match without.split_once(char::is_whitespace) {
                 Some((k, v)) => (k, v),
-                None => (sem, ""),
+                None => (without, ""),
             };
             let value = value_of(rest);
             let value = value.as_str();
@@ -504,7 +504,7 @@ mod tests {
     }
 
     #[test]
-    fn comentario_nao_come_cor() {
+    fn comentario_not_come_cor() {
         let (cfg, errs) =
             Config::parse("# linha toda\nforeground #112233   # nota no fim\nbackground #abc\n");
         assert!(errs.is_empty(), "{errs:?}");
@@ -516,16 +516,16 @@ mod tests {
     /// Os três valores de `ligatures` valem e o padrão é `standard` (ligadura
     /// ligada, como no kitty); valor errado não derruba o arquivo, só a linha.
     #[test]
-    fn ligaduras_por_nome() {
+    fn ligaduras_per_name() {
         assert_eq!(Config::parse("").0.ligatures, Ligatures::Standard);
-        for (texto, esperado) in [
+        for (text, esperado) in [
             ("off", Ligatures::Off),
             ("standard", Ligatures::Standard),
             ("all", Ligatures::All),
         ] {
-            let (cfg, errs) = Config::parse(&format!("ligatures {texto}\n"));
-            assert!(errs.is_empty(), "{texto}: {errs:?}");
-            assert_eq!(cfg.ligatures, esperado, "{texto}");
+            let (cfg, errs) = Config::parse(&format!("ligatures {text}\n"));
+            assert!(errs.is_empty(), "{text}: {errs:?}");
+            assert_eq!(cfg.ligatures, esperado, "{text}");
         }
         let (cfg, errs) = Config::parse("ligatures talvez\nfont_size 14\n");
         assert_eq!(
@@ -542,13 +542,13 @@ mod tests {
     }
 
     #[test]
-    fn repetida_vence_a_ultima() {
+    fn repetida_vence_a_last() {
         let (cfg, _) = Config::parse("font_size 20\nfont_size 14\n");
         assert!((cfg.font_size - 14.0).abs() < f32::EPSILON);
     }
 
     #[test]
-    fn chave_desconhecida_e_erro_e_o_resto_vale() {
+    fn key_desconhecida_e_error_e_o_rest_vale() {
         let (cfg, errs) = Config::parse("inventada 1\nfont_size 20\n");
         assert_eq!(errs.len(), 1);
         assert_eq!(errs[0].line, 1);
@@ -567,7 +567,7 @@ mod tests {
     }
 
     #[test]
-    fn faixas_tem_teto() {
+    fn faixas_has_cap() {
         let (_, errs) =
             Config::parse("font_size 200\nscrollback 999999\nwindow_padding_width 900\n");
         assert_eq!(errs.len(), 3);
@@ -576,7 +576,7 @@ mod tests {
     }
 
     #[test]
-    fn shell_vazio_e_none_e_debug_log_off_desliga() {
+    fn shell_empty_e_none_e_debug_log_off_desliga() {
         let (cfg, _) = Config::parse("shell del\n");
         assert_eq!(cfg.shell.as_deref(), Some("del"));
         let (cfg, _) = Config::parse("shell\ndebug_log off\n");
@@ -585,7 +585,7 @@ mod tests {
     }
 
     #[test]
-    fn paleta_do_tema_chega_na_256() {
+    fn palette_do_theme_arrives_na_256() {
         let (cfg, errs) = Config::parse("color1 #ff0000\ncolor8 #00ff00\n");
         assert_eq!(errs, [], "erros inesperados");
         let p = cfg.palette256();
@@ -597,18 +597,18 @@ mod tests {
     }
 
     #[test]
-    fn reload_com_erro_nao_troca_nada() {
-        let (bom, _) = Config::parse("font_size 16\n");
-        let (tentativa, errs) = bom.over("font_size 18\nbell grita\n");
+    fn reload_with_error_not_swap_nada() {
+        let (good, _) = Config::parse("font_size 16\n");
+        let (tentativa, errs) = good.over("font_size 18\nbell grita\n");
         assert_ne!(errs, [], "o erro tinha que aparecer");
         // quem chama só aplica se `errs` estiver vazio; aqui provamos que a base
         // não é mutada e que o valor bom sobrevive
-        assert!((bom.font_size - 16.0).abs() < f32::EPSILON);
+        assert!((good.font_size - 16.0).abs() < f32::EPSILON);
         assert!((tentativa.font_size - 18.0).abs() < f32::EPSILON);
     }
 
     #[test]
-    fn doc_de_configuracao_cita_todas_as_chaves() {
+    fn doc_de_configuracao_mentions_all_as_chaves() {
         // a doc não pode envelhecer sozinha: toda chave dos padrões tem que
         // aparecer em docs/CONFIG.md
         let doc =
@@ -616,10 +616,10 @@ mod tests {
                 .expect("docs/CONFIG.md");
         for k in KNOWN {
             // a paleta aparece como intervalo na doc (`color0` … `color15`)
-            let intervalo =
+            let interval =
                 k.starts_with("color") && doc.contains("color0") && doc.contains("color15");
             assert!(
-                doc.contains(k) || intervalo,
+                doc.contains(k) || interval,
                 "docs/CONFIG.md não fala de '{k}'"
             );
         }

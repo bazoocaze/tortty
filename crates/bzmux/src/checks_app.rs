@@ -20,7 +20,7 @@ use crate::keys;
 use crate::mouse;
 use crate::state;
 
-const NENHUM: ModifiersState = ModifiersState::empty();
+const NONE: ModifiersState = ModifiersState::empty();
 
 /// O instalador e o ícone entram no binário: o check do atalho de desktop vale
 /// também para o binário já instalado, longe da árvore do repositório.
@@ -64,19 +64,19 @@ fn argv_parsing() -> Result<(), String> {
     // `--help` e `--version` são informativas (0); erro de uso é 2 — inclusive
     // valor que não é número, que antes saía 0 e deixava script de automação
     // seguir com um comando inválido.
-    let casos: [(&[&str], i32); 5] = [
+    let cases: [(&[&str], i32); 5] = [
         (&["--help"], 0),
         (&["-V"], 0),
         (&["--colo", "80"], 2),
         (&["--cols", "abc"], 2),
         (&["--cols"], 2),
     ];
-    for (args, esperado) in casos {
+    for (args, esperado) in cases {
         let msg = argv(args).err().unwrap_or_default();
-        let obtido = cli::exit_code(&msg);
-        if obtido != esperado {
+        let obtained = cli::exit_code(&msg);
+        if obtained != esperado {
             return Err(format!(
-                "{}: código {obtido}, esperado {esperado}",
+                "{}: código {obtained}, esperado {esperado}",
                 args.join(" ")
             ));
         }
@@ -95,33 +95,33 @@ fn argv_parsing() -> Result<(), String> {
     let conf = std::env::temp_dir().join(format!("bzmux-check-{}.conf", std::process::id()));
     std::fs::write(&conf, "font_size 20\nscrollback 1234\n")
         .map_err(|e| format!("{}: {e}", conf.display()))?;
-    let caminho = conf.to_string_lossy().to_string();
-    let (sem_cli, _) = cli::Options::build(argv(&["--config", &caminho])?);
-    let (com_cli, _) = cli::Options::build(argv(&[
+    let path = conf.to_string_lossy().to_string();
+    let (without_cli, _) = cli::Options::build(argv(&["--config", &path])?);
+    let (with_cli, _) = cli::Options::build(argv(&[
         "--config",
-        &caminho,
+        &path,
         "--font-size",
         "14",
         "--scrollback",
         "99",
     ])?);
     let _ = std::fs::remove_file(&conf);
-    if (sem_cli.font_size_pt - 20.0).abs() > f32::EPSILON || sem_cli.scrollback != 1234 {
+    if (without_cli.font_size_pt - 20.0).abs() > f32::EPSILON || without_cli.scrollback != 1234 {
         return Err(format!(
             "arquivo ignorado: {:?} pt / scrollback {}",
-            sem_cli.font_size_pt, sem_cli.scrollback
+            without_cli.font_size_pt, without_cli.scrollback
         ));
     }
-    if (com_cli.font_size_pt - 14.0).abs() > f32::EPSILON || com_cli.scrollback != 99 {
+    if (with_cli.font_size_pt - 14.0).abs() > f32::EPSILON || with_cli.scrollback != 99 {
         return Err(format!(
             "CLI não venceu o arquivo: {:?} pt / scrollback {}",
-            com_cli.font_size_pt, com_cli.scrollback
+            with_cli.font_size_pt, with_cli.scrollback
         ));
     }
     Ok(())
 }
 
-fn tecla(named: Option<NamedKey>, ch: Option<&str>, mods: ModifiersState, flags: u32) -> String {
+fn key(named: Option<NamedKey>, ch: Option<&str>, mods: ModifiersState, flags: u32) -> String {
     String::from_utf8_lossy(
         &keys::encode_parts(named, ch, ch, mods, false, flags).unwrap_or_default(),
     )
@@ -131,47 +131,55 @@ fn tecla(named: Option<NamedKey>, ch: Option<&str>, mods: ModifiersState, flags:
 fn kitty_keyboard() -> Result<(), String> {
     // sem flag o caminho é o legado: ESC cru, ^A, F5 na forma do xterm
     let legado: [(&str, String); 3] = [
-        ("escape", tecla(Some(NamedKey::Escape), None, NENHUM, 0)),
-        ("ctrl+a", tecla(None, Some("a"), ModifiersState::CONTROL, 0)),
-        ("f5", tecla(Some(NamedKey::F5), None, NENHUM, 0)),
+        ("escape", key(Some(NamedKey::Escape), None, NONE, 0)),
+        ("ctrl+a", key(None, Some("a"), ModifiersState::CONTROL, 0)),
+        ("f5", key(Some(NamedKey::F5), None, NONE, 0)),
     ];
-    for (nome, obtido) in legado {
-        let esperado = match nome {
+    for (name, obtained) in legado {
+        let esperado = match name {
             "escape" => "\x1b",
             "ctrl+a" => "\x01",
             _ => "\x1b[15~",
         };
-        if obtido != esperado {
-            return Err(format!("legado {nome}: {obtido:?}, esperado {esperado:?}"));
+        if obtained != esperado {
+            return Err(format!(
+                "legado {name}: {obtained:?}, esperado {esperado:?}"
+            ));
         }
     }
-    let desambigua = keys::F_DISAMBIGUATE;
-    if tecla(Some(NamedKey::Escape), None, NENHUM, desambigua) != "\x1b[27u" {
+    let disambiguate = keys::F_DISAMBIGUATE;
+    if key(Some(NamedKey::Escape), None, NONE, disambiguate) != "\x1b[27u" {
         return Err("flag 1 devia mandar ESC como CSI 27u".into());
     }
-    if tecla(None, Some("a"), ModifiersState::CONTROL, desambigua) != "\x1b[97;5u" {
+    if key(None, Some("a"), ModifiersState::CONTROL, disambiguate) != "\x1b[97;5u" {
         return Err("flag 1 devia mandar Ctrl+a como CSI 97;5u".into());
     }
     // F3 tem forma própria no kitty: `CSI 1;2R`, e não `CSI 13;2~`
-    if tecla(Some(NamedKey::F3), None, ModifiersState::SHIFT, desambigua) != "\x1b[1;2R" {
+    if key(
+        Some(NamedKey::F3),
+        None,
+        ModifiersState::SHIFT,
+        disambiguate,
+    ) != "\x1b[1;2R"
+    {
         return Err("Shift+F3 devia ser CSI 1;2R".into());
     }
     // flag 8 manda a letra sozinha também, e o maiúsculo vem do winit (65)
-    let tudo = keys::F_ALL_KEYS;
-    if tecla(None, Some("a"), NENHUM, tudo) != "\x1b[97u" {
+    let all = keys::F_ALL_KEYS;
+    if key(None, Some("a"), NONE, all) != "\x1b[97u" {
         return Err("flag 8 devia mandar 'a' como CSI 97u".into());
     }
-    if tecla(None, Some("A"), ModifiersState::SHIFT, tudo) != "\x1b[65;2u" {
+    if key(None, Some("A"), ModifiersState::SHIFT, all) != "\x1b[65;2u" {
         return Err("flag 8 + shift devia mandar CSI 65;2u".into());
     }
     // flag 16 embute o texto da tecla
-    if tecla(None, Some("a"), NENHUM, tudo | keys::F_TEXT) != "\x1b[97;97u" {
+    if key(None, Some("a"), NONE, all | keys::F_TEXT) != "\x1b[97;97u" {
         return Err("flag 16 devia embutir o texto".into());
     }
     Ok(())
 }
 
-fn rato(button: u8, col: usize, row: usize) -> mouse::Ev {
+fn mouse(button: u8, col: usize, row: usize) -> mouse::Ev {
     mouse::Ev {
         button,
         col,
@@ -187,11 +195,11 @@ fn mouse_modes_and_sgr() -> Result<(), String> {
         sgr: true,
         utf8: false,
     };
-    let antigo = mouse::Proto::default();
-    let casos: [(&str, Vec<u8>, &[u8]); 3] = [
+    let legacy = mouse::Proto::default();
+    let cases: [(&str, Vec<u8>, &[u8]); 3] = [
         (
             "sgr press",
-            mouse::encode(rato(mouse::LEFT, 9, 4), sgr),
+            mouse::encode(mouse(mouse::LEFT, 9, 4), sgr),
             b"\x1b[<0;10;5M",
         ),
         (
@@ -199,7 +207,7 @@ fn mouse_modes_and_sgr() -> Result<(), String> {
             mouse::encode(
                 mouse::Ev {
                     pressed: false,
-                    ..rato(mouse::RIGHT, 0, 0)
+                    ..mouse(mouse::RIGHT, 0, 0)
                 },
                 sgr,
             ),
@@ -207,17 +215,17 @@ fn mouse_modes_and_sgr() -> Result<(), String> {
         ),
         (
             "antigo press",
-            mouse::encode(rato(mouse::LEFT, 0, 0), antigo),
+            mouse::encode(mouse(mouse::LEFT, 0, 0), legacy),
             b"\x1b[M\x20\x21\x21",
         ),
     ];
-    for (nome, obtido, esperado) in casos {
-        if obtido != esperado {
-            return Err(format!("{nome}: {obtido:?}, esperado {esperado:?}"));
+    for (name, obtained, esperado) in cases {
+        if obtained != esperado {
+            return Err(format!("{name}: {obtained:?}, esperado {esperado:?}"));
         }
     }
     // release de roda não existe no protocolo antigo (só no SGR)
-    let roda = mouse::Ev {
+    let run = mouse::Ev {
         button: 64,
         col: 0,
         row: 0,
@@ -225,10 +233,10 @@ fn mouse_modes_and_sgr() -> Result<(), String> {
         motion: false,
         mods: 0,
     };
-    if !mouse::encode(roda, antigo).is_empty() {
+    if !mouse::encode(run, legacy).is_empty() {
         return Err("release de roda devia sumir no protocolo antigo".into());
     }
-    if mouse::encode(roda, sgr).is_empty() {
+    if mouse::encode(run, sgr).is_empty() {
         return Err("release de roda devia sair no SGR".into());
     }
     // ?1005: a coordenada vai somada de 33 e codificada em UTF-8 — 300 vira
@@ -237,12 +245,12 @@ fn mouse_modes_and_sgr() -> Result<(), String> {
         sgr: false,
         utf8: true,
     };
-    let longe = rato(mouse::LEFT, 300, 300);
-    let bytes = mouse::encode(longe, utf8);
+    let far = mouse(mouse::LEFT, 300, 300);
+    let bytes = mouse::encode(far, utf8);
     if bytes != b"\x1b[M\x20\xc5\x8d\xc5\x8d" {
         return Err(format!("?1005 com coluna 300: {bytes:?}"));
     }
-    let saturado = mouse::encode(longe, antigo);
+    let saturado = mouse::encode(far, legacy);
     if saturado != b"\x1b[M\x20\xff\xff" {
         return Err(format!("antigo devia saturar em 222: {saturado:?}"));
     }
@@ -263,7 +271,7 @@ fn window_state() -> Result<(), String> {
     state::save_to(&arq, &g);
     match state::load_from(&arq) {
         Some(lido) if lido == g => {},
-        outro => return Err(format!("ida e volta perdeu a geometria: {outro:?}")),
+        other => return Err(format!("ida e volta perdeu a geometria: {other:?}")),
     }
     // arquivo torto não pode virar pânico nem geometria inventada
     std::fs::write(&arq, "{ isto não é json").map_err(|e| e.to_string())?;
@@ -285,7 +293,7 @@ fn window_state() -> Result<(), String> {
     // Wayland (J6): sem posição, o tamanho sozinho continua valendo
     match state::fit(None, None, 900, 500, &monitores) {
         Some(g) if g.x.is_none() && g.w == 900 => Ok(()),
-        outro => Err(format!("sem posição devia manter o tamanho: {outro:?}")),
+        other => Err(format!("sem posição devia manter o tamanho: {other:?}")),
     }
 }
 
@@ -295,41 +303,41 @@ fn window_state() -> Result<(), String> {
 // a assinatura é a do trait `Sink` (que recebe a linha e o canal por valor),
 // então o `allow` fica aqui e não no topo do crate
 #[allow(clippy::needless_pass_by_value)]
-fn sink_de_teste(linha: String, resposta: mpsc::Sender<String>) -> bool {
-    let reply = match serde_json::from_str::<serde_json::Value>(&linha) {
+fn sink_de_test(line: String, response: mpsc::Sender<String>) -> bool {
+    let reply = match serde_json::from_str::<serde_json::Value>(&line) {
         Ok(v) if v.get("cmd").is_some() => debugsock::ok(serde_json::json!({ "cmd": v["cmd"] })),
         Ok(_) => debugsock::err("falta o campo cmd"),
         Err(e) => debugsock::err(format!("json: {e}")),
     };
-    resposta.send(reply).is_ok()
+    response.send(reply).is_ok()
 }
 
 fn debug_socket() -> Result<(), String> {
-    let caminho = std::env::temp_dir()
+    let path = std::env::temp_dir()
         .join(format!("bzmux-check-sock-{}.sock", std::process::id()))
         .to_string_lossy()
         .to_string();
-    let _ = std::fs::remove_file(&caminho);
+    let _ = std::fs::remove_file(&path);
     let srv = debugsock::DebugServer::start(
-        &caminho,
-        sink_de_teste as fn(String, mpsc::Sender<String>) -> bool,
+        &path,
+        sink_de_test as fn(String, mpsc::Sender<String>) -> bool,
     )
     .map_err(|e| format!("start: {e}"))?;
     // modo 0600: o terminal de outro usuário não pode ler a tela
     {
         use std::os::unix::fs::PermissionsExt;
-        let modo = std::fs::metadata(&caminho)
+        let mode = std::fs::metadata(&path)
             .map_err(|e| e.to_string())?
             .permissions()
             .mode()
             & 0o777;
-        if modo != 0o600 {
-            return Err(format!("socket com modo {modo:o}, esperado 600"));
+        if mode != 0o600 {
+            return Err(format!("socket com modo {mode:o}, esperado 600"));
         }
     }
-    let mut s = UnixStream::connect(&caminho).map_err(|e| format!("connect: {e}"))?;
+    let mut s = UnixStream::connect(&path).map_err(|e| format!("connect: {e}"))?;
     let mut f = BufReader::new(s.try_clone().map_err(|e| e.to_string())?);
-    let mut ler = |esperado: &str| -> Result<String, String> {
+    let mut read = |esperado: &str| -> Result<String, String> {
         let mut l = String::new();
         f.read_line(&mut l).map_err(|e| e.to_string())?;
         if !l.contains(esperado) {
@@ -339,16 +347,16 @@ fn debug_socket() -> Result<(), String> {
     };
     s.write_all(b"{\"cmd\":\"state\"}\n")
         .map_err(|e| e.to_string())?;
-    ler("state")?;
+    read("state")?;
     // pedido torto responde erro **e a conexão continua**: quem chama o socket
     // precisa do motivo, não de um EOF
     s.write_all(b"nao sou json\n").map_err(|e| e.to_string())?;
-    ler("\"ok\":false")?;
+    read("\"ok\":false")?;
     s.write_all(b"{\"cmd\":\"text\"}\n")
         .map_err(|e| e.to_string())?;
-    ler("text")?;
+    read("text")?;
     drop(srv);
-    if std::path::Path::new(&caminho).exists() {
+    if std::path::Path::new(&path).exists() {
         return Err("socket devia sair do disco ao parar".into());
     }
     Ok(())
@@ -357,15 +365,15 @@ fn debug_socket() -> Result<(), String> {
 fn desktop_shortcut() -> Result<(), String> {
     // o `install.sh` é o dono do atalho (K18): o check cobra o contrato, não a
     // implementação — nome, Exec com o binário, ícone e categoria de terminal
-    for campo in [
+    for field in [
         "Exec=$BINDIR/$APP",
         "TryExec=$BINDIR/$APP",
         "Icon=$APP",
         "Categories=System;",
         "TerminalEmulator;",
     ] {
-        if !INSTALL_SH.contains(campo) {
-            return Err(format!("install.sh não escreve {campo:?} no .desktop"));
+        if !INSTALL_SH.contains(field) {
+            return Err(format!("install.sh não escreve {field:?} no .desktop"));
         }
     }
     if !INSTALL_SH.contains("share/applications/bzmux.desktop") {
@@ -376,9 +384,9 @@ fn desktop_shortcut() -> Result<(), String> {
         .split("do_uninstall()")
         .nth(1)
         .ok_or("install.sh sem do_uninstall")?;
-    for alvo in ["$DESKTOP", "$ICON"] {
-        if !desinstala.contains(alvo) || !desinstala.contains("rm -f") {
-            return Err(format!("desinstalar não remove {alvo}"));
+    for target in ["$DESKTOP", "$ICON"] {
+        if !desinstala.contains(target) || !desinstala.contains("rm -f") {
+            return Err(format!("desinstalar não remove {target}"));
         }
     }
     if !ICONE.contains("<svg") || !ICONE.contains("viewBox") {

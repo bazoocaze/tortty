@@ -46,7 +46,7 @@ fn main() {
     }
 
     // antes de qualquer janela: erro X do WSI da GPU não pode derrubar o app
-    xguard::instalar();
+    xguard::install();
     let event_loop = match EventLoop::<UserEvent>::with_user_event().build() {
         Ok(e) => e,
         Err(e) => {
@@ -77,12 +77,12 @@ fn selftest() -> i32 {
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
-    let todos: Vec<_> = bzmux_core::checks::all()
+    let all: Vec<_> = bzmux_core::checks::all()
         .into_iter()
         .chain(checks_app::all())
         .collect();
     let mut falhas = 0;
-    for c in &todos {
+    for c in &all {
         match (c.run)() {
             Ok(()) => println!("ok    {}", c.name),
             Err(e) => {
@@ -91,7 +91,7 @@ fn selftest() -> i32 {
             },
         }
     }
-    let total = todos.len();
+    let total = all.len();
     println!();
     if falhas == 0 {
         println!("selftest: {total}/{total} ok");

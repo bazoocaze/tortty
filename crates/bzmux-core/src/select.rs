@@ -209,7 +209,7 @@ mod tests {
     }
 
     #[test]
-    fn ancora_sobrevive_ao_scroll() {
+    fn ancora_sobrevive_on_scroll() {
         let mut t = term();
         // três linhas: enche a tela, depois rola uma
         t.feed(b"AAA\r\nBBB\r\nCCC\r\nDDD");
@@ -221,7 +221,7 @@ mod tests {
     }
 
     #[test]
-    fn ancora_morre_quando_o_historico_e_reescrito() {
+    fn ancora_morre_when_o_historico_e_reescrito() {
         let mut t = term();
         t.feed(b"AAA\r\nBBB");
         let a = t.anchor_at(0, 0, 0);
@@ -232,7 +232,7 @@ mod tests {
     }
 
     #[test]
-    fn span_normaliza_e_corta_espaco_a_direita() {
+    fn span_normaliza_e_cuts_espaco_a_direita() {
         let mut t = term();
         t.feed(b"oi   \r\nmundo  ");
         let a = t.anchor_at(0, 1, 4); // "o" de "mundo" (ponta inclusiva)
@@ -255,12 +255,12 @@ mod tests {
     }
 
     #[test]
-    fn view_text_corta_linhas_vazias_do_fim() {
+    fn view_text_cuts_linhas_vazias_do_end() {
         let mut t = term();
         t.feed(b"um\r\ndois");
         assert_eq!(t.view_text(0), "um\ndois\n");
-        let vazio = super::tests::term(); // tela limpa -> nada
-        assert_eq!(vazio.view_text(0), "");
+        let empty = super::tests::term(); // tela limpa -> nada
+        assert_eq!(empty.view_text(0), "");
     }
 
     #[test]

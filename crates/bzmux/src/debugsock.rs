@@ -83,7 +83,7 @@ impl DebugServer {
                         continue;
                     }
                     let sink = Arc::clone(&sink);
-                    std::thread::spawn(move || serve(conn, sink.as_ref()));
+                    std::thread::spawn(move || serves(conn, sink.as_ref()));
                 }
             })
             .map_err(|e| format!("thread do socket: {e}"))?;
@@ -165,7 +165,7 @@ fn same_uid(conn: &UnixStream) -> bool {
     rc == 0 && cred.uid == unsafe { libc::getuid() }
 }
 
-fn serve(conn: UnixStream, sink: &dyn Sink) {
+fn serves(conn: UnixStream, sink: &dyn Sink) {
     let Ok(mut out) = conn.try_clone() else {
         return;
     };
@@ -229,7 +229,7 @@ mod checks_socket {
     use super::*;
 
     /// Caminho de socket exclusivo deste caso: pid + contador atômico.
-    fn caminho(tag: &str) -> PathBuf {
+    fn path(tag: &str) -> PathBuf {
         static N: AtomicU32 = AtomicU32::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!("bz-{tag}-{}-{n}.sock", std::process::id()))
@@ -251,21 +251,21 @@ mod checks_socket {
             Cli { inp, out }
         }
 
-        fn envia_bruto(&mut self, bytes: &[u8]) {
+        fn send_raw(&mut self, bytes: &[u8]) {
             self.inp.write_all(bytes).expect("escrever pedido");
             self.inp.flush().expect("flush do pedido");
         }
 
         /// Uma linha JSON e o newline do framing.
-        fn envia(&mut self, req: &str) {
+        fn send(&mut self, req: &str) {
             let mut buf = String::with_capacity(req.len() + 1);
             buf.push_str(req);
             buf.push('\n');
-            self.envia_bruto(buf.as_bytes());
+            self.send_raw(buf.as_bytes());
         }
 
         /// Exatamente uma linha de resposta, sem o `\n`.
-        fn linha(&mut self) -> String {
+        fn line(&mut self) -> String {
             let mut s = String::new();
             self.out
                 .read_line(&mut s)
@@ -275,47 +275,44 @@ mod checks_socket {
             s
         }
 
-        fn resposta(&mut self) -> serde_json::Value {
-            let l = self.linha();
+        fn response(&mut self) -> serde_json::Value {
+            let l = self.line();
             assert!(!l.contains('\n'), "resposta com mais de uma linha: {l:?}");
             serde_json::from_str(&l).expect("resposta não é JSON")
         }
 
-        fn pede(&mut self, req: &str) -> serde_json::Value {
-            self.envia(req);
-            self.resposta()
+        fn ask(&mut self, req: &str) -> serde_json::Value {
+            self.send(req);
+            self.response()
         }
     }
 
     /// "App falso" inline: a resposta sai do mesmo lado do canal que a UI
     /// usaria, sem thread e sem janela.
-    fn fake(
-        path: &Path,
-        responder: impl Fn(&str) -> String + Send + Sync + 'static,
-    ) -> DebugServer {
+    fn fake(path: &Path, respond: impl Fn(&str) -> String + Send + Sync + 'static) -> DebugServer {
         let srv = DebugServer::start(
             path.to_str().expect("caminho utf8"),
-            move |line: String, reply: Sender<String>| reply.send(responder(&line)).is_ok(),
+            move |line: String, reply: Sender<String>| reply.send(respond(&line)).is_ok(),
         );
         srv.expect("start do socket")
     }
 
     #[test]
-    fn frame_e_uma_linha_json_por_pedido() {
+    fn frame_e_a_line_json_per_request() {
         // o app falso devolve a linha que recebeu: é assim que o teste vê que
         // o pedido atravessou o canal inteiro e sem sobra de newline
-        let path = caminho("frame");
+        let path = path("frame");
         let srv = fake(&path, |line| ok(json!({ "echo": line })));
         let mut cli = Cli::connect(&path);
 
-        let v = cli.pede(r#"{"cmd":"echo","n":1}"#);
+        let v = cli.ask(r#"{"cmd":"echo","n":1}"#);
         assert_eq!(v["ok"], json!(true));
         assert_eq!(v["echo"], json!(r#"{"cmd":"echo","n":1}"#));
 
         // linha em branco não vira pedido (senão a resposta seguinte seria
         // lixo, e não o eco do pedido de verdade)
-        cli.envia_bruto(b"\n   \n");
-        let v = cli.pede(r#"{"cmd":"echo","n":2}"#);
+        cli.send_raw(b"\n   \n");
+        let v = cli.ask(r#"{"cmd":"echo","n":2}"#);
         assert_eq!(v["echo"], json!(r#"{"cmd":"echo","n":2}"#));
 
         assert_eq!(srv.path(), path.to_str().unwrap());
@@ -324,8 +321,8 @@ mod checks_socket {
     }
 
     #[test]
-    fn resposta_ok_e_err() {
-        let path = caminho("okerr");
+    fn response_ok_e_err() {
+        let path = path("okerr");
         let srv = fake(&path, |line| {
             if line.contains("\"cmd\":\"state\"") {
                 ok(json!({ "cols": 80, "rows": 24 }))
@@ -335,7 +332,7 @@ mod checks_socket {
         });
         let mut cli = Cli::connect(&path);
 
-        let v = cli.pede(r#"{"cmd":"state"}"#);
+        let v = cli.ask(r#"{"cmd":"state"}"#);
         assert_eq!(v["ok"], json!(true));
         assert_eq!(
             (v["cols"].as_u64(), v["rows"].as_u64()),
@@ -343,7 +340,7 @@ mod checks_socket {
         );
         assert!(v.get("err").is_none());
 
-        let v = cli.pede(r#"{"cmd":"nada"}"#);
+        let v = cli.ask(r#"{"cmd":"nada"}"#);
         assert_eq!(v["ok"], json!(false));
         assert_eq!(v["err"], json!("cmd desconhecido"));
         assert!(v.get("cols").is_none());
@@ -353,10 +350,10 @@ mod checks_socket {
     }
 
     #[test]
-    fn o_sink_recebe_o_pedido_e_a_conexao_espera_a_resposta() {
+    fn o_sink_receives_o_request_e_a_conexao_waits_a_response() {
         // aqui o "app" é outro lado de verdade: o pedido sai por um canal e a
         // resposta só volta quando o teste manda — o servidor tem de esperar
-        let path = caminho("sink");
+        let path = path("sink");
         let (tx, rx) = channel::<(String, Sender<String>)>();
         let srv = DebugServer::start(
             path.to_str().unwrap(),
@@ -365,15 +362,15 @@ mod checks_socket {
         .expect("start do socket");
         let mut cli = Cli::connect(&path);
 
-        cli.envia(r#"{"cmd":"state"}"#);
-        let (linha, reply) = rx
+        cli.send(r#"{"cmd":"state"}"#);
+        let (line, reply) = rx
             .recv_timeout(Duration::from_secs(10))
             .expect("pedido no canal do app");
-        assert_eq!(linha, r#"{"cmd":"state"}"#);
+        assert_eq!(line, r#"{"cmd":"state"}"#);
         reply
             .send(ok(json!({ "cols": 80 })))
             .expect("mandar a resposta");
-        assert_eq!(cli.resposta()["cols"], json!(80));
+        assert_eq!(cli.response()["cols"], json!(80));
 
         drop(srv);
         let _ = std::fs::remove_file(&path);
@@ -381,7 +378,7 @@ mod checks_socket {
 
     #[test]
     fn varios_pedidos_na_mesma_conexao() {
-        let path = caminho("varios");
+        let path = path("varios");
         let srv = fake(&path, |line| {
             let n = serde_json::from_str::<serde_json::Value>(line)
                 .ok()
@@ -395,25 +392,25 @@ mod checks_socket {
 
         // um de cada vez, no mesmo socket
         for n in 1..=3 {
-            let v = cli.pede(&format!("{{\"n\":{n}}}"));
+            let v = cli.ask(&format!("{{\"n\":{n}}}"));
             assert_eq!(v["n"], json!(n));
         }
         // e dois pedidos num write só (o servidor tem de fatiar por linha)
-        cli.envia_bruto(b"{\"n\":4}\n{\"n\":5}\n");
-        assert_eq!(cli.resposta()["n"], json!(4));
-        assert_eq!(cli.resposta()["n"], json!(5));
+        cli.send_raw(b"{\"n\":4}\n{\"n\":5}\n");
+        assert_eq!(cli.response()["n"], json!(4));
+        assert_eq!(cli.response()["n"], json!(5));
         // o pedido torto continua sendo um pedido: erro é resposta, não queda
-        assert_eq!(cli.pede("null")["ok"], json!(false));
+        assert_eq!(cli.ask("null")["ok"], json!(false));
 
         drop(srv);
         let _ = std::fs::remove_file(&path);
     }
 
     #[test]
-    fn utf8_invalido_vira_pedido_torto_e_nao_queda() {
+    fn utf8_invalido_becomes_request_skewed_e_not_queda() {
         // antes, `lines()` devolvia Err e a conexão morria sem resposta: quem
         // mandou lixo recebia EOF em vez de `{"ok":false,...}`
-        let path = caminho("utf8");
+        let path = path("utf8");
         let srv = fake(&path, |line| {
             match serde_json::from_str::<serde_json::Value>(line) {
                 // a linha chega com U+FFFD no lugar do byte inválido, como no
@@ -424,8 +421,8 @@ mod checks_socket {
         });
         let mut cli = Cli::connect(&path);
         // 0xFF sozinho não é UTF-8 válido
-        cli.envia_bruto(b"{\"x\":\"\xff\"}\n");
-        let v = cli.resposta();
+        cli.send_raw(b"{\"x\":\"\xff\"}\n");
+        let v = cli.response();
         assert_eq!(v["ok"], json!(true), "conexão morreu em vez de responder");
         assert!(
             v["echo"].as_str().is_some_and(|s| s.contains('\u{fffd}')),
@@ -433,15 +430,15 @@ mod checks_socket {
             v["echo"]
         );
         // e a conexão continua viva para o próximo pedido
-        assert_eq!(cli.pede(r#"{"y":1}"#)["ok"], json!(true));
+        assert_eq!(cli.ask(r#"{"y":1}"#)["ok"], json!(true));
         drop(srv);
         let _ = std::fs::remove_file(&path);
     }
 
     #[test]
-    fn o_arquivo_do_socket_nasce_0600() {
+    fn o_file_do_socket_nasce_0600() {
         use std::os::unix::fs::PermissionsExt;
-        let path = caminho("perm");
+        let path = path("perm");
         let srv = fake(&path, |_| ok(json!({})));
         let mode = std::fs::metadata(&path)
             .expect("metadata do socket")
@@ -455,9 +452,9 @@ mod checks_socket {
     }
 
     #[test]
-    fn clear_stale_nao_apaga_arquivo_que_nao_e_socket() {
+    fn clear_stale_not_clears_file_que_not_e_socket() {
         // L12: caminho ocupado por arquivo comum é recusado, não apagado
-        let path = caminho("comum");
+        let path = path("comum");
         std::fs::write(&path, b"nao sou socket").expect("criar arquivo comum");
 
         let e = clear_stale(path.to_str().unwrap()).expect_err("tinha de recusar");
@@ -476,8 +473,8 @@ mod checks_socket {
     }
 
     #[test]
-    fn clear_stale_nao_rouba_socket_vivo() {
-        let path = caminho("vivo");
+    fn clear_stale_not_rouba_socket_alive() {
+        let path = path("vivo");
         let listener = UnixListener::bind(&path).expect("bind do socket vivo");
         let e = clear_stale(path.to_str().unwrap()).expect_err("tinha de recusar");
         assert!(e.contains("escutando"), "erro inesperado: {e}");
@@ -493,7 +490,7 @@ mod checks_socket {
 
     #[test]
     fn clear_stale_remove_socket_orfao() {
-        let path = caminho("orfao");
+        let path = path("orfao");
         {
             // ninguém escutando depois deste bloco: o arquivo vira lixo
             let listener = UnixListener::bind(&path).expect("bind do órfão");
@@ -511,14 +508,14 @@ mod checks_socket {
     #[test]
     fn resolve_auto_usa_xdg_runtime_dir_e_o_pid() {
         let pid = std::process::id();
-        let nome = format!("bzmux-{pid}.sock");
+        let name = format!("bzmux-{pid}.sock");
         // base explícita: puro, sem mexer no ambiente do processo
-        assert_eq!(auto_path_in("/run/user/7"), format!("/run/user/7/{nome}"));
+        assert_eq!(auto_path_in("/run/user/7"), format!("/run/user/7/{name}"));
 
         // `auto` de verdade: o nome leva o pid e a base é o XDG (ou /tmp)
         let base = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
-        assert_eq!(resolve("auto"), format!("{base}/{nome}"));
-        assert!(resolve("auto").ends_with(&nome));
+        assert_eq!(resolve("auto"), format!("{base}/{name}"));
+        assert!(resolve("auto").ends_with(&name));
 
         // qualquer outro valor passa intacto (o app resolve o resto)
         assert_eq!(resolve("/tmp/bz.sock"), "/tmp/bz.sock");

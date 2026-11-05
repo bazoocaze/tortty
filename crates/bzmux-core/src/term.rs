@@ -176,7 +176,7 @@ pub struct Term {
     /// Corpo do APC (`ESC _`): é por aqui que chega a imagem do kitty.
     apc: Vec<u8>,
     /// O `Str` em curso é um APC (e não DCS/PM/SOS, que são descartados).
-    apc_ativo: bool,
+    apc_active: bool,
     csi_prefix: u8,
     csi_inter: u8,
     esc_inter: u8,
@@ -247,7 +247,7 @@ impl Term {
             csi: Vec::with_capacity(64),
             osc: Vec::with_capacity(128),
             apc: Vec::new(),
-            apc_ativo: false,
+            apc_active: false,
             csi_prefix: 0,
             csi_inter: 0,
             esc_inter: 0,
@@ -1289,8 +1289,8 @@ impl Term {
                 if inter == b' ' {
                     let ps = p(0, 0);
                     self.app_cursor_style = if (1..=6).contains(&ps) {
-                        let forma = ((ps - 1) / 2) as u8;
-                        Some((forma, ps % 2 == 1))
+                        let shape = ((ps - 1) / 2) as u8;
+                        Some((shape, ps % 2 == 1))
                     } else {
                         None
                     };
@@ -1380,9 +1380,9 @@ impl Term {
             0 | 2 => {
                 // `from_utf8_lossy` de um corte no meio de UTF-8 já vira `�`;
                 // o resto do lixo é o que `sanitize_title` tira (B4).
-                let limpo = sanitize_title(&String::from_utf8_lossy(arg));
-                if !limpo.is_empty() {
-                    self.title = limpo;
+                let clean = sanitize_title(&String::from_utf8_lossy(arg));
+                if !clean.is_empty() {
+                    self.title = clean;
                 }
             },
             // 4;índice;cor define a paleta, 4;índice;? consulta
@@ -1446,13 +1446,13 @@ impl Term {
 
     /// `OSC 10/11/12`: cor de texto, fundo e cursor — consulta (`?`) ou define.
     fn osc_color(&mut self, which: u32, arg: &[u8]) {
-        let atual = match which {
+        let current = match which {
             10 => self.theme.fg,
             11 => self.theme.bg,
             _ => self.theme.cursor,
         };
         if arg == b"?" {
-            let (r, g, b) = self.theme.rgb(atual, (0, 0, 0));
+            let (r, g, b) = self.theme.rgb(current, (0, 0, 0));
             self.reply_color(which, None, r, g, b);
             return;
         }
@@ -1470,12 +1470,12 @@ impl Term {
     /// Resposta de cor: `OSC 4;i;rgb:…` ou `OSC 1x;rgb:…` (4 dígitos, como o
     /// xterm; o `rgb:rr/gg/bb` de 2 também é aceito pelo lado de lá).
     fn reply_color(&mut self, which: u32, idx: Option<usize>, r: u8, g: u8, b: u8) {
-        let corpo = match idx {
+        let body = match idx {
             Some(i) => format!("4;{i};rgb:{r:02x}{r:02x}/{g:02x}{g:02x}/{b:02x}{b:02x}"),
             None => format!("{which};rgb:{r:02x}{r:02x}/{g:02x}{g:02x}/{b:02x}{b:02x}"),
         };
         self.child_out
-            .extend_from_slice(format!("\x1b]{corpo}\x1b\\").as_bytes());
+            .extend_from_slice(format!("\x1b]{body}\x1b\\").as_bytes());
     }
 
     /// `OSC 104` (paleta inteira ou índices listados) volta ao padrão.
@@ -1593,7 +1593,7 @@ impl Term {
                     i += 1;
                     if b == b'\\' {
                         self.state = State::Ground;
-                        if std::mem::take(&mut self.apc_ativo) {
+                        if std::mem::take(&mut self.apc_active) {
                             self.apc_done();
                         }
                     } else {
@@ -1606,19 +1606,19 @@ impl Term {
 
     /// Um byte dentro de DCS/APC/PM/SOS: só o APC guarda conteúdo.
     fn str_byte(&mut self, b: u8) {
-        let corpo: &[u8] = if self.apc_ativo { &self.apc } else { &[] };
+        let body: &[u8] = if self.apc_active { &self.apc } else { &[] };
         if b == 0x1b {
             self.state = State::StrEsc;
-        } else if b == 0x9c && st_c1(corpo) {
+        } else if b == 0x9c && st_c1(body) {
             // ST em 8 bits também fecha DCS/APC/PM/SOS
             if self.apc.last() == Some(&0xc2) {
                 self.apc.pop();
             }
             self.state = State::Ground;
-            if std::mem::take(&mut self.apc_ativo) {
+            if std::mem::take(&mut self.apc_active) {
                 self.apc_done();
             }
-        } else if self.apc_ativo && self.apc.len() < crate::graphics::MAX_APC {
+        } else if self.apc_active && self.apc.len() < crate::graphics::MAX_APC {
             // teto: transmissão que nunca fecha não pode crescer sem fim
             self.apc.push(b);
         }
@@ -1632,13 +1632,13 @@ impl Term {
             u16::try_from(self.cy).unwrap_or(0),
         );
         let out = self.graphics.handle(&body, cursor, self.cell_size);
-        for r in out.respostas {
+        for r in out.responses {
             self.child_out.extend_from_slice(b"\x1b_");
             self.child_out.extend_from_slice(&r);
             self.child_out.extend_from_slice(b"\x1b\\");
         }
         // H10: sem `C=1` o cursor desce as linhas que a imagem ocupou
-        if out.mover {
+        if out.move_cursor {
             for _ in 0..out.linhas {
                 self.newline();
             }
@@ -1695,11 +1695,11 @@ impl Term {
                 // APC: só este tipo é conteúdo (imagem do kitty); DCS/PM/SOS
                 // seguem descartados até o ST
                 self.apc.clear();
-                self.apc_ativo = true;
+                self.apc_active = true;
                 self.state = State::Str;
             },
             b'P' | b'^' | b'X' => {
-                self.apc_ativo = false;
+                self.apc_active = false;
                 self.state = State::Str;
             },
             0x20..=0x2f => {
@@ -1940,9 +1940,9 @@ fn parse_osc_color(spec: &[u8]) -> Option<Color> {
         }
         return None;
     }
-    let resto = s.strip_prefix("rgb:")?;
-    let mut it = resto.split('/');
-    let mut canal = || -> Option<u32> {
+    let rest = s.strip_prefix("rgb:")?;
+    let mut it = rest.split('/');
+    let mut channel = || -> Option<u32> {
         let v = it.next()?;
         match v.len() {
             // xterm manda 4 dígitos e o valor é o byte duplicado (rrrr)
@@ -1951,7 +1951,7 @@ fn parse_osc_color(spec: &[u8]) -> Option<Color> {
             _ => None,
         }
     };
-    let (r, g, b) = (canal()?, canal()?, canal()?);
+    let (r, g, b) = (channel()?, channel()?, channel()?);
     Some(Color::rgb(r, g, b))
 }
 
@@ -2002,7 +2002,7 @@ fn invisivel(c: char) -> bool {
 
 /// O buffer termina no meio de uma sequência UTF-8? Um `0x9c` logo depois
 /// seria byte de continuação (`М` = `d0 9c`), não o ST de 8 bits.
-fn meio_utf8(buf: &[u8]) -> bool {
+fn middle_utf8(buf: &[u8]) -> bool {
     let mut i = buf.len();
     let mut cont = 0usize;
     while i > 0 && buf[i - 1] & 0xc0 == 0x80 {
@@ -2024,7 +2024,7 @@ fn meio_utf8(buf: &[u8]) -> bool {
 /// `0x9c` fecha a string? Sim quando é o ST de 8 bits, e não quando é byte de
 /// continuação de UTF-8. `c2 9c` é o próprio U+009C, que também é ST.
 fn st_c1(buf: &[u8]) -> bool {
-    buf.last() == Some(&0xc2) || !meio_utf8(buf)
+    buf.last() == Some(&0xc2) || !middle_utf8(buf)
 }
 
 /// Parâmetro `idx` do corpo: token vazio vale 0; token inexistente, `default`.
@@ -2086,14 +2086,14 @@ struct Reflowed {
 fn reflow(all: Vec<Row>, cols: usize, cur_abs: usize, cur_col: usize) -> Reflowed {
     let cols = cols.max(1);
     // -- 1. parágrafos, na ordem de leitura
-    let mut paras: Vec<Vec<Cell>> = Vec::new();
-    let mut cur_para = 0usize;
+    let mut paragraphs: Vec<Vec<Cell>> = Vec::new();
+    let mut cur_to = 0usize;
     let mut cur_off = 0usize;
-    let mut para: Vec<Cell> = Vec::new();
+    let mut to: Vec<Cell> = Vec::new();
     for (i, mut row) in all.into_iter().enumerate() {
         if i == cur_abs {
-            cur_para = paras.len();
-            cur_off = para.len() + cur_col.min(row.cells.len().saturating_sub(1));
+            cur_to = paragraphs.len();
+            cur_off = to.len() + cur_col.min(row.cells.len().saturating_sub(1));
         }
         let soft = row.wrapped;
         if !soft {
@@ -2101,13 +2101,13 @@ fn reflow(all: Vec<Row>, cols: usize, cur_abs: usize, cur_col: usize) -> Reflowe
                 row.cells.pop();
             }
         }
-        para.append(&mut row.cells);
+        to.append(&mut row.cells);
         if !soft {
-            paras.push(std::mem::take(&mut para));
+            paragraphs.push(std::mem::take(&mut to));
         }
     }
-    if !para.is_empty() || paras.is_empty() {
-        paras.push(para);
+    if !to.is_empty() || paragraphs.is_empty() {
+        paragraphs.push(to);
     }
 
     // -- 2. re-quebra
@@ -2115,7 +2115,7 @@ fn reflow(all: Vec<Row>, cols: usize, cur_abs: usize, cur_col: usize) -> Reflowe
     let mut cur_row = 0usize;
     let mut cur_col_new = 0usize;
     let mut wrap = false;
-    for (pi, cells) in paras.iter().enumerate() {
+    for (pi, cells) in paragraphs.iter().enumerate() {
         let first = rows.len();
         let mut chunks: Vec<(usize, usize)> = Vec::new();
         let mut s = 0usize;
@@ -2139,7 +2139,7 @@ fn reflow(all: Vec<Row>, cols: usize, cur_abs: usize, cur_col: usize) -> Reflowe
                 wrapped: !last,
             });
         }
-        if pi == cur_para {
+        if pi == cur_to {
             let last_i = chunks.len() - 1;
             let ci = chunks
                 .iter()
@@ -2196,7 +2196,7 @@ mod scroll_shift_tests {
     /// O dano tem de rolar junto com o conteúdo: escrita que ainda não foi
     /// desenhada e rola no mesmo chunk cairia na linha errada (B6).
     #[test]
-    fn dano_anda_junto_com_o_conteudo_ao_rolar() {
+    fn damage_anda_together_with_o_conteudo_on_scroll() {
         let mut t = Term::new(10, 4);
         t.feed(b"\x1b[4;1H");
         t.clear_damage();
@@ -2294,12 +2294,12 @@ mod tests {
         base64::engine::general_purpose::STANDARD.encode([9, 8, 7, 255].repeat(4))
     }
 
-    fn apc(corpo: &str) -> Vec<u8> {
-        format!("\x1b_{corpo}\x1b\\").into_bytes()
+    fn apc(body: &str) -> Vec<u8> {
+        format!("\x1b_{body}\x1b\\").into_bytes()
     }
 
     #[test]
-    fn apc_do_kitty_vira_imagem_resposta_e_linha_do_cursor() {
+    fn apc_do_kitty_becomes_image_response_e_line_do_cursor() {
         let mut t = Term::new(20, 4);
         t.feed(&apc(&format!("Ga=T,f=32,s=2,v=2,i=3;{}", rgba2x2())));
         assert_eq!(t.graphics.images().len(), 1);
@@ -2314,7 +2314,7 @@ mod tests {
     }
 
     #[test]
-    fn c_1_mantem_o_cursor_onde_estava() {
+    fn c_1_mantem_o_cursor_onde_was() {
         let mut t = Term::new(20, 4);
         t.feed(&apc(&format!("Ga=T,f=32,s=2,v=2,i=1,C=1;{}", rgba2x2())));
         assert_eq!(t.cy, 0);
@@ -2322,7 +2322,7 @@ mod tests {
     }
 
     #[test]
-    fn dcs_e_apc_que_nao_e_do_kitty_nao_guardam_nada() {
+    fn dcs_e_apc_que_not_e_do_kitty_not_guardam_nada() {
         let mut t = Term::new(20, 4);
         // DCS (`ESC P`): descartado até o ST, e não pode virar imagem
         t.feed(b"\x1bP1;2;3+abc\x1b\\");
@@ -2346,7 +2346,7 @@ mod tests {
     }
 
     #[test]
-    fn ed_3_limpa_as_imagens() {
+    fn ed_3_clears_as_imagens() {
         let mut t = Term::new(20, 4);
         t.feed(&apc(&format!("Ga=T,f=32,s=2,v=2,i=1;{}", rgba2x2())));
         assert_eq!(t.graphics.images().len(), 1);
@@ -2356,7 +2356,7 @@ mod tests {
     }
 
     #[test]
-    fn imagem_acompanha_a_rolagem_e_o_reflow_poda_a_inalcancavel() {
+    fn image_acompanha_a_scrollback_e_o_reflow_prune_a_inalcancavel() {
         // `graphics_follow_history` do Python
         let mut t = Term::new(20, 4);
         t.feed(&apc(&format!("Ga=T,f=32,s=2,v=2,i=7;{}", rgba2x2())));
@@ -2364,14 +2364,14 @@ mod tests {
             t.feed(b"\r\n");
         }
         let p = t.graphics.placements()[0];
-        assert!(p.linha < 0, "saiu pelo topo: {}", p.linha);
-        assert!(p.linha + i32::try_from(t.scrollback.len()).unwrap() >= 0);
+        assert!(p.line < 0, "saiu pelo topo: {}", p.line);
+        assert!(p.line + i32::try_from(t.scrollback.len()).unwrap() >= 0);
         t.resize(40, 4);
         assert!(
             t.graphics
                 .placements()
                 .iter()
-                .all(|p| p.linha >= -i32::try_from(t.scrollback.len()).unwrap()),
+                .all(|p| p.line >= -i32::try_from(t.scrollback.len()).unwrap()),
             "{:?}",
             t.graphics.placements()
         );
@@ -2382,7 +2382,7 @@ mod tests {
     }
 
     #[test]
-    fn kbd_protocolo_do_kitty_empilha_desempilha_e_consulta() {
+    fn kbd_protocol_do_kitty_empilha_desempilha_e_consulta() {
         let mut t = term();
         // consulta: o app pergunta e o terminal responde com o estado (0)
         t.feed(b"\x1b[?u");
@@ -2401,7 +2401,7 @@ mod tests {
     }
 
     #[test]
-    fn kbd_protocolo_do_kitty_modos_do_set() {
+    fn kbd_protocol_do_kitty_modos_do_set() {
         let mut t = term();
         t.feed(b"\x1b[=3u"); // modo default = 1 (substitui)
         assert_eq!(t.kbd_flags, 3);
@@ -2414,7 +2414,7 @@ mod tests {
     }
 
     #[test]
-    fn kbd_protocolo_do_kitty_pilha_com_dois_niveis() {
+    fn kbd_protocol_do_kitty_stack_with_two_niveis() {
         let mut t = term();
         t.feed(b"\x1b[>1u\x1b[>11u");
         assert_eq!(t.kbd_flags, 11);
@@ -2425,7 +2425,7 @@ mod tests {
     }
 
     #[test]
-    fn scorc_sem_prefixo_continua_sendo_restore_cursor() {
+    fn scorc_without_prefix_continua_being_restore_cursor() {
         let mut t = term();
         t.feed(b"\x1b[2;3H\x1b[s\x1b[H\x1b[u");
         assert_eq!((t.cy, t.cx), (1, 2));
@@ -2433,7 +2433,7 @@ mod tests {
     }
 
     #[test]
-    fn texto_simples_e_quebra() {
+    fn text_simple_e_break() {
         let mut t = term();
         t.feed(b"abc");
         assert_eq!(t.row_text(0), "abc");
@@ -2444,7 +2444,7 @@ mod tests {
     }
 
     #[test]
-    fn autowrap_marca_quebra_mole() {
+    fn autowrap_mark_break_mole() {
         let mut t = term();
         t.feed(b"0123456789A");
         assert_eq!(t.row_text(0), "0123456789");
@@ -2454,7 +2454,7 @@ mod tests {
     }
 
     #[test]
-    fn crlf_depois_de_linha_cheia_nao_pula_duas() {
+    fn crlf_after_de_line_full_not_pula_duas() {
         // o bug do P15: preencher a linha e depois \r\n avançava duas
         let mut t = term();
         t.feed(b"0123456789\r\nx");
@@ -2463,7 +2463,7 @@ mod tests {
     }
 
     #[test]
-    fn sgr_truecolor_por_celula() {
+    fn sgr_truecolor_per_celula() {
         let mut t = term();
         t.feed(b"\x1b[38;2;1;2;3m\x1b[48;2;4;5;6mA");
         let c = t.grid[0].cells[0];
@@ -2486,18 +2486,18 @@ mod tests {
     }
 
     #[test]
-    fn sgr_atributos_de_texto() {
+    fn sgr_attributes_de_text() {
         let mut t = term();
         t.feed(b"\x1b[3;2;5;9;53mA");
         let c = t.grid[0].cells[0];
-        for (bit, nome) in [
+        for (bit, name) in [
             (ITALIC, "italico"),
             (FAINT, "faint"),
             (BLINK, "pisca"),
             (STRIKE, "riscado"),
             (OVERLINE, "overline"),
         ] {
-            assert_eq!(c.flags & bit, bit, "{nome} não subiu");
+            assert_eq!(c.flags & bit, bit, "{name} não subiu");
         }
         // 23/22/25/29/55 desligam um a um, sem tocar nos outros
         t.feed(b"\x1b[23mB");
@@ -2513,7 +2513,7 @@ mod tests {
     #[test]
     fn sgr_estilos_de_sublinhado() {
         let mut t = term();
-        let casos: [(&[u8], usize, u8); 7] = [
+        let cases: [(&[u8], usize, u8); 7] = [
             (b"\x1b[4m", 0, UL_SINGLE),
             (b"\x1b[4:2m", 1, UL_DOUBLE),
             (b"\x1b[4:3m", 2, UL_CURLY),
@@ -2522,7 +2522,7 @@ mod tests {
             (b"\x1b[21m", 5, UL_DOUBLE),
             (b"\x1b[4:0m", 6, UL_NONE),
         ];
-        for (seq, col, esperado) in casos {
+        for (seq, col, esperado) in cases {
             t.feed(seq);
             t.feed(&[b'A' + col as u8]);
             assert_eq!(t.grid[0].cells[col].ul, esperado, "seq {seq:?}");
@@ -2549,7 +2549,7 @@ mod tests {
     }
 
     #[test]
-    fn sgr_subparametro_com_espaco_de_cor() {
+    fn sgr_subparametro_with_espaco_de_cor() {
         let mut t = term();
         t.feed(b"\x1b[38:2::10:20:30mX");
         assert_eq!(t.grid[0].cells[0].fg, Color::Rgb(10, 20, 30));
@@ -2569,7 +2569,7 @@ mod tests {
     }
 
     #[test]
-    fn alt_screen_guarda_o_principal() {
+    fn alt_screen_holds_o_principal() {
         let mut t = term();
         t.feed(b"principal\r\n");
         t.feed(b"\x1b[?1049h");
@@ -2583,14 +2583,14 @@ mod tests {
     }
 
     #[test]
-    fn charset_dec_desenha_moldura() {
+    fn charset_dec_draws_frame() {
         let mut t = term();
         t.feed(b"\x1b(0lqk\x1b(B");
         assert_eq!(t.row_text(0), "┌─┐");
     }
 
     #[test]
-    fn decstbm_rola_dentro_da_regiao() {
+    fn decstbm_scrolls_inside_da_regiao() {
         let mut t = term();
         t.feed(b"1\r\n2\r\n3\r\n4");
         t.feed(b"\x1b[2;3r"); // linhas 2..3 (1-based)
@@ -2617,7 +2617,7 @@ mod tests {
     }
 
     #[test]
-    fn salva_e_restaura_cursor() {
+    fn save_e_restaura_cursor() {
         let mut t = term();
         t.feed(b"\x1b[2;3H\x1b7\x1b[4;1H\x1b8X");
         assert_eq!(t.grid[1].cells[2].ch, 'X');
@@ -2656,7 +2656,7 @@ mod tests {
     }
 
     #[test]
-    fn titulo_osc_termina_com_st_de_8_bits() {
+    fn titulo_osc_termina_with_st_de_8_bits() {
         let mut t = term();
         // `0x9c` puro e o próprio U+009C em UTF-8 fecham o OSC; sem isso o
         // escape seguia aberto e engolia até o próximo BEL (B4)
@@ -2670,7 +2670,7 @@ mod tests {
     }
 
     #[test]
-    fn titulo_osc_com_9c_de_continuacao_utf8_nao_corta() {
+    fn titulo_osc_with_9c_de_continuacao_utf8_not_cuts() {
         let mut t = term();
         // `d0 9c` é `М` e `e2 90 9c` é `␜`: o 0x9c aqui é continuação de
         // UTF-8, não ST — cortar no meio perderia o resto do título
@@ -2679,7 +2679,7 @@ mod tests {
     }
 
     #[test]
-    fn osc_nao_engole_o_titulo_seguinte() {
+    fn osc_not_swallows_o_titulo_next() {
         let mut t = term();
         // OSC fechado com ST de 8 bits seguido do título seguinte, separados
         // por outro escape: o título tem de ser só o último pedido
@@ -2688,7 +2688,7 @@ mod tests {
     }
 
     #[test]
-    fn esc_no_corpo_do_osc_encerra_a_sequencia() {
+    fn esc_no_body_do_osc_encerra_a_sequencia() {
         let mut t = term();
         // ESC que não é ST encerra o OSC (não volta para o corpo): o título é
         // o que veio antes, e o `[31m` depois vira SGR de verdade
@@ -2699,7 +2699,7 @@ mod tests {
     }
 
     #[test]
-    fn titulo_osc_sem_caractere_de_controle() {
+    fn titulo_osc_without_character_de_controle() {
         let mut t = term();
         t.feed(b"\x1b]0;A\x01B\x7fC\x07");
         assert_eq!(t.title, "ABC");
@@ -2713,7 +2713,7 @@ mod tests {
     }
 
     #[test]
-    fn nome_de_diretorio_nao_traz_controle_para_o_titulo() {
+    fn name_de_diretorio_not_brings_controle_to_o_titulo() {
         // nome de arquivo no Linux tem qualquer byte menos `/` e NUL: o título
         // vindo do cwd passa pela mesma regra do payload do OSC
         assert_eq!(sanitize_title("proj\r\n\u{1b}[31m\u{202e}x"), "proj[31mx");
@@ -2721,19 +2721,19 @@ mod tests {
     }
 
     #[test]
-    fn st_de_8_bits_fecha_dcs_sem_engolir_a_grade() {
+    fn st_de_8_bits_fecha_dcs_without_swallow_a_grade() {
         let mut t = term();
         t.feed(b"\x1bP1$qm\x9cok");
         assert_eq!(t.grid[0].cells[0].ch, 'o');
     }
 
     #[test]
-    fn sonda_guarda_os_osc_recebidos() {
+    fn probe_holds_os_osc_recebidos() {
         let mut t = term();
         t.feed(b"\x1b]0;um\x07");
         t.feed(b"\x1b]8;;http://x\x07");
-        let vistos: Vec<&[u8]> = t.osc_seen.iter().map(|o| o.raw.as_slice()).collect();
-        assert_eq!(vistos, vec![b"0;um".as_slice(), b"8;;http://x".as_slice()]);
+        let seen: Vec<&[u8]> = t.osc_seen.iter().map(|o| o.raw.as_slice()).collect();
+        assert_eq!(seen, vec![b"0;um".as_slice(), b"8;;http://x".as_slice()]);
         assert_eq!(t.osc_seen[0].title, "um");
         // link não mexe no título
         assert_eq!(t.osc_seen[1].title, "um");
@@ -2746,7 +2746,7 @@ mod tests {
     }
 
     #[test]
-    fn respostas_ao_filho() {
+    fn responses_on_child() {
         let mut t = term();
         t.feed(b"\x1b[c");
         assert_eq!(t.take_child_out(), b"\x1b[?62c".to_vec());
@@ -2759,7 +2759,7 @@ mod tests {
     }
 
     #[test]
-    fn modo_autowrap_desligado_nao_quebra() {
+    fn mode_autowrap_desligado_not_break() {
         let mut t = term();
         t.feed(b"\x1b[?7l0123456789AB");
         assert_eq!(t.row_text(0), "012345678B");
@@ -2767,7 +2767,7 @@ mod tests {
     }
 
     #[test]
-    fn scrollback_guarda_o_que_saiu() {
+    fn scrollback_holds_o_que_saiu() {
         let mut t = term();
         for i in 0..8 {
             t.feed(format!("linha{i}\r\n").as_bytes());
@@ -2778,7 +2778,7 @@ mod tests {
     }
 
     /// Texto de todas as linhas (histórico + tela), na ordem de leitura.
-    fn tudo(t: &Term) -> String {
+    fn all(t: &Term) -> String {
         t.scrollback
             .iter()
             .chain(t.grid.iter())
@@ -2788,7 +2788,7 @@ mod tests {
     }
 
     #[test]
-    fn visao_fica_no_lugar_enquanto_chega_output() {
+    fn visao_stays_no_place_while_arrives_output() {
         let mut t = Term::new(20, 4);
         for i in 0..10 {
             t.feed(format!("l{i}\r\n").as_bytes());
@@ -2799,14 +2799,14 @@ mod tests {
         // chegam mais 2 linhas: ele continua na mesma linha absoluta
         t.feed(b"nova1\r\nnova2\r\n");
         let off2 = t.view_after_output(off, sc, hist);
-        let depois = t.abs_row(t.scrolled as i64 - off2 as i64).map(Row::text);
-        assert_eq!(antes, depois, "a visão andou junto com o output");
+        let after = t.abs_row(t.scrolled as i64 - off2 as i64).map(Row::text);
+        assert_eq!(antes, after, "a visão andou junto com o output");
         // no fundo (off=0) fica no fundo
         assert_eq!(t.view_after_output(0, sc, hist), 0);
     }
 
     #[test]
-    fn visao_desconta_o_que_caiu_do_historico_cheio() {
+    fn visao_desconta_o_que_caiu_do_historico_full() {
         let mut t = Term::new(20, 2);
         t.scrollback_limit = 3;
         for i in 0..5 {
@@ -2825,7 +2825,7 @@ mod tests {
     }
 
     #[test]
-    fn reflow_estreita_e_alarga_preservando_o_texto() {
+    fn reflow_estreita_e_alarga_preservando_o_text() {
         let mut t = term(); // 10x4
         t.feed(b"abcdefghijklmnopqrstuvwxy"); // 25 células
         assert_eq!(screen(&t)[..3], ["abcdefghij", "klmnopqrst", "uvwxy"]);
@@ -2833,7 +2833,7 @@ mod tests {
         // 25 células viram 5 linhas de 5: só a primeira vai para o histórico
         // (a tela guarda o fim do parágrafo, como qualquer terminal). O cursor
         // está na última linha, então nada em branco desce para o histórico.
-        assert_eq!(tudo(&t), "abcde\nfghij\nklmno\npqrst\nuvwxy");
+        assert_eq!(all(&t), "abcde\nfghij\nklmno\npqrst\nuvwxy");
         assert_eq!(t.scrollback.len(), 1);
         assert_eq!(t.row_text(3), "uvwxy");
         // volta: re-quebra de novo na largura original
@@ -2858,7 +2858,7 @@ mod tests {
     }
 
     #[test]
-    fn reflow_marca_quebra_mole_so_nas_linhas_do_meio() {
+    fn reflow_mark_break_mole_only_in_linhas_do_middle() {
         let mut t = term();
         t.feed(b"abcdefghijklmnopqrstuvwxy\r\ncurta");
         t.resize(5, 8);
@@ -2870,7 +2870,7 @@ mod tests {
     }
 
     #[test]
-    fn reflow_nao_come_espaco_com_fundo_pintado() {
+    fn reflow_not_come_espaco_with_bg_pintado() {
         // A23: espaço com fundo pintado é conteúdo (barra de status, git diff)
         let mut t = term();
         t.feed(b"\x1b[48;2;200;0;0mabc       "); // 3 letras + 7 espaços pintados
@@ -2885,7 +2885,7 @@ mod tests {
     }
 
     #[test]
-    fn reflow_nao_parte_par_largo_ao_meio() {
+    fn reflow_not_part_par_total_w_on_middle() {
         let mut t = Term::new(10, 4);
         // 5 ideogramas: 10 células (cada um ocupa 2)
         for _ in 0..5 {
@@ -2898,25 +2898,25 @@ mod tests {
                 "linha {y} começa com metade de um par largo"
             );
         }
-        let texto: String = (0..6).map(|y| t.row_text(y)).collect();
-        assert_eq!(texto, "漢漢漢漢漢", "nenhum ideograma pode sumir no reflow");
+        let text: String = (0..6).map(|y| t.row_text(y)).collect();
+        assert_eq!(text, "漢漢漢漢漢", "nenhum ideograma pode sumir no reflow");
     }
 
     #[test]
-    fn reflow_mantem_o_historico_na_ordem() {
+    fn reflow_mantem_o_historico_na_order() {
         let mut t = Term::new(20, 4);
         for i in 0..50 {
             t.feed(format!("linha {i:02}\r\n").as_bytes());
         }
         t.resize(10, 4);
-        let depois = tudo(&t);
+        let after = all(&t);
         assert!(
-            depois.contains("linha 00") && depois.contains("linha 49"),
+            after.contains("linha 00") && after.contains("linha 49"),
             "o reflow não pode perder as pontas do histórico"
         );
         // as linhas continuam em ordem crescente
         let pos: Vec<usize> = (0..50)
-            .map(|i| depois.find(&format!("linha {i:02}")).expect("linha sumiu"))
+            .map(|i| after.find(&format!("linha {i:02}")).expect("linha sumiu"))
             .collect();
         assert!(
             pos.windows(2).all(|w| w[0] < w[1]),
@@ -2925,7 +2925,7 @@ mod tests {
     }
 
     #[test]
-    fn resize_preserva_roda_para_o_historico() {
+    fn resize_preserva_runs_to_o_historico() {
         let mut t = term();
         for i in 0..6 {
             t.feed(format!("l{i}\r\n").as_bytes());
@@ -2942,7 +2942,7 @@ mod tests {
     /// Encolher e crescer de volta (é o que o WM faz ao maximizar) não pode
     /// mover o conteúdo: a linha do prompt continua sendo a primeira.
     #[test]
-    fn crescer_depois_de_encolher_nao_leva_o_prompt_para_o_meio() {
+    fn grow_after_de_shrink_not_leva_o_prompt_to_o_middle() {
         let mut t = Term::new(20, 12);
         t.feed(b"prompt");
         for (c, r) in [(20, 16), (20, 12), (20, 16)] {
@@ -2978,7 +2978,7 @@ mod tests {
     }
 
     #[test]
-    fn largo_ocupa_duas_celulas() {
+    fn total_w_ocupa_duas_celulas() {
         let mut t = term();
         t.feed("漢".as_bytes());
         assert_eq!(t.grid[0].cells[0].ch, '漢');
@@ -2987,7 +2987,7 @@ mod tests {
     }
 
     #[test]
-    fn rep_repete_o_ultimo_caractere() {
+    fn rep_repeats_o_last_character() {
         let mut t = term();
         t.feed(b"a\x1b[3b");
         assert_eq!(t.row_text(0), "aaaa");

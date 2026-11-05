@@ -24,42 +24,42 @@ pub struct Gate {
     /// Quando o próximo frame pode sair; `None` = nada pendente.
     frame_at: Option<Instant>,
     /// Fim da janela do `?2026` em curso (o teto de segurança).
-    sync_ate: Option<Instant>,
+    sync_until: Option<Instant>,
     /// O `?2026` estava aberto na última leitura: é assim que se vê o fecho.
-    sync_era: bool,
+    sync_was: bool,
 }
 
 impl Gate {
     /// Chegou mais saída do pty. `sync` é o `?2026` da aba visível **agora**
     /// (por isso o chamador lê o parser depois de alimentá-lo, não antes).
-    pub fn pedir(&mut self, agora: Instant, sync: bool) {
+    pub fn request(&mut self, now: Instant, sync: bool) {
         if sync {
             // janela viva é mantida; teto estourado abre outra, senão o app
             // que nunca fecha o `?2026` desenharia a cada leitura
-            let ate = match self.sync_ate {
-                Some(a) if a > agora => a,
-                _ => agora + Duration::from_millis(SYNC_MS),
+            let until = match self.sync_until {
+                Some(a) if a > now => a,
+                _ => now + Duration::from_millis(SYNC_MS),
             };
-            self.sync_ate = Some(ate);
-            self.sync_era = true;
-            self.frame_at = Some(ate);
+            self.sync_until = Some(until);
+            self.sync_was = true;
+            self.frame_at = Some(until);
             return;
         }
         // fechou a transação: o estado final sai agora, sem esperar o ritmo
-        let fechou = std::mem::take(&mut self.sync_era);
-        self.sync_ate = None;
+        let fechou = std::mem::take(&mut self.sync_was);
+        self.sync_until = None;
         if fechou {
-            self.frame_at = Some(agora);
+            self.frame_at = Some(now);
             return;
         }
         // coalescido: quem já tem hora marcada não remarca (é o ponto)
         self.frame_at
-            .get_or_insert(agora + Duration::from_millis(FRAME_MS));
+            .get_or_insert(now + Duration::from_millis(FRAME_MS));
     }
 
     /// O frame venceu? Devolve `true` uma vez só e libera o portão.
-    pub fn venceu(&mut self, agora: Instant) -> bool {
-        if self.frame_at.is_some_and(|t| agora >= t) {
+    pub fn venceu(&mut self, now: Instant) -> bool {
+        if self.frame_at.is_some_and(|t| now >= t) {
             self.frame_at = None;
             return true;
         }
@@ -68,7 +68,7 @@ impl Gate {
 
     /// Quando acordar para desenhar (para o `ControlFlow::WaitUntil`).
     #[must_use]
-    pub fn quando(&self) -> Option<Instant> {
+    pub fn when(&self) -> Option<Instant> {
         self.frame_at
     }
 }
@@ -83,57 +83,57 @@ mod checks_frame {
     }
 
     #[test]
-    fn leituras_seguidas_desenham_uma_vez() {
+    fn leituras_seguidas_desenham_a_time() {
         let mut g = Gate::default();
         let t = t0();
-        g.pedir(t, false);
+        g.request(t, false);
         // outra leitura 5 ms depois não remarca nada: um frame só
-        g.pedir(t + Duration::from_millis(5), false);
-        let hora = g.quando().expect("tem frame marcado");
-        assert_eq!(hora, t + Duration::from_millis(FRAME_MS));
+        g.request(t + Duration::from_millis(5), false);
+        let time = g.when().expect("tem frame marcado");
+        assert_eq!(time, t + Duration::from_millis(FRAME_MS));
         assert!(!g.venceu(t + Duration::from_millis(FRAME_MS - 1)));
         assert!(g.venceu(t + Duration::from_millis(FRAME_MS)));
         // e o portão liberou: não vence duas vezes com a mesma hora
         assert!(!g.venceu(t + Duration::from_millis(FRAME_MS)));
         // saída nova depois do frame marca outro
-        g.pedir(t + Duration::from_millis(FRAME_MS + 1), false);
-        assert!(g.quando().is_some());
+        g.request(t + Duration::from_millis(FRAME_MS + 1), false);
+        assert!(g.when().is_some());
     }
 
     #[test]
-    fn sync_aberto_segura_ate_o_fecho() {
+    fn sync_open_segura_until_o_closure() {
         let mut g = Gate::default();
         let t = t0();
-        g.pedir(t, true);
+        g.request(t, true);
         // nada sai no ritmo normal: a transação está aberta
         assert!(!g.venceu(t + Duration::from_millis(FRAME_MS)));
         // um pedido a mais não estica a janela
-        g.pedir(t + Duration::from_millis(100), true);
-        assert_eq!(g.quando(), Some(t + Duration::from_millis(SYNC_MS)));
+        g.request(t + Duration::from_millis(100), true);
+        assert_eq!(g.when(), Some(t + Duration::from_millis(SYNC_MS)));
         // fechou: o estado final sai na hora
-        g.pedir(t + Duration::from_millis(120), false);
-        assert_eq!(g.quando(), Some(t + Duration::from_millis(120)));
+        g.request(t + Duration::from_millis(120), false);
+        assert_eq!(g.when(), Some(t + Duration::from_millis(120)));
         assert!(g.venceu(t + Duration::from_millis(120)));
     }
 
     #[test]
-    fn sync_que_nunca_fecha_desenha_no_teto_e_nao_a_cada_leitura() {
+    fn sync_que_nunca_fecha_draws_no_cap_e_not_a_each_reading() {
         let mut g = Gate::default();
         let t = t0();
-        g.pedir(t, true);
+        g.request(t, true);
         assert!(g.venceu(t + Duration::from_millis(SYNC_MS)));
         // ainda aberto: nova janela (senão desenharia a cada leitura daqui
         // para a frente, que é o bug que o portão existe para evitar)
-        let depois = t + Duration::from_millis(SYNC_MS + 1);
-        g.pedir(depois, true);
-        assert_eq!(g.quando(), Some(depois + Duration::from_millis(SYNC_MS)));
-        assert!(!g.venceu(depois + Duration::from_millis(FRAME_MS)));
+        let after = t + Duration::from_millis(SYNC_MS + 1);
+        g.request(after, true);
+        assert_eq!(g.when(), Some(after + Duration::from_millis(SYNC_MS)));
+        assert!(!g.venceu(after + Duration::from_millis(FRAME_MS)));
     }
 
     #[test]
-    fn sem_pedido_nao_ha_frame() {
+    fn without_request_not_ha_frame() {
         let mut g = Gate::default();
-        assert_eq!(g.quando(), None);
+        assert_eq!(g.when(), None);
         assert!(!g.venceu(t0()));
     }
 }

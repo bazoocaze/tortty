@@ -63,8 +63,8 @@ pub fn load() -> Option<Geometry> {
 /// `load` num caminho dado (é o que o teste usa: ambiente não é estado de teste).
 #[must_use]
 pub fn load_from(path: &std::path::Path) -> Option<Geometry> {
-    let texto = std::fs::read_to_string(path).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&texto).ok()?;
+    let text = std::fs::read_to_string(path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
     let obj = v.as_object()?;
     let num = |k: &str| obj.get(k).and_then(serde_json::Value::as_i64);
     // `w`/`h` obrigatórios: sem eles não há geometria, só um `max: true`
@@ -159,13 +159,13 @@ pub fn fit(
             maximizado: false,
         });
     }
-    let dentro = monitors.iter().any(|&(mx, my, mw, mh)| {
+    let inside = monitors.iter().any(|&(mx, my, mw, mh)| {
         x >= mx
             && x < mx + i32::try_from(mw).unwrap_or(i32::MAX)
             && y >= my
             && y < my + i32::try_from(mh).unwrap_or(i32::MAX)
     });
-    dentro.then_some(Geometry {
+    inside.then_some(Geometry {
         x: Some(x),
         y: Some(y),
         w,
@@ -175,7 +175,7 @@ pub fn fit(
 }
 
 #[cfg(test)]
-mod checks_estado {
+mod checks_state {
     use super::{fit, load_from, save_to, Geometry, Monitor, MIN_H, MIN_W, PADRAO};
     use std::path::{Path, PathBuf};
 
@@ -184,8 +184,8 @@ mod checks_estado {
         vec![(0, 0, 1920, 1080), (1920, 0, 1280, 1024)]
     }
 
-    fn tmp(nome: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("bz-estado-{nome}"));
+    fn tmp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("bz-estado-{name}"));
         let _ = std::fs::remove_dir_all(&d);
         d.join("bzmux").join("window.json")
     }
@@ -205,7 +205,7 @@ mod checks_estado {
     }
 
     #[test]
-    fn fit_rejeita_tamanho_de_lixo() {
+    fn fit_rejeita_size_de_garbage() {
         // abaixo do mínimo: lixo de WM ou arquivo editado à mão
         assert!(fit(Some(0), Some(0), MIN_W - 1, 600, &monitores()).is_none());
         assert!(fit(Some(0), Some(0), 600, MIN_H - 1, &monitores()).is_none());
@@ -214,7 +214,7 @@ mod checks_estado {
     }
 
     #[test]
-    fn fit_rejeita_canto_fora_de_todos_os_monitores() {
+    fn fit_rejeita_canto_fora_de_all_os_monitores() {
         // monitor desconectado: o canto ficou no vazio
         assert!(fit(Some(5000), Some(0), 900, 600, &monitores()).is_none());
         assert!(fit(Some(0), Some(-500), 900, 600, &monitores()).is_none());
@@ -227,13 +227,13 @@ mod checks_estado {
     }
 
     #[test]
-    fn fit_sem_monitor_conhecido_aceita_o_tamanho() {
+    fn fit_without_monitor_conhecido_aceita_o_size() {
         // sem monitor não há como julgar posição (o WM decide)
         assert!(fit(Some(-9000), Some(-9000), 900, 600, &[]).is_some());
     }
 
     #[test]
-    fn fit_sem_posicao_vale_o_tamanho_wayland() {
+    fn fit_without_posicao_vale_o_size_wayland() {
         // Wayland não dá posição (J6): o tamanho sozinho é o que sobra
         let g = fit(None, None, 900, 600, &monitores()).expect("tamanho vale");
         assert_eq!((g.x, g.y), (None, None));
@@ -241,7 +241,7 @@ mod checks_estado {
     }
 
     #[test]
-    fn caminho_respeita_xdg_state_home() {
+    fn path_respeita_xdg_state_home() {
         // `state_path` é a única parte que lê ambiente; a montagem é o que importa
         let p = std::env::temp_dir().join("bz-xdg");
         assert_eq!(
@@ -251,7 +251,7 @@ mod checks_estado {
     }
 
     #[test]
-    fn salva_e_le_de_volta_e_nao_deixa_tmp() {
+    fn save_e_le_de_returns_e_not_leaves_tmp() {
         let path = tmp("ida-volta");
         let g = Geometry {
             x: Some(120),
@@ -280,7 +280,7 @@ mod checks_estado {
     }
 
     #[test]
-    fn gravar_em_lugar_impossivel_nao_estoura() {
+    fn save_em_place_impossivel_not_estoura() {
         // sandbox/home somente leitura: o app tem de seguir de pé (e dizer no
         // stderr, não sumir calado)
         let path = std::path::Path::new("/proc/bzmux-nao-existe/window.json");
@@ -299,12 +299,12 @@ mod checks_estado {
     }
 
     #[test]
-    fn arquivo_torto_nao_e_erro_so_padrao() {
+    fn file_skewed_not_e_error_only_padrao() {
         let path = tmp("torto");
         std::fs::create_dir_all(path.parent().expect("dir")).expect("dir");
-        for lixo in ["", "{", "[]", "null", "\"texto\"", "{\"x\":1}"] {
-            std::fs::write(&path, lixo).expect("escreve");
-            assert_eq!(load_from(&path), None, "lixo aceito: {lixo:?}");
+        for garbage in ["", "{", "[]", "null", "\"texto\"", "{\"x\":1}"] {
+            std::fs::write(&path, garbage).expect("escreve");
+            assert_eq!(load_from(&path), None, "lixo aceito: {garbage:?}");
         }
         // número que não cabe em i32/x/y vira None, mas w/h mandam
         std::fs::write(&path, r#"{"x":1e300,"y":3,"w":900,"h":600}"#).expect("escreve");

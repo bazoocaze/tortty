@@ -97,7 +97,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn paleta_tem_256_e_bate_nos_extremos() {
+    fn palette_has_256_e_bate_in_extremos() {
         let p = palette256();
         assert_eq!(p.len(), 256);
         assert_eq!(p[16], (0, 0, 0));

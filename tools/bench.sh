@@ -18,15 +18,15 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 FRAMES=1200
 SHOTS=3
 COLORS="61x18 70x21"
-SO_RUST=0
-PYBZMUZ=${PYBZMUZ:-$HOME/tortty-python}
+ONLY_RUST=0
+PYBZMUZ=${PYBZMUZ:-$HOME/data/desenv/gh/tortty-python}
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --frames) FRAMES=$2; shift 2 ;;
         --shots) SHOTS=$2; shift 2 ;;
         --grades) COLORS=$2; shift 2 ;;
-        --so-rust) SO_RUST=1; shift ;;
+        --only-rust) ONLY_RUST=1; shift ;;
         -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "opção desconhecida: $1" >&2; exit 2 ;;
     esac
@@ -38,7 +38,7 @@ GOV=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || e
 echo "# frames=$FRAMES tiros=$SHOTS governor=$GOV display=${DISPLAY:-?}"
 echo "# app | grade | fps | MB/s | draw | parse"
 
-roda() {
+run() {
     app=$1; grade=$2; rotulo=$3
     cols=${grade%x*}; rows=${grade#*x}
     i=1
@@ -66,11 +66,11 @@ roda() {
 }
 
 for g in $COLORS; do
-    roda "" "$g" "rust"
+    run "" "$g" "rust"
 done
 if [ "$SO_RUST" = 0 ]; then
     [ -x "$PYBZMUZ/run.sh" ] || { echo "# sem $PYBZMUZ/run.sh: pulando o Python" >&2; exit 0; }
     for g in $COLORS; do
-        roda "$PYBZMUZ/run.sh" "$g" "python"
+        run "$PYBZMUZ/run.sh" "$g" "python"
     done
 fi

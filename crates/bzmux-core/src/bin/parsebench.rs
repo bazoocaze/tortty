@@ -124,7 +124,7 @@ fn main() {
     let cols = arg("cols", 61);
     let rows = arg("rows", 18);
     let frames = arg("frames", 500);
-    let sem_draw = std::env::args().any(|a| a == "--no-damage");
+    let without_draw = std::env::args().any(|a| a == "--no-damage");
 
     let mut term = Term::new(cols, rows);
     term.scrollback_limit = 1000;
@@ -136,7 +136,7 @@ fn main() {
         term.clear_damage();
     }
 
-    let cells_por_frame = cols * rows;
+    let cells_per_frame = cols * rows;
     let mut best = f64::MAX;
     let mut best_mbs = 0.0;
     let mut total_bytes = 0usize;
@@ -146,13 +146,13 @@ fn main() {
         let t0 = Instant::now();
         term.feed(&payload);
         let ns = t0.elapsed().as_nanos();
-        if !sem_draw {
+        if !without_draw {
             let _ = term.has_damage();
             term.clear_damage();
         }
         total_ns += ns;
         total_bytes += payload.len();
-        let us_cell = ns as f64 / 1000.0 / cells_por_frame as f64;
+        let us_cell = ns as f64 / 1000.0 / cells_per_frame as f64;
         if us_cell < best {
             best = us_cell;
             best_mbs = payload.len() as f64 / (ns as f64 / 1e9) / 1e6;
@@ -160,16 +160,16 @@ fn main() {
     }
 
     let media_ns = total_ns as f64 / frames as f64;
-    let media_us_cell = media_ns / 1000.0 / cells_por_frame as f64;
+    let media_us_cell = media_ns / 1000.0 / cells_per_frame as f64;
     let media_mbs = total_bytes as f64 / (total_ns as f64 / 1e9) / 1e6;
-    let escapes = 1 + cells_por_frame * 2;
+    let escapes = 1 + cells_per_frame * 2;
     let ns_escape = media_ns / escapes as f64;
 
-    println!("grade        {cols}x{rows} ({cells_por_frame} células)");
+    println!("grade        {cols}x{rows} ({cells_per_frame} células)");
     println!(
         "frame        {} B ({} B/célula)",
         payload.len(),
-        payload.len() / cells_por_frame
+        payload.len() / cells_per_frame
     );
     println!("frames       {frames}");
     println!(

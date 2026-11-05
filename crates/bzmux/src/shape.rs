@@ -99,9 +99,9 @@ impl Shaper {
         if let Some(hit) = self.cache.get(&key) {
             return hit.clone();
         }
-        let plano = shape(face, text, cells, mode, cw, px).map(Arc::new);
-        self.cache.insert(key, plano.clone());
-        plano
+        let plan = shape(face, text, cells, mode, cw, px).map(Arc::new);
+        self.cache.insert(key, plan.clone());
+        plan
     }
 }
 
@@ -132,14 +132,14 @@ fn shape(
     if text.is_empty() || cells.len() != text.chars().count() {
         return None;
     }
-    let fonte = Face::from_slice(&face.data, face.index)?;
-    let upem = fonte.units_per_em() as f32;
+    let font = Face::from_slice(&face.data, face.index)?;
+    let upem = font.units_per_em() as f32;
     if upem <= 0.0 || cw <= 0.0 {
         return None;
     }
     let mut buf = UnicodeBuffer::new();
     buf.push_str(text);
-    let buf = rustybuzz::shape(&fonte, &features(mode), buf);
+    let buf = rustybuzz::shape(&font, &features(mode), buf);
 
     // posição (índice no trecho) de cada glifo, pela posição do cluster no texto
     let inicios: Vec<(usize, usize)> = text
@@ -170,13 +170,13 @@ fn shape(
 
     // span é em **coluna** da grade (caractere largo ocupa duas células), mas a
     // peça guarda a posição no trecho — daí as duas conversões
-    let coluna = |i: usize| cells.get(i).copied().unwrap_or(0);
+    let col = |i: usize| cells.get(i).copied().unwrap_or(0);
     let mut pieces: Vec<Piece> = Vec::with_capacity(brutos.len());
     for (i, &(cell, gid, avanco, x)) in brutos.iter().enumerate() {
-        let proxima = brutos
+        let next = brutos
             .get(i + 1)
-            .map_or(coluna(cells.len() - 1) + 1, |p| coluna(p.0));
-        let span = proxima.saturating_sub(coluna(cell)).max(1);
+            .map_or(col(cells.len() - 1) + 1, |p| col(p.0));
+        let span = next.saturating_sub(col(cell)).max(1);
         // glifo que cobre N células só vale se o avanço fechar com N células
         let esperado = span as f32 * cw;
         if (avanco - esperado).abs() > 0.1 * cw * span as f32 {
@@ -190,7 +190,7 @@ fn shape(
 /// A face da fonte de teste, embutida no binário (`cargo test` não depende de
 /// fonte instalada). Licença OFL em `assets/fonts/JetBrainsMono-OFL.txt`.
 #[cfg(test)]
-pub const FONTE_DE_TESTE: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf");
+pub const FONT_DE_TEST: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf");
 
 #[cfg(test)]
 mod tests {
@@ -201,17 +201,17 @@ mod tests {
 
     fn face() -> GlyphFace {
         GlyphFace {
-            data: Arc::new(FONTE_DE_TESTE.to_vec()),
+            data: Arc::new(FONT_DE_TEST.to_vec()),
             index: 0,
         }
     }
 
     /// "abc" ocupa 3 células: cada glifo cobre exatamente a sua.
     #[test]
-    fn um_glifo_por_celula() {
-        let plano = shape(&face(), "abc", &[0, 1, 2], Ligatures::Off, CW, PX).expect("plano");
-        assert_eq!(plano.pieces.len(), 3);
-        for (i, p) in plano.pieces.iter().enumerate() {
+    fn um_glyph_per_celula() {
+        let plan = shape(&face(), "abc", &[0, 1, 2], Ligatures::Off, CW, PX).expect("plano");
+        assert_eq!(plan.pieces.len(), 3);
+        for (i, p) in plan.pieces.iter().enumerate() {
             assert_eq!(p.cell, i);
             assert_eq!(p.span, 1);
         }
@@ -221,14 +221,14 @@ mod tests {
     /// diferente com `calt` ligado e desligado. Se os ids ficarem iguais, o
     /// shaping não pegou e a ligadura nunca vai aparecer na tela.
     #[test]
-    fn ligadura_troca_o_glifo() {
+    fn ligature_swap_o_glyph() {
         let f = face();
         let ligado = shape(&f, "->", &[0, 1], Ligatures::Standard, CW, PX).expect("ligado");
-        let solto = shape(&f, "->", &[0, 1], Ligatures::Off, CW, PX).expect("solto");
+        let loose = shape(&f, "->", &[0, 1], Ligatures::Off, CW, PX).expect("solto");
         let ids = |p: &Plan| p.pieces.iter().map(|x| x.gid).collect::<Vec<_>>();
         assert_ne!(
             ids(&ligado),
-            ids(&solto),
+            ids(&loose),
             "calt não trocou os glifos: ligadura não tem como aparecer"
         );
         // e continua sendo um glifo por célula (a fonte mono não funde célula)
@@ -245,12 +245,12 @@ mod tests {
     /// Contexto é o trecho inteiro: o mesmo par dentro de uma palavra maior
     /// continua sendo shapeado, e cada glifo cai na célula certa.
     #[test]
-    fn contexto_do_trecho_inteiro() {
+    fn context_do_run_whole() {
         let f = face();
-        let texto = "a->b";
-        let plano = shape(&f, texto, &[0, 1, 2, 3], Ligatures::Standard, CW, PX).expect("plano");
-        assert_eq!(plano.pieces.len(), 4);
-        for (i, p) in plano.pieces.iter().enumerate() {
+        let text = "a->b";
+        let plan = shape(&f, text, &[0, 1, 2, 3], Ligatures::Standard, CW, PX).expect("plano");
+        assert_eq!(plan.pieces.len(), 4);
+        for (i, p) in plan.pieces.iter().enumerate() {
             assert_eq!((p.cell, p.span), (i, 1), "glifo {i} fora da célula");
         }
     }
@@ -258,31 +258,31 @@ mod tests {
     /// Glifo largo (CJK) ocupa duas células: o avanço tem de fechar com as duas,
     /// senão a grade desalinha.
     #[test]
-    fn largo_ocupa_duas_celulas() {
+    fn total_w_ocupa_duas_celulas() {
         let f = face();
         // a JetBrains Mono não tem CJK: o teste usa o próprio espaço largo? Não —
         // usa um par que a fonte cobre, e verifica a *regra* pelo avanço.
-        let plano = shape(&f, "ab", &[0, 1], Ligatures::Off, CW, PX).expect("plano");
-        let soma: f32 = plano.pieces.iter().map(|_| CW).sum();
-        assert!((soma - 2.0 * CW).abs() < f32::EPSILON);
+        let plan = shape(&f, "ab", &[0, 1], Ligatures::Off, CW, PX).expect("plano");
+        let sum: f32 = plan.pieces.iter().map(|_| CW).sum();
+        assert!((sum - 2.0 * CW).abs() < f32::EPSILON);
     }
 
     /// O plano fala **posição no trecho**, não coluna da grade: trecho que
     /// começa na coluna 40 tem peças em 0, 1, 2… (era o bug de 2026-11-02: com
     /// coluna absoluta, todo trecho fora da coluna 0 desenhava glifo trocado).
     #[test]
-    fn posicao_e_relativa_ao_trecho() {
+    fn posicao_e_relativa_on_run() {
         let f = face();
-        let plano = shape(&f, "->", &[40, 41], Ligatures::Standard, CW, PX).expect("plano");
+        let plan = shape(&f, "->", &[40, 41], Ligatures::Standard, CW, PX).expect("plano");
         assert_eq!(
-            plano.pieces.iter().map(|p| p.cell).collect::<Vec<_>>(),
+            plan.pieces.iter().map(|p| p.cell).collect::<Vec<_>>(),
             vec![0, 1]
         );
-        assert!(plano.piece_at(0).is_some() && plano.piece_at(1).is_some());
+        assert!(plan.piece_at(0).is_some() && plan.piece_at(1).is_some());
     }
 
     #[test]
-    fn cache_nao_reshapia() {
+    fn cache_not_reshapia() {
         let f = face();
         let mut s = Shaper::new();
         let a = s
@@ -301,52 +301,52 @@ mod tests {
     /// sem cache. É o número que decide se shaping pode rodar no caminho quente.
     #[test]
     #[ignore = "sonda de medição, imprime e não afirma"]
-    fn imprime_custo() {
+    fn imprime_cost() {
         let f = face();
-        let texto = "if (a -> b) { x != y; fi = ffi; } // comentário de 60 colunas OK";
-        let cells: Vec<usize> = (0..texto.chars().count()).collect();
+        let text = "if (a -> b) { x != y; fi = ffi; } // comentário de 60 colunas OK";
+        let cells: Vec<usize> = (0..text.chars().count()).collect();
         let n = 2000;
         let t = std::time::Instant::now();
         for _ in 0..n {
-            let _ = shape(&f, texto, &cells, Ligatures::Standard, CW, PX).expect("plano");
+            let _ = shape(&f, text, &cells, Ligatures::Standard, CW, PX).expect("plano");
         }
-        let sem = t.elapsed() / n;
+        let without = t.elapsed() / n;
         let mut sh = Shaper::new();
-        let _ = sh.plan(&f, texto, &cells, Ligatures::Standard, CW, PX);
+        let _ = sh.plan(&f, text, &cells, Ligatures::Standard, CW, PX);
         let t = std::time::Instant::now();
         for _ in 0..n {
-            let _ = sh.plan(&f, texto, &cells, Ligatures::Standard, CW, PX);
+            let _ = sh.plan(&f, text, &cells, Ligatures::Standard, CW, PX);
         }
-        let com = t.elapsed() / n;
+        let with = t.elapsed() / n;
         // quanto é parse da fonte e quanto é shaping de verdade
         let t = std::time::Instant::now();
         for _ in 0..n {
             let _ = Face::from_slice(&f.data, f.index);
         }
         let parse = t.elapsed() / n;
-        let fonte = Face::from_slice(&f.data, f.index).expect("face");
+        let font = Face::from_slice(&f.data, f.index).expect("face");
         let mut buf0 = UnicodeBuffer::new();
-        buf0.push_str(texto);
+        buf0.push_str(text);
         let t = std::time::Instant::now();
         for _ in 0..n {
             let mut b = UnicodeBuffer::new();
-            b.push_str(texto);
-            let _ = rustybuzz::shape(&fonte, &[], b);
+            b.push_str(text);
+            let _ = rustybuzz::shape(&font, &[], b);
         }
-        let so_shaping = t.elapsed() / n;
+        let only_shaping = t.elapsed() / n;
         println!(
             "{} células: shaping sem cache {:?} (parse da fonte {:?}, shape {:?}), cache {:?}",
             cells.len(),
-            sem,
+            without,
             parse,
-            so_shaping,
-            com
+            only_shaping,
+            with
         );
     }
 
     /// Texto que não bate com a lista de células é erro de chamador, não plano.
     #[test]
-    fn entrada_inconsistente_nao_vira_plano() {
+    fn entrada_inconsistent_not_becomes_plan() {
         let f = face();
         assert!(shape(&f, "abc", &[0, 1], Ligatures::Off, CW, PX).is_none());
         assert!(shape(&f, "", &[], Ligatures::Off, CW, PX).is_none());

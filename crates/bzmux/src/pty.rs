@@ -205,7 +205,7 @@ mod checks_shell {
     use super::effective_shell;
 
     #[test]
-    fn shell_resolvido_e_um_caminho_que_existe() {
+    fn shell_resolvido_e_um_path_que_existe() {
         // config vence o ambiente
         assert_eq!(
             effective_shell(Some("/bin/sh"), Some("/bin/bash")),
@@ -219,8 +219,8 @@ mod checks_shell {
             "precisa sair em caminho, não no nome"
         );
         // caminho morto na config, e $SHELL também morto: cai no /bin/bash
-        let duro = effective_shell(Some("nao-existe-xyz"), Some("/x"));
-        assert!(duro == "/bin/bash" || duro == "/bin/sh", "{duro}");
+        let hard = effective_shell(Some("nao-existe-xyz"), Some("/x"));
+        assert!(hard == "/bin/bash" || hard == "/bin/sh", "{hard}");
         // nada de nada: /bin/bash, não /bin/sh
         let padrao = effective_shell(None, None);
         assert_eq!(
