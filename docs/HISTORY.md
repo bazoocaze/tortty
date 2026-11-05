@@ -1416,3 +1416,30 @@ next `cd` gave `tmp — tortty`. Three tests in `tortty-core`
 `title_stack_nests_like_vim_pushes_it`,
 `title_stack_does_not_grow_without_bound`), `tools/check.sh` green,
 `tools/visual.sh` green.
+
+## 2026-11-04 — B38: closing by the shell lost the window state
+
+Symptom: maximize, quit, open again via the `.desktop` shortcut and the window
+came back normal, as if the change was not remembered.
+
+**Cause: a panic, not a missing save.** The window state is written only in
+`exiting()`. When the terminal is closed the way a terminal is usually closed —
+typing `exit` or Ctrl+D, so the *child* ends and the last tab goes away — the app
+kept working with `tabs` empty, and the paths of the way out indexed
+`tabs[active]`: `wscards()` (from `redraw()`, which `drop_empty_workspace`
+called) panicked first, and after that was fixed `exiting()` itself panicked while
+killing the pty of a tab that no longer existed. Closing through the WM (the X
+button) never hit it, which is why the bug looked like "it does not save".
+
+Fix: once `exiting` is set nothing else is handled (`window_event` returns on
+anything but the two events that leave the loop), `drop_empty_workspace` only
+sets the flag instead of drawing with no tab, and `exiting()` reads the tab with
+`get_mut`. Measured, not guessed: under Xvfb + **Marco** (the owner's WM) the
+three close paths were told apart — WM button wrote the file, `exit` and Ctrl+D
+wrote nothing at all, and stderr showed the panic at `app.rs:561`.
+
+**Verified.** Xvfb + Marco with its own `XDG_STATE_HOME`: the three paths now
+write `{"max":true,...}` and the next launch is born maximized; new step 8 of
+[`tools/visual.sh`](../tools/visual.sh) ("the shell ending the session exits
+cleanly and saves the window state") fails on the old code with `rc=101`.
+`tools/check.sh` green, `tools/visual.sh` green.

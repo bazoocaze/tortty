@@ -52,13 +52,16 @@ TMP=$(mktemp -d "${TMPDIR:-/tmp}/tortty-visual.XXXXXX")
 XVFB_PID=
 APP_PID=
 APP2_PID=
+APP3_PID=
 
 cleanup() {
     [ -n "$APP2_PID" ] && kill "$APP2_PID" 2>/dev/null
+    [ -n "$APP3_PID" ] && kill "$APP3_PID" 2>/dev/null
     [ -n "$APP_PID" ] && kill "$APP_PID" 2>/dev/null
     # wait for the app to exit: without that Xvfb can die with a client connected
     [ -n "$APP_PID" ] && wait "$APP_PID" 2>/dev/null
     [ -n "$APP2_PID" ] && wait "$APP2_PID" 2>/dev/null
+    [ -n "$APP3_PID" ] && wait "$APP3_PID" 2>/dev/null
     [ -n "$XVFB_PID" ] && kill "$XVFB_PID" 2>/dev/null
     rm -f "$SOCK"
     [ "$KEEP" -eq 1 ] || rm -rf "$TMP"
@@ -429,6 +432,25 @@ then
     ok "scrolling does not leave a line with text and no pixel"
 else
     fail "grid line lost its pixels after scrolling (B6)"
+fi
+
+# 8. the shell ending the session (`exit`, Ctrl+D) is a close path of its own: it
+# has to exit cleanly **and save the window state**. Drawing with no tab indexed
+# `tabs[active]` and panicked on the way out, so the state file was never written
+# and the remembered geometry (maximized included) was lost — B38. No `--cols/--rows`
+# here: a grid on the command line turns the remembering off.
+STATE8="$TMP/state"
+DISPLAY=$DISPLAY_XVFB HOME=$TMP/home XDG_STATE_HOME="$STATE8" "$APP" \
+    --cmd 'sleep 0.5' >"$TMP/app3.log" 2>&1 &
+APP3_PID=$!
+wait "$APP3_PID" 2>/dev/null
+RC3=$?
+APP3_PID=
+if [ "$RC3" -eq 0 ] && [ -s "$STATE8/tortty/window.json" ] &&
+    ! grep -q panicked "$TMP/app3.log"; then
+    ok "the shell ending the session exits cleanly and saves the window state"
+else
+    fail "exit by the shell: rc=$RC3 state=[$(cat "$STATE8/tortty/window.json" 2>/dev/null)] $(grep -m1 panicked "$TMP/app3.log")"
 fi
 
 echo

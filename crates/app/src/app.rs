@@ -2318,9 +2318,13 @@ impl App {
     /// closes the app, if none is left) — I20.
     fn drop_empty_workspace(&mut self) {
         if self.parked.is_empty() {
-            // last workspace: the app closes on the next `RedrawRequested`
+            // last workspace: the app closes on the next tick (`about_to_wait`
+            // exits as soon as `exiting` is set). Drawing here would index
+            // `tabs[active]` with no tab and panic on the way out, and nothing
+            // is saved when the process dies mid-frame — that is why the window
+            // state was lost when the shell ended the session with `exit`/Ctrl+D
+            // instead of the WM close button (B38)
             self.exiting = true;
-            self.redraw();
             return;
         }
         let new = self.parked.remove(0);
@@ -2630,6 +2634,18 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        // on the way out the last tab may already be gone, and every handler
+        // below indexes `tabs[active]`: the panic killed the exit before
+        // `exiting()` saved the window state (B38)
+        if self.exiting {
+            if matches!(
+                event,
+                WindowEvent::CloseRequested | WindowEvent::RedrawRequested
+            ) {
+                event_loop.exit();
+            }
+            return;
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Moved(pos) => {
@@ -2651,9 +2667,6 @@ impl ApplicationHandler<UserEvent> for App {
             },
             WindowEvent::RedrawRequested => {
                 self.redraw();
-                if self.exiting {
-                    event_loop.exit();
-                }
             },
             WindowEvent::ModifiersChanged(m) => {
                 self.mods = m.state();
@@ -2810,7 +2823,9 @@ impl ApplicationHandler<UserEvent> for App {
             eprintln!("prof: {summary}");
             logln(&format!("prof: {summary}"));
         }
-        if let Some(pty) = self.tabs[self.active].pty.as_mut() {
+        // the tab may be gone already: closing the app by the shell exiting is
+        // exactly that case (B38)
+        if let Some(pty) = self.tabs.get_mut(self.active).and_then(|t| t.pty.as_mut()) {
             pty.kill();
         }
         self.debug = None;
