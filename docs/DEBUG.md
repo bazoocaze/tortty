@@ -351,6 +351,20 @@ Probe: `TORTTY_NO_TITLE=1 tortty` (does not touch the window title). It is a
 debugging probe, not configuration — it only exists so you can use the terminal
 while investigating.
 
+## Pitfall: a panic on the way out is invisible from the `.desktop` shortcut
+
+Launched from the menu, tortty has **no stderr**: the entry is `Terminal=false`
+and nothing captures the output, so a panic during the shutdown looks exactly
+like a normal close — the window disappears and the only trace is an exit code
+nobody reads. That is how B38 read as "the window state is not saved": the app
+was dying on the way out, before `window.json` was written. The same silence
+covers any failure that only shows on the way in (font, GPU, config).
+
+How to see it: run the installed binary from a shell (`~/.local/bin/tortty`) and
+close it the same way, or append `2>/tmp/tortty.err` to the `Exec=` line while
+investigating. The gate is step 8 of [`visual.sh`](../tools/visual.sh): it closes
+by the shell ending and fails on `rc=101`.
+
 ## Pitfall: GL without a display handle, and `alpha_mode`
 
 Two things that only show up in the GL backend:
