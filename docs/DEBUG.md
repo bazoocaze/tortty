@@ -115,6 +115,14 @@ or `ok: false` with `err`. The same protocol as the Python bzmux, on purpose:
 result — the client is the one that checks, with `state`, and that is why
 `benchrun.py` insists until it matches.
 
+**`state.title` is not the title on screen.** It is `Term::title`, what the child
+asked for with `OSC 0/2` (default `tortty`); the tab bar and the window show
+`Tab::title()`, which is the OSC when there is one and `basename(cwd)` otherwise.
+A probe that reads `state.title` sees `tortty` and concludes the cwd fallback is
+broken when it is working (found investigating B37). For the title the user
+sees: `xdotool getwindowname <xid>` for the window, or `text where=view` for the
+bar.
+
 ## Pitfalls
 
 ### winit
@@ -313,6 +321,12 @@ a `Return` at the end is the probe that shows the bytes and not just the screen
 See [`BENCHMARKS.md`](BENCHMARKS.md) — it is the only place with numbers. Flow
 summary: `parsebench` for the parser, `tools/benchrun.py` for the app,
 `tools/bench.sh` for the ladder.
+
+For a probe of the socket or of the keyboard (`xdotool`, `state`, `text`) the
+**debug** binary is enough: `cargo build -p tortty` takes seconds against the
+~50 s of `cargo build --release`, and nothing there is about throughput.
+`bench.sh` is the one that needs `release`; [`visual.sh`](../tools/visual.sh)
+runs the **debug** binary by default (`TORTTY_BIN` overrides).
 
 ## Pitfall: a pending X error kills the app in `set_title`
 

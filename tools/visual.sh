@@ -22,7 +22,9 @@
 set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-APP=${TORTTY_BIN:-$ROOT/target/release/tortty}
+# debug by default: what this gate proves does not depend on the profile, and the
+# debug build is seconds against ~50 s of release (`TORTTY_BIN` overrides)
+APP=${TORTTY_BIN:-$ROOT/target/debug/tortty}
 DISPLAY_XVFB=${TORTTY_DISPLAY:-:77}
 OUT_DIR=${TORTTY_VISUAL_DIR:-/tmp/tortty-visual}
 KEEP=0
@@ -42,7 +44,7 @@ step() { printf '%s %s\n' "$1" "$2"; }
 ok() { step "ok   " "$1"; }
 fail() { step "FAILURE" "$1"; failures=$((failures + 1)); }
 
-[ -x "$APP" ] || { echo "no binary at $APP (cargo build --release)" >&2; exit 2; }
+[ -x "$APP" ] || { echo "no binary at $APP (cargo build -p tortty)" >&2; exit 2; }
 command -v import >/dev/null || { echo "ImageMagick (import) is missing" >&2; exit 2; }
 
 mkdir -p "$OUT_DIR"

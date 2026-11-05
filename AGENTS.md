@@ -125,6 +125,11 @@ A hook and a CI that disagree are good for nothing.
 
 - `./tools/devrun.sh --cmd 'mc' --debug-socket /tmp/tt.sock` — starts in
   background with a PID file.
+- **`target/debug/tortty` for any test that is not about speed.**
+  `cargo build -p tortty` takes seconds against ~50 s of `cargo build
+  --release`, and nothing in the socket/`xdotool` probes depends on the profile.
+  `bench.sh` is the one that needs `release`; `visual.sh` uses debug by default
+  (`TORTTY_BIN` overrides).
 - `./tools/devkill.sh` — kills **only** the registered PID, checking
   `/proc/<pid>/exe`. `pkill -f tortty` kills the shell that called it (the
   pattern is in its command line); `pkill -x` was worse when the binary and the
