@@ -100,6 +100,7 @@ o `tools/benchrun.py` roda nos dois.
 | `keys` | `data` (spec tipo `ctrl+shift+t`, `f5`, `alt+left`) | `keys: [n]` bytes escritos no pty |
 | `resize` | `cols`, `rows` | `requested` (o grid **pedido**; confira em `state`) |
 | `prof` | `on` (bool, opcional) | contadores: `draw_ms_call`, `draw_calls`, `parse_*`, `pty_*` |
+| `osc` | `tab` (opcional, padrão a ativa) | os últimos 8 OSC que o parser viu, do mais novo para o mais velho: `hex`, `text` (lossy), `truncated`, `title` (o resultante). É a sonda de "por que o título da aba está com lixo" |
 | `log` | `data` | escreve no log de debug |
 | `quit` | — | fecha a janela |
 
@@ -137,6 +138,14 @@ WM, que é o que importa. `resize` devolve o pedido, não o resultado — quem c
 
 ### fonte (fontdb + swash)
 
+- **Bitmap de cor rouba glifo da primária**: `glyph_bitmap` existe para o texto
+  fora da grade (barra, sidebar, selo, toast) e resolve cor → máscara. Se a
+  passada de cor varrer a cadeia de socorro inteira antes de qualquer máscara,
+  uma fonte de emoji que mapeie ASCII vence: a **Noto Color Emoji** mapeia
+  dígito e devolve bitmap de 19x18 px, então o número da aba virava um
+  retângulo de duas células. A ordem certa é a fonte da célula primeiro (cor e
+  máscara na mesma face) e só depois a cadeia; a grade não sofre disso porque
+  escolhe a face pelo cmap (`face_of`). Teste: `digito_vem_da_primaria_em_mascara`.
 - **Não há fontconfig**: a escolha é lista de preferência fixa + varredura do
   sistema. Máquina sem monoespaçada → o app sai com mensagem, não com `.notdef`.
 - **pt→px**: `px = pt * dpi / 72 * scale_factor`. É o que faz a célula bater com
@@ -170,6 +179,24 @@ WM, que é o que importa. `resize` devolve o pedido, não o resultado — quem c
 - **`feed` com UTF-8 parcial**: o buffer pode terminar no meio de uma sequência;
   guardar os bytes e continuar na próxima chamada (o `dmesg` cortado no meio de
   um acento é o caso de teste).
+- **`ST` de 8 bits**: `0x9c` fecha OSC/DCS/APC/PM/SOS como o `ESC \` (muito
+  cliente manda isso em vez do ST de 7 bits). Só vale quando **não** é byte de
+  continuação de UTF-8 — `М` é `d0 9c`, e cortar ali perde o resto do título.
+  Um `ESC` que não é ST (dentro do corpo) **encerra** a sequência: empurrá-lo
+  de volta para o payload colava o `ESC ]` do título seguinte dentro do título
+  e a barra de abas mostrava lixo antes do texto (B4, 2026-11-04). A sonda é o
+  verbo `osc` do socket, que devolve os payloads crus.
+- **Texto de cromo não é sequência de terminal**: a regra é uma só,
+  `bzmux_core::term::sanitize_title` (fora controle, zero-width, marcas de
+  direção e BOM), e ela vale em **dois níveis**:
+  - *desenho*: `Renderer::chrome_text` é o único lugar que desenha texto fora da
+    grade (barra de abas, cartão da sidebar, selo de histórico, toast) e sanitiza
+    ali — elemento de cromo novo herda a garantia sem chamar nada;
+  - *produtores*: payload do OSC (`osc_dispatch`), basename do cwd
+    (`Tab::cwd_name`) e nome de workspace (digitação do rename e o `Enter` que o
+    confirma) saem limpos, porque além da tela eles vão para o título da janela,
+    para o `state` do socket e para o cabeçalho do `dump` — um `\n` num nome de
+    diretório quebra o formato do dump.
 
 ## Qualidade (linter e formatação)
 

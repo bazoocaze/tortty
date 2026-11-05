@@ -11,6 +11,7 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
 use bzmux_core::cell::{Cell, INV};
 use bzmux_core::config::{Config, CursorShape, Theme};
+use bzmux_core::term::sanitize_title;
 use bzmux_core::{Color, Span, Term};
 use swash::scale::ScaleContext;
 use winit::window::Window;
@@ -641,6 +642,45 @@ impl Renderer {
 
     /// Selo de uma linha no canto superior direito (indicador de histórico).
     /// Desenhado por último: tem que ficar por cima do que estiver lá.
+    /// Texto de cromo: **o único lugar** que desenha texto fora da grade
+    /// (barra de abas, cartão da sidebar, selo de histórico, toast).
+    ///
+    /// A sanitização mora aqui, não no chamador: assim um elemento de cromo
+    /// novo herda a garantia de não desenhar controle, zero-width nem marca de
+    /// direção no rótulo — era por aí que o título da aba aparecia com lixo
+    /// antes do texto (B4, 2026-11-04). Avanço é sempre uma célula por
+    /// caractere; `largura` = 0 significa sem teto.
+    fn chrome_text(&mut self, texto: &str, x0: f32, y: f32, fg: [f32; 3], largura: f32) {
+        let cw = self.fonts.cw;
+        let ascent = self.fonts.ascent;
+        let limite = if largura > 0.0 {
+            largura.floor()
+        } else {
+            f32::INFINITY
+        };
+        for (i, ch) in sanitize_title(texto).chars().enumerate() {
+            let px = x0 + i as f32 * cw;
+            if px + cw > x0 + limite {
+                break;
+            }
+            if ch == ' ' {
+                continue;
+            }
+            if let Some(q) = self.glyph_quad(ch, false, false) {
+                self.instances.push(Instance {
+                    rect: [
+                        px + q.left as f32,
+                        y + ascent - q.top as f32,
+                        q.w as f32,
+                        q.h as f32,
+                    ],
+                    color: [fg[0], fg[1], fg[2], 1.0],
+                    uv: q.uv,
+                });
+            }
+        }
+    }
+
     /// Barra de abas: ` 1 zsh │ 2 vim  ` na faixa acima da grade.
     ///
     /// A aba ativa fica invertida (fundo = cor do texto). Aba com BELL recente
@@ -649,7 +689,6 @@ impl Renderer {
     fn tabbar(&mut self, tabs: &[TabInfo], cols: usize) {
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
-        let ascent = self.fonts.ascent;
         // a barra começa à direita da sidebar: as duas dividem a linha 1, e a
         // sidebar não fica com um buraco em cima (o cartão é a altura de 2,4
         // linhas, então ela passa por baixo da barra de qualquer jeito)
@@ -680,27 +719,7 @@ impl Renderer {
             // um retângulo por aba (não um por letra): o fundo do rótulo é uma
             // peça só, e o texto é desenhado por cima
             self.push_rect(x, y0, largura, chh, [bg[0], bg[1], bg[2], 1.0]);
-            for (k, ch) in rotulo.chars().enumerate() {
-                if ch == ' ' {
-                    continue;
-                }
-                let px = x + k as f32 * cw;
-                if px + cw > x + largura {
-                    break;
-                }
-                if let Some(q) = self.glyph_quad(ch, false, false) {
-                    self.instances.push(Instance {
-                        rect: [
-                            px + q.left as f32,
-                            y0 + ascent - q.top as f32,
-                            q.w as f32,
-                            q.h as f32,
-                        ],
-                        color: [fg[0], fg[1], fg[2], 1.0],
-                        uv: q.uv,
-                    });
-                }
-            }
+            self.chrome_text(&rotulo, x, y0, fg, largura);
             x += largura;
         }
     }
@@ -746,9 +765,7 @@ impl Renderer {
 
     /// Uma linha de texto da sidebar, cortada na largura do cartão.
     fn text_line(&mut self, x0: f32, y: f32, texto: &str, fg: [f32; 3], largura: f32) {
-        let cw = self.fonts.cw;
-        let ascent = self.fonts.ascent;
-        let cabe = (largura / cw).floor().max(1.0) as usize;
+        let cabe = (largura / self.fonts.cw).floor().max(1.0) as usize;
         // reticências em vez de corte seco: o cartão estreito não come o fim
         // do título sem avisar (o Python faz o mesmo com `ellipsize`)
         let texto: String = if texto.chars().count() > cabe {
@@ -758,23 +775,7 @@ impl Renderer {
         } else {
             texto.to_string()
         };
-        for (i, ch) in texto.chars().take(cabe).enumerate() {
-            if ch == ' ' {
-                continue;
-            }
-            if let Some(q) = self.glyph_quad(ch, false, false) {
-                self.instances.push(Instance {
-                    rect: [
-                        x0 + self.pad + i as f32 * cw + q.left as f32,
-                        y + ascent - q.top as f32,
-                        q.w as f32,
-                        q.h as f32,
-                    ],
-                    color: [fg[0], fg[1], fg[2], 1.0],
-                    uv: q.uv,
-                });
-            }
-        }
+        self.chrome_text(&texto, x0 + self.pad, y, fg, 0.0);
     }
 
     /// Toast (I12): uma faixa na última linha, com as cores invertidas.
@@ -786,7 +787,6 @@ impl Renderer {
     fn toast(&mut self, text: &str, cols: usize, rows: usize) {
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
-        let ascent = self.fonts.ascent;
         let bg = self.color(Color::Default, self.fg);
         let fg = self.color(Color::Default, self.bg);
         let n = cols.saturating_sub(2);
@@ -799,26 +799,12 @@ impl Renderer {
         let x0 = -self.side;
         let y0 = rows.saturating_sub(1) as f32 * chh;
         self.push_rect(x0, y0, (w + 2) as f32 * cw, chh, [bg[0], bg[1], bg[2], 1.0]);
-        for (i, ch) in curto.chars().enumerate() {
-            if let Some(q) = self.glyph_quad(ch, false, false) {
-                self.instances.push(Instance {
-                    rect: [
-                        x0 + (i + 1) as f32 * cw + q.left as f32,
-                        y0 + ascent - q.top as f32,
-                        q.w as f32,
-                        q.h as f32,
-                    ],
-                    color: [fg[0], fg[1], fg[2], 1.0],
-                    uv: q.uv,
-                });
-            }
-        }
+        self.chrome_text(&curto, x0 + cw, y0, fg, 0.0);
     }
 
     fn badge(&mut self, text: &str, cols: usize) {
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
-        let ascent = self.fonts.ascent;
         let n = text.chars().count();
         let x0 = cols.saturating_sub(n + 1);
         let bg = self.color(Color::Default, self.fg);
@@ -830,20 +816,7 @@ impl Renderer {
             chh,
             [bg[0], bg[1], bg[2], 1.0],
         );
-        for (i, ch) in text.chars().enumerate() {
-            if let Some(q) = self.glyph_quad(ch, false, false) {
-                self.instances.push(Instance {
-                    rect: [
-                        (x0 + i) as f32 * cw + q.left as f32,
-                        ascent - q.top as f32,
-                        q.w as f32,
-                        q.h as f32,
-                    ],
-                    color: [fg[0], fg[1], fg[2], 1.0],
-                    uv: q.uv,
-                });
-            }
-        }
+        self.chrome_text(text, x0 as f32 * cw, 0.0, fg, 0.0);
     }
 
     /// Glifo + decoração de uma célula. A ordem aqui é a ordem de blend:

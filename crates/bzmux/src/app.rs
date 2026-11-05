@@ -225,7 +225,7 @@ impl Tab {
     /// `basename` do cwd do processo filho (`/proc/<pid>/cwd`); sem isso, nada.
     fn cwd_name(&self) -> Option<String> {
         let cwd = self.cwd()?;
-        let nome = cwd.file_name()?.to_string_lossy().to_string();
+        let nome = bzmux_core::term::sanitize_title(&cwd.file_name()?.to_string_lossy());
         if nome.is_empty() {
             None
         } else {
@@ -1886,6 +1886,37 @@ impl App {
                 }
                 debugsock::ok(prof::fields())
             },
+            // Sonda dos OSC: os últimos payloads crus que o parser viu, da aba
+            // ativa e da mais nova para a mais velha. É o que responde "por que
+            // a barra de abas mostra lixo" sem recompilar nada.
+            "osc" => {
+                let tab = req
+                    .get("tab")
+                    .and_then(serde_json::Value::as_u64)
+                    .map_or(self.active, |n| n as usize);
+                let Some(t) = self.tabs.get(tab) else {
+                    return debugsock::err(format!("aba {tab} não existe"));
+                };
+                let events: Vec<_> = t
+                    .term
+                    .osc_seen
+                    .iter()
+                    .rev()
+                    .map(|o| {
+                        serde_json::json!({
+                            "hex": hex(&o.raw),
+                            "text": String::from_utf8_lossy(&o.raw),
+                            "truncated": o.truncated,
+                            "title": o.title,
+                        })
+                    })
+                    .collect();
+                debugsock::ok(serde_json::json!({
+                    "tab": tab,
+                    "title": self.tabs[tab].term.title,
+                    "events": events,
+                }))
+            },
             "log" => {
                 // liga/desliga/troca o caminho em execução; `off` desliga
                 let value = req.get("value").and_then(|v| v.as_str()).unwrap_or("off");
@@ -2142,7 +2173,10 @@ impl App {
             self.redraw();
             return;
         }
-        let novo = texto.trim().to_string();
+        // o nome vai para o cartão e para o cabeçalho do `dump`: mesma regra do
+        // título de aba (controle, zero-width, direção) — o campo é digitação
+        // livre, não payload de terminal
+        let novo = bzmux_core::term::sanitize_title(&texto).trim().to_string();
         if novo.is_empty() {
             self.redraw();
             return;
@@ -2180,14 +2214,20 @@ impl App {
                 let Some(s) = k.character else {
                     return true;
                 };
+                // tecla que só produz invisível (ou controle) não entra no
+                // campo: o nome em edição é desenhado no cartão como está
+                let limpo = bzmux_core::term::sanitize_title(s);
+                if limpo.is_empty() {
+                    return true;
+                }
                 if let Some(r) = self.rename.as_mut() {
                     if r.substituir {
                         r.texto.clear();
                         r.substituir = false;
                     }
                     // só o que cabe no cartão; o resto seria invisível
-                    if r.texto.chars().count() < 40 {
-                        r.texto.push_str(s);
+                    if r.texto.chars().count() + limpo.chars().count() <= 40 {
+                        r.texto.push_str(&limpo);
                     }
                 }
                 self.redraw();

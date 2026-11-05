@@ -18,6 +18,13 @@ use crate::grid::Row;
 
 const REPLACEMENT: char = '\u{FFFD}';
 
+/// Teto do payload de um OSC em curso: sequência que nunca fecha não pode
+/// crescer sem fim.
+const MAX_OSC: usize = 4096;
+/// Quantos OSC a sonda guarda, e quanto de cada um (o verbo `osc` do socket).
+const OSC_SEEN: usize = 8;
+const OSC_SEEN_MAX: usize = 256;
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum State {
     Ground,
@@ -59,6 +66,19 @@ impl Default for SavedCursor {
             autowrap: true,
         }
     }
+}
+
+/// Um OSC que chegou, com o payload cru (sem `ESC ]` e sem terminador). É a
+/// sonda do verbo `osc` do socket: quando a barra de abas mostra lixo, a
+/// pergunta é "que bytes o filho mandou", e só o parser sabe responder.
+#[derive(Clone, Debug)]
+pub struct OscSeen {
+    pub raw: Vec<u8>,
+    /// O payload passou de `OSC_SEEN_MAX` e foi cortado.
+    pub truncated: bool,
+    /// Título **depois** de aplicar este OSC (útil quando o título não mudou:
+    /// o OSC era cor, link ou lixo que não casou com `0`/`2`).
+    pub title: String,
 }
 
 /// Onde a cor estendida vai: texto, fundo ou sublinhado.
@@ -121,6 +141,8 @@ pub struct Term {
     /// Respostas ao filho (DA, CPR, DECRQM...). O app drena e escreve no pty.
     pub child_out: Vec<u8>,
     pub title: String,
+    /// Os últimos OSC que chegaram, do mais antigo para o mais novo.
+    pub osc_seen: VecDeque<OscSeen>,
     /// Cores do tema: o desenho usa e `OSC 4/10/11/12` consulta/altera.
     pub theme: Theme,
     /// Alguém mexeu nas cores por OSC: o app tem que reenviar ao renderer.
@@ -203,6 +225,7 @@ impl Term {
             saved: SavedCursor::default(),
             child_out: Vec::new(),
             title: String::from("bzmux"),
+            osc_seen: VecDeque::with_capacity(OSC_SEEN),
             theme: Theme::default(),
             theme_dirty: false,
             cell_size: (10, 19),
@@ -1354,8 +1377,13 @@ impl Term {
         let cmd = it.next().unwrap_or_default();
         let arg = it.next().unwrap_or_default();
         match parse_u32(cmd) {
-            0 | 2 if !arg.is_empty() => {
-                self.title = String::from_utf8_lossy(arg).to_string();
+            0 | 2 => {
+                // `from_utf8_lossy` de um corte no meio de UTF-8 já vira `�`;
+                // o resto do lixo é o que `sanitize_title` tira (B4).
+                let limpo = sanitize_title(&String::from_utf8_lossy(arg));
+                if !limpo.is_empty() {
+                    self.title = limpo;
+                }
             },
             // 4;índice;cor define a paleta, 4;índice;? consulta
             4 => self.osc_palette(arg),
@@ -1368,6 +1396,30 @@ impl Term {
             112 => self.reset_color(12),
             _ => {},
         }
+        self.osc_record(data);
+    }
+
+    /// Guarda o payload na sonda (anel de `OSC_SEEN`), com o título resultante.
+    fn osc_record(&mut self, data: &[u8]) {
+        let truncated = data.len() > OSC_SEEN_MAX;
+        let raw = data[..data.len().min(OSC_SEEN_MAX)].to_vec();
+        if self.osc_seen.len() == OSC_SEEN {
+            self.osc_seen.pop_front();
+        }
+        self.osc_seen.push_back(OscSeen {
+            raw,
+            truncated,
+            title: self.title.clone(),
+        });
+    }
+
+    /// Fecha o OSC em curso: despacha o que chegou e volta para a grade.
+    fn osc_end(&mut self) {
+        let data = std::mem::take(&mut self.osc);
+        self.osc_dispatch(&data);
+        self.osc = data;
+        self.osc.clear();
+        self.state = State::Ground;
     }
 
     /// `OSC 4;índice;cor` (define) ou `OSC 4;índice;?` (consulta).
@@ -1500,16 +1552,19 @@ impl Term {
                     let b = bytes[i];
                     i += 1;
                     match b {
-                        0x07 => {
-                            let data = std::mem::take(&mut self.osc);
-                            self.osc_dispatch(&data);
-                            self.osc = data;
-                            self.osc.clear();
-                            self.state = State::Ground;
-                        },
+                        0x07 => self.osc_end(),
                         0x1b => self.state = State::OscEsc,
+                        // ST em 8 bits (o `\x9c` que muito cliente manda em
+                        // vez de `ESC \`): sem isto o OSC nunca fechava e
+                        // engolia tudo até o próximo BEL.
+                        0x9c if st_c1(&self.osc) => {
+                            if self.osc.last() == Some(&0xc2) {
+                                self.osc.pop(); // U+009C em UTF-8
+                            }
+                            self.osc_end();
+                        },
                         _ => {
-                            if self.osc.len() < 4096 {
+                            if self.osc.len() < MAX_OSC {
                                 self.osc.push(b);
                             }
                         },
@@ -1518,19 +1573,14 @@ impl Term {
                 State::OscEsc => {
                     let b = bytes[i];
                     i += 1;
-                    if b == b'\\' {
-                        let data = std::mem::take(&mut self.osc);
-                        self.osc_dispatch(&data);
-                        self.osc = data;
-                        self.osc.clear();
-                        self.state = State::Ground;
-                    } else {
-                        // ESC perdido dentro do OSC: volta para o corpo
-                        if self.osc.len() < 4096 {
-                            self.osc.push(0x1b);
-                            self.osc.push(b);
-                        }
-                        self.state = State::Osc;
+                    // `ESC \` é ST. Qualquer outro ESC no corpo é sequência
+                    // quebrada: despacha o que já veio e trata o byte como o
+                    // que viria depois de um ESC. Empurrar o ESC de volta para
+                    // o corpo (o que se fazia) colava o `ESC ]` do título
+                    // seguinte dentro do título deste — o lixo do B4.
+                    self.osc_end();
+                    if b != b'\\' {
+                        self.escape(b);
                     }
                 },
                 State::Str => {
@@ -1556,8 +1606,18 @@ impl Term {
 
     /// Um byte dentro de DCS/APC/PM/SOS: só o APC guarda conteúdo.
     fn str_byte(&mut self, b: u8) {
+        let corpo: &[u8] = if self.apc_ativo { &self.apc } else { &[] };
         if b == 0x1b {
             self.state = State::StrEsc;
+        } else if b == 0x9c && st_c1(corpo) {
+            // ST em 8 bits também fecha DCS/APC/PM/SOS
+            if self.apc.last() == Some(&0xc2) {
+                self.apc.pop();
+            }
+            self.state = State::Ground;
+            if std::mem::take(&mut self.apc_ativo) {
+                self.apc_done();
+            }
         } else if self.apc_ativo && self.apc.len() < crate::graphics::MAX_APC {
             // teto: transmissão que nunca fecha não pode crescer sem fim
             self.apc.push(b);
@@ -1915,6 +1975,56 @@ fn parse_u32(t: &[u8]) -> u32 {
         }
     }
     v
+}
+
+/// Título próprio para desenhar: sem caractere de controle nem marca
+/// invisível/de direção. O payload do OSC vem do filho e o cwd pode ser um nome
+/// de diretório com qualquer byte; nenhum dos dois pode mexer no layout do
+/// rótulo (um `U+202E` inverteria o resto do texto da aba).
+pub fn sanitize_title(s: &str) -> String {
+    s.chars().filter(|c| !invisivel(*c)).collect()
+}
+
+/// O que não desenha e só serve para mexer no layout: controle (C0, C1, DEL),
+/// zero-width, marcas de direção e BOM.
+fn invisivel(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{00ad}'
+                | '\u{200b}'..='\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{2066}'..='\u{206f}'
+                | '\u{feff}'
+        )
+}
+
+/// O buffer termina no meio de uma sequência UTF-8? Um `0x9c` logo depois
+/// seria byte de continuação (`М` = `d0 9c`), não o ST de 8 bits.
+fn meio_utf8(buf: &[u8]) -> bool {
+    let mut i = buf.len();
+    let mut cont = 0usize;
+    while i > 0 && buf[i - 1] & 0xc0 == 0x80 {
+        i -= 1;
+        cont += 1;
+    }
+    if i == 0 {
+        return false;
+    }
+    let precisa = match buf[i - 1] {
+        0xc2..=0xdf => 1,
+        0xe0..=0xef => 2,
+        0xf0..=0xf4 => 3,
+        _ => 0,
+    };
+    cont < precisa
+}
+
+/// `0x9c` fecha a string? Sim quando é o ST de 8 bits, e não quando é byte de
+/// continuação de UTF-8. `c2 9c` é o próprio U+009C, que também é ST.
+fn st_c1(buf: &[u8]) -> bool {
+    buf.last() == Some(&0xc2) || !meio_utf8(buf)
 }
 
 /// Parâmetro `idx` do corpo: token vazio vale 0; token inexistente, `default`.
@@ -2543,6 +2653,96 @@ mod tests {
         assert_eq!(t.title, "meu titulo");
         t.feed(b"\x1b]2;outro\x1b\\");
         assert_eq!(t.title, "outro");
+    }
+
+    #[test]
+    fn titulo_osc_termina_com_st_de_8_bits() {
+        let mut t = term();
+        // `0x9c` puro e o próprio U+009C em UTF-8 fecham o OSC; sem isso o
+        // escape seguia aberto e engolia até o próximo BEL (B4)
+        t.feed(b"\x1b]0;c1\x9c");
+        assert_eq!(t.title, "c1");
+        t.feed(b"\x1b]0;utf8\xc2\x9c");
+        assert_eq!(t.title, "utf8");
+        // e o texto seguinte volta a aparecer na grade
+        t.feed(b"Xdepois");
+        assert_eq!(t.grid[0].cells[0].ch, 'X');
+    }
+
+    #[test]
+    fn titulo_osc_com_9c_de_continuacao_utf8_nao_corta() {
+        let mut t = term();
+        // `d0 9c` é `М` e `e2 90 9c` é `␜`: o 0x9c aqui é continuação de
+        // UTF-8, não ST — cortar no meio perderia o resto do título
+        t.feed(b"\x1b]0;\xd0\x9c\xd0\xbe \xe2\x90\x9c \x07");
+        assert_eq!(t.title, "Мо ␜ ");
+    }
+
+    #[test]
+    fn osc_nao_engole_o_titulo_seguinte() {
+        let mut t = term();
+        // OSC fechado com ST de 8 bits seguido do título seguinte, separados
+        // por outro escape: o título tem de ser só o último pedido
+        t.feed(b"\x1b]0;LIXO\x9c\x1b]8;;http://x\x1b\\\x1b]0;LIMPO\x07");
+        assert_eq!(t.title, "LIMPO");
+    }
+
+    #[test]
+    fn esc_no_corpo_do_osc_encerra_a_sequencia() {
+        let mut t = term();
+        // ESC que não é ST encerra o OSC (não volta para o corpo): o título é
+        // o que veio antes, e o `[31m` depois vira SGR de verdade
+        t.feed(b"\x1b]2;titulo\x1b[31mX");
+        assert_eq!(t.title, "titulo");
+        assert_eq!(t.grid[0].cells[0].ch, 'X');
+        assert_eq!(t.grid[0].cells[0].fg, Color::Idx(1));
+    }
+
+    #[test]
+    fn titulo_osc_sem_caractere_de_controle() {
+        let mut t = term();
+        t.feed(b"\x1b]0;A\x01B\x7fC\x07");
+        assert_eq!(t.title, "ABC");
+        // marca invisível e de direção saem também: `U+202E` inverteria o
+        // resto do rótulo da aba
+        t.feed("\x1b]0;A\u{202e}B\u{200b}C\u{feff}\x07".as_bytes());
+        assert_eq!(t.title, "ABC");
+        // controle sozinho não zera o título (o `OSC 0;` vazio já era no-op)
+        t.feed(b"\x1b]0;\x01\x07");
+        assert_eq!(t.title, "ABC");
+    }
+
+    #[test]
+    fn nome_de_diretorio_nao_traz_controle_para_o_titulo() {
+        // nome de arquivo no Linux tem qualquer byte menos `/` e NUL: o título
+        // vindo do cwd passa pela mesma regra do payload do OSC
+        assert_eq!(sanitize_title("proj\r\n\u{1b}[31m\u{202e}x"), "proj[31mx");
+        assert_eq!(sanitize_title("ok"), "ok");
+    }
+
+    #[test]
+    fn st_de_8_bits_fecha_dcs_sem_engolir_a_grade() {
+        let mut t = term();
+        t.feed(b"\x1bP1$qm\x9cok");
+        assert_eq!(t.grid[0].cells[0].ch, 'o');
+    }
+
+    #[test]
+    fn sonda_guarda_os_osc_recebidos() {
+        let mut t = term();
+        t.feed(b"\x1b]0;um\x07");
+        t.feed(b"\x1b]8;;http://x\x07");
+        let vistos: Vec<&[u8]> = t.osc_seen.iter().map(|o| o.raw.as_slice()).collect();
+        assert_eq!(vistos, vec![b"0;um".as_slice(), b"8;;http://x".as_slice()]);
+        assert_eq!(t.osc_seen[0].title, "um");
+        // link não mexe no título
+        assert_eq!(t.osc_seen[1].title, "um");
+        // anel limitado: dois OSC a mais não crescem o histórico
+        for _ in 0..OSC_SEEN + 2 {
+            t.feed(b"\x1b]2;x\x07");
+        }
+        assert_eq!(t.osc_seen.len(), OSC_SEEN);
+        assert!(t.osc_seen.back().is_some_and(|o| !o.truncated));
     }
 
     #[test]

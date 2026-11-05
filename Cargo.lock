@@ -224,7 +224,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "bzmux"
-version = "1.0.5"
+version = "1.0.6"
 dependencies = [
  "arboard",
  "bytemuck",
@@ -243,7 +243,7 @@ dependencies = [
 
 [[package]]
 name = "bzmux-core"
-version = "1.0.5"
+version = "1.0.6"
 dependencies = [
  "base64",
  "flate2",

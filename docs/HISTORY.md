@@ -1193,3 +1193,59 @@ a dizer isso em uma linha, com a saída (`/dev/dri`, `sandbox @gpu`), e o `DEBUG
 ganhou a tabela, a sonda e o método do `xwd`. Decisão registrada em
 [`LIMITATIONS.md`](LIMITATIONS.md): não há backend de software próprio.
 
+
+## 2026-11-04 — B4: lixo antes do título da aba (dois bugs, não um)
+
+Sintoma relatado pelo dono: os rótulos da barra de abas apareciam com
+"garbage textual" antes do texto da aba. Eram **duas** causas independentes, e
+a segunda estava em toda aba, não só nas que levavam OSC.
+
+**1. OSC 0/2 não fechava em ST de 8 bits.** O parser só reconhecia `BEL` e
+`ESC \` como terminador. Um cliente que manda `0x9c` (ou o `c2 9c` do U+009C em
+UTF-8) deixava o OSC **aberto**, e tudo que vinha depois entrava no payload até
+o próximo `BEL`. Pior: um `ESC` no corpo era empurrado de volta para o buffer,
+então o `ESC ]` do título **seguinte** era colado dentro do título deste.
+Reproduzido com o filho mandando `OSC 0;LIXO\x9c` e depois `OSC 0;LIMPO\x07`:
+`state.tab_titles` devolvia `"LIXO\u{9c}\x1b]0;LIMPO"` — o lixo antes do texto,
+exatamente como relatado (captura em Xvfb, barra legível).
+
+**2. O número da aba era desenhado pela Noto Color Emoji.** No caminho sem
+shaping (`glyph_bitmap`, o que desenha barra, cartão da sidebar, selo e toast) a
+passada de **cor** varria a cadeia de socorro inteira antes de qualquer máscara.
+A Noto Color Emoji mapeia dígito ASCII e devolve bitmap colorido de 19x18 px
+(duas células): o `1` do rótulo era um retângulo grande, e o rótulo inteiro
+saía como `b$Tb$` em vez de ` 1 T1 `. Medido com uma sonda temporária no
+`tabbar` (`ch='1' cache=19x18 cor=true face=5`) e num teste que pergunta, face
+por face, quem tem bitmap de cor para `'1'`: só a Noto Color Emoji. A grade não
+era afetada porque ela desenha pelo shaping, que escolhe a face pelo cmap.
+
+**Correções.**
+
+- `bzmux-core`: `0x9c` fecha OSC e também DCS/APC/PM/SOS, com guarda contra byte
+  de continuação UTF-8 (`М` é `d0 9c`; cortar ali perderia o resto do título);
+  `ESC` que não é ST **encerra** a sequência em vez de voltar para o corpo.
+- O título passa a ter uma regra só, `sanitize_title` (core): fora controle
+  (C0/C1/DEL), zero-width, marcas de direção (`U+202A..202E`, `U+2066..2069`),
+  BOM e soft hyphen. Ela é aplicada em **dois níveis**, não em cada chamador:
+  no desenho — `Renderer::chrome_text`, criado aqui como o único ponto que
+  desenha texto fora da grade (barra, cartão, selo, toast passaram a usar a
+  mesma função), então cromo novo herda a garantia — e nos produtores do texto:
+  payload do OSC, basename do cwd e nome de workspace (`Tab::cwd_name`,
+  `finish_rename` e a digitação do rename), porque essas strings também vão para
+  o título da janela, para o `state` e para o cabeçalho do `dump`.
+  Medido ao vivo: OSC com `A U+202E B \x01 C` dá `ABC`; aba com cwd
+  `dir\u{202e}XYZ` mostra `dirXYZ`; rename digitado como
+  `U+202E x U+200B y` vira `xy`.
+- `glyph.rs`: a fonte da célula e as variantes de estilo resolvem primeiro
+  (cor e depois máscara); a cadeia de socorro continua com cor antes de
+  máscara, que é o que mantém emoji colorido.
+- `app.rs`: verbo `osc` no socket — os últimos 8 payloads crus (hex, texto,
+  truncado, título resultante), porque a pergunta "que bytes o filho mandou"
+  só o parser sabe responder.
+
+**Verificado.** 8 testes novos em `bzmux-core` (ST de 8 bits puro e em UTF-8,
+`ESC` no corpo, controle e marca de direção no título, `sanitize_title` sobre
+nome de diretório, DCS com `0x9c`, `М` não cortado, anel da sonda) + 1 em
+`glyph.rs` (dígito vem da primária em máscara). Ao vivo em Xvfb,
+com três abas: os 12 casos de OSC da bateria deram o título esperado e a captura
+da barra mostra `1 LIMPO │ 2 b4 │ 3 b4`. `tools/check.sh` verde.

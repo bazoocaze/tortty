@@ -194,14 +194,38 @@ impl Fonts {
                 (g != 0).then_some((idx, g))
             })
             .collect();
-        for &(idx, gid) in &gids {
+        // 1) a fonte da célula (e as variantes de estilo) desenha? então é
+        //    dela. A passada de cor varria a cadeia inteira antes de qualquer
+        //    máscara, e a Noto Color Emoji — que mapeia dígito ASCII e tem
+        //    bitmap de 19x18 — roubava os números: o rótulo da aba saía com um
+        //    retângulo de duas células no lugar do dígito (B4, 2026-11-04).
+        for &(idx, gid) in gids.iter().filter(|(idx, _)| !Fonts::e_fallback(*idx)) {
+            if let Some(b) = rasterize_color(ctx, self.face(idx), self.px, gid) {
+                return Some((b, true, idx, gid));
+            }
+            if let Some(b) = rasterize(ctx, self.face(idx), self.px, gid) {
+                return Some((b, false, idx, gid));
+            }
+        }
+        // 2) fora dela, cor primeiro na cadeia: ter o caractere no cmap não
+        //    garante que a face saiba desenhá-lo (DejaVu Sans mapeia U+1F600 e
+        //    não produz bitmap), então emoji precisa da passada de cor antes
+        //    de qualquer máscara de fallback.
+        let fallback = || gids.iter().filter(|(idx, _)| Fonts::e_fallback(*idx));
+        for &(idx, gid) in fallback() {
             if let Some(b) = rasterize_color(ctx, self.face(idx), self.px, gid) {
                 return Some((b, true, idx, gid));
             }
         }
-        gids.iter().find_map(|&(idx, gid)| {
+        fallback().find_map(|&(idx, gid)| {
             rasterize(ctx, self.face(idx), self.px, gid).map(|b| (b, false, idx, gid))
         })
+    }
+
+    /// A face é da cadeia de socorro? `FACE_BOLD_ITALIC` mora no meio dos
+    /// índices, mas não é fallback.
+    fn e_fallback(idx: usize) -> bool {
+        idx >= FACE_FALLBACK && idx != FACE_BOLD_ITALIC
     }
 
     /// Bitmap de um glifo **já resolvido** (face + gid do shaping): cor primeiro,
@@ -393,6 +417,23 @@ mod tests {
             let (face, gid) = f.origem(ch);
             assert_ne!(gid, 0, "{ch} sem glifo");
             assert_eq!(face, FACE_PRIMARY, "{ch} veio da face {face}");
+        }
+    }
+
+    /// Dígito é da primária, em máscara: a Noto Color Emoji mapeia '1' e tem
+    /// bitmap colorido de 19x18, e ganhava da máscara da primária — o número
+    /// da aba saía como um retângulo largo no lugar do dígito (B4).
+    #[test]
+    fn digito_vem_da_primaria_em_mascara() {
+        let f = fontes();
+        let mut ctx = ScaleContext::new();
+        for ch in ['0', '1', '2', '4', '9'] {
+            let (b, cor, face, _) = f
+                .glyph_bitmap(&mut ctx, ch, false, false)
+                .unwrap_or_else(|| panic!("{ch} sem bitmap"));
+            assert!(!cor, "{ch} saiu colorido");
+            assert_eq!(face, FACE_PRIMARY, "{ch} veio da face {face}");
+            assert!(b.w < 16, "{ch} largo demais: {}x{}", b.w, b.h);
         }
     }
 
