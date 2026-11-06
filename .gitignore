@@ -4,3 +4,4 @@ target/
 docs/NAMING.md
 tools/.sandbox-cargo-scratch/
 __pycache__/
+/.idea/
