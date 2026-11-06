@@ -157,6 +157,6 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - Headless core check suite, run by `--selftest` without a window, covering
   parser, config/CLI, keyboard/mouse, socket, reflow/selection/anchor.
 - Visual gate on its own Xvfb: draws, captures and compares pixels
-  (`tools/visual.sh`), so a drawing regression fails without an eye.
+  (`tools/render-check.sh`), so a drawing regression fails without an eye.
 - Reproducible benchmark with the grid locked by the socket
   (`tools/benchrun.py`) and the ladder of `tools/bench.sh`.

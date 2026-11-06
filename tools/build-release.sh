@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# release.sh — packages the binary for distribution (what CI does per tag).
+# build-release.sh — packages the binary for distribution (what CI does per tag).
 #
 # Same script locally and in CI: here it builds the `.tar.gz` that
 # `install.sh --from-release` knows how to download, with a predictable name:
@@ -7,10 +7,10 @@
 #   tortty-<version>-<triple>.tar.gz   (contains `tortty`, LICENSE and README.md)
 #
 # Usage:
-#   ./tools/release.sh                 builds and packages for the host
-#   ./tools/release.sh --target TRIPLE cross-compiles (needs the right linker)
-#   ./tools/release.sh --skip-build    packages what is already in target/<triple>/release
-#   ./tools/release.sh --out DIR       where to leave the package (default: dist/)
+#   ./tools/build-release.sh              builds and packages for the host
+#   ./tools/build-release.sh --target T   cross-compiles (needs the right linker)
+#   ./tools/build-release.sh --skip-build packages what is in target/<triple>/release
+#   ./tools/build-release.sh --out DIR    where to leave the package (default: dist/)
 #
 # `--check-version v1.2.3` checks that the tag matches the version in Cargo.toml
 # (CI uses it to avoid publishing a tag pointing at other code).

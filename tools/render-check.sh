@@ -1,11 +1,11 @@
 #!/bin/sh
-# Automatic visual verification: opens the window on an isolated display (Xvfb),
-# draws known content, captures and **compares** — with no window on the working
-# session and no human eye on the result.
+# Automatic rendering verification: opens the window on an isolated display
+# (Xvfb), draws known content, captures and **compares** — with no window on the
+# working session and no human eye on the result.
 #
-#   tools/visual.sh                # runs the battery and says PASSED/FAILED
-#   tools/visual.sh --keep         # keeps the captures in /tmp/tortty-visual
-#   tools/visual.sh --display :77  # uses another display (Xvfb comes up if missing)
+#   tools/render-check.sh               # runs the battery, says PASSED/FAILED
+#   tools/render-check.sh --keep        # keeps the captures in /tmp/tortty-render
+#   tools/render-check.sh --display :77 # uses another display (Xvfb if missing)
 #
 # What it proves, and no headless test proves:
 #
@@ -26,9 +26,9 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 # debug build is seconds against ~50 s of release (`TORTTY_BIN` overrides)
 APP=${TORTTY_BIN:-$ROOT/target/debug/tortty}
 DISPLAY_XVFB=${TORTTY_DISPLAY:-:77}
-OUT_DIR=${TORTTY_VISUAL_DIR:-/tmp/tortty-visual}
+OUT_DIR=${TORTTY_RENDER_DIR:-/tmp/tortty-render}
 KEEP=0
-SOCK=/tmp/tortty-visual.sock
+SOCK=/tmp/tortty-render.sock
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -48,7 +48,7 @@ fail() { step "FAILURE" "$1"; failures=$((failures + 1)); }
 command -v import >/dev/null || { echo "ImageMagick (import) is missing" >&2; exit 2; }
 
 mkdir -p "$OUT_DIR"
-TMP=$(mktemp -d "${TMPDIR:-/tmp}/tortty-visual.XXXXXX")
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/tortty-render.XXXXXX")
 XVFB_PID=
 APP_PID=
 APP2_PID=
@@ -177,14 +177,14 @@ PY
 
 sleep 0.4
 take "$OUT_DIR/b.png" || fail "capture 2"
-if ./tools/pixel.py --diff "$OUT_DIR/a.png" "$OUT_DIR/b.png" --max 0 >/dev/null 2>&1; then
+if ./tools/pixel-probe.py --diff "$OUT_DIR/a.png" "$OUT_DIR/b.png" --max 0 >/dev/null 2>&1; then
     fail "content changed and no pixel changed ($(state_summary))"
 else
     ok "new content changed pixels"
 fi
 
 # 2. background color through SGR 41/42 on the first line
-if ./tools/pixel.py "$OUT_DIR/b.png" \
+if ./tools/pixel-probe.py "$OUT_DIR/b.png" \
     --expect "$((CWL / 2)),$((CHL / 2))=ff0000" \
     --expect "$((CWL * 2 + CWL / 2)),$((CHL / 2))=00ff00" \
     --expect "$((CWL * 20)),$((CHL / 2))=000000" >"$OUT_DIR/colors.txt" 2>&1; then
@@ -194,7 +194,7 @@ else
 fi
 
 # 3. text painted inside the cell (line 3, column 1: white glyph on black)
-if ./tools/pixel.py "$OUT_DIR/b.png" --row "$((CHL * 2 + CHL / 2))" \
+if ./tools/pixel-probe.py "$OUT_DIR/b.png" --row "$((CHL * 2 + CHL / 2))" \
     >"$OUT_DIR/line3.txt" 2>&1 && grep -qv '000000' "$OUT_DIR/line3.txt"; then
     ok "text draws inside the cell"
 else
@@ -203,7 +203,7 @@ fi
 
 # 4. still screen: two captures in a row have to be identical
 take "$OUT_DIR/c.png" || fail "capture 3"
-if ./tools/pixel.py --diff "$OUT_DIR/b.png" "$OUT_DIR/c.png" --max 0 >/dev/null 2>&1; then
+if ./tools/pixel-probe.py --diff "$OUT_DIR/b.png" "$OUT_DIR/c.png" --max 0 >/dev/null 2>&1; then
     ok "still screen does not repaint differently"
 else
     fail "two captures of the same screen differ (unstable repaint)"
@@ -455,8 +455,8 @@ fi
 
 echo
 if [ "$failures" -eq 0 ]; then
-    echo "visual: all ok (captures in $OUT_DIR)"
+    echo "render-check: all ok (captures in $OUT_DIR)"
     exit 0
 fi
-echo "visual: $failures failure(s)"
+echo "render-check: $failures failure(s)"
 exit 1

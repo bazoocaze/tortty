@@ -5,4 +5,4 @@
 # Skip (only when really needed):  git commit --no-verify
 set -eu
 HERE=$(git rev-parse --show-toplevel)
-exec "$HERE/tools/check.sh" --fast
+exec "$HERE/tools/quality-check.sh" --fast

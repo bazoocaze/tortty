@@ -46,14 +46,15 @@ verification here runs on a display of its own — the window exists, but not on
 anyone's screen:
 
 ```sh
-./tools/visual.sh            # Xvfb + fixed theme + capture + comparison; exits 0/1
-./tools/visual.sh --keep     # keeps the captures in /tmp/tortty-visual
+./tools/render-check.sh            # Xvfb + fixed theme + capture + comparison; exits 0/1
+./tools/render-check.sh --keep     # keeps the captures in /tmp/tortty-render
 ```
 
-`tools/visual.sh` owns that recipe (display, fake `HOME` with a `tortty.conf` of
-the fixed theme, wait for the first frame, capture through `state`/`xid`, and
-the four pixel checks via [`tools/pixel.py`](../tools/pixel.py)). To probe a
-capture by hand: `tools/pixel.py shot.png 100,50` (colour of one point),
+`tools/render-check.sh` owns that recipe (display, fake `HOME` with a
+`tortty.conf` of the fixed theme, wait for the first frame, capture through
+`state`/`xid`, and the four pixel checks via
+[`tools/pixel-probe.py`](../tools/pixel-probe.py)). To probe a capture by hand:
+`tools/pixel-probe.py shot.png 100,50` (colour of one point),
 `--scan X`/`--row Y` (sample per cell) and `--diff a.png b.png` (how many pixels
 changed and where).
 
@@ -227,8 +228,8 @@ bar.
 ## Quality (linter and formatting)
 
 ```sh
-./tools/check.sh          # the full ruler: fmt, clippy, test, build, parsebench
-./tools/check.sh --fix    # fixes what is mechanical (fmt + clippy --fix)
+./tools/quality-check.sh          # the full ruler: fmt, clippy, test, build, parsebench
+./tools/quality-check.sh --fix    # fixes what is mechanical (fmt + clippy --fix)
 ```
 
 `pre-commit` runs `--fast` on its own (installed with
@@ -329,7 +330,7 @@ summary: `parsebench` for the parser, `tools/benchrun.py` for the app,
 For a probe of the socket or of the keyboard (`xdotool`, `state`, `text`) the
 **debug** binary is enough: `cargo build -p tortty` takes seconds against the
 ~50 s of `cargo build --release`, and nothing there is about throughput.
-`bench.sh` is the one that needs `release`; [`visual.sh`](../tools/visual.sh)
+`bench.sh` is the one that needs `release`; [`render-check.sh`](../tools/render-check.sh)
 runs the **debug** binary by default (`TORTTY_BIN` overrides).
 
 ## Pitfall: drawing inside an input handler turns the event queue into inertia
@@ -380,7 +381,7 @@ covers any failure that only shows on the way in (font, GPU, config).
 
 How to see it: run the installed binary from a shell (`~/.local/bin/tortty`) and
 close it the same way, or append `2>/tmp/tortty.err` to the `Exec=` line while
-investigating. The gate is step 8 of [`visual.sh`](../tools/visual.sh): it closes
+investigating. The gate is step 8 of [`render-check.sh`](../tools/render-check.sh): it closes
 by the shell ending and fails on `rc=101`.
 
 ## Pitfall: GL without a display handle, and `alpha_mode`
@@ -405,7 +406,7 @@ tortty: GPU: Vulkan llvmpipe (LLVM 20.1.2, 256 bits) (driver llvmpipe)
 
 **Before investigating drawing, check `/dev/dri` with `ls -la /dev/dri`.** Without
 the device nodes `wgpu` only has llvmpipe. Under a display of its own (Xvfb)
-llvmpipe **draws** — `tools/visual.sh` passes without `/dev/dri`. In the owner's
+llvmpipe **draws** — `tools/render-check.sh` passes without `/dev/dri`. In the owner's
 real session, on 2026-11-02, the container without `/dev/dri` made the pty and
 the socket work with the window **receiving no frame**.
 
@@ -447,7 +448,7 @@ MESA: error: Failed to attach to x11 shm
 ```
 
 Practical consequence: **visual verification is not trustworthy in that state**.
-In that case the gate is another one: `tools/visual.sh` on an Xvfb (pixel proof
+In that case the gate is another one: `tools/render-check.sh` on an Xvfb (pixel proof
 without depending on the owner's display), plus what does not depend on pixel —
 `state` (grid, cursor, images, `drawn`/`skips`/`rows_max`/`last_damage`),
 `--selftest`, `cargo test` and `parsebench`.
@@ -510,4 +511,4 @@ since the hook it is no longer needed for the app to survive.
   "aim mode"); if the process dies halfway, the pointer can stay stuck until the
   X client goes away.
 - Consequence: capture only on a virtual display of your own
-  (`tools/visual.sh`); never on the display of whoever is working.
+  (`tools/render-check.sh`); never on the display of whoever is working.

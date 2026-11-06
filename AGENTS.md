@@ -88,9 +88,9 @@ per category, in order).
 ## Quality: one command only
 
 ```sh
-./tools/check.sh          # fmt --check + clippy -D warnings + test + build
-./tools/check.sh --fast   # without the build (it is the pre-commit)
-./tools/check.sh --fix    # applies `cargo fmt` and `clippy --fix` before checking
+./tools/quality-check.sh          # fmt --check + clippy -D warnings + test + build
+./tools/quality-check.sh --fast   # without the build (it is the pre-commit)
+./tools/quality-check.sh --fix    # applies `cargo fmt` and `clippy --fix` before checking
 ```
 
 The **same** script runs in the git hook (`.githooks/pre-commit`, enabled with
@@ -114,18 +114,18 @@ A hook and a CI that disagree are good for nothing.
 - **`target/debug/tortty` for any test that is not about speed.**
   `cargo build -p tortty` takes seconds against ~50 s of `cargo build
   --release`, and nothing in the socket/`xdotool` probes depends on the profile.
-  `bench.sh` is the one that needs `release`; `visual.sh` uses debug by default
-  (`TORTTY_BIN` overrides).
+  `bench.sh` is the one that needs `release`; `render-check.sh` uses debug by
+  default (`TORTTY_BIN` overrides).
 - `./tools/devkill.sh` — kills **only** the registered PID, checking
   `/proc/<pid>/exe`. `pkill -f tortty` kills the shell that called it (the
   pattern is in its command line); `pkill -x` was worse still when two builds
   shared the same binary name (it brought down the owner's session). It has
   happened; do not use it.
-- `./tools/visual.sh` — visual verification **without showing up on the owner's
-  screen**: its own Xvfb, fixed theme, capture and pixel comparison
-  (`tools/pixel.py`). It exits 0/1, so it works as a gate.
-  `./tools/pixel.py shot.png --diff a.png b.png` says how many pixels changed
-  and where.
+- `./tools/render-check.sh` — rendering verification **without showing up on the
+  owner's screen**: its own Xvfb, fixed theme, capture and pixel comparison
+  (`tools/pixel-probe.py`). It exits 0/1, so it works as a gate.
+  `./tools/pixel-probe.py shot.png --diff a.png b.png` says how many pixels
+  changed, and where.
 - `./tools/bench.sh` — the ladder in both grids, against the reference build.
 - `cargo run --release -p tortty-core --bin parsebench -- --file /tmp/dmesg.txt`
   — real-load parsing, no display.

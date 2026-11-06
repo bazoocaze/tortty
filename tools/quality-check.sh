@@ -1,12 +1,12 @@
 #!/bin/sh
-# check.sh — the quality ruler: formatting, lints and tests.
+# quality-check.sh — the quality ruler: formatting, lints and tests.
 #
-# It is the same command in the pre-commit and in CI, on purpose: if the hook and CI
-# disagree, the hook is worthless.
+# It is the same command in the pre-commit and in CI, on purpose: if the hook and
+# CI disagree, the hook is worthless.
 #
-#   tools/check.sh            # fmt --check, clippy, tests, release build
-#   tools/check.sh --fast     # without the release build (what the pre-commit runs)
-#   tools/check.sh --fix      # applies fmt and clippy --fix before checking
+#   tools/quality-check.sh          # fmt --check, clippy, tests, release build
+#   tools/quality-check.sh --fast   # without the build (what the pre-commit runs)
+#   tools/quality-check.sh --fix    # applies fmt and clippy --fix before checking
 #
 # Exits with 0 only if everything passes. Nothing here runs a GUI: `mc`/`vim` stay
 # manual (docs/DEBUG.md).

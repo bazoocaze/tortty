@@ -5,13 +5,13 @@ The capture needs no toolkit: the window is grabbed by ImageMagick's `import` an
 the PNG is decoded by `convert`, which `import` already requires. That way the
 same script runs here, in CI and over ssh.
 
-    tools/pixel.py shot.png                 # default sample
-    tools/pixel.py shot.png 100,50 200,50   # specific (x,y) points
-    tools/pixel.py shot.png --scan 300      # column x=300, one sample per cell
-    tools/pixel.py shot.png --row 515       # line y=515 sampled along the width
-    tools/pixel.py --expect 100,50=ff0000   # checks the color (± --tol)
-    tools/pixel.py --diff a.png b.png       # how many pixels changed and where
-    tools/pixel.py --diff a.png b.png --max 0   # fails (exit 1) if anything changed
+    tools/pixel-probe.py shot.png                 # default sample
+    tools/pixel-probe.py shot.png 100,50 200,50   # specific (x,y) points
+    tools/pixel-probe.py shot.png --scan 300      # column x=300, one sample per cell
+    tools/pixel-probe.py shot.png --row 515       # line y=515 sampled along the width
+    tools/pixel-probe.py --expect 100,50=ff0000   # checks the color (± --tol)
+    tools/pixel-probe.py --diff a.png b.png       # how many pixels changed and where
+    tools/pixel-probe.py --diff a.png b.png --max 0   # fails (exit 1) if anything changed
 
 `--diff` is what turns a capture into a **test**: pages with the same content have
 to give 0 differing pixels; new content has to give a difference — and that is how you

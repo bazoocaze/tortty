@@ -2,7 +2,7 @@ name: release
 
 # Per `v*` tag: packages and publishes the binary that `install.sh --from-release`
 # knows how to download (`tortty-<version>-<triple>.tar.gz`). The packaging is
-# `tools/release.sh` — the same one that runs on the developer's machine, so what
+# `tools/build-release.sh` — the same one that runs on the developer's machine, so what
 # comes out of here is not a separate path.
 #
 # Coverage today: Linux x86_64 and aarch64. macOS (M7) and Windows (M6) do not yet
@@ -57,7 +57,7 @@ jobs:
           # the cross linker that cargo does not guess
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
-        run: ./tools/release.sh --target "${{ matrix.target }}" --check-version "$GITHUB_REF_NAME"
+        run: ./tools/build-release.sh --target "${{ matrix.target }}" --check-version "$GITHUB_REF_NAME"
 
       - uses: actions/upload-artifact@v4
         with:

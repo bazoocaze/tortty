@@ -32,7 +32,7 @@ The limitations of the project.
   hardware adapter and, when there is none, takes the CPU one it can find
   (llvmpipe/lavapipe) and says so on stderr once, because a VM or a container
   without `/dev/dri` has only that. Whether it **presents** is another matter:
-  under an Xvfb of its own llvmpipe draws (`tools/visual.sh` passes without
+  under an Xvfb of its own llvmpipe draws (`tools/render-check.sh` passes without
   `/dev/dri`), but in the owner's confined session on 2026-11-03 the window
   received no frame — Vulkan blew the present timeout and GL returned success
   without painting a pixel. Whoever runs confined uses `sandbox @gpu`, which presents

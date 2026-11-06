@@ -84,12 +84,12 @@ SHA256SUMS
 ```
 
 What generates that is `.github/workflows/release.yml`, which only calls
-`tools/release.sh` — the **same** command that is run on the machine:
+`tools/build-release.sh` — the **same** command that is run on the machine:
 
 ```sh
-./tools/release.sh                      # packages the host into dist/
-./tools/release.sh --target aarch64-unknown-linux-gnu
-./tools/release.sh --check-version v0.1.0   # CI uses it: the tag has to match
+./tools/build-release.sh                      # packages the host into dist/
+./tools/build-release.sh --target aarch64-unknown-linux-gnu
+./tools/build-release.sh --check-version v0.1.0   # CI uses it: the tag has to match
 ```
 
 The script checks the `Cargo.toml` version against the tag, runs
