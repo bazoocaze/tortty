@@ -28,6 +28,10 @@ reading; only README.md is for humans.
   (`done`/`partial`/`missing`/`no`) and the order in which it was done. Closed at
   195/195; **it is not a queue**. **Migration scope only**: an idea Python does
   not have does not go in here.
+- `docs/FEATURES.md` — **the index of what exists today**, by area: one line per
+  capability, and in the same entry the limit of that capability — a `BACKLOG`
+  id when it is queued, a `LIMITATIONS` reason when it is accepted. It owns no
+  fact: it points, it does not restate.
 - `docs/BACKLOG.md` — the queue: activity Python does not have (id `B<number>`,
   the old `M-*`, each with trigger and cost) and the rules of the queue. If
   Python does not do it, it is not parity: it is backlog.
