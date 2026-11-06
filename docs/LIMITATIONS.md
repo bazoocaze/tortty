@@ -1,15 +1,6 @@
 # Limits
 
-What tortty **does not** do and why. Only a **decision** or an accepted
-consequence of scope enters here. Functionality of tortty-python that has not
-been migrated yet is `missing` in [`MIGRATION.md`](MIGRATION.md) — it is not a
-limit. If a limit stops existing, it leaves here and becomes a completed item in
-[`HISTORY.md`](HISTORY.md).
-
-A limit is **not frozen**: it may name the [`BACKLOG.md`](BACKLOG.md) entry that
-would remove it, and the two are not a contradiction — the limit is the state
-today, the entry is what would change it. A limit without an id is one nobody has
-committed to lift yet; a limit with an id is one with a price written down.
+The limitations of the project.
 
 ## Scope
 
@@ -28,8 +19,8 @@ committed to lift yet; a limit with an id is one with a price written down.
 ## Platform
 
 - **Linux X11 is the tested target.** Wayland is not exercised here (`M-AB` in
-  BACKLOG); Windows and macOS **are not parity** (Python never ran there) and are
-  in the queue as `M-X`/`M-Y` of [`BACKLOG`](BACKLOG.md), with what each one
+  BACKLOG); Windows and macOS are untested and are in the queue as `M-X`/`M-Y`
+  of [`BACKLOG`](BACKLOG.md), with what each one
   requires in [`PORTABILITY.md`](PORTABILITY.md). Until they go through CI, "it
   works there" is an expectation, not a fact.
 - **Window position on Wayland**: the client does not choose where the window
@@ -53,12 +44,11 @@ committed to lift yet; a limit with an id is one with a price written down.
 
 ## Emulation
 
-- **Wide char works, it is a conscious improvement** — and that is why the cell
-  model has a continuation mark (`WIDE_CONT`). tortty-python does not have it:
-  there CJK occupies one cell. Every new grid operation has to respect the pair.
+- **Wide char works, and it is why the cell model has a continuation mark**
+  (`WIDE_CONT`). Every new grid operation has to respect the pair.
 - **Grapheme combination**: each cell carries a `char`; a combining mark that did
-  not come together in the same commit as the text becomes its own cell. Really
-  composing is new activity (`BACKLOG.md` M-U), not a limit accepted forever.
+  not come together in the same commit as the text becomes its own cell. Composing
+  the two is queued (`BACKLOG.md` M-U).
 - **Shaping works; three consequences are accepted** (`G8` closed on 2026-11-02
   with `rustybuzz`, see [`HISTORY.md`](HISTORY.md)): a **single-cell** run is not
   shaped (no context, no ligature — this is the doom-fire case, 2400 runs of 1);
@@ -69,24 +59,22 @@ committed to lift yet; a limit with an id is one with a price written down.
 - **No `IRM`/`LNM`** (insert mode, newline mode) and no `CSI ? 3` (80/132):
   rare to the point of not paying for the test. They stay registered in the
   parser as a known pending item.
-- **No DECDL/DECDHL** and no double-height: Python does not have them either.
+- **No DECDL/DECDHL** and no double-height: nothing draws them, so there is no
+  state to keep.
 
 ### Keyboard
 
-- **No `DECKPAM`/`DECKPNM`** (`ESC =` / `ESC >`): the parser ignores them, so the
-  numeric keypad sends the character (`7`, `+`) in every mode instead of the
-  application-keypad form (`\EOw`). Python does the same, and the
-  `xterm-256color` terminfo of this machine has no `kp*` capability to honor.
+- **The numeric keypad has no application mode** (`DECKPAM`/`DECKPNM`, `ESC =` /
+  `ESC >`): the parser takes both escapes and does nothing with them, so a keypad
+  key always sends its character (`7`, `+`) and never the `\EOw` form of a
+  terminal in that mode. The keypad itself works; what is missing is the mode. The
+  `xterm-256color` installed here declares no `kp*` capability, so a program that
+  set the mode would have nothing to read back.
 - **Shift+letter in the kitty protocol comes out with the *post*-Shift code**:
   Shift+A becomes `CSI 65;2u`, not `CSI 97;2u`. `winit` delivers the key already
   applied to the layout and the **base** key would require its own layout table
-  (`xkb`/`keymap`) only to undo Shift. Python, via Gdk, has the same limitation:
-  it is parity, not regression. Whoever needs the base key for a shortcut
+  (`xkb`/`keymap`) only to undo Shift. Whoever needs the base key for a shortcut
   (`ctrl+shift+a` distinct from `ctrl+a`) only has the shifted code.
-- **F3 comes out `CSI 1;2R`, diverging from Python, on purpose.** `kitty_kbd.py`
-  maps `GDK_KEY_F3` to `(13, "~")` — `13` is the number of **Enter** and
-  `CSI 13~` is xterm's Shift+F3, not the kitty form (`F1`..`F4` are `1P`..`1S`).
-  The right thing is what is in the code; do not "fix" it back for parity.
 
 ## Interface
 
@@ -100,8 +88,5 @@ committed to lift yet; a limit with an id is one with a price written down.
 
 ## Development
 
-- **A performance number lives in one place** ([`BENCHMARKS.md`](BENCHMARKS.md))
-  and not in README, TASK or a code comment. Repeating a number produces
-  divergence and every re-measurement becomes a hunt.
 - **`--no-vsync` is not a mode of use**: it is an instrument. In normal use
   drawing is limited by vsync, and that is how it should be.

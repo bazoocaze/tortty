@@ -6,11 +6,10 @@ below already cost someone their work terminal.
 ## Never `pkill` — PID file, always
 
 `pkill -f tortty` kills the **shell that called** the command, because the
-pattern appears in its command line. `pkill -x` was the one that hurt: while the
-binary and the Python app shared the name `bzmux`, `pkill -x bzmux` killed the
-installed app and not the dev binary — that is how a `pkill` here brought down
-the user's terminal session. The rename to `tortty` removed the collision, but
-the rule stands: nothing here kills by name.
+pattern appears in its command line. `pkill -x` was the one that hurt: while two
+builds shared the same binary name, it killed the installed app and not the dev
+binary — that is how a `pkill` here brought down the user's terminal session. The
+rename removed the collision, but the rule stands: nothing here kills by name.
 
 The tools only kill a registered PID, checking `/proc/<pid>/exe` first:
 
@@ -95,7 +94,7 @@ the boundary.
 ## Introspection socket
 
 Unix socket, one JSON request per line, one JSON response per line. `ok: true`
-or `ok: false` with `err`. The same protocol as the Python bzmux, on purpose:
+or `ok: false` with `err`. The protocol is stable on purpose:
 `tools/benchrun.py` runs on both.
 
 | verb | input | response |
@@ -188,7 +187,7 @@ bar.
 - **`TERM=xterm-256color`** and **`COLORTERM=truecolor`** must be exported;
   without them `mc` draws in 8 colours and `vim` does not turn on truecolor.
 
-### parser / grid (what Python had already learned)
+### parser / grid
 
 - **Pending wrap**: after writing to the last column, the next character wraps
   the line — and a `\r\n` right after it **must not** count as a second wrap. TUI

@@ -1,9 +1,8 @@
 # History
 
-Dated record of what was done: the day's narrative, not current reading. What
-still holds is promoted to [`MIGRATION.md`](MIGRATION.md) (state),
-[`BENCHMARKS.md`](BENCHMARKS.md) (number) or [`DEBUG.md`](DEBUG.md)
-(pitfall). The history of the Python phase lives in the other repository.
+Dated record of what was done: the day's narrative. What still holds is promoted
+to [`FEATURES.md`](FEATURES.md) (state), [`BENCHMARKS.md`](BENCHMARKS.md) (number)
+or [`DEBUG.md`](DEBUG.md) (pitfall).
 
 Format of each line: **date — what — how it was verified**.
 
@@ -1510,7 +1509,7 @@ Verified with `keys::tests::f13_to_f24_are_f1_to_f12_with_shift` and
 `keys::tests::the_keypad_sends_its_character_even_with_num_lock_on`. What stays
 out: `DECKPAM` (`ESC =` / `ESC >`) is still "no effect" in the parser, so the
 keypad always sends the character instead of the `\EOw` of the application
-keypad — as in Python, and today's `xterm-256color` has no `kp*` to honor
+keypad — the `xterm-256color` installed here has no `kp*` to honor
 ([`LIMITATIONS.md`](LIMITATIONS.md)).
 
 ## 2026-11-06 — M-E: double click selects the word, triple the line

@@ -39,7 +39,7 @@ file.
 | `color0` … `color15` | see file | ANSI palette; the rest of the 256 palette (cube and greys) is computed |
 
 The colour default is the **classic xterm palette** (black background, blue
-`#0000ee`), the same as the Python bzmux. It is not laziness: `mc`, `htop`, `ls
+`#0000ee`). It is not laziness: `mc`, `htop`, `ls
 --color` and `git diff` were calibrated on it, and swapping it for a "pretty"
 theme changes the meaning of the colours the program picked — `mc` blue becomes
 something else.

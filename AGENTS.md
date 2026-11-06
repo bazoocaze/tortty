@@ -1,18 +1,7 @@
 # tortty (TorTTY — Torbie TTY)
 
 Fast, GPU based terminal. VT terminal in Rust: own pty + VT parser + grid,
-drawing on the GPU with `wgpu`. It is the continuation of the Python/GTK
-tortty-python (`~/tortty-python`). The migration is **closed** (2026-11-02):
-[`docs/MIGRATION.md`](docs/MIGRATION.md) is its record, one line per Python
-feature with the final state and the `file:line` reference.
-
-Coexistence rule between the two repositories: Python **was** the observable
-specification while the migration ran; today it is historical — it serves to
-answer "how the app behaved" and to judge whether something here is a
-regression. What is still missing here **is not parity**: it is new activity, and
-it lives in [`docs/BACKLOG.md`](docs/BACKLOG.md). Only what is a decision not to
-do it enters [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) (what it lists
-itself); pending migration work no longer exists.
+drawing on the GPU with `wgpu`.
 
 ## Documentation
 
@@ -23,18 +12,16 @@ reading; only README.md is for humans.
 - `TASK-tortty-in-rust.md` — dated record of phase 1 (the feasibility
   experiment): questions, decisions, what was measured that day. It is not
   current reading; what still holds was promoted to the docs below.
-- `docs/MIGRATION.md` — **the migration record**: complete inventory of the
-  Python bzmux features, the final state of each one here
-  (`done`/`partial`/`missing`/`no`) and the order in which it was done. Closed at
-  195/195; **it is not a queue**. **Migration scope only**: an idea Python does
-  not have does not go in here.
+- `docs/MIGRATION.md` — **the record of the 2026-11 migration**: the inventory it
+  came from and the order it was done in, closed at 195/195. A photograph of the
+  past: it is not read as state, not a queue, and it is not edited.
 - `docs/FEATURES.md` — **the index of what exists today**, by area: one line per
   capability, and in the same entry the limit of that capability — a `BACKLOG`
   id when it is queued, a `LIMITATIONS` reason when it is accepted. It owns no
   fact: it points, it does not restate.
-- `docs/BACKLOG.md` — the queue: activity Python does not have (id `B<number>`,
-  the old `M-*`, each with trigger and cost) and the rules of the queue. If
-  Python does not do it, it is not parity: it is backlog.
+- `docs/BACKLOG.md` — the queue: the work not started or in progress (id
+  `B<number>`, the old `M-*`, each with trigger and cost) and the rules of the
+  queue.
 - `docs/BENCHMARKS.md` — **the only place with numbers** for throughput, parse,
   drawing and footprint (with date, governor and condition). The other docs cite
   the fact in one sentence and link.
@@ -45,10 +32,8 @@ reading; only README.md is for humans.
 - `docs/DEBUG.md` — operational manual: how to start/kill without dropping the
   session, probes, the debug socket contract and the pitfalls
   (winit/wgpu/pty/parser). **Read before running any graphical tool.**
-- `docs/LIMITATIONS.md` — what is not done and why (a decision or an accepted
-  limit, not a queue).
-- `docs/HISTORY.md` — dated record of what was done (narrative). The history of
-  the Python phase lives in the other repo, in `docs/HISTORY.md` there.
+- `docs/LIMITATIONS.md` — the limitations of the project.
+- `docs/HISTORY.md` — dated record of what was done (narrative).
 - `README.md` — the human view: run, measure, structure.
 
 ### A rule is not created by itself
@@ -72,8 +57,7 @@ testable without a display:
 - `crates/app` — the app: `pty` (portable-pty), `app` (winit + event loop),
   `render`/`glyph`/`atlas` (wgpu + swash), `keys`, `debugsock`, `prof`, `cli`.
 - `tools/` — `devrun.sh`/`devkill.sh` (PID file), `benchrun.py`, `bench.sh`,
-  `doomfire.py` (byte for byte identical to the one in the Python repo: it is
-  the same load).
+  `doomfire.py` (the fixed load, byte for byte, so two runs are comparable).
 
 Flow of a byte: pty reader thread → `Term::feed` (core) → marks damage on the
 line → `request_redraw` → `RedrawRequested` builds the instance vector →
@@ -84,9 +68,9 @@ per category, in order).
 
 - Version: bump the patch in `Cargo.toml` (root, `workspace.package`) in **every
   commit that changes code** (`crates/`, `tools/`, `install.sh`) — closing an item
-  of `docs/MIGRATION.md` or `docs/BACKLOG.md` is one of those cases, not a
-  separate one. The bump rides in the commit that earns it. A commit that only
-  touches docs or tests does not bump. It is the single source: both crates
+  of `docs/BACKLOG.md` is one of those cases, not a separate one. The bump rides
+  in the commit that earns it. A commit that only touches docs or tests does not
+  bump. It is the single source: both crates
   inherit it (`version.workspace = true`) and `--version` shows it
   (`env!("CARGO_PKG_VERSION")`, compiled at build).
 - Comment and message explain **why**; no comment narrates the obvious.
@@ -137,14 +121,14 @@ A hook and a CI that disagree are good for nothing.
   (`TORTTY_BIN` overrides).
 - `./tools/devkill.sh` — kills **only** the registered PID, checking
   `/proc/<pid>/exe`. `pkill -f tortty` kills the shell that called it (the
-  pattern is in its command line); `pkill -x` was worse when the binary and the
-  Python app shared the name `bzmux` (it brought down the owner's session). It
-  has happened; do not use it.
+  pattern is in its command line); `pkill -x` was worse still when two builds
+  shared the same binary name (it brought down the owner's session). It has
+  happened; do not use it.
 - `./tools/visual.sh` — visual verification **without showing up on the owner's
   screen**: its own Xvfb, fixed theme, capture and pixel comparison
   (`tools/pixel.py`). It exits 0/1, so it works as a gate.
   `./tools/pixel.py shot.png --diff a.png b.png` says how many pixels changed
   and where.
-- `./tools/bench.sh` — Rust x Python ladder in both grids.
+- `./tools/bench.sh` — the ladder in both grids, against the reference build.
 - `cargo run --release -p tortty-core --bin parsebench -- --file /tmp/dmesg.txt`
   — real-load parsing, no display.

@@ -2,8 +2,8 @@
 
 tortty is **one binary**. There is no system dependency step: `cargo build
 --release` links only against `libc`/`libm`/`libgcc_s`, and what is left at run
-time is the GPU driver (Vulkan/GL) and a system mono font. The Python bzmux
-needed `python3-gi`, `gir1.2-gtk-3.0`, cairo, Pango and pipx; here none of that.
+time is the GPU driver (Vulkan/GL) and a system mono font: no toolkit, no
+interpreter and no bindings to install.
 
 ## Command
 
@@ -45,17 +45,13 @@ The "opening" notice lost with that depended on that answer, which never
 existed; when (and if) the app completes the notification, the key goes back to
 `true` together with the code that sustains it.
 
-## The Python one, `tortty-python`
+## Coexistence
 
-The Python terminal installs through pipx as `tortty-python` and removes **only**
-`tortty-python.desktop`/`tortty-python.svg`; `tortty.desktop`/`tortty.svg` belong to this
-installation. The two share no name, so there is nothing to coordinate: no
-step of this installer looks at, warns about or removes an older installation.
-
-An older `tortty-python` (before 2026-11-02) treated `bzmux` as an "old name" and
-deleted those files in its `install()`; if the menu entry disappears after
-running that installer, update `tortty-python` (the case has a regression test in
-`bzmux/checks.py`).
+No step of this installer looks at, warns about or removes another installation:
+the names do not collide, so there is nothing to coordinate. An older installer
+of a terminal with a similar name did delete `tortty.desktop`/`tortty.svg` when it
+mistook the name for an old one of its own — if the menu entry disappears, update
+that installer.
 
 ## Verify
 
@@ -103,4 +99,4 @@ Publishing is creating the tag:
 `git tag -a v0.1.0 -m ... && git push origin v0.1.0`. The download repository
 comes from `TORTTY_REPO` (default `bazoocaze/tortty`). macOS and Windows are
 not in the matrix yet: they are new targets (`M-X`/`M-Y` of
-`docs/BACKLOG.md`, with signing in `M-Z`), not parity — Python never ran there.
+`docs/BACKLOG.md`, with signing in `M-Z`): a target nobody has exercised yet.

@@ -5,9 +5,8 @@ a known limit, the **limit** is named in the same entry. A limit in brackets wit
 an id is in the [`BACKLOG.md`](BACKLOG.md) queue; without one it is an accepted
 consequence, explained in [`LIMITATIONS.md`](LIMITATIONS.md).
 
-Where each thing came from (the Python original, `file:line`) is
-[`MIGRATION.md`](MIGRATION.md); numbers are [`BENCHMARKS.md`](BENCHMARKS.md);
-configuration keys are [`CONFIG.md`](CONFIG.md).
+Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
+[`CONFIG.md`](CONFIG.md).
 
 ## Terminal core
 
@@ -28,15 +27,14 @@ configuration keys are [`CONFIG.md`](CONFIG.md).
 - Alt screen: separate grid, swap preserving the cursor, crop/pad on resize (no
   reflow there).
 - Reflow on resize: joins and splits soft lines and keeps the coloured
-  background. **limit:** it kills the selection anchor, as in Python (`M-P`).
+  background. **limit:** it kills the selection anchor (`M-P`).
 - Scrollback with a configurable cap ([`CONFIG.md`](CONFIG.md)).
   **limit:** no search (`M-D`) and no visible scrollbar (`M-M`).
-- Wide cells carry a continuation mark — an improvement over Python, where CJK
-  occupied one cell. **limit:** a combining mark arriving in a later commit
-  becomes its own cell (`M-U`).
+- Wide cells carry a continuation mark. **limit:** a combining mark arriving in a
+  later commit becomes its own cell (`M-U`).
 - `TERM=xterm-256color` with no terminfo of our own.
 - **Not implemented:** `IRM`/`LNM`, `CSI ? 3` (80/132), DECDL/DECDHL and
-  double-height — none of which Python has either.
+  double-height.
 
 ## Input
 
@@ -51,7 +49,7 @@ configuration keys are [`CONFIG.md`](CONFIG.md).
 - kitty keyboard protocol: push/pop/set/query, flag 1 (disambiguate), flag 2
   (event types, release `:3`), flag 8 (all keys as CSI u), flag 16 (associated
   text). **limit:** flag 4, the alternate keys, is not done (`M-G`), and
-  Shift+letter reports the post-Shift code (`CSI 65;2u`), as Python does.
+  Shift+letter reports the post-Shift code (`CSI 65;2u`).
 - Mouse: X10 and SGR encodings, modifiers in the button code, wheel, buttons 8/9,
   motion with and without a button. **limit:** no pixel-precision reporting
   `?1016` (`M-T`).
@@ -160,4 +158,4 @@ configuration keys are [`CONFIG.md`](CONFIG.md).
 - Visual gate on its own Xvfb: draws, captures and compares pixels
   (`tools/visual.sh`), so a drawing regression fails without an eye.
 - Reproducible benchmark with the grid locked by the socket
-  (`tools/benchrun.py`) and the Rust × Python ladder (`tools/bench.sh`).
+  (`tools/benchrun.py`) and the ladder of `tools/bench.sh`.

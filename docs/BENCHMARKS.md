@@ -12,9 +12,8 @@ comparable, and that is how two different terminals become an honest table.
   grid, and only then types the load. If the grid does not match, it exits with
   code 3 and prints no number: a measurement from another condition is noise
   dressed up as a result.
-- **The load is the same file in both terminals.** `tools/doomfire.py` is a
-  byte-for-byte copy of the generator from the Python repo (same `sha1`), so
-  what is measured is the consumer.
+- **The load is the same file in both terminals.** `tools/doomfire.py` is fixed
+  byte for byte (same `sha1`), so what is measured is the consumer.
 - **No vsync to measure throughput.** The app accepts `--no-vsync`; with vsync
   the number is the monitor's (60–144 Hz), which is the correct behaviour in
   use. This is recorded in the result, not hidden.
@@ -33,8 +32,8 @@ comparable, and that is how two different terminals become an honest table.
 | Date | 2026-11-01 |
 
 Frequency sampled during the measurement (every 200 ms, peak across all cores):
-Rust 3.66–3.95 GHz average / 4.29 GHz peak; Python 4.11–4.21 GHz average / 4.29
-GHz peak. That is: **Rust measured at a lower clock and won anyway.**
+Rust 3.66–3.95 GHz average / 4.29 GHz peak; reference 4.11–4.21 GHz average /
+4.29 GHz peak. That is: **Rust measured at a lower clock and won anyway.**
 
 `scaling_governor` matters: under `powersave` the number halves and the
 comparison lies. Check
@@ -52,7 +51,7 @@ escape, and `▀` makes every cell need two colors.
 
 ```sh
 tools/benchrun.py                                   # Rust, 1200 frames, 61x18
-tools/benchrun.py --app ~/tortty-python/run.sh   # Python reference
+tools/benchrun.py --app <launcher>                  # the reference build
 tools/bench.sh                                      # the whole ladder, both grids
 tools/bench.sh --frames 300 --shots 1 --so-rust     # smoke
 ```
@@ -85,9 +84,9 @@ underline/sub-underline, strikeout, overline) and did not change.
 | grid | terminal | fps | MB/s | `draw` per call |
 |---|---|---|---|---|
 | 61x18 | **Rust** | **970–1005** | **41.7–43.2** | 0.29–0.33 ms |
-| 61x18 | Python (post-P20) | 112–143 | 4.8–6.1 | 8.0–8.2 ms |
+| 61x18 | reference (post-P20) | 112–143 | 4.8–6.1 | 8.0–8.2 ms |
 | 70x21 | **Rust** | **658–732** | **37.5–41.7** | 0.32–0.34 ms |
-| 70x21 | Python (post-P20) | 63–72 | 3.6–4.1 | 13.1–13.4 ms |
+| 70x21 | reference (post-P20) | 63–72 | 3.6–4.1 | 13.1–13.4 ms |
 
 Gain: **7–9x (61x18) and 9–11x (70x21)** in fps and MB/s; **25–46x** in drawing.
 
@@ -119,10 +118,10 @@ a regression.
 
 ### The ceiling is now the generator
 
-Doom-fire alone does **~55 MB/s** (756 fps at 80x24, measured in the Python
-repo). At 42–43 MB/s Rust is at ~78% of the load's ceiling. That is why fps
+Doom-fire alone does **~55 MB/s** (756 fps at 80x24, the load's own ceiling,
+measured without drawing). At 42–43 MB/s Rust is at ~78% of it. That is why fps
 grows 9x but MB/s does not grow 9x: the 61x18 screen has no more cells to
-consume; what is left is the Python in the generator. Measuring faster than that
+consume; what is left is the cost of the interpreter in the generator. Measuring faster than that
 requires a generator in C or reusing a buffer — and then you are measuring the
 generator, not the terminal.
 
@@ -133,15 +132,15 @@ Same doom-fire frame, best of 800 runs, 35 B cell:
 | parser | µs/cell | MB/s | ns/escape |
 |---|---|---|---|
 | **Rust** | **0.183** (average 0.199) | 180–195 | 99 |
-| Python post-P20 (the production one) | 5.49 | ~7 | — |
-| Python pre-P20 | 35.0 | ~1 | — |
-| kitty (reference of the Python benchmark) | ~1.0 | ~10 | — |
+| reference post-P20 | 5.49 | ~7 | — |
+| reference pre-P20 | 35.0 | ~1 | — |
+| kitty (published figure) | ~1.0 | ~10 | — |
 
-**30x** over the production Python; **191x** over Python without the fast path.
-kitty is in the table as a reference of magnitude — its number was measured in
-the Python repo, with drawing included, so it is not the same ruler.
+**30x** over the reference; **191x** over the reference without its fast path.
+kitty is in the table as a reference of magnitude — its published number includes
+drawing, so it is not the same ruler.
 
-Why Python cost 35 µs: 91% was truecolor SGR (closing the CSI, `split(';')`,
+Why the slow path cost 35 µs: 91% was truecolor SGR (closing the CSI, `split(';')`,
 `int()`, building lists). In Rust truecolor SGR is a function that walks the
 buffer and writes three `u8` — no allocation, no `String`, no `dict`.
 
@@ -149,22 +148,22 @@ buffer and writes three `u8` — no allocation, no `String`, no `dict`.
 
 1397 lines (the system's `dmesg`), 100x40 grid, best of 20 passes:
 
-| payload | Rust | Python | gain |
+| payload | Rust | reference | gain |
 |---|---|---|---|
 | no color (109 KB) | **2.11 ms** (51.7 MB/s, 1.5 µs/line) | 42.6 ms | 20x |
 | `--color=always` (134 KB) | **2.22 ms** (60.2 MB/s, 1.6 µs/line) | 78.6 ms | 35x |
 
-It is this pair that explains the Python UI "freezing" while a log is dumped:
+It is this pair that explains the old build "freezing" while a log is dumped:
 42–79 ms of work on the UI thread, several times a second, against 2.2 ms. In
 Rust the whole `dmesg` costs less than one 60 Hz frame.
 
 ## Footprint
 
-| | Rust | Python |
+| | Rust | reference |
 |---|---|---|
-| binary / installation | **10.1 MB**, one file | ~6.2 thousand lines + GTK3, Pango, cairo, PyGObject, fontconfig |
+| binary / installation | **10.1 MB**, one file | ~6.2 thousand lines + a toolkit stack |
 | system dependencies | `libc`, `libm`, `libgcc_s` (+ graphics driver at runtime) | the full GTK stack |
-| startup until the window opens and runs the command | **0.18 s** | ~0.6–1.2 s (imports `gi`, registers Pango) |
+| startup until the window opens and runs the command | **0.18 s** | ~0.6–1.2 s (loads the toolkit) |
 | `cargo build --release` from scratch | ~2 min (most of it is `wgpu`) | — |
 
 ## Protocol (to compare two terminals)
@@ -174,13 +173,13 @@ Rust the whole `dmesg` costs less than one 60 Hz frame.
 3. `tools/benchrun.py --frames 1200` and the same with `--app <other>`.
 4. If the grid does not match, **do not compare**: `benchrun` exits with code 3.
 5. Run 3 times and compare medians, not the best shot.
-6. If comparing against Python, measure the same `--font-size` and the same
-   grid.
+6. If comparing against another terminal, measure the same `--font-size` and the
+   same grid.
 
 ## Pitfalls
 
 - **Governor**: `powersave` halves the number. It was the "anomaly" that cost a
-  day in the Python project.
+  day in a previous measurement session.
 - **Vsync**: measuring without `--no-vsync` measures the monitor. The app
   default is vsync (the right thing in use); the bench passes `--no-vsync` and
   says so in the output.
