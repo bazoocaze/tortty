@@ -3,7 +3,7 @@
 //! A check builds the scenario, exercises it and compares against the expected
 //! value. Nothing here needs a window, GPU or pty.
 //!
-//! What Python already covers through another check here (`paste_markers`,
+//! A case already covered by another check here (`paste_markers`,
 //! `selection_follows_history`) does not show up again: the goal is to cover what
 //! is missing, not to duplicate a name or an assertion.
 
@@ -77,7 +77,7 @@ fn text_of_view(t: &Term, off: usize) -> Vec<String> {
 
 /// `off` that keeps the absolute line `linha` at the top of the view.
 ///
-/// This is Python's `anchored_view_off` arithmetic: `scrolled` is an absolute
+/// The `anchored_view_off` arithmetic: `scrolled` is an absolute
 /// index and never goes back — not even when the history hits the ceiling and
 /// drops an old line — so the absolute arithmetic does not drift line by line the
 /// way the size difference did. The clamp is on the history length: if the line
@@ -86,7 +86,7 @@ fn off_of_anchor(t: &Term, line: i64) -> usize {
     (t.scrolled as i64 - line).clamp(0, t.scrollback.len() as i64) as usize
 }
 
-/// Damage shaped like Python's: `None` = the whole grid, `Some(lines)` = only them.
+/// Damage: `None` = the whole grid, `Some(lines)` = only them.
 ///
 /// The core keeps damage as `dirty`/`dirty_all`; consuming it is the draw's job,
 /// so the read that clears it lives here (the app does the same in `app.rs`).
@@ -386,7 +386,7 @@ fn truecolor() -> Result<(), String> {
 }
 
 fn style_contrast() -> Result<(), String> {
-    // Same arithmetic as Python's `style.contrast` (WCAG 2.1): relative luminance
+    // WCAG 2.1 contrast: relative luminance
     // and ratio (L1+0.05)/(L2+0.05). The GUI chrome (cards, tabs, toast) does not
     // exist in the core — what exists here is the terminal theme.
     fn channel(v: u8) -> f64 {

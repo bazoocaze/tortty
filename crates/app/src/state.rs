@@ -1,7 +1,8 @@
 //! Window state between runs: position, size and maximized — J2–J6.
 //!
-//! Mirrors the Python `state.py`, and for the same reason it is **pure**: whoever
-//! talks to `winit` is `app.rs`, which here only hands and receives rectangles.
+//! It is **pure** so that the file, the validation and the atomicity are
+//! testable: whoever talks to `winit` is `app.rs`, which here only hands and
+//! receives rectangles.
 //! That keeps the file, the validation and the atomicity testable without a
 //! display.
 //!

@@ -2,8 +2,8 @@
 //!
 //! `portable-pty` instead of raw `openpty`: it is what gives ConPTY on Windows the
 //! day that platform comes in (decision recorded in the TASK). The reader thread
-//! pushes the bytes through a channel and wakes the loop with the `proxy` — the
-//! same topology as the GLib watch in Python.
+//! pushes the bytes through a channel and wakes the loop with the `proxy`, so no
+//! read blocks the event loop.
 
 use std::io::{Read, Write};
 use std::sync::mpsc::Sender;
@@ -35,11 +35,10 @@ pub struct Pty {
 }
 
 /// SHELL of the child, **always a path**: config (empty inherits the environment)
-/// → `$SHELL` → `/bin/bash`. A value that does not exist in PATH falls back to
-/// `/bin/bash`, like `shutil.which(value or $SHELL or "/bin/bash") or "/bin/bash"`
-/// in Python. We used to take the raw `$SHELL`: a stale `$SHELL` pointing at a
-/// dead path made the child die on the spot, and the default was `/bin/sh` (dash
-/// on Debian) where Python uses `/bin/bash`.
+/// → `$SHELL` → `/bin/bash`. A value that does not exist in `PATH` falls back to
+/// `/bin/bash`. Taking the raw `$SHELL` is what breaks: a stale `$SHELL` pointing
+/// at a dead path makes the child die on the spot, and the default of the system
+/// is `/bin/sh` (dash on Debian), not `/bin/bash`.
 #[must_use]
 pub fn effective_shell(configured: Option<&str>, env_shell: Option<&str>) -> String {
     let cand = configured
@@ -90,7 +89,8 @@ impl Pty {
 
         let shell = effective_shell(configured_shell, std::env::var("SHELL").ok().as_deref());
         let mut cb = match cmd {
-            // the Python `--cmd` goes through `sh -c`: keeps the same semantics
+            // `--cmd` goes through `sh -c`: pipes and redirections work as the
+            // user typed them
             Some(c) => {
                 let mut cb = CommandBuilder::new("sh");
                 cb.arg("-c");
@@ -99,9 +99,9 @@ impl Pty {
             },
             None => CommandBuilder::new(&shell),
         };
-        // portable-pty falls back to $HOME when there is no cwd; Python inherits
-        // the process cwd (pty.fork), and that is what the user expects. A new tab
-        // passes the cwd of the tab it was born from (I2), not the tortty one.
+        // portable-pty falls back to `$HOME` when there is no cwd; inheriting the
+        // process cwd is what the user expects. A new tab passes the cwd of the
+        // tab it was born from (I2), not the tortty one.
         let dir = cwd
             .map(std::path::Path::to_path_buf)
             .or_else(|| std::env::current_dir().ok());
@@ -150,8 +150,8 @@ impl Pty {
                         Err(_) => break,
                     }
                 }
-                // EOF sentinel: the app decides (Python uses waitpid, and here
-                // `Child::try_wait` plays the same role)
+                // EOF sentinel: the app decides, and `Child::try_wait` is what
+                // tells it the child is gone
                 let _ = tx.send(Vec::new());
                 wake();
             })

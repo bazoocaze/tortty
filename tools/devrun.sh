@@ -3,7 +3,7 @@
 #
 # Why a PID file and not `pkill -f tortty`: the caller's command line
 # contains the pattern, so `pkill -f` kills the shell itself. `pkill -x` on the
-# old name (`bzmux`) killed the installed Python app instead of the dev binary,
+# same binary name killed the installed one instead of the dev binary,
 # because both answered to the same name; it has already happened. Here the PID
 # is the `$!` of the process itself, and devkill checks `/proc/<pid>/exe` before
 # killing.

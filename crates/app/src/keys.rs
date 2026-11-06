@@ -1,10 +1,10 @@
 //! Keyboard: winit event -> bytes the terminal sends to the child.
 //!
-//! Same table as `bzmux/keys.py`: arrows in application mode (DECCKM `?1`),
-//! modifiers in the xterm format, Alt as an ESC prefix, Shift+Tab `\e[Z` and
-//! Ctrl+letter in 0x01..0x1a.
+//! The base table: arrows in application mode (DECCKM `?1`), modifiers in the
+//! xterm format, Alt as an ESC prefix, Shift+Tab `\e[Z` and Ctrl+letter in
+//! 0x01..0x1a.
 //!
-//! On top of that, the kitty keyboard protocol (`kitty_kbd.py`): when the child
+//! On top of that, the kitty keyboard protocol: when the child
 //! turns flags on with `CSI > u`, keys go out as `CSI code ; mods u` instead of
 //! the control byte. The flags live in `Term` (one per tab) and the app decides
 //! — only the encoding lives here.
@@ -162,7 +162,7 @@ fn resolve_key(logical: &Key, physical: PhysicalKey) -> (Option<NamedKey>, Optio
     }
 }
 
-/// Applies modifiers in the xterm format (like `_special` in the Python).
+/// Applies modifiers in the xterm format.
 fn with_mods(seq: &str, ctrl: bool, alt: bool, shift: bool) -> Vec<u8> {
     // Shift+Tab arrives as `\t` with shift: the canonical form is backtab
     if seq == "\t" && shift {
@@ -209,9 +209,8 @@ const RELEASE: u8 = 3;
 /// A named key in the kitty shape: (CSI number, trailer).
 ///
 /// The trailer is what changes between `CSI 27;5 u` (Escape with Ctrl) and
-/// `CSI 1;5 A` (up arrow with Ctrl). The kitty table applies (`key_encoding.c`)
-/// — including F3 = `1 R`, which in the Python `kitty_kbd.py` came out as
-/// `13 ~` (typo: F3 is `SS3 R`, not `CSI 13~`).
+/// `CSI 1;5 A` (up arrow with Ctrl). The table of the protocol applies — F3 is
+/// `1 R` (`SS3 R` with a modifier), not `13 ~`.
 fn kitty_functional(n: NamedKey) -> Option<(u32, char)> {
     use NamedKey::{
         ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Backspace, Delete, End, Enter, Escape, Home,
@@ -269,7 +268,7 @@ fn kitty_functional(n: NamedKey) -> Option<(u32, char)> {
 }
 
 /// `CSI key ; mods[:event] [;text] trailer`, with no field the terminal does not
-/// need to see (the same care as `_csi` in the Python).
+/// need to see.
 fn kitty_csi(key: u32, mods: u8, trailer: char, event: Option<u8>, text: &str) -> Vec<u8> {
     let event = event.filter(|e| *e != PRESS);
     let mut out = String::from("\x1b[");
@@ -573,8 +572,8 @@ mod tests {
         assert_eq!(enc(None, Some("a"), NONE, f), "\x1b[97u");
         // Shift+letter stops being plain text. The code goes out as 65 ('A') and
         // not 97: winit hands over the character **after** shift, and the base
-        // key would need a layout table (the Python, via Gdk keyval, does the
-        // same). What must not come back is the plain text.
+        // key would need a layout table to undo it. What must not come back is
+        // the plain text.
         assert_eq!(enc(None, Some("A"), ModifiersState::SHIFT, f), "\x1b[65;2u");
         // Ctrl+Shift+a reports the base key, not the uppercase character
         assert_eq!(
@@ -595,9 +594,8 @@ mod tests {
     }
 
     #[test]
-    fn f3_uses_the_kitty_shape_not_the_python_typo() {
-        // `CSI 1;2R` (kitty) and not `CSI 13;2~` (`kitty_kbd.py` had F3 as 13~,
-        // which is xterm's Shift+F3)
+    fn f3_uses_the_kitty_shape_not_the_xterm_typo() {
+        // `CSI 1;2R` (kitty) and not `CSI 13;2~` (which is xterm's Shift+F3)
         assert_eq!(
             enc(
                 Some(NamedKey::F3),
@@ -762,7 +760,7 @@ mod checks_keyboard {
     }
 
     /// The encoder with the state the app really uses (`?1` and `kbd_flags` from
-    /// `Term`), to compare bytes the way the Python check does.
+    /// `Term`), to compare the exact bytes sent to the child.
     fn enc(
         t: &Term,
         named: Option<NamedKey>,
@@ -876,7 +874,7 @@ mod checks_keyboard {
             enc(&t, Some(NamedKey::F3), None, NONE).as_deref(),
             Some("\x1bOR")
         );
-        // and F3 with Shift is `CSI 1;2R` (not the `CSI 13~` of `kitty_kbd.py`)
+        // and F3 with Shift is `CSI 1;2R`, not the `CSI 13~` of xterm
         assert_eq!(
             enc(&t, Some(NamedKey::F3), None, ModifiersState::SHIFT).as_deref(),
             Some("\x1b[1;2R")

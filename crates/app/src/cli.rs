@@ -33,9 +33,9 @@ pub struct Options {
     pub cols: usize,
     pub rows: usize,
     pub font_family: String,
-    /// Size in POINTS, like `font_size` in tortty-python.
+    /// Size in POINTS, not pixels: the same key as `font_size` in the config.
     pub font_size_pt: f32,
-    /// DPI used for pt -> px (the Python `Xft.dpi`). 96 = X11 default.
+    /// DPI used for pt -> px (the `Xft.dpi` of the X resources). 96 = default.
     pub dpi: f32,
     pub scrollback: usize,
     pub debug_socket: Option<String>,
@@ -84,7 +84,7 @@ impl Options {
         let scrollback = over.scrollback.unwrap_or(cfg.scrollback);
         let debug_log = over.debug_log.or_else(|| cfg.debug_log.clone());
         // empty path means "no socket asked for": otherwise `bind("")` fails
-        // with a message that says nothing (Python treats empty as off)
+        // with a message that says nothing (empty means off)
         let debug_socket = over.debug_socket.filter(|p| !p.is_empty());
         let grid_explicito = over.cols.is_some() || over.rows.is_some();
         let opts = Options {

@@ -4,8 +4,7 @@
 //! Why it exists: `request_redraw` on every pty read gave one drawing per read
 //! chunk under a continuous flood, and the drawing cost started competing with
 //! the reading (the screen still froze, because the redraw has lower priority
-//! than the pty watch in Python). It is the same decision as `view.py:286-320`:
-//! coalesce and pace. With `?2026` open the app will still redraw, so drawing now
+//! than the pty watch). The decision: coalesce and pace. With `?2026` open the app will still redraw, so drawing now
 //! shows the **middle** of each repaint — hold until the close, with a 200 ms cap
 //! for an app that forgets to close.
 //!

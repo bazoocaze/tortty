@@ -23,8 +23,7 @@ use crate::prof;
 use crate::pty::Pty;
 use crate::render::Renderer;
 
-/// Shell argument: `'…'` with `'` becoming `'\''` (the same thing Python's
-/// `shlex.quote` does for the common case).
+/// Shell argument: `'…'` with `'` becoming `'\''` — enough for the common case.
 fn shell_quote(s: &str) -> String {
     if s.chars()
         .all(|c| c.is_ascii_alphanumeric() || "/._-+:%=@,".contains(c))
@@ -34,7 +33,7 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// Super alone (neither Ctrl nor Alt): the Python workspace alias.
+/// Super alone (neither Ctrl nor Alt): the workspace alias.
 fn super_only(mods: ModifiersState) -> bool {
     mods.super_key() && !mods.control_key() && !mods.alt_key()
 }
@@ -48,7 +47,7 @@ fn alt_digit_only(mods: ModifiersState) -> bool {
 ///
 /// `Ctrl+Shift+1` arrives as `!` and on ABNT2 each digit shifts to something
 /// else (`2` → `@`, `6` → `¨`); translating the physical code gives the digit
-/// in any layout — same reason as Python's `_digit_of` (I16).
+/// in any layout (I16).
 fn digit_of(event: &winit::event::KeyEvent) -> Option<usize> {
     let PhysicalKey::Code(code) = event.physical_key else {
         return None;
@@ -240,7 +239,7 @@ impl Tab {
 
     /// cwd of what is running **in front** of the pty: the shell may have
     /// launched `vim`/`mc`, and their cwd is what the next tab should inherit
-    /// (that is what Python's `fork` did when it looked at the last descendant).
+    /// (the last descendant of the shell is the one in front).
     fn cwd(&self) -> Option<std::path::PathBuf> {
         let pid = self.pty.as_ref()?.child_pid()?;
         let target = descendant(pid);
@@ -254,7 +253,7 @@ struct Rename {
     ws: usize,
     text: String,
     /// The old name is whole in the field and untouched so far: the first key
-    /// replaces it, like the "selected" text of Python's `Gtk.Entry`.
+    /// replaces it, as if the text were selected.
     replace: bool,
 }
 
@@ -370,7 +369,7 @@ pub struct App {
     dumped: bool,
     /// Normal window size (J5: maximized does **not** overwrite this).
     geom_normal: (u32, u32),
-    /// Last outer position seen (frame, like Python's `get_position()`).
+    /// Last outer position seen (the frame, not the client area).
     geom_pos: Option<(i32, i32)>,
     /// The remembered state only counts if nobody asked for a grid on the
     /// command line.
@@ -450,9 +449,8 @@ impl App {
         }
     }
 
-    /// Text of every tab of every workspace (Python's `dump`): scrollback (the
-    /// last 40) and the viewport of each session, with a header when there is
-    /// more than one.
+    /// Text of every tab of every workspace: scrollback (the last 40) and the
+    /// viewport of each session, with a header when there is more than one.
     fn dump_text(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
         let mut multi_ws = self.ws_count() > 1;
@@ -509,8 +507,8 @@ impl App {
         }
     }
 
-    /// Window XID on X11 (0 on Wayland): whoever is going to capture pixels
-    /// asks the app, not X (that is what Python's `benchrun.py` does).
+    /// Window XID on X11 (0 on Wayland): whoever is going to capture pixels asks
+    /// the app, not X, so the capture cannot pick another window.
     fn xid(&self) -> u64 {
         use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
         let Some(w) = self.window.as_ref() else {
@@ -754,9 +752,9 @@ impl App {
                 },
                 _ => {},
             }
-            // Ctrl+Shift+F2: the config file in the editor, in a new tab
-            // (P33 of Python). It comes **before** encoding: vim never sees the
-            // key, otherwise it interprets it as a shortcut of its own.
+            // Ctrl+Shift+F2: the config file in the editor, in a new tab. It
+            // comes **before** encoding: vim never sees the key, otherwise it
+            // interprets it as a shortcut of its own.
             if named == Some(NamedKey::F2) {
                 self.open_config();
                 return true;
@@ -769,7 +767,7 @@ impl App {
             }
         }
         // Super+N/Q and Super+1..9: workspace alias (the WM may swallow them,
-        // but when they arrive the effect is the same — what Python did)
+        // but when they arrive they act)
         if super_only(self.mods) {
             match ch.map(|c| c.to_ascii_lowercase()) {
                 Some('n') => {
@@ -846,7 +844,7 @@ impl App {
             return true;
         }
         // Alt+1..9 picks the tab; Alt+0 is the tenth (I15). The digit does not
-        // leak to the child — what Python did.
+        // leak to the child.
         if alt_digit_only(k.mods) {
             if let Some(n) = k.digit {
                 self.select_tab(if n == 0 { 9 } else { n - 1 });
@@ -854,8 +852,7 @@ impl App {
             }
         }
         // Ctrl+Shift+C/V belong to the terminal, not to the app: without this
-        // Ctrl+Shift+C becomes the same ^C as Ctrl+C and kills the process (a
-        // bug in the Python bzmux)
+        // Ctrl+Shift+C becomes the same ^C as Ctrl+C and kills the process
         if ctrl && shift {
             match ch.map(|c| c.to_ascii_lowercase()) {
                 Some('c') => {
@@ -1010,7 +1007,7 @@ impl App {
             self.select_tab(at);
             return;
         }
-        // one notch is worth 3 lines (the same as the Python bzmux); a trackpad
+        // one notch is worth 3 lines; a trackpad
         // sends a fraction of a line per event and the rest accumulates in
         // `scroll_frac`
         let (hx, lines) = match delta {
@@ -2135,7 +2132,7 @@ impl App {
         let remembered = crate::state::load();
         let maximized = remembered.is_some_and(|g| g.maximized);
         // J2/J4: with no state (or invalid state: monitor unplugged, garbage in
-        // the file) it opens at Python's 980x640 default, not at the grid size —
+        // the file) it opens at the 980x640 default, not at the grid size —
         // whoever wants an exact grid asks for `--cols/--rows`, which turns the
         // remembering off. Invalid remembered geometry falls back to this same
         // default.
@@ -2175,7 +2172,7 @@ impl App {
     }
 
     /// New workspace, inheriting the cwd of the current tab (I5). The new one is
-    /// born with a tab already, as in Python.
+    /// born with a tab already.
     fn new_workspace(&mut self) {
         let Some(wake) = self.wake.clone() else {
             return;
@@ -2475,8 +2472,8 @@ fn debug_read_only(line: &str) -> bool {
     )
 }
 
-/// `ctrl+shift+n` -> bytes (minimal version of Python's `parse_key`: the full
-/// keyboard path is winit's, this verb is for test/automation).
+/// `ctrl+shift+n` -> bytes (minimal parser: the full keyboard path is winit's,
+/// this verb is for test/automation).
 /// `spec` of the `keys` verb: `ctrl+shift+t`, `alt+left`, `f5`, `a`.
 ///
 /// Resolves modifiers and key name and hands over to the real encoder
@@ -2582,7 +2579,7 @@ impl ApplicationHandler<UserEvent> for App {
         // the window is born one column/row short (the WM does not give it back)
         // the padding enters the request: the grid is `cols*cw` and the rest is
         // padding
-        // signals: `SIGUSR1` (dump) and `SIGTERM` (clean exit), as in Python
+        // signals: `SIGUSR1` (dump) and `SIGTERM` (clean exit)
         instala_sinais();
         let (w, h, pos, maximized) = self.geometry_initial(event_loop, &fonts);
         let mut attrs = Window::default_attributes()
@@ -2646,8 +2643,8 @@ impl ApplicationHandler<UserEvent> for App {
                     self.debug = Some(s);
                 },
                 Err(e) => {
-                    // whoever opened the debug surface has to know it is not up
-                    // (Python shows it in the toast)
+                    // whoever opened the debug surface has to know it is not up,
+                    // on stderr and in the toast
                     eprintln!("tortty: debug socket: {e}");
                     self.toast(format!("debug socket: {e}"));
                 },
@@ -2715,9 +2712,9 @@ impl ApplicationHandler<UserEvent> for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Moved(pos) => {
-                // outer position (frame): it is the one `with_position` consumes,
-                // and the one Python's `get_position()` saved — saving the client
-                // position walked the window down a title bar on every run
+                // outer position (frame): it is the one `with_position`
+                // consumes — saving the client position walked the window down a
+                // title bar on every run
                 self.geom_pos = Some((pos.x, pos.y));
             },
             WindowEvent::Resized(size) => {
@@ -2865,8 +2862,8 @@ impl ApplicationHandler<UserEvent> for App {
         // workspace, and only the last workspace closes the app (I20). Here was
         // the `M-W`: the shortcut `tabs.len() == 1 → exit` skipped
         // `drop_empty_workspace`, so a `Ctrl+D`/`exit` in the visible tab killed
-        // the whole app even with another workspace parked (Python closes only
-        // the tab). The death of the child has to enter the **same** path as
+        // the whole app even with another workspace parked. The death of the
+        // child has to enter the **same** path as
         // `close_tab_at`.
         if let Some(morta) = (0..self.tabs.len()).find(|&i| {
             self.tabs[i]

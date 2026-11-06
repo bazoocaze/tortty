@@ -1,14 +1,14 @@
 //! Cell color and the xterm-256 palette.
 //!
-//! Python kept three things in the same `int` (index 0-255, sentinels 256/257
-//! and RGB with bit 24 set). Here the type says what it is, with no decoding in
-//! the hot path: `Default` is the sentinel, `Idx` is the palette and `Rgb` is
+//! Three things used to share one `int` (index 0-255, sentinels 256/257 and RGB
+//! with bit 24 set). Here the type says what it is, with no decoding in the hot
+//! path: `Default` is the sentinel, `Idx` is the palette and `Rgb` is
 //! truecolor straight in the cell (no allocated color table, as in P4).
 
 use std::fmt;
 
 /// Color of a cell. `Default` counts as default fg in the fg slot and default bg
-/// in the bg slot — it is the same convention as tortty-python (`DEF_FG`/`DEF_BG`).
+/// in the bg slot.
 #[derive(Copy, Clone, PartialEq, Eq, Default, Debug, Hash)]
 pub enum Color {
     #[default]
@@ -42,7 +42,7 @@ impl fmt::Display for Color {
     }
 }
 
-/// The first 16 shades (the classic ANSI palette of tortty-python).
+/// The first 16 shades (the classic ANSI palette).
 pub const PALETTE: [(u8, u8, u8); 16] = [
     (0, 0, 0),
     (205, 0, 0),

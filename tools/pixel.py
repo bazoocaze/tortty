@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Reads and compares pixels from a screen capture — to prove what was drawn.
 
-Mirrors `tools/pixel.py` from the Python bzmux, without depending on `gi`: the capture
-is decoded by `convert` (ImageMagick), which is already a requirement of the `import` used
-to capture. That way the same script runs here, in CI and over ssh.
+The capture needs no toolkit: the window is grabbed by ImageMagick's `import` and
+the PNG is decoded by `convert`, which `import` already requires. That way the
+same script runs here, in CI and over ssh.
 
     tools/pixel.py shot.png                 # default sample
     tools/pixel.py shot.png 100,50 200,50   # specific (x,y) points

@@ -2,8 +2,7 @@
 //!
 //! No freetype, no fontconfig, no Pango: that is what keeps the binary
 //! self-contained on the three systems. The cell in pixels comes from the font
-//! metrics at the requested size — the equivalent of the Pango metric that the
-//! Python measured.
+//! metrics at the requested size.
 
 use std::sync::Arc;
 
@@ -28,8 +27,8 @@ pub struct Fonts {
     pub italic: Option<Face>,
     pub bold_italic: Option<Face>,
     /// Fallback fonts, in the order they are tried when the primary does not
-    /// have the character: symbols, emoji, CJK. Python always had this through
-    /// fontconfig/Pango; without the chain, emoji and CJK came out blank.
+    /// have the character: symbols, emoji, CJK. Without the chain, emoji and CJK
+    /// came out blank.
     pub fallbacks: Vec<Face>,
     /// Size in pixels (already converted from points).
     pub px: f32,
@@ -68,7 +67,7 @@ impl Fonts {
         // A generic name (`Monospace`, which is the file default) has to land
         // on the preference list: fontdb does **not** have the fontconfig
         // aliases, so matching "Monospace" by name gives FreeMono — the ugly
-        // font Python never used (Pango consulted fontconfig).
+        // font nobody meant to pick.
         let generic = matches!(
             family.to_ascii_lowercase().as_str(),
             "" | "monospace" | "mono" | "fixed" | "sans-serif" | "sans" | "serif" | "system-ui"

@@ -21,7 +21,7 @@
 use std::collections::HashMap;
 
 /// Cap on the buffer of a chunked transmission: an app that opens an `m=1` and
-/// never closes it cannot grow forever (Python has no cap; here the parser is
+/// never closes it cannot grow forever (here the parser is
 /// fed by anything that writes to the pty).
 pub const MAX_APC: usize = 64 * 1024 * 1024;
 
@@ -447,7 +447,7 @@ mod checks_graphics {
         base64::engine::general_purpose::STANDARD.encode(data)
     }
 
-    /// 2x2 RGBA in a single color — the same image as the Python checks.
+    /// 2x2 RGBA in a single color.
     fn rgba2x2() -> String {
         b64(&[9, 8, 7, 255].repeat(4))
     }
@@ -458,7 +458,7 @@ mod checks_graphics {
 
     #[test]
     fn image_with_offset_and_size_derived_from_cell() {
-        // Python's `graphics_image_and_offset`: 2x2 in a 10x19 cell = 1x1
+        // 2x2 in a 10x19 cell = 1x1
         let mut g = Graphics::new();
         let body = format!("Ga=T,f=32,s=2,v=2,i=3;{}", rgba2x2());
         let out = g.handle(body.as_bytes(), (0, 1), cell());

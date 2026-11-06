@@ -1,4 +1,4 @@
-//! Cost counters per stage (the `PYTERM_PROF` of tortty-python).
+//! Cost counters per stage, switched on by the environment.
 //!
 //! Turned on by `--prof` or by the socket verb `prof`. Atomics because the pty
 //! cost is measured on the reader thread and the parse/draw one on the UI thread.
@@ -69,8 +69,8 @@ fn ms(ns: u64, call: u64) -> f64 {
     }
 }
 
-/// Line in the same format as Python (`prof: draw Nx X.XXms/call (...) | pty ...`),
-/// so the same `grep` works in both terminals.
+/// One line: `prof: draw Nx X.XXms/call (...) | pty ...`, so a `grep` over the
+/// log works the same from run to run.
 pub fn summary() -> String {
     let dc = DRAW_CALLS.load(Ordering::Relaxed);
     let pc = PARSE_CALLS.load(Ordering::Relaxed);

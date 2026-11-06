@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # install.sh — installs tortty as the `tortty` command.
 #
-# Unlike the Python terminal (tortty-python), there is no dependency step here:
-# the binary is single and only needs libc/libm (+ the GPU driver at
-# runtime). Installing = copying one file and, if you want, a menu entry.
+# There is no dependency step: the binary is single and only needs libc/libm (+
+# the GPU driver at runtime). Installing = copying one file and, if you want, a
+# menu entry.
 #
 # Usage (from the cloned repository):
 #   ./install.sh                 builds (release) and installs into ~/.local/bin/tortty

@@ -2,9 +2,9 @@
 //!
 //! `tortty-core` does not know `cli.rs`, `keys.rs`, `mouse.rs`, `state.rs` or
 //! `debugsock.rs` — so the core `checks::all()` does not reach those five, and
-//! Python's `checks.py` covers all five (`argv_parsing`, `kitty_keyboard`,
-//! `mouse_modes_and_sgr`, `window_state`, `debug_socket`). This list closes the
-//! `N1` gap without a display: same rule as the core — build the scenario, exercise
+//! The five are `argv_parsing`, `kitty_keyboard`, `mouse_modes_and_sgr`,
+//! `window_state` and `debug_socket`. This list closes the `N1` gap without a
+//! display: same rule as the core — build the scenario, exercise
 //! it, compare with the expected result, and fail saying why.
 
 use std::io::{BufRead, BufReader, Write};

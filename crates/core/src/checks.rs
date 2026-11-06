@@ -1,8 +1,7 @@
 //! Display-less smoke checks (`tortty --selftest`).
 //!
-//! They mirror what the Python bzmux `checks.py` verifies, but here they run in
-//! the binary: one function per area, all using only the core (no window, GPU or
-//! pty). The goal is to have **one command** that answers "is the emulator still
+//! They run in the binary: one function per area, all using only the core (no
+//! window, GPU or pty). The goal is to have **one command** that answers "is the emulator still
 //! whole?" on any machine, including on CI and over ssh.
 //!
 //! Rule: every check builds the scenario, exercises it and **compares against the

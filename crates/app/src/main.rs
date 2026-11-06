@@ -66,8 +66,7 @@ fn main() {
 }
 
 /// `--selftest`: one command that answers "is the emulator still whole?" without
-/// a display, without a GPU and without a pty. It is what Python's `checks.py`
-/// did separately.
+/// a display, without a GPU and without a pty.
 fn selftest() -> i32 {
     // `tortty --selftest | head` closes the pipe in the middle of the list: with
     // SIGPIPE ignored (the Rust default) the next `println!` becomes a panic. Here

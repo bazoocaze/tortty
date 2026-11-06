@@ -1,8 +1,8 @@
 //! Terminal state: grid, cursor and VT parser.
 //!
-//! No GUI, no pty, no GPU — the same discipline as `bzmux/term.py`. It is what
-//! lets the parser benchmark run without a display, and what guarantees the
-//! number measured is the parser's, not the toolkit's.
+//! No GUI, no pty, no GPU. It is what lets the parser benchmark run without a
+//! display, and what guarantees the number measured is the parser's, not the
+//! toolkit's.
 
 use std::collections::VecDeque;
 use unicode_width::UnicodeWidthChar;
@@ -512,8 +512,8 @@ impl Term {
     fn put_char(&mut self, ch: char) {
         let w = ch.width().unwrap_or(1);
         if w == 0 {
-            // combining: the Python bzmux cell does not compose either (note in
-            // TASK). Ignoring it beats drawing a box.
+            // combining: a cell does not compose. Ignoring it beats drawing a
+            // box.
             return;
         }
         if self.wrap_pending {
@@ -1356,7 +1356,7 @@ impl Term {
                     // text area in PIXELS: it is what `kitten icat` asks for
                     // before sending the image (without it, it gives up with
                     // "terminal does not support reporting screen sizes").
-                    // Python does not answer this one either — here it is free,
+                    // It is not answered here either — but here it is free,
                     // because the parser already carries the cell size.
                     let (cw, ch) = self.cell_size;
                     let w = self.cols as u32 * cw;
@@ -2187,10 +2187,10 @@ fn reflow(all: Vec<Row>, cols: usize, cur_abs: usize, cur_col: usize) -> Reflowe
         }
     }
     // what is AFTER the cursor is blank area: it is not worth pushing empty
-    // rows into the scrollback just because the screen changed size (Python runs
-    // the same loop in `_reflow`). Without this, maximizing from 36 to 48 rows
-    // pushed the 12 empty ones at the bottom into the scrollback, and they came
-    // back as 12 rows above the prompt — the content "started mid-screen".
+    // rows into the scrollback just because the screen changed size (a resize
+    // runs the same loop in `_reflow`). Without this, maximizing from 36 to 48
+    // rows pushed the 12 empty ones at the bottom into the scrollback, and they
+    // came back as 12 rows above the prompt — the content "started mid-screen".
     while rows.len() > cur_row + 1
         && rows
             .last()
@@ -2328,7 +2328,7 @@ mod tests {
         Term::new(10, 4)
     }
 
-    /// Solid-color 2x2 RGBA, as in the Python checks.
+    /// Solid-color 2x2 RGBA.
     fn rgba2x2() -> String {
         use base64::Engine as _;
         base64::engine::general_purpose::STANDARD.encode([9, 8, 7, 255].repeat(4))
@@ -2397,7 +2397,7 @@ mod tests {
 
     #[test]
     fn image_follows_the_scrollback_and_reflow_prunes_the_unreachable() {
-        // Python's `graphics_follow_history`
+        // An image follows the history
         let mut t = Term::new(20, 4);
         t.feed(&apc(&format!("Ga=T,f=32,s=2,v=2,i=7;{}", rgba2x2())));
         for _ in 0..6 {

@@ -1,32 +1,32 @@
 #!/bin/sh
-# bench.sh — doom-fire measurement ladder: Rust x Python, on both grids.
+# bench.sh — doom-fire measurement ladder, on both grids.
 #
-# Measures the SAME generator (`tools/doomfire.py`, byte for byte the one from
-# tortty-python) running inside each terminal, on the same grid locked in CELLS by the
-# socket `resize` verb (`tools/benchrun.py`). A number from another condition does
-# not go in: if the grid does not match, benchrun exits with code 3 and this table fails.
+# Measures the fixed generator (`tools/doomfire.py`, byte for byte) running inside
+# the terminal, on the same grid locked in CELLS by the socket `resize` verb
+# (`tools/benchrun.py`). A number from another condition does not go in: if the
+# grid does not match, benchrun exits with code 3 and this table fails.
 #
 # Usage:
 #   tools/bench.sh                    # 3 shots per row, 1200 frames
 #   tools/bench.sh --frames 300 --shots 1
-#   tools/bench.sh --only-rust        # without the Python reference
+#   tools/bench.sh --ref ./run.sh     # plus another terminal, same condition
 #
-# The Python app comes from $PYTHON_APP (default: the sibling repo in ~).
+# `--ref` takes the launcher of another terminal that speaks the same debug
+# socket; without it the ladder measures only this build.
 set -eu
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 FRAMES=1200
 SHOTS=3
 GRIDS="61x18 70x21"
-ONLY_RUST=0
-PYTHON_APP=${PYTHON_APP:-$HOME/tortty-python}
+REF=
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --frames) FRAMES=$2; shift 2 ;;
         --shots) SHOTS=$2; shift 2 ;;
         --grids) GRIDS=$2; shift 2 ;;
-        --only-rust) ONLY_RUST=1; shift ;;
+        --ref) REF=$2; shift 2 ;;
         -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
@@ -58,7 +58,7 @@ run() {
         if echo "$out" | grep -q '^parse '; then
             parse=$(echo "$out" | awk '/^parse /{print $2" "$3}')
         else
-            parse=$(echo "$out" | awk '/^pty /{print $2" "$3}')  # Python app
+            parse=$(echo "$out" | awk '/^pty /{print $2" "$3}')  # only pty
         fi
         echo "$label | $grid | $fps | $mbs | $draw | $parse"
         i=$((i+1))
@@ -68,9 +68,9 @@ run() {
 for g in $GRIDS; do
     run "" "$g" "rust"
 done
-if [ "$ONLY_RUST" = 0 ]; then
-    [ -x "$PYTHON_APP/run.sh" ] || { echo "# no $PYTHON_APP/run.sh: skipping Python" >&2; exit 0; }
+if [ -n "$REF" ]; then
+    [ -x "$REF" ] || { echo "# $REF is not executable" >&2; exit 1; }
     for g in $GRIDS; do
-        run "$PYTHON_APP/run.sh" "$g" "python"
+        run "$REF" "$g" "ref"
     done
 fi

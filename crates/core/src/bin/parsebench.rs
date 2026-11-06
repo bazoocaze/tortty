@@ -2,7 +2,7 @@
 //! reports µs/cell, MB/s and ns/escape.
 //!
 //! Same load as `tools/doomfire.py` (truecolor fg + truecolor bg + `▀` per cell,
-//! with no grouping), so the number is comparable with tortty-python one
+//! with no grouping), so the number is comparable with the reference one
 //! measured in docs/BENCHMARKS.md (~35 µs/cell before P20, 5,5 after).
 //!
 //! ```sh
@@ -69,7 +69,7 @@ fn arg_s(name: &str) -> Option<String> {
 }
 
 /// "Real load" mode: dumps a file (the system `dmesg`, with and without color)
-/// into the parser, the way the Python BENCHMARKS does with the `Term` without GTK.
+/// into the parser, with no toolkit in the way.
 fn bench_file(path: &str, cols: usize, rows: usize) {
     const ROUNDS: usize = 20;
     let data = match std::fs::read(path) {
@@ -169,10 +169,10 @@ fn main() {
     println!("frames       {frames}");
     println!("mean         {avg_us_cell:.3} µs/cell  {avg_mbs:.1} MB/s  {ns_escape:.1} ns/escape");
     println!("best         {best:.3} µs/cell  {best_mbs:.1} MB/s");
-    println!("reference    python post-P20 5,49 µs/cell · python pre-P20 35,0 · kitty ~1,0");
+    println!("reference    post-P20 5,49 µs/cell · pre-P20 35,0 · kitty ~1,0 (2026-11-01)");
     if best > 0.0 {
         println!(
-            "speedup      {:.1}x over python post-P20, {:.1}x over pre-P20",
+            "speedup      {:.1}x over the reference, {:.1}x over its slow path",
             5.49 / best,
             35.0 / best
         );

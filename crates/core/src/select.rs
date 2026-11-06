@@ -2,9 +2,8 @@
 //!
 //! The anchor is `(absolute line, column)` and **not** a pair of screen
 //! coordinates: that way the selection survives scrolling the history and output
-//! arriving (the text moves, the selection moves with it). It is the same model
-//! as Python `tortty` (`term.py:1050-1075`), with one difference: `scrolled` and
-//! `abs_gen` are counters here, not objects.
+//! arriving (the text moves, the selection moves with it). `scrolled` and
+//! `abs_gen` are counters, not objects.
 //!
 //! `abs_gen` is the generation of the absolute space: anything that rewrites the
 //! history underneath (`CSI 3J`, RIS, reflow) increments it and kills the old
@@ -290,7 +289,7 @@ impl Term {
     /// What to send to the child when the user pastes `text`.
     ///
     /// With `?2004` on, the text goes between `ESC[200~` and `ESC[201~`: the app
-    /// (readline, vim, python) knows it is a paste and does not treat `\n` as
+    /// (readline, vim, a REPL) knows it is a paste and does not treat `\n` as
     /// Enter. The policy lives here so it is testable without a display.
     #[must_use]
     pub fn paste_payload(&self, text: &str) -> Vec<u8> {

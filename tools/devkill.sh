@@ -2,8 +2,8 @@
 # devkill.sh — kills this repository's dev instance (and leftovers).
 #
 # The criterion is `/proc/<pid>/exe` pointing at `target/{release,debug}/tortty`
-# of **this** checkout. That is specific enough not to touch the Python app
-# (`tortty-python`) nor another checkout. Never use `pkill -f tortty` (it matches the
+# of **this** checkout. That is specific enough not to touch another checkout or
+# another build. Never use `pkill -f tortty` (it matches the
 # shell that called it); `pkill -x` is only as safe as the name being unique,
 # and names change — the exe check does not.
 #

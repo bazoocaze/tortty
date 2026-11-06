@@ -1,7 +1,6 @@
 //! Damage: which grid lines must be rebuilt in this frame (A17/G17).
 //!
-//! The Python equivalent is GTK's `queue_draw_area` (`view.py:330-364`): whoever
-//! writes marks the line, and drawing only remakes what got dirty. Here the mark
+//! Whoever writes marks the line, and drawing only remakes what got dirty. Here the mark
 //! already exists in the core (`Term::dirty` / `dirty_all`); what was missing was
 //! drawing using it instead of rebuilding the whole grid every frame.
 //!

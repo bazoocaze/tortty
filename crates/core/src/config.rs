@@ -1,8 +1,8 @@
 //! Configuration: kitty format (`key value`), built-in defaults and per-line
 //! errors.
 //!
-//! The rule is tortty-python one (`config.py`): **merge key by key**, with
-//! the defaults written as a file (`DEFAULT_CONF`) and the user file on top.
+//! The rule: **merge key by key**, with the defaults written as a file
+//! (`DEFAULT_CONF`) and the user file on top.
 //! The error is per line, not per file: whatever validated holds, the invalid
 //! key keeps the previous default and the error comes out with the line number
 //! (the app shows it in a toast). On reload the rule is stricter: **any** error
@@ -52,7 +52,7 @@ copy_on_select off
 debug_log off
 
 # colours: foreground/background/cursor and the 16-colour ANSI palette.
-# The defaults are the classic xterm palette (the same as tortty-python): mc,
+# The defaults are the classic xterm palette: mc,
 # htop and ls --color were calibrated on it, and swapping it for a \"pretty
 # theme\" changes the meaning of the colours the program picked.
 foreground #d6d6d6
@@ -90,8 +90,7 @@ pub enum Bell {
 /// the glyph of each cell with the context of the run.
 ///
 /// `Off` turns off **the ligatures**, not the shaping: Arabic and Devanagari
-/// depend on shaping to be readable and keep being shaped (what Pango did in
-/// Python).
+/// depend on shaping to be readable and keep being shaped.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Ligatures {
     Off,

@@ -1,6 +1,6 @@
 //! Mouse: window event -> bytes of the protocol the app expects.
 //!
-//! Pure (integers and bytes only), like `bzmux/mouse.py`: `Term` is the one that
+//! Pure (integers and bytes only): `Term` is the one that
 //! knows whether the app asked for mouse (`?1000`/`?1002`/`?1003`/`?1006`/`?1005`);
 //! only the format lives here.
 //!
@@ -143,8 +143,8 @@ pub fn encode(ev: Ev, proto: Proto) -> Vec<u8> {
 
 /// Lines scrolled by one axis of a `MouseScrollDelta::LineDelta`.
 ///
-/// A wheel notch arrives as exactly ±1.0 and is worth 3 lines (D4, the same as
-/// the Python bzmux). A touchpad arrives as a *fraction* of a line — the X11
+/// A wheel notch arrives as exactly ±1.0 and is worth 3 lines (D4). A touchpad
+/// arrives as a *fraction* of a line — the X11
 /// smooth valuators divided by the scroll increment — and there the fraction is
 /// the distance the finger asked for, so it is kept as sent (the rest
 /// accumulates in `scroll_frac`).

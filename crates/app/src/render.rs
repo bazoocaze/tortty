@@ -1,8 +1,8 @@
 //! Renderer: builds instances and draws in a single GPU pass.
 //!
-//! The measured bottleneck of the Python bzmux was the **alternation** of
-//! background `fill` and `show_layout` per run (13.0 ms/frame; 7.9 ms just from
-//! grouping). Here background and glyph are the same quad instance — there is
+//! The **alternation** of background and glyph per run is what used to cost
+//! (13.0 ms/frame; 7.9 ms just from grouping runs). Here background and glyph are
+//! the same quad instance — there is
 //! no alternation to pay for, and a frame costs what building vertices costs
 //! (tens of µs), not the drawing.
 
@@ -21,8 +21,7 @@ use crate::atlas::{bind_atlas, globals_buffer, globals_layout, Atlas};
 use crate::glyph::{self, Fonts};
 use crate::prof;
 
-/// Background and foreground used when the configuration says nothing (the
-/// same as the Python bzmux, `BG_DEFAULT`/`FG_DEFAULT`).
+/// Background and foreground used when the configuration says nothing.
 pub const BG: (u8, u8, u8) = (0, 0, 0);
 pub const FG: (u8, u8, u8) = (214, 214, 214);
 
@@ -779,7 +778,7 @@ impl Renderer {
     fn text_line(&mut self, x0: f32, y: f32, text: &str, fg: [f32; 3], width: f32) {
         let fit = (width / self.fonts.cw).floor().max(1.0) as usize;
         // ellipsis instead of a hard cut: a narrow card does not eat the end of
-        // the title without warning (Python does the same with `ellipsize`)
+        // the title without warning
         let text: String = if text.chars().count() > fit {
             let mut t: String = text.chars().take(fit.saturating_sub(1)).collect();
             t.push('…');

@@ -3,11 +3,9 @@
 //! Each check sets up the scenario, exercises it and compares with the expected
 //! value. Nothing here needs a window, GPU or pty.
 //!
-//! What has **no** Rust equivalent is left out on purpose: Python validates
-//! that `shell` is executable and resolves `effective_shell`/`tab_command` in
-//! `config.py`, while here `shell` is only resolved in `pty::spawn` (it needs a
-//! pty and `$SHELL`), and Python has the notion of a *warning* (repeated key),
-//! which Rust does not have — here there is only `Error`.
+//! What has no equivalent is left out on purpose: `shell` is only resolved in
+//! `pty::spawn` (it needs a pty and `$SHELL`), and there is no notion of a
+//! *warning* (repeated key): here the result is only `Error`.
 
 use crate::checks::Check;
 use crate::config::{Bell, Config, CursorShape};

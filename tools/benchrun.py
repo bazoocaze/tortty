@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """benchrun.py — one doom-fire measurement with the condition locked by the GRID.
 
-Port of `tortty-python/tools/benchrun.py` to the Rust app, with the **same
-protocol**: starts the app with the socket, uses the `resize` verb until the grid
-matches the target (checked with `state`), and only then types the load into the pty
-and reads the statistics.
+Starts the app with the debug socket, uses the `resize` verb until the grid
+matches the target (checked with `state`), and only then types the load into the
+pty and reads the statistics.
 
-The generator is the same file (`tools/doomfire.py`, byte for byte the one from
-tortty-python), so what is measured is the consumer — the terminal — and not the load.
+The generator is a fixed file (`tools/doomfire.py`, byte for byte), so what is
+measured is the consumer — the terminal — and not the load.
 
 Usage:
-  tools/benchrun.py                       # Rust app, 1200 frames, 61x18
-  tools/benchrun.py --app ./run.sh        # Python app, same condition
+  tools/benchrun.py                       # tortty, 1200 frames, 61x18
   tools/benchrun.py --cols 70 --rows 21 --frames 600
 
 Prints `key value` per line. Exits with code 3 if the grid does not match (a number
@@ -39,7 +37,7 @@ class Failure(Exception):
 
 
 class Client:
-    """Socket client: one JSON request per line (the same one as Python)."""
+    """Socket client: one JSON request per line."""
 
     def __init__(self, path):
         self.s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -134,12 +132,17 @@ def main(argv):
     ap.add_argument("--cols", type=int, default=61)
     ap.add_argument("--rows", type=int, default=18)
     ap.add_argument("--font-size", default="13")
-    ap.add_argument("--app", default=DEFAULT_APP)
+    ap.add_argument("--app", default=None, help="another terminal to measure")
     ap.add_argument("--env", action="append", default=[], metavar="K=V")
     ap.add_argument("--extra", action="append", default=[], metavar="ARG",
                     help="extra argument for the app")
     ap.add_argument("--timeout", type=float, default=0)
     a = ap.parse_args(argv)
+    # an explicit --app is another terminal in the same condition: the label in
+    # the output is the only thing that tells the rows apart
+    ref = a.app is not None
+    if a.app is None:
+        a.app = DEFAULT_APP
 
     tmp = tempfile.mkdtemp(prefix="tortty-rs-bench-")
     sock = os.path.join(tmp, "tortty.sock")
@@ -149,25 +152,16 @@ def main(argv):
     env = dict(os.environ)
     env["XDG_STATE_HOME"] = os.path.join(tmp, "state")
 
-    if a.app.endswith(".py") or a.app.endswith("run.sh"):
-        # tortty-python Python app: accepts -c FILE (config) and --debug-log
-        conf = os.path.join(tmp, "tortty.conf")
-        with open(conf, "w", encoding="utf-8") as f:
-            f.write("font_size %s\n" % a.font_size)
-        cmdline = [a.app, "-c", conf, "--debug-log", "off", "--debug-socket", sock]
-        env["PYTERM_PROF"] = "1"
-        env.pop("PYTERM_GEOM", None)
-    else:
-        cmdline = [
-            a.app,
-            "--debug-socket",
-            sock,
-            "--no-vsync",
-            "--prof",
-            "--font-size",
-            str(a.font_size),
-        ]
-        cmdline += a.extra
+    cmdline = [
+        a.app,
+        "--debug-socket",
+        sock,
+        "--no-vsync",
+        "--prof",
+        "--font-size",
+        str(a.font_size),
+    ]
+    cmdline += a.extra
 
     for pair in a.env:
         key, _, value = pair.partition("=")
@@ -226,7 +220,7 @@ def main(argv):
     peak = max(frequencies) / 1e6 if frequencies else 0.0
     mean = sum(frequencies) / len(frequencies) / 1e6 if frequencies else 0.0
 
-    print("app %s" % ("python" if cmdline[0].endswith((".py", "run.sh")) else "rust"))
+    print("app %s" % ("ref" if ref else "rust"))
     print("grade %s" % grid.split()[0] if grid else "?")
     print("fps %s" % data.get("fps", "-"))
     print("mbs %s" % mbs)
@@ -235,18 +229,6 @@ def main(argv):
         print("draw %.2f ms/call (%s calls)" % (prof["draw_ms_call"], prof.get("draw_calls", 0)))
         print("parse %.2f ms/call (%s calls)" % (prof["parse_ms_call"], prof.get("parse_calls", 0)))
         print("pty %.2f ms/call (%s calls)" % (prof["pty_ms_call"], prof.get("pty_calls", 0)))
-    else:
-        # Python app: read the `prof:` line from the log
-        try:
-            with open(log, encoding="utf-8", errors="replace") as f:
-                lines = [ln for ln in f if ln.startswith("prof:")]
-            if lines:
-                for field in lines[-1][5:].split("|"):
-                    parts = field.split()
-                    if len(parts) >= 3 and parts[0] in ("draw", "pty"):
-                        print("%s %s" % (parts[0], parts[2]))
-        except OSError:
-            pass
     print("cell %s" % (st.get("cell", "-")))
     print("ghz %.2f/%.2f" % (mean, peak))
     print("log %s" % log)

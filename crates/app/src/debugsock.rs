@@ -1,8 +1,8 @@
 //! Unix introspection socket: one JSON line per request and per reply.
 //!
-//! Same protocol as `bzmux/debugsock.py` (`{"ok":true,...}` / `{"ok":false,
-//! "err":...}`, `0600`, same uid only) — it is what lets both terminals run the
-//! same measurement harness.
+//! The protocol is `{"ok":true,...}` / `{"ok":false,"err":...}`, on a socket with
+//! `0600` and the same uid only — it is what lets a measurement harness pin the
+//! grid and read the state.
 //!
 //! The socket runs on its own thread, but **the UI thread is the one that
 //! answers**: the request goes through the `Sink` and the reply comes back over a
@@ -107,7 +107,7 @@ impl Drop for DebugServer {
     }
 }
 
-/// `auto` = `$XDG_RUNTIME_DIR/tortty-<pid>.sock` (the same name as the Python).
+/// `auto` = `$XDG_RUNTIME_DIR/tortty-<pid>.sock`.
 pub fn resolve(value: &str) -> String {
     if value == "auto" {
         auto_path()
@@ -116,7 +116,7 @@ pub fn resolve(value: &str) -> String {
     }
 }
 
-/// `$XDG_RUNTIME_DIR` (or `/tmp`, as in the Python) plus the pid.
+/// `$XDG_RUNTIME_DIR` (or `/tmp`) plus the pid.
 fn auto_path() -> String {
     let base = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
     auto_path_in(&base)
@@ -416,9 +416,8 @@ mod checks_socket {
         let path = path("utf8");
         let srv = fake(&path, |line| {
             match serde_json::from_str::<serde_json::Value>(line) {
-                // the line arrives with U+FFFD in place of the invalid byte, as
-                // in the Python `decode("utf-8","replace")`: the app sees valid
-                // JSON
+                // the line arrives with U+FFFD in place of the invalid byte
+                // (lossy decode): the app sees valid JSON
                 Ok(_) => ok(json!({ "echo": line })),
                 Err(_) => err("invalid json"),
             }
