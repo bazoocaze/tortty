@@ -87,10 +87,12 @@ committed to lift yet; a limit with an id is one with a price written down.
 ## Interface
 
 - **Fixed shortcuts up to F3.** There is no remapping; the config file (which
-  comes in F3) covers font, colors, padding, bell, scrollback.
+  comes in F3) covers font, colors, padding, bell, scrollback. Remapping is
+  `M-H` in [`BACKLOG.md`](BACKLOG.md).
 - **No automatic dark/light theme**: the palette comes from the config, not from
   the desktop portal.
-- **No context menu and no DnD** of a file onto the window.
+- **No context menu and no DnD** of a file onto the window. The menu is `M-V` in
+  [`BACKLOG.md`](BACKLOG.md); dragging a file onto the window has no id yet.
 
 ## Development
 
