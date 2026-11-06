@@ -49,6 +49,15 @@ fn is_swap(cell: &Cell, sel: Option<(usize, usize, usize, usize)>, y: usize, x: 
     inv ^ inside
 }
 
+/// Does this glyph exist to touch the one in the neighbour cell?
+///
+/// Box drawing (`─ ┼ │`, what `mc`, `vim` and DEC graphics draw) and block
+/// elements (`▀ ▄ █`, the quote bar of `git` and of `vim`) are meant to tile; the
+/// rest of the text has no such intention and stays where the advance puts it.
+fn tiles(ch: char) -> bool {
+    matches!(ch, '\u{2500}'..='\u{257f}' | '\u{2580}'..='\u{259f}')
+}
+
 /// Instances of one row: the mask (text, background, decoration) and the colour
 /// emoji, which goes in its own draw call because it has an RGBA atlas.
 #[derive(Default, Clone)]
@@ -855,7 +864,19 @@ impl Renderer {
                 .or_else(|| self.glyph_quad(cell.ch, bold, italic));
             let desloc = glyph.map_or(0.0, |(_, _, dx)| dx);
             if let Some(q) = quad {
-                let gx = x as f32 * cw + desloc + q.left as f32;
+                let mut gx = x as f32 * cw + desloc + q.left as f32;
+                let mut gw = q.w as f32;
+                // Box drawing and block elements are the glyphs that touch the
+                // neighbour's ink on purpose: at a fractional cell width the
+                // antialias of two neighbours meets with less than full ink, and
+                // a dim column shows at the seam. The quad goes half a pixel
+                // wider on each side, so the two coverages add up instead. A
+                // stroke (`│`) does not span the cell and stays where the advance
+                // puts it.
+                if tiles(cell.ch) && gw >= cw - 1.0 {
+                    gx = x as f32 * cw + desloc + q.left as f32 - 0.5;
+                    gw += 1.0;
+                }
                 let gy = py + ascent - q.top as f32;
                 // colour emoji gets no tinting: only the cell alpha
                 let (cor, target) = if q.color {
@@ -864,7 +885,7 @@ impl Renderer {
                     ([c[0], c[1], c[2], alpha], &mut self.instances)
                 };
                 target.push(Instance {
-                    rect: [gx, gy, q.w as f32, q.h as f32],
+                    rect: [gx, gy, gw, q.h as f32],
                     color: cor,
                     uv: q.uv,
                 });

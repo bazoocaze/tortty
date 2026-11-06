@@ -184,7 +184,7 @@ pub struct Tab {
     pub press: Option<(Anchor, (f64, f64))>,
     pub dragging: bool,
     /// Last press on the grid and how many clicks it made: 2 selects the word,
-    /// 3 the line, 4 starts over (M-E).
+    /// 3 the line, 4 starts over.
     pub click: Option<(Anchor, u8, std::time::Instant)>,
     /// Accumulated row fraction from the wheel (a trackpad sends fractions).
     pub scroll_frac: f32,

@@ -1539,3 +1539,24 @@ after the word click extends from the start of the word. Unit tests:
 
 The rectangular selection, the fourth part of the item, is registered as `B5`: it
 is a different copy (a column range) and does not fit in the same span.
+
+## 2026-11-06 — M-AD: the 1 px seam of box drawing
+
+Measured before touching anything, with a private Xvfb and a capture of three rows
+of box drawing (`─`, `┼`, `│`) at the default cell of 9.63 px: on the scanline of
+the bar **25 of the 386 columns** came out at 83% of the ink (0.83 against 1.00),
+a dim column at every other cell boundary. That is the seam.
+
+The cause is the antialias: the glyph is drawn at the fractional advance and its
+mask ends in a partially covered column, so two neighbours meet with less than
+full ink. Box drawing (`U+2500`–`U+257F`) and block elements (`U+2580`–`U+259F`)
+are exactly the glyphs that exist to touch the neighbour, so `draw_cell` draws
+them half a pixel wider on each side **when the ink spans the cell**
+(`gw >= cw - 1`); a stroke like `│` does not span it and stays where the advance
+puts it. Rounding the origin — what the item suggested — was measured first and
+changes **nothing**: the masks are placed 1:1, and a sub-pixel shift moves no
+sample (moving a quad by 2 px moves 5370 pixels, by 0.37 px moves none).
+
+After: **0** dim columns, 385 of 386 at full ink (the last one is the window
+edge), and `tools/visual.sh` still passes — text, colour, scrolling and the saved
+state are untouched.

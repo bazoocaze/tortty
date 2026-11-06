@@ -82,8 +82,9 @@ configuration keys are [`CONFIG.md`](CONFIG.md).
 - Underline at the width of the run, selection as inversion, padding in px,
   background painted to the border.
 - Damage per line: only dirty lines are rebuilt, and a full-screen scroll shifts
-  the lines that are ready. **limit:** per-region drawing is not done (`M-AC`),
-  and box drawing can show a 1 px seam at a fractional cell width (`M-AD`).
+  the lines that are ready. **limit:** per-region drawing is not done (`M-AC`).
+  Box drawing and block elements are drawn half a pixel wider than their ink, so
+  that two neighbours meet at a fractional cell width.
 - Frame coalescing and `?2026` held output, so one frame is drawn per frame.
 
 ## Images (kitty protocol)
