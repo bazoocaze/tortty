@@ -1488,3 +1488,27 @@ presents, now **0** (`debug_read_only` skips the verbs that only read).
 The keystroke and action paths (`rename_key`, `write_paste`, new/close tab, new
 workspace, config reload) keep the immediate draw on purpose: one present per
 action is the latency they want; a queue is what they must not have.
+
+## 2026-11-06 — M-S: F13–F24 and the numeric keypad
+
+F13..F24 have no sequence of their own: on a PC keyboard they are F1..F12 with
+Shift, and that is what xterm's terminfo says (`kf13=\E[1;2P`). The base is the
+F1..F12 sequence and the Shift is part of the key, so a modifier on top adds to it
+(Ctrl+F13 = `CSI 1;6P`). Under the kitty protocol they only exist in the `CSI <n>u`
+form, with their own numbers (57376..57387). The `keys` verb of the socket learned
+the same twelve names, so the encoder can be exercised without a keyboard.
+
+The keypad was **mute**, and not only with NumLock off: winit leaves `KP_0`..
+`KP_9`, `KP_Decimal` and the operators out of its keysym table (`keymap.rs` has
+them commented out), so with NumLock on they arrive as `Key::Unidentified` and
+were dropped. `resolve_key` now falls back to the physical key for exactly that
+case. With NumLock off it already worked: winit maps `KP_Home`/`KP_Up` to the
+navigation keys, the logical key wins and the keypad keeps acting as the arrow
+cluster (`KP_Enter` too, as `Enter`).
+
+Verified with `keys::tests::f13_to_f24_are_f1_to_f12_with_shift` and
+`keys::tests::the_keypad_sends_its_character_even_with_num_lock_on`. What stays
+out: `DECKPAM` (`ESC =` / `ESC >`) is still "no effect" in the parser, so the
+keypad always sends the character instead of the `\EOw` of the application
+keypad — as in Python, and today's `xterm-256color` has no `kp*` to honor
+([`LIMITATIONS.md`](LIMITATIONS.md)).

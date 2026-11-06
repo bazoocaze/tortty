@@ -12,7 +12,7 @@
 use std::fmt::Write as _;
 
 use winit::event::{ElementState, KeyEvent};
-use winit::keyboard::{Key, ModifiersState, NamedKey};
+use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 
 /// 1 + shift(1) + alt(2) + ctrl(4) — the xterm modifier parameter.
 fn mod_param(ctrl: bool, alt: bool, shift: bool) -> u8 {
@@ -93,6 +93,75 @@ fn named_base(n: NamedKey, app_cursor: bool) -> Option<&'static str> {
     Some(s)
 }
 
+/// F13..F24 are, on a PC keyboard, F1..F12 with Shift held: xterm's terminfo
+/// says so (`kf13=\E[1;2P`), so the base sequence is the F1 one and the Shift is
+/// part of the key, not of the event.
+fn shifted_fkey(n: NamedKey) -> Option<NamedKey> {
+    use NamedKey::{
+        F1, F10, F11, F12, F13, F14, F15, F16, F17, F18, F19, F2, F20, F21, F22, F23, F24, F3, F4,
+        F5, F6, F7, F8, F9,
+    };
+    Some(match n {
+        F13 => F1,
+        F14 => F2,
+        F15 => F3,
+        F16 => F4,
+        F17 => F5,
+        F18 => F6,
+        F19 => F7,
+        F20 => F8,
+        F21 => F9,
+        F22 => F10,
+        F23 => F11,
+        F24 => F12,
+        _ => return None,
+    })
+}
+
+/// The character a keypad key stands for in numeric mode.
+///
+/// winit leaves `KP_0`..`KP_9`, `KP_Decimal` and the operators out of its keysym
+/// table (they are commented out in `keymap.rs`), so with NumLock on they arrive
+/// as `Key::Unidentified` and the keypad was mute. The physical key is what says
+/// which one it was. With NumLock off the keysym is a navigation one (`KP_Home`)
+/// and winit **does** map it, so the logical key wins and the keypad keeps
+/// acting as the arrow cluster.
+fn numpad_char(p: PhysicalKey) -> Option<&'static str> {
+    let PhysicalKey::Code(c) = p else {
+        return None;
+    };
+    Some(match c {
+        KeyCode::Numpad0 => "0",
+        KeyCode::Numpad1 => "1",
+        KeyCode::Numpad2 => "2",
+        KeyCode::Numpad3 => "3",
+        KeyCode::Numpad4 => "4",
+        KeyCode::Numpad5 => "5",
+        KeyCode::Numpad6 => "6",
+        KeyCode::Numpad7 => "7",
+        KeyCode::Numpad8 => "8",
+        KeyCode::Numpad9 => "9",
+        KeyCode::NumpadDecimal => ".",
+        KeyCode::NumpadComma => ",",
+        KeyCode::NumpadDivide => "/",
+        KeyCode::NumpadMultiply => "*",
+        KeyCode::NumpadSubtract => "-",
+        KeyCode::NumpadAdd => "+",
+        KeyCode::NumpadEqual => "=",
+        _ => return None,
+    })
+}
+
+/// The key the tables see: the logical one or, for the keypad with NumLock on,
+/// the character its physical key stands for.
+fn resolve_key(logical: &Key, physical: PhysicalKey) -> (Option<NamedKey>, Option<&str>) {
+    match logical {
+        Key::Named(n) => (Some(*n), None),
+        Key::Character(s) => (None, Some(s.as_str())),
+        _ => (None, numpad_char(physical)),
+    }
+}
+
 /// Applies modifiers in the xterm format (like `_special` in the Python).
 fn with_mods(seq: &str, ctrl: bool, alt: bool, shift: bool) -> Vec<u8> {
     // Shift+Tab arrives as `\t` with shift: the canonical form is backtab
@@ -146,7 +215,8 @@ const RELEASE: u8 = 3;
 fn kitty_functional(n: NamedKey) -> Option<(u32, char)> {
     use NamedKey::{
         ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Backspace, Delete, End, Enter, Escape, Home,
-        Insert, PageDown, PageUp, Space, Tab, F1, F10, F11, F12, F2, F3, F4, F5, F6, F7, F8, F9,
+        Insert, PageDown, PageUp, Space, Tab, F1, F10, F11, F12, F13, F14, F15, F16, F17, F18, F19,
+        F2, F20, F21, F22, F23, F24, F3, F4, F5, F6, F7, F8, F9,
     };
     Some(match n {
         Escape => (27, 'u'),
@@ -179,6 +249,21 @@ fn kitty_functional(n: NamedKey) -> Option<(u32, char)> {
         F10 => (21, '~'),
         F11 => (23, '~'),
         F12 => (24, '~'),
+        // F13..F24 have no legacy form: the kitty table gives them their own
+        // numbers (GLFW's `GLFW_FKEY_F13`..), which is why they only travel as
+        // `CSI <number> u`
+        F13 => (57376, 'u'),
+        F14 => (57377, 'u'),
+        F15 => (57378, 'u'),
+        F16 => (57379, 'u'),
+        F17 => (57380, 'u'),
+        F18 => (57381, 'u'),
+        F19 => (57382, 'u'),
+        F20 => (57383, 'u'),
+        F21 => (57384, 'u'),
+        F22 => (57385, 'u'),
+        F23 => (57386, 'u'),
+        F24 => (57387, 'u'),
         _ => return None,
     })
 }
@@ -309,11 +394,7 @@ pub fn encode(
     if ev.state != ElementState::Pressed && kbd_flags & F_EVENT_TYPES == 0 {
         return None;
     }
-    let (named, character) = match &ev.logical_key {
-        Key::Named(n) => (Some(*n), None),
-        Key::Character(s) => (None, Some(s.as_str())),
-        _ => return None,
-    };
+    let (named, character) = resolve_key(&ev.logical_key, ev.physical_key);
     encode_event(
         named,
         character,
@@ -383,6 +464,10 @@ pub fn encode_parts(
         if ctrl && n == NamedKey::Space {
             return Some(if alt { vec![0x1b, 0x00] } else { vec![0x00] });
         }
+        let (n, key_shift) = match shifted_fkey(n) {
+            Some(base) => (base, true),
+            None => (n, false),
+        };
         let base = named_base(n, app_cursor)?;
         // a dead key resolved over a named key: `xkbcommon` composes into `text`
         // and keeps the logical key as the base, so `~`+space arrives as
@@ -397,7 +482,7 @@ pub fn encode_parts(
             v.extend_from_slice(t.as_bytes());
             return Some(v);
         }
-        return Some(with_mods(base, ctrl, alt, shift));
+        return Some(with_mods(base, ctrl, alt, shift || key_shift));
     }
 
     let s = character?;
@@ -601,6 +686,63 @@ mod tests {
             )
             .as_deref(),
             Some(&b"\x7f"[..])
+        );
+    }
+
+    #[test]
+    fn f13_to_f24_are_f1_to_f12_with_shift() {
+        // xterm's terminfo: `kf13=\E[1;2P` .. `kf24=\E[24;2~`
+        assert_eq!(enc(Some(NamedKey::F13), None, NONE, 0), "\x1b[1;2P");
+        assert_eq!(enc(Some(NamedKey::F14), None, NONE, 0), "\x1b[1;2Q");
+        assert_eq!(enc(Some(NamedKey::F17), None, NONE, 0), "\x1b[15;2~");
+        assert_eq!(enc(Some(NamedKey::F24), None, NONE, 0), "\x1b[24;2~");
+        // a modifier adds to the Shift the key already carries (1+shift+ctrl=6)
+        assert_eq!(
+            enc(Some(NamedKey::F13), None, ModifiersState::CONTROL, 0),
+            "\x1b[1;6P"
+        );
+        // with the kitty flags they only travel as `CSI <number> u`: there is no
+        // legacy sequence for them
+        assert_eq!(
+            enc(Some(NamedKey::F13), None, NONE, F_ALL_KEYS),
+            "\x1b[57376u"
+        );
+        assert_eq!(
+            enc(Some(NamedKey::F24), None, NONE, F_ALL_KEYS),
+            "\x1b[57387u"
+        );
+        // disambiguate alone is not enough: without flag 8 the legacy path
+        // already sends the right thing
+        assert_eq!(
+            enc(Some(NamedKey::F13), None, NONE, F_DISAMBIGUATE),
+            "\x1b[1;2P"
+        );
+    }
+
+    #[test]
+    fn the_keypad_sends_its_character_even_with_num_lock_on() {
+        // winit has no `NamedKey` for `KP_7` (`keymap.rs` comments them out):
+        // with NumLock on the event arrives as `Unidentified` and the physical
+        // key is the only thing left to read
+        let kp = |c| resolve_key(&Key::Dead(None), PhysicalKey::Code(c));
+        assert_eq!(kp(KeyCode::Numpad7), (None, Some("7")));
+        assert_eq!(kp(KeyCode::Numpad0), (None, Some("0")));
+        assert_eq!(kp(KeyCode::NumpadDecimal), (None, Some(".")));
+        assert_eq!(kp(KeyCode::NumpadAdd), (None, Some("+")));
+        assert_eq!(kp(KeyCode::NumpadDivide), (None, Some("/")));
+        // with NumLock off the keysym is a navigation one and winit maps it: the
+        // logical key wins and the keypad keeps being the arrow cluster
+        assert_eq!(
+            resolve_key(
+                &Key::Named(NamedKey::ArrowUp),
+                PhysicalKey::Code(KeyCode::Numpad8)
+            ),
+            (Some(NamedKey::ArrowUp), None)
+        );
+        // any other physical key stays nothing
+        assert_eq!(
+            resolve_key(&Key::Dead(None), PhysicalKey::Code(KeyCode::KeyA)),
+            (None, None)
         );
     }
 }

@@ -73,6 +73,10 @@ committed to lift yet; a limit with an id is one with a price written down.
 
 ### Keyboard
 
+- **No `DECKPAM`/`DECKPNM`** (`ESC =` / `ESC >`): the parser ignores them, so the
+  numeric keypad sends the character (`7`, `+`) in every mode instead of the
+  application-keypad form (`\EOw`). Python does the same, and the
+  `xterm-256color` terminfo of this machine has no `kp*` capability to honor.
 - **Shift+letter in the kitty protocol comes out with the *post*-Shift code**:
   Shift+A becomes `CSI 65;2u`, not `CSI 97;2u`. `winit` delivers the key already
   applied to the layout and the **base** key would require its own layout table

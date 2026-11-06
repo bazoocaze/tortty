@@ -40,9 +40,14 @@ configuration keys are [`CONFIG.md`](CONFIG.md).
 
 ## Input
 
-- Keyboard: arrows, Home/End, Ins/Del, PgUp/PgDn, F1–F12; modifiers as a
-  parameter; DECCKM; Shift+Tab; Ctrl+letter; Alt as an ESC prefix; dead keys and
-  composition (ABNT2 `~ ^ ´`); printable text from the event on non-US layouts.
+- Keyboard: arrows, Home/End, Ins/Del, PgUp/PgDn, F1–F24 (F13–F24 as F1–F12
+  with Shift, which is what xterm's terminfo says) and the numeric keypad (its
+  digits and operators in every NumLock state, and the navigation cluster with
+  NumLock off); modifiers as a parameter; DECCKM; Shift+Tab; Ctrl+letter; Alt as
+  an ESC prefix; dead keys and composition (ABNT2 `~ ^ ´`); printable text from
+  the event on non-US layouts. **limit:** the keypad sends the character in every
+  mode, never the application-keypad form, because `DECKPAM` is ignored
+  ([`LIMITATIONS.md`](LIMITATIONS.md)).
 - kitty keyboard protocol: push/pop/set/query, flag 1 (disambiguate), flag 2
   (event types, release `:3`), flag 8 (all keys as CSI u), flag 16 (associated
   text). **limit:** flag 4, the alternate keys, is not done (`M-G`), and
@@ -103,8 +108,7 @@ configuration keys are [`CONFIG.md`](CONFIG.md).
 - Chrome: toast with a queue and timeout, visual bell, audible bell.
 - Shortcuts: Ctrl+Shift+T/W/N/Q/F2, Ctrl+Shift+1…9, Alt+1…9, Super+N/Q/1…9, with
   the digit taken from the physical key so ABNT2 layouts still work.
-  **limit:** they are fixed, no remapping yet (`M-H`), and keys Python does not
-  deliver (F13–F24, keypad with NumLock off) are not handled (`M-S`).
+  **limit:** they are fixed, no remapping yet (`M-H`).
 - Geometry: 980×640 without state, size restored, maximized tracked separately
   from the normal size, invalid geometry rejected. **limit:** tabs and workspaces
   do not survive closing (`M-I`); on Wayland the position is not stored, because
