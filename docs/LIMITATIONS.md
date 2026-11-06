@@ -6,6 +6,11 @@ been migrated yet is `missing` in [`MIGRATION.md`](MIGRATION.md) — it is not a
 limit. If a limit stops existing, it leaves here and becomes a completed item in
 [`HISTORY.md`](HISTORY.md).
 
+A limit is **not frozen**: it may name the [`BACKLOG.md`](BACKLOG.md) entry that
+would remove it, and the two are not a contradiction — the limit is the state
+today, the entry is what would change it. A limit without an id is one nobody has
+committed to lift yet; a limit with an id is one with a price written down.
+
 ## Scope
 
 - **One user, one machine.** No session multiplexing, no server, no
@@ -30,13 +35,17 @@ limit. If a limit stops existing, it leaves here and becomes a completed item in
 - **Window position on Wayland**: the client does not choose where the window
   goes. When geometry is persisted (J2/J3), on Wayland only size and maximized
   are stored. It is not missing code, it is the protocol.
-- **No software backend of our own.** If there is no usable Vulkan/Metal/D3D12/GL,
-  the app exits with a message. Rasterizing on the CPU is an entire renderer.
-  Worse: **llvmpipe is not an emergency exit** — measured on 2026-11-03 inside
-  `sandbox` without `/dev/dri`, the present either blows the timeout (Vulkan) or
-  returns success without painting a pixel (GL). Whoever runs confined uses
-  `sandbox @gpu`, which presents for real; the app warns this on stderr, once (see
-  [`DEBUG.md`](DEBUG.md)).
+- **No rasterizer of our own.** Drawing is `wgpu` and nothing else: there is no
+  cell-by-cell CPU painter to fall back on, and writing one is an entire
+  renderer, not a switch. What `wgpu` offers **is** used — `render.rs` prefers a
+  hardware adapter and, when there is none, takes the CPU one it can find
+  (llvmpipe/lavapipe) and says so on stderr once, because a VM or a container
+  without `/dev/dri` has only that. Whether it **presents** is another matter:
+  under an Xvfb of its own llvmpipe draws (`tools/visual.sh` passes without
+  `/dev/dri`), but in the owner's confined session on 2026-11-03 the window
+  received no frame — Vulkan blew the present timeout and GL returned success
+  without painting a pixel. Whoever runs confined uses `sandbox @gpu`, which presents
+  for real ([`DEBUG.md`](DEBUG.md)).
 - **No signing/notarization for now.** macOS 15+ requires "Open Anyway" for a
   binary downloaded from the network. It is in `M-Z` of
   [`BACKLOG`](BACKLOG.md) (the cost is the developer account, US$ 99/year), behind
@@ -50,8 +59,13 @@ limit. If a limit stops existing, it leaves here and becomes a completed item in
 - **Grapheme combination**: each cell carries a `char`; a combining mark that did
   not come together in the same commit as the text becomes its own cell. Really
   composing is new activity (`BACKLOG.md` M-U), not a limit accepted forever.
-- **No ligatures/complex shaping** (G8): `swash` rasterizes a glyph, it does not
-  shape like HarfBuzz. There is no plan to switch to `harfbuzz` at this stage.
+- **Shaping works; three consequences are accepted** (`G8` closed on 2026-11-02
+  with `rustybuzz`, see [`HISTORY.md`](HISTORY.md)): a **single-cell** run is not
+  shaped (no context, no ligature — this is the doom-fire case, 2400 runs of 1);
+  the **cursor and the selection break the ligature** around them, because those
+  cells become runs of their own; and **bidi reordering is not done** — a cluster
+  that comes out of order falls back to cell by cell. A font that merges N cells
+  is only used when the advance fits, ±10%.
 - **No `IRM`/`LNM`** (insert mode, newline mode) and no `CSI ? 3` (80/132):
   rare to the point of not paying for the test. They stay registered in the
   parser as a known pending item.
