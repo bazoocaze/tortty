@@ -336,7 +336,11 @@ delivers up to ~125 events/s, so the app consumed slower than X delivered, the
 server queue grew, and the view kept scrolling after the finger left the pad.
 That reads as smooth-scroll inertia and is not: it is backlog. Any path that
 mutates the view must `request_redraw()` and let `RedrawRequested` draw, which
-is what the pty path and the frame gate already do.
+is what the pty path and the frame gate already do. `ask_frame()` (`app.rs`) is
+that ask; `redraw()` is only for the action paths, where one present per action
+is the latency wanted. The socket verbs that only read (`state`, `text`, `prof`,
+`log`, `osc`) must not draw either: `debug_read_only` keeps a poll loop from
+buying a frame per request, which is what `benchrun.py` does with `state`.
 
 ## Pitfall: a pending X error kills the app in `set_title`
 

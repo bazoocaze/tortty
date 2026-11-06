@@ -1465,3 +1465,26 @@ Measured in one 9 s gesture: 337 events, ~37/s, delta 0.58–2.06 lines per even
 (22–132 lines/s). The event rate stays put and the magnitude carries the finger
 speed — which is why a fixed step per event was tried and rejected: it pins the
 speed at ~37 lines/s and loses the control.
+
+## 2026-11-05 — B4: the drag paid one present per mouse event
+
+`fn redraw()` (`app.rs`) drenches the pty, builds the frame and presents
+synchronously, so a handler that called it from a **motion** path paid one
+present per event: `drag_select` (selection) and `bar_drag` (tab reorder, which
+drew twice — `move_tab` also redrew). A touchpad delivers up to ~125 events/s, so
+the X queue grew and the drag kept going after the hand stopped: the wheel's trap
+(`6499f09`) in another path, and the reason the lag showed up "in several
+points".
+
+Measured with `PROF` under Xvfb (120 motion events per drag, `--prof`, socket
+`prof` reset before each one): selection **57 presents → 3**, tab reorder
+**9 → 3**. The selection ended on the same cells before and after, and the tab
+drag still reorders (`['tortty','tmp','usr']` → `['tmp','usr','tortty']`).
+
+The third number is the socket: `UserEvent::Debug` asked for a redraw on **every**
+verb, and `state` is what `benchrun.py` polls in a loop — 60 polls were 61
+presents, now **0** (`debug_read_only` skips the verbs that only read).
+
+The keystroke and action paths (`rename_key`, `write_paste`, new/close tab, new
+workspace, config reload) keep the immediate draw on purpose: one present per
+action is the latency they want; a queue is what they must not have.

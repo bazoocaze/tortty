@@ -1175,7 +1175,8 @@ impl App {
         let dest = if dx > 0.0 { i + n } else { i.saturating_sub(n) };
         self.move_tab(i, dest);
         self.bar_press = Some((dest, x0));
-        self.redraw();
+        // motion path: a frame is asked for, not drawn (B4, the wheel's trap)
+        self.ask_frame();
     }
 
     /// Reorders (I10): removes from `i` and inserts at `d`; the active one
@@ -1194,7 +1195,6 @@ impl App {
         } else if i > self.active && d <= self.active {
             self.active += 1;
         }
-        self.redraw();
     }
 
     /// Drag: the selection only starts after 3 px (shaking the mouse with the
@@ -1215,7 +1215,8 @@ impl App {
         );
         if self.tabs[self.active].sel != Some(new) {
             self.tabs[self.active].sel = Some(new);
-            self.redraw();
+            // motion path: a frame is asked for, not drawn (B4, the wheel's trap)
+            self.ask_frame();
         }
     }
 
@@ -1592,6 +1593,20 @@ impl App {
         }
         let size = window.inner_size();
         self.apply_size(size.width, size.height);
+    }
+
+    /// Asks for a frame instead of drawing one.
+    ///
+    /// `redraw` presents synchronously, and a handler that calls it pays one
+    /// present per event: on a motion path (`drag_select`, `bar_drag`) the
+    /// events arrive faster than the present, the X queue grows and the drag
+    /// keeps moving after the hand stops — the same trap the wheel had (B4).
+    /// `request_redraw` is coalesced by `winit` into one `RedrawRequested` per
+    /// event loop iteration, and the frame gate keeps the pacing.
+    fn ask_frame(&self) {
+        if let Some(w) = self.window.as_ref() {
+            w.request_redraw();
+        }
     }
 
     fn redraw(&mut self) {
@@ -2433,6 +2448,18 @@ impl<'a> KeyIn<'a> {
     }
 }
 
+/// Does this socket verb only read? A read must not cost a frame: `benchrun.py`
+/// polls `state` in a loop, and every poll used to buy a full present (B4).
+fn debug_read_only(line: &str) -> bool {
+    let cmd: Option<String> = serde_json::from_str::<serde_json::Value>(line)
+        .ok()
+        .and_then(|v| v.get("cmd").and_then(|c| c.as_str()).map(str::to_owned));
+    matches!(
+        cmd.as_deref(),
+        Some("state" | "text" | "prof" | "log" | "osc")
+    )
+}
+
 /// `ctrl+shift+n` -> bytes (minimal version of Python's `parse_key`: the full
 /// keyboard path is winit's, this verb is for test/automation).
 /// `spec` of the `keys` verb: `ctrl+shift+t`, `alt+left`, `f5`, `a`.
@@ -2632,11 +2659,14 @@ impl ApplicationHandler<UserEvent> for App {
                 self.gate.request(std::time::Instant::now(), sync);
             },
             UserEvent::Debug(line, reply) => {
+                let draws = !debug_read_only(&line);
                 let out = self.debug_dispatch(&line);
                 let _ = reply.send(out);
-                // `resize`/`quit` need an event cycle to take effect
-                if let Some(w) = self.window.as_ref() {
-                    w.request_redraw();
+                // `resize`/`quit` need an event cycle to take effect. A verb that
+                // only reads must not buy one: `benchrun.py` polls `state` in a
+                // loop and every poll was paying a full present (B4).
+                if draws {
+                    self.ask_frame();
                 }
             },
         }
