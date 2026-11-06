@@ -183,6 +183,9 @@ pub struct Tab {
     /// Anchor and pixel of the press: the drag only starts after 3 px.
     pub press: Option<(Anchor, (f64, f64))>,
     pub dragging: bool,
+    /// Last press on the grid and how many clicks it made: 2 selects the word,
+    /// 3 the line, 4 starts over (M-E).
+    pub click: Option<(Anchor, u8, std::time::Instant)>,
     /// Accumulated row fraction from the wheel (a trackpad sends fractions).
     pub scroll_frac: f32,
     /// BELLs already handled (the `Term` counts them; the app decides what to play).
@@ -205,6 +208,7 @@ impl Tab {
             sel: None,
             press: None,
             dragging: false,
+            click: None,
             scroll_frac: 0.0,
             bells_seen: 0,
             osc_title: String::new(),
@@ -1079,17 +1083,28 @@ impl App {
                 self.bar_press = None;
                 // clicking the history does NOT go back to live: the drag is
                 // exactly to copy from there
-                self.tabs[self.active].sel = None;
-                let (col, row) = self.cell_at(self.cursor_px.0, self.cursor_px.1);
-                self.tabs[self.active].press = Some((
-                    self.tabs[self.active].term.anchor_at(
-                        self.tabs[self.active].view_off,
-                        row,
-                        col,
-                    ),
-                    self.cursor_px,
-                ));
-                self.tabs[self.active].dragging = true;
+                let px = self.cursor_px;
+                let (col, row) = self.cell_at(px.0, px.1);
+                let t = &mut self.tabs[self.active];
+                let at = t.term.anchor_at(t.view_off, row, col);
+                // a second click on the same cell selects the word, a third the
+                // line and a fourth starts over
+                let count = match t.click {
+                    Some((prev, n, when)) if prev == at && when.elapsed().as_millis() < 400 => {
+                        n % 3 + 1
+                    },
+                    _ => 1,
+                };
+                t.click = Some((at, count, std::time::Instant::now()));
+                let span = match count {
+                    2 => t.term.word_span(at),
+                    3 => t.term.line_span(at),
+                    _ => None,
+                };
+                t.sel = span;
+                // the drag extends from the start of the word/line
+                t.press = Some((span.map_or(at, |s| s.a), px));
+                t.dragging = true;
                 self.redraw();
             },
             (ElementState::Released, Left) => {

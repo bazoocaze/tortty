@@ -1512,3 +1512,30 @@ out: `DECKPAM` (`ESC =` / `ESC >`) is still "no effect" in the parser, so the
 keypad always sends the character instead of the `\EOw` of the application
 keypad — as in Python, and today's `xterm-256color` has no `kp*` to honor
 ([`LIMITATIONS.md`](LIMITATIONS.md)).
+
+## 2026-11-06 — M-E: double click selects the word, triple the line
+
+The click count lives in the tab (`Tab::click`: anchor, count, instant) — 2 takes
+the word, 3 the line, 4 starts over, and a click on another cell resets it. The
+rule itself is in the core (`Term::word_span`, `Term::line_span`), so it is
+testable without a display: a word ends **only at whitespace**, which is what
+makes a path, a `-rw-r--r--` or an `--option=value` come out whole (the case the
+item exists for, and the reason a drag was needed), and a soft-wrapped line is
+**one** line — the span of a `wrapped` row goes on into the row below.
+
+That last part forced a fix in the copy: `span_text` put a `\n` between every pair
+of rows, so copying over a wrapped line invented a line break, and the trailing
+spaces of a `wrapped` row (content, because the row is full) were trimmed. Now the
+break only exists where the row is not `wrapped` and `Row::text_cols_full` keeps
+them; `selection_text` (the viewport copy of Ctrl+Shift+C) follows the same rule.
+
+Verified on a real window (Xvfb + `xdotool`, `--cmd` with `ls -l /tmp/a.txt
+fim`): double click on the path gave `sel a=[0,6] b=[0,15]` (`/tmp/a.txt`),
+triple gave `a=[0,0] b=[0,21]` (the whole line, without the padding), and a drag
+after the word click extends from the start of the word. Unit tests:
+`double_click_takes_the_whole_word`,
+`triple_click_takes_the_whole_line_without_the_padding` and
+`triple_click_follows_the_soft_wrap`.
+
+The rectangular selection, the fourth part of the item, is registered as `B5`: it
+is a different copy (a column range) and does not fit in the same span.

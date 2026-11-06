@@ -55,9 +55,10 @@ configuration keys are [`CONFIG.md`](CONFIG.md).
 - Mouse: X10 and SGR encodings, modifiers in the button code, wheel, buttons 8/9,
   motion with and without a button. **limit:** no pixel-precision reporting
   `?1016` (`M-T`).
-- Selection: drag with a 3 px threshold, absolute anchor that survives scrolling
-  and output, drawn as inversion. **limit:** no double/triple click word or line
-  and no rectangular selection (`M-E`).
+- Selection: drag with a 3 px threshold, double click for the word (a word ends
+  only at whitespace, so a path comes out whole), triple click for the whole
+  line — a soft-wrapped line included —, absolute anchor that survives scrolling
+  and output, drawn as inversion. **limit:** no rectangular selection (`B5`).
 - Clipboard: PRIMARY on release, CLIPBOARD with `copy_on_select`,
   Ctrl+Shift+C/V, button 2 pastes PRIMARY, bracketed paste. **limit:** PRIMARY
   dies with the app — it owns the selection; CLIPBOARD survives.

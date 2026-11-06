@@ -114,16 +114,22 @@ impl Term {
     /// Text between two anchors (ends inclusive), even off screen.
     ///
     /// Trailing space is dropped from each line; a dead anchor returns `None`
-    /// instead of half the text.
+    /// instead of half the text. A `wrapped` row does **not** break the line: the
+    /// text continues in the row below, and its trailing spaces are content.
     #[must_use]
     pub fn span_text(&self, span: &Span) -> Option<String> {
         if !self.anchor_alive(&span.a) || !self.anchor_alive(&span.b) {
             return None;
         }
         let cols = self.cols;
-        let mut out = Vec::with_capacity((span.b.line - span.a.line + 1) as usize);
+        let mut out = String::new();
+        let mut prev_wrapped = false;
         for line in span.a.line..=span.b.line {
             let row = self.abs_row(line)?;
+            if line > span.a.line && !prev_wrapped {
+                out.push('\n');
+            }
+            prev_wrapped = row.wrapped;
             let from = if line == span.a.line { span.a.col } else { 0 }.min(cols);
             let to = if line == span.b.line {
                 span.b.col
@@ -131,9 +137,102 @@ impl Term {
                 cols.saturating_sub(1)
             }
             .min(cols.saturating_sub(1));
-            out.push(row.text_cols(from, to + 1));
+            out.push_str(&row_text(row, from, to + 1));
         }
-        Some(out.join("\n"))
+        Some(out)
+    }
+
+    /// The word around `at` (double click), as a span of the line it is on.
+    ///
+    /// A word ends only at whitespace, so a path, a `-rw-r--r--` or a
+    /// `--option=value` comes out whole: it is the case this exists for (copying
+    /// a path out of a log by dragging the exact characters is what annoys). A
+    /// click on whitespace selects the whitespace run.
+    #[must_use]
+    pub fn word_span(&self, at: Anchor) -> Option<Span> {
+        let row = self.abs_row(at.line)?;
+        let cols = self.cols.min(row.cells.len());
+        if cols == 0 {
+            return None;
+        }
+        // the kind of each column: a continuation cell belongs to the wide
+        // character before it
+        let mut space = Vec::with_capacity(cols);
+        let mut prev = true;
+        for c in row.cells.iter().take(cols) {
+            prev = if c.is_cont() {
+                prev
+            } else {
+                c.ch.is_whitespace()
+            };
+            space.push(prev);
+        }
+        let col = at.col.min(cols - 1);
+        let kind = space[col];
+        let mut a = col;
+        while a > 0 && space[a - 1] == kind {
+            a -= 1;
+        }
+        let mut b = col;
+        while b + 1 < cols && space[b + 1] == kind {
+            b += 1;
+        }
+        Some(Span::new(
+            Anchor {
+                line: at.line,
+                col: a,
+                gen: at.gen,
+            },
+            Anchor {
+                line: at.line,
+                col: b,
+                gen: at.gen,
+            },
+        ))
+    }
+
+    /// The whole logical line of `at` (triple click): from column 0 of the first
+    /// row up to the last cell that has something in it.
+    ///
+    /// A soft-wrapped line is **one** line: the rows below a `wrapped` one belong
+    /// to it, which is what makes copying a wrapped log line one triple click.
+    #[must_use]
+    pub fn line_span(&self, at: Anchor) -> Option<Span> {
+        let mut first = at.line;
+        while let Some(r) = self.abs_row(first - 1) {
+            if !r.wrapped {
+                break;
+            }
+            first -= 1;
+        }
+        let mut last = at.line;
+        while let Some(r) = self.abs_row(last) {
+            if !r.wrapped {
+                break;
+            }
+            last += 1;
+        }
+        let row = self.abs_row(last)?;
+        let cols = self.cols.min(row.cells.len());
+        // the last cell with ink: the padding of the view is not worth copying
+        let end = row
+            .cells
+            .iter()
+            .take(cols)
+            .rposition(|c| c.ch != ' ' || c.is_cont())
+            .unwrap_or(0);
+        Some(Span::new(
+            Anchor {
+                line: first,
+                col: 0,
+                gen: at.gen,
+            },
+            Anchor {
+                line: last,
+                col: end,
+                gen: at.gen,
+            },
+        ))
     }
 
     /// Text of a rectangle of the view `(r1,c1)..(r2,c2)`, ends inclusive.
@@ -154,13 +253,18 @@ impl Term {
         let last = rows.len().saturating_sub(1);
         let (r1, r2) = (r1.min(last), r2.min(last));
         let cols = self.cols;
-        let mut out = Vec::with_capacity(r2 - r1 + 1);
+        let mut out = String::new();
+        let mut prev_wrapped = false;
         for (y, row) in rows.iter().enumerate().take(r2 + 1).skip(r1) {
+            if y > r1 && !prev_wrapped {
+                out.push('\n');
+            }
+            prev_wrapped = row.wrapped;
             let from = if y == r1 { c1 } else { 0 };
             let to = if y == r2 { (c2 + 1).min(cols) } else { cols };
-            out.push(row.text_cols(from, to));
+            out.push_str(&row_text(row, from, to));
         }
-        out.join("\n")
+        out
     }
 
     /// The whole viewport, without trailing blank lines (Ctrl+Shift+C with no
@@ -199,6 +303,16 @@ impl Term {
         } else {
             text.as_bytes().to_vec()
         }
+    }
+}
+
+/// Text of a row as the copy wants it: a `wrapped` row is full, so there the
+/// trailing spaces are content and stay.
+fn row_text(row: &Row, a: usize, b: usize) -> String {
+    if row.wrapped {
+        row.text_cols_full(a, b)
+    } else {
+        row.text_cols(a, b)
     }
 }
 
@@ -263,6 +377,45 @@ mod tests {
         assert_eq!(t.view_text(0), "one\ntwo\n");
         let empty = super::tests::term(); // clean screen -> nothing
         assert_eq!(empty.view_text(0), "");
+    }
+
+    #[test]
+    fn double_click_takes_the_whole_word() {
+        let mut t = Term::new(40, 2);
+        t.feed(b"ls -l /tmp/a.txt   fim");
+        // the anchor is inside the path: the word is the path
+        let at = t.anchor_at(0, 0, 12);
+        let span = t.word_span(at).unwrap();
+        assert_eq!(t.span_text(&span).unwrap(), "/tmp/a.txt");
+        // on whitespace the run of whitespace is what gets selected
+        let ws = t.word_span(t.anchor_at(0, 0, 2)).unwrap();
+        assert_eq!((ws.a.col, ws.b.col), (2, 2));
+        // past the end of the text the blank run goes to the last column
+        let tail = t.word_span(t.anchor_at(0, 0, 30)).unwrap();
+        assert_eq!((tail.a.col, tail.b.col), (22, 39));
+    }
+
+    #[test]
+    fn triple_click_takes_the_whole_line_without_the_padding() {
+        let mut t = Term::new(20, 2);
+        t.feed(b"  uma linha  \r\nseguinte");
+        // clicked on a blank column of the first line: the line is still the line
+        let span = t.line_span(t.anchor_at(0, 0, 18)).unwrap();
+        assert_eq!((span.a.col, span.b.col), (0, 10));
+        assert_eq!(t.span_text(&span).unwrap(), "  uma linha");
+    }
+
+    #[test]
+    fn triple_click_follows_the_soft_wrap() {
+        let mut t = Term::new(4, 4);
+        t.feed(b"abcdefgh"); // wraps: row 1 is the rest of the same line
+        assert!(t.grid[0].wrapped, "autowrap has to mark the row");
+        let span = t.line_span(t.anchor_at(0, 1, 1)).unwrap();
+        assert_eq!(
+            (span.a.line, span.b.line),
+            (t.scrolled as i64, t.scrolled as i64 + 1)
+        );
+        assert_eq!(t.span_text(&span).unwrap(), "abcdefgh");
     }
 
     #[test]

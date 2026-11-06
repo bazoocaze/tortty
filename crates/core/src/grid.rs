@@ -46,17 +46,24 @@ impl Row {
     /// space. It is the base of the copy: cut by column, not by character.
     #[must_use]
     pub fn text_cols(&self, a: usize, b: usize) -> String {
-        let b = b.min(self.cells.len());
-        let a = a.min(b);
-        let mut s: String = self.cells[a..b]
-            .iter()
-            .filter(|c| !c.is_cont())
-            .map(|c| c.ch)
-            .collect();
+        let mut s = self.text_cols_full(a, b);
         while s.ends_with(' ') {
             s.pop();
         }
         s
+    }
+
+    /// The same, keeping the trailing spaces: a `wrapped` row is full (the line
+    /// goes on in the row below), so there they are content and not padding.
+    #[must_use]
+    pub fn text_cols_full(&self, a: usize, b: usize) -> String {
+        let b = b.min(self.cells.len());
+        let a = a.min(b);
+        self.cells[a..b]
+            .iter()
+            .filter(|c| !c.is_cont())
+            .map(|c| c.ch)
+            .collect()
     }
 
     /// Resize the row (grows with a blank cell, cuts the excess).
