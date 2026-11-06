@@ -1559,3 +1559,37 @@ sample (moving a quad by 2 px moves 5370 pixels, by 0.37 px moves none).
 After: **0** dim columns, 385 of 386 at full ink (the last one is the window
 edge), and `tools/visual.sh` still passes — text, colour, scrolling and the saved
 state are untouched.
+
+## 2026-11-06 — `OSC 7`, `?1016` and `LNM`: three cheap facts from the parser
+
+Three escapes/modes that were consumed and thrown away. None of them touches the
+hot path: `OSC 7` is one arm in a `match` that already existed, `LNM` is one flag
+read where `LF` already goes, and `?1016` reuses the SGR encoder and the cell
+geometry the app already has.
+
+- **`OSC 7` (shell cwd).** The payload is `file://host/path`: the authority is
+  dropped and the path is percent-decoded (`a%20dir` → `a dir`), because a
+  directory with a space arrives escaped. An empty payload clears the cwd (the
+  shell saying it does not know) and a payload that is not `file://` does not
+  overwrite a known one. The app keeps `/proc/<pid>/cwd` as the first answer — it
+  is where the program **in front** is, not where the shell thinks it is — and
+  the shell's word is the last resort when `/proc` has none, and only when the
+  path is still a directory.
+- **`?1016` (mouse in pixels).** The shape stays SGR; what changes is the number
+  in it. `Proto::pixels` makes the encoder emit SGR, and `App::grid_px` gives the
+  offset from the same origin `cell_at` divides by the cell size.
+- **`LNM` (`CSI 20 h`).** `LF` returns to column 0 as well. `IRM` stays out on
+  purpose: inserting a cell means a branch in `put_ascii_run`.
+
+Verified: 4 new core tests and 2 in the app (`mouse.rs`, `app.rs`), all green
+under `tools/check.sh --fast`; and by hand, with a private Xvfb and
+`xdotool mousemove --window $XID 55 47 click 1` on cell `10x19`, the child
+received `ESC[<0;6;3M` with `?1006` and `ESC[<0;56;48M` with `?1016` — the same
+click, `5*10+5` and `2*19+9` in pixels. A child that printed
+`OSC 7;file://host/home/user/a%20dir` arrived in `state` as
+`cwd=/home/user/a dir`. The socket `state` learned the two fields (`cwd`,
+`mouse_px`), which is how the two were checked without guessing.
+
+Found on the way: **DECALN (`ESC # 8`) was already implemented** (`term.rs`,
+screen full of `E`, confirmed by test) while `M-U` listed it as missing; the row
+became combining-characters-only.

@@ -241,9 +241,12 @@ impl Tab {
     /// launched `vim`/`mc`, and their cwd is what the next tab should inherit
     /// (the last descendant of the shell is the one in front).
     fn cwd(&self) -> Option<std::path::PathBuf> {
-        let pid = self.pty.as_ref()?.child_pid()?;
-        let target = descendant(pid);
-        std::fs::read_link(format!("/proc/{target}/cwd")).ok()
+        let from_proc = self
+            .pty
+            .as_ref()
+            .and_then(Pty::child_pid)
+            .and_then(|pid| std::fs::read_link(format!("/proc/{}/cwd", descendant(pid))).ok());
+        prefer_cwd(from_proc, self.term.cwd.as_deref())
     }
 }
 
@@ -622,13 +625,18 @@ impl App {
         }
     }
 
+    /// Cell size and padding, with the startup values when there is no
+    /// renderer yet (an event can arrive before the first frame).
+    fn cell_metrics(&self) -> (f32, f32, f32) {
+        self.renderer
+            .as_ref()
+            .map_or((10.0, 19.0, 0.0), |r| (r.fonts.cw, r.fonts.ch, r.pad))
+    }
+
     /// Pixel -> (col, row) 0-based, clamped to the grid (no padding: G9 still
     /// missing).
     fn cell_at(&self, px: f64, py: f64) -> (usize, usize) {
-        let (cw, ch, pad) = self
-            .renderer
-            .as_ref()
-            .map_or((10.0, 19.0, 0.0), |r| (r.fonts.cw, r.fonts.ch, r.pad));
+        let (cw, ch, pad) = self.cell_metrics();
         // subtract the origin: with padding, tab bar and sidebar, the grid's
         // (0,0) is not the window's (0,0)
         let bar = f64::from(self.bar_h(ch));
@@ -641,12 +649,20 @@ impl App {
         )
     }
 
+    /// Pixel offset from cell (0,0) — the coordinate a child that asked for
+    /// `?1016` expects. Same origin rule as `cell_at`, without the division.
+    fn grid_px(&self, px: f64, py: f64) -> (usize, usize) {
+        let (cw, ch, pad) = self.cell_metrics();
+        let bar = f64::from(self.bar_h(ch));
+        let side = f64::from(self.side_w(cw));
+        let x = (px - f64::from(pad) - side).max(0.0);
+        let y = (py - f64::from(pad) - bar).max(0.0);
+        (x as usize, y as usize)
+    }
+
     /// Index of the tab under the cursor, if it is in the bar strip.
     fn tab_at(&self, px: f64, py: f64) -> Option<usize> {
-        let (cw, ch, pad) = self
-            .renderer
-            .as_ref()
-            .map_or((10.0, 19.0, 0.0), |r| (r.fonts.cw, r.fonts.ch, r.pad));
+        let (cw, ch, pad) = self.cell_metrics();
         let bar = f64::from(self.bar_h(ch));
         if bar <= 0.0 || py < f64::from(pad) || py >= f64::from(pad) + bar {
             return None;
@@ -668,10 +684,7 @@ impl App {
 
     /// Workspace under the cursor, if it is on the sidebar (I9).
     fn card_at(&self, px: f64, py: f64) -> Option<usize> {
-        let (cw, ch, pad) = self
-            .renderer
-            .as_ref()
-            .map_or((10.0, 19.0, 0.0), |r| (r.fonts.cw, r.fonts.ch, r.pad));
+        let (cw, ch, pad) = self.cell_metrics();
         let side = f64::from(self.side_w(cw));
         if side <= 0.0 || px >= f64::from(pad) + side || px < f64::from(pad) {
             return None;
@@ -707,7 +720,17 @@ impl App {
     /// Sends a mouse event to the child. Only called when the app asked for it
     /// (`?1000/1002/1003`); the rest of the mouse is ours (selection).
     fn report_mouse(&mut self, button: u8, pressed: bool, motion: bool) {
-        let (col, row) = self.cell_at(self.cursor_px.0, self.cursor_px.1);
+        let (pixels, sgr, utf8) = {
+            let t = &self.tabs[self.active].term;
+            (t.mouse_px, t.mouse_sgr, t.mouse_utf8)
+        };
+        let (px, py) = self.cursor_px;
+        // `?1016` wants pixels from the same origin the cells are measured from
+        let (col, row) = if pixels {
+            self.grid_px(px, py)
+        } else {
+            self.cell_at(px, py)
+        };
         let bytes = crate::mouse::encode(
             crate::mouse::Ev {
                 button,
@@ -717,10 +740,7 @@ impl App {
                 motion,
                 mods: self.mouse_mods(),
             },
-            crate::mouse::Proto {
-                sgr: self.tabs[self.active].term.mouse_sgr,
-                utf8: self.tabs[self.active].term.mouse_utf8,
-            },
+            crate::mouse::Proto { sgr, utf8, pixels },
         );
         self.pty_write(&bytes);
     }
@@ -1760,6 +1780,8 @@ impl App {
                     "mouse_mode": self.tabs[self.active].term.mouse_mode,
                     "mouse_sgr": self.tabs[self.active].term.mouse_sgr,
                     "mouse_utf8": self.tabs[self.active].term.mouse_utf8,
+                    "mouse_px": self.tabs[self.active].term.mouse_px,
+                    "cwd": self.tabs[self.active].term.cwd,
                     "cursor_px": [self.cursor_px.0, self.cursor_px.1],
                     "cell_at": [at.0, at.1],
                     "sel": sel_json,
@@ -2960,4 +2982,41 @@ fn signals() -> (bool, bool) {
         SIGNAL_DUMP.swap(false, Relaxed),
         SIGNAL_TERM.swap(false, Relaxed),
     )
+}
+
+/// cwd for the next tab: `/proc` answers where the program in front really is,
+/// `OSC 7` only where the shell thinks it is — so `/proc` wins and the shell's
+/// word is the last resort (a container, a stricter mount, a process tree the
+/// walk missed). A path that is no longer a directory is not a cwd: spawning a
+/// tab there would fail after the decision.
+fn prefer_cwd(
+    from_proc: Option<std::path::PathBuf>,
+    from_osc: Option<&str>,
+) -> Option<std::path::PathBuf> {
+    if from_proc.is_some() {
+        return from_proc;
+    }
+    let path = std::path::PathBuf::from(from_osc?);
+    path.is_dir().then_some(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_next_tab_prefers_proc_and_takes_osc7_as_the_last_resort() {
+        let here = std::env::temp_dir();
+        let here_s = here.to_str().expect("temp dir is UTF-8");
+        // `/proc` answered: the shell's word does not override it
+        assert_eq!(
+            prefer_cwd(Some(here.clone()), Some("/nope")),
+            Some(here.clone())
+        );
+        // `/proc` did not: the shell is what is left
+        assert_eq!(prefer_cwd(None, Some(here_s)), Some(here.clone()));
+        // and a path that no longer exists does not become a cwd
+        assert_eq!(prefer_cwd(None, Some("/nope/nope/nope")), None);
+        assert_eq!(prefer_cwd(None, None), None);
+    }
 }

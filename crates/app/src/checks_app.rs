@@ -194,6 +194,7 @@ fn mouse_modes_and_sgr() -> Result<(), String> {
     let sgr = mouse::Proto {
         sgr: true,
         utf8: false,
+        pixels: false,
     };
     let legacy = mouse::Proto::default();
     let cases: [(&str, Vec<u8>, &[u8]); 3] = [
@@ -244,6 +245,7 @@ fn mouse_modes_and_sgr() -> Result<(), String> {
     let utf8 = mouse::Proto {
         sgr: false,
         utf8: true,
+        pixels: false,
     };
     let far = mouse(mouse::LEFT, 300, 300);
     let bytes = mouse::encode(far, utf8);

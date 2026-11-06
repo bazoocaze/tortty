@@ -17,12 +17,13 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - Editing: IL/DL/ICH/DCH/ECH, EL 0/1/2, ED 0/1/2/3 — `ED 3` clears the scrollback
   and kills the selection anchors.
 - Modes: `?1` DECCKM, `?25`, `?47`/`?1047`/`?1049` alt screen, `?1048`,
-  `?1000`/`?1002`/`?1003`/`?1006`, `?1004` focus, `?2004` paste, `?2026` sync.
+  `?1000`/`?1002`/`?1003`/`?1006`/`?1016`, `?1004` focus, `?2004` paste, `?2026`
+  sync, and `20` LNM (LF returns the column too).
 - SGR: bold, italic, underline (styles `4:2`…`4:5`), reverse, 16 colours, 256,
   truecolor `38;2`/`48;2`, and `:` subparameters.
-- OSC: 0/2 window title, 1 icon title, 4 palette query, 10/11 default colour
-  query. **limit:** everything else is discarded — OSC 52 (remote clipboard) and
-  OSC 7 (shell cwd) are examples (`M-R`).
+- OSC: 0/2 window title, 1 icon title, 4 palette query, 7 shell cwd, 10/11 default
+  colour query. **limit:** everything else is discarded — OSC 52 (remote
+  clipboard) and OSC 133 (prompt marks) are examples (`M-R`).
 - DEC Special Graphics charset (G0).
 - Alt screen: separate grid, swap preserving the cursor, crop/pad on resize (no
   reflow there).
@@ -33,7 +34,7 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - Wide cells carry a continuation mark. **limit:** a combining mark arriving in a
   later commit becomes its own cell (`M-U`).
 - `TERM=xterm-256color` with no terminfo of our own.
-- **Not implemented:** `IRM`/`LNM`, `CSI ? 3` (80/132), DECDL/DECDHL and
+- **Not implemented:** `IRM`, `CSI ? 3` (80/132), DECDL/DECDHL and
   double-height.
 
 ## Input
@@ -51,8 +52,8 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   text). **limit:** flag 4, the alternate keys, is not done (`M-G`), and
   Shift+letter reports the post-Shift code (`CSI 65;2u`).
 - Mouse: X10 and SGR encodings, modifiers in the button code, wheel, buttons 8/9,
-  motion with and without a button. **limit:** no pixel-precision reporting
-  `?1016` (`M-T`).
+  motion with and without a button, and `?1016` (the SGR shape with the
+  coordinates in pixels from the grid origin).
 - Selection: drag with a 3 px threshold, double click for the word (a word ends
   only at whitespace, so a path comes out whole), triple click for the whole
   line — a soft-wrapped line included —, absolute anchor that survives scrolling
@@ -98,9 +99,9 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 
 ## Window
 
-- Tabs: own pty and term, new tab inherits the cwd of the deepest descendant,
-  close with Ctrl+Shift+W or middle click, a dead shell closes itself, drag to
-  reorder, wheel cycles.
+- Tabs: own pty and term, new tab inherits the cwd of the deepest descendant
+  (else the shell's `OSC 7` when `/proc` has no answer), close with Ctrl+Shift+W
+  or middle click, a dead shell closes itself, drag to reorder, wheel cycles.
 - Workspaces: a set of tabs with a name, sidebar cards (hidden when there is
   only one), inline rename, stable numbering.
 - Title: OSC 0/2, else `basename(cwd)`, else `tortty`; the window title mirrors

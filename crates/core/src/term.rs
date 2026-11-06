@@ -127,10 +127,15 @@ pub struct Term {
     pub mouse_sgr: bool,
     /// `?1005`: coordinates as UTF-8 in the legacy protocol.
     pub mouse_utf8: bool,
+    /// `?1016`: the SGR form, but the coordinates are pixels inside the grid
+    /// instead of cells. The app converts: only it knows the cell size.
+    pub mouse_px: bool,
     pub focus_report: bool,
     pub bracketed_paste: bool,
     pub sync_output: bool,
     pub autowrap: bool,
+    /// LNM (`CSI 20 h`): LF returns to column 0 as well.
+    pub lnm: bool,
     pub origin: bool,
     /// Kitty keyboard protocol flags (`CSI > u`, `CSI = u`). The app's
     /// encoder reads from here: the bits change **what** the key becomes.
@@ -144,6 +149,9 @@ pub struct Term {
     /// Replies to the child (DA, CPR, DECRQM...). The app drains and writes to the pty.
     pub child_out: Vec<u8>,
     pub title: String,
+    /// Where the shell says it is (`OSC 7`, `file://host/path`). Only the app
+    /// uses it, as the last resort for the cwd of a new tab.
+    pub cwd: Option<String>,
     /// Titles saved by `CSI 22 t`, restored by `CSI 23 t` — how an app gives the
     /// title back when it leaves (`mc` pushes, sets its own with OSC 0 and pops).
     title_stack: Vec<String>,
@@ -218,10 +226,12 @@ impl Term {
             mouse_mode: 0,
             mouse_sgr: false,
             mouse_utf8: false,
+            mouse_px: false,
             focus_report: false,
             bracketed_paste: false,
             sync_output: false,
             autowrap: true,
+            lnm: false,
             origin: false,
             kbd_flags: 0,
             kbd_stack: Vec::new(),
@@ -231,6 +241,7 @@ impl Term {
             saved: SavedCursor::default(),
             child_out: Vec::new(),
             title: String::from("tortty"),
+            cwd: None,
             title_stack: Vec::new(),
             osc_seen: VecDeque::with_capacity(OSC_SEEN),
             theme: Theme::default(),
@@ -1098,15 +1109,19 @@ impl Term {
                 },
                 1006 => self.mouse_sgr = on,
                 1005 => self.mouse_utf8 = on,
+                1016 => self.mouse_px = on,
                 1004 => self.focus_report = on,
                 2004 => self.bracketed_paste = on,
                 2026 => self.sync_output = on,
                 _ => {},
             }
         }
-        // ANSI modes (IRM=4, LNM=20) are deliberately not implemented; they are
-        // so rare that paying for the test does not pay off
-        let _ = p;
+        if !private && p == 20 {
+            // IRM (4) stays out: it would put a test in the run path of
+            // `put_ascii_run`, which is the parser's hot path. LNM is a flag
+            // read where LF already goes, so it costs nothing.
+            self.lnm = on;
+        }
     }
 
     fn enter_alt(&mut self, clear_scrollback: bool) {
@@ -1162,6 +1177,7 @@ impl Term {
             1004 => onoff(self.focus_report),
             1005 => onoff(self.mouse_utf8),
             1006 => onoff(self.mouse_sgr),
+            1016 => onoff(self.mouse_px),
             2004 => onoff(self.bracketed_paste),
             2026 => onoff(self.sync_output),
             _ => 0,
@@ -1405,6 +1421,7 @@ impl Term {
             10 => self.osc_color(10, arg),
             11 => self.osc_color(11, arg),
             12 => self.osc_color(12, arg),
+            7 => self.osc_cwd(arg),
             104 => self.osc_reset_palette(arg),
             110 => self.reset_color(10),
             111 => self.reset_color(11),
@@ -1473,6 +1490,37 @@ impl Term {
             self.theme.palette[idx] = c;
             self.theme_dirty = true;
         }
+    }
+
+    /// `OSC 7`: `file://host/path` — where the shell says it is. The host is
+    /// ignored (the path is what the shell sees) and the payload is
+    /// percent-decoded, since a directory with a space arrives as `%20`. An
+    /// empty payload is the shell saying it does not know, and that clears.
+    fn osc_cwd(&mut self, arg: &[u8]) {
+        if arg.is_empty() {
+            self.cwd = None;
+            return;
+        }
+        let Some(rest) = arg.strip_prefix(b"file://") else {
+            // a payload that is not the documented form is not a reason to
+            // throw away a cwd that was already known
+            return;
+        };
+        // `//host/path`: the authority ends at the first `/`
+        let path = rest
+            .iter()
+            .position(|&b| b == b'/')
+            .map_or(&rest[rest.len()..], |i| &rest[i..]);
+        if path.is_empty() {
+            self.cwd = None;
+            return;
+        }
+        let decoded = percent_decode(path);
+        let clean: String = String::from_utf8_lossy(&decoded)
+            .chars()
+            .filter(|c| !c.is_control())
+            .collect();
+        self.cwd = if clean.is_empty() { None } else { Some(clean) };
     }
 
     /// `OSC 10/11/12`: text color, background and cursor — query (`?`) or define.
@@ -1690,6 +1738,9 @@ impl Term {
             },
             0x0a..=0x0c => {
                 self.wrap_pending = false;
+                if self.lnm {
+                    self.cx = 0;
+                }
                 self.newline();
             },
             0x0d => {
@@ -2006,6 +2057,32 @@ fn parse_u32(t: &[u8]) -> u32 {
         }
     }
     v
+}
+
+/// Percent-decoding of a URI path: `%XX` becomes the byte. Anything else — a
+/// lone `%`, a truncated escape, a non-hex digit — stays as it is written, so a
+/// path that already has a `%` does not turn into a different path.
+fn percent_decode(s: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(s.len());
+    let mut i = 0usize;
+    while i < s.len() {
+        let hex = |b: u8| (b as char).to_digit(16).map(|v| v as u8);
+        match (
+            s[i],
+            s.get(i + 1).copied().and_then(hex),
+            s.get(i + 2).copied().and_then(hex),
+        ) {
+            (b'%', Some(hi), Some(lo)) => {
+                out.push(hi * 16 + lo);
+                i += 3;
+            },
+            (b, _, _) => {
+                out.push(b);
+                i += 1;
+            },
+        }
+    }
+    out
 }
 
 /// Title fit to draw: no control character, no invisible/direction mark. The
@@ -3084,5 +3161,56 @@ mod tests {
         let mut t = term();
         t.feed(b"a\x1b[3b");
         assert_eq!(t.row_text(0), "aaaa");
+    }
+
+    #[test]
+    fn lnm_makes_lf_return_to_the_column_too() {
+        let mut t = term();
+        // without LNM the LF only goes down, and the next line starts where the
+        // cursor was
+        t.feed(b"ab\ncd");
+        assert_eq!(t.row_text(1), "  cd");
+        let mut u = term();
+        u.feed(b"\x1b[20hab\ncd");
+        assert_eq!(u.row_text(1), "cd");
+        // and it turns off again: ANSI mode 20 is not private, so no `?`
+        let mut v = term();
+        v.feed(b"\x1b[20h\x1b[20lab\ncd");
+        assert_eq!(v.row_text(1), "  cd");
+    }
+
+    #[test]
+    fn osc7_stores_the_shell_cwd() {
+        let mut t = term();
+        t.feed(b"\x1b]7;file://host/home/j/user/a%20b\x07");
+        assert_eq!(t.cwd.as_deref(), Some("/home/j/user/a b"));
+        // an empty payload is the shell saying it does not know
+        t.feed(b"\x1b]7;\x07");
+        assert_eq!(t.cwd, None);
+        // junk does not throw away what is known
+        t.feed(b"\x1b]7;file://h/tmp\x07");
+        t.feed(b"\x1b]7;junk\x07");
+        assert_eq!(t.cwd.as_deref(), Some("/tmp"));
+    }
+
+    #[test]
+    fn osc7_keeps_a_lone_percent_as_written() {
+        let mut t = term();
+        t.feed(b"\x1b]7;file://h/tmp/100%\x07");
+        assert_eq!(t.cwd.as_deref(), Some("/tmp/100%"));
+        t.feed(b"\x1b]7;file://h/tmp/%zz\x07");
+        assert_eq!(t.cwd.as_deref(), Some("/tmp/%zz"));
+    }
+
+    #[test]
+    fn pixel_mouse_mode_answers_decrqm() {
+        let mut t = term();
+        // DECRQM answers 2 (known, reset) before and 1 (set) after
+        assert_eq!(t.mode_state(1016, true), 2);
+        t.feed(b"\x1b[?1016h");
+        assert!(t.mouse_px);
+        assert_eq!(t.mode_state(1016, true), 1);
+        t.feed(b"\x1b[?1016l");
+        assert!(!t.mouse_px);
     }
 }

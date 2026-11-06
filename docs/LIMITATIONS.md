@@ -56,9 +56,9 @@ The limitations of the project.
   cells become runs of their own; and **bidi reordering is not done** — a cluster
   that comes out of order falls back to cell by cell. A font that merges N cells
   is only used when the advance fits, ±10%.
-- **No `IRM`/`LNM`** (insert mode, newline mode) and no `CSI ? 3` (80/132):
-  rare to the point of not paying for the test. They stay registered in the
-  parser as a known pending item.
+- **No `IRM`** (insert mode) and no `CSI ? 3` (80/132): rare to the point of not
+  paying for the test. `IRM` costs more than it looks — inserting a cell means a
+  branch in `put_ascii_run`, which is the parser's hot path.
 - **No DECDL/DECDHL** and no double-height: nothing draws them, so there is no
   state to keep.
 

@@ -66,20 +66,24 @@ pub fn from_winit(button: winit::event::MouseButton) -> Option<u8> {
     }
 }
 
-/// Which dialect the app asked for (`?1006` SGR, `?1005` UTF-8).
+/// Which dialect the app asked for (`?1006` SGR, `?1005` UTF-8, `?1016`
+/// pixels).
 #[derive(Copy, Clone, Default)]
 pub struct Proto {
     pub sgr: bool,
     pub utf8: bool,
+    /// `?1016`: the SGR shape, with the coordinates in pixels. The caller fills
+    /// `col`/`row` with pixels instead of cells.
+    pub pixels: bool,
 }
 
 /// A mouse event already translated into the protocol vocabulary.
 #[derive(Copy, Clone)]
 pub struct Ev {
     pub button: u8,
-    /// 0-based; becomes 1-based in the byte.
+    /// 0-based; becomes 1-based in the byte. Pixels when `Proto::pixels`.
     pub col: usize,
-    /// 0-based; becomes 1-based in the byte.
+    /// 0-based; becomes 1-based in the byte. Pixels when `Proto::pixels`.
     pub row: usize,
     pub pressed: bool,
     pub motion: bool,
@@ -98,7 +102,10 @@ pub fn encode(ev: Ev, proto: Proto) -> Vec<u8> {
         motion,
         mods,
     } = ev;
-    let Proto { sgr, utf8 } = proto;
+    let Proto { sgr, utf8, pixels } = proto;
+    // `?1016` is the SGR form with pixel coordinates: there is no legacy pixel
+    // protocol to fall back to, so it decides the shape on its own
+    let sgr = sgr || pixels;
     let mods = mods & (MOD_SHIFT | MOD_ALT | MOD_CTRL);
     if !pressed && !sgr && is_wheel(button) {
         return Vec::new();
@@ -191,7 +198,22 @@ mod tests {
         Proto {
             sgr: true,
             utf8: false,
+            pixels: false,
         }
+    }
+
+    #[test]
+    fn pixel_mode_keeps_the_sgr_shape_and_the_raw_numbers() {
+        // ?1016 alone, without ?1006: the shape is still SGR and the numbers
+        // are pixels, not cells
+        let px = Proto {
+            sgr: false,
+            utf8: false,
+            pixels: true,
+        };
+        assert_eq!(encode(ev(LEFT, 123, 456), px), b"\x1b[<0;124;457M");
+        // and the pixel coordinate is not pushed into the legacy byte path
+        assert_eq!(encode(ev(LEFT, 3000, 2000), px), b"\x1b[<0;3001;2001M");
     }
 
     fn old() -> Proto {
@@ -252,6 +274,7 @@ mod tests {
             Proto {
                 sgr: false,
                 utf8: true,
+                pixels: false,
             },
         );
         // 300+33 = 333 = U+014D -> two bytes in UTF-8 (y=1 becomes 1 byte)
@@ -267,6 +290,7 @@ mod tests {
         Proto {
             sgr: t.mouse_sgr,
             utf8: t.mouse_utf8,
+            pixels: t.mouse_px,
         }
     }
 

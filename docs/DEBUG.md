@@ -242,11 +242,16 @@ PID file, and `pkill` by name brings a session down.
 
 ### Mouse
 
-`mouse.rs` is pure (like `mouse.py`): it translates `(button, col, row)` into
-protocol bytes. What decides whether the event goes to the child is the `Term`
-(`mouse_mode` 0/1/2/3, `mouse_sgr`, `mouse_utf8`). The socket `state` exposes all
-three, which is how you find out, without guessing, whether the app turned the
-mouse on.
+`mouse.rs` is pure: it translates `(button, col, row)` into protocol bytes. What
+decides whether the event goes to the child is the `Term` (`mouse_mode`
+0/1/2/3, `mouse_sgr`, `mouse_utf8`, `mouse_px`). The socket `state` exposes all
+four, which is how you find out, without guessing, whether the app turned the
+mouse on and in which dialect.
+
+`?1016` is the SGR shape with the numbers in pixels instead of cells: the
+encoder keeps the shape and the caller fills `col`/`row` with pixel offsets from
+the grid origin (`App::grid_px`, the same origin `cell_at` divides by the cell
+size).
 
 Probe that closes the loop (what the app *received*, not what it did):
 
