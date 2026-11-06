@@ -1,5 +1,4 @@
-//! TorTTY — fast, GPU based terminal. The feasibility record is in
-//! TASK-tortty-in-rust.md.
+//! TorTTY — fast, GPU based terminal.
 // the `state` `json!` goes past the macro's default expansion limit
 #![recursion_limit = "256"]
 

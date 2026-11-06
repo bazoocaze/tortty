@@ -1105,7 +1105,7 @@ impl Term {
             }
         }
         // ANSI modes (IRM=4, LNM=20) are deliberately not implemented; they are
-        // noted in TASK as pending
+        // so rare that paying for the test does not pay off
         let _ = p;
     }
 

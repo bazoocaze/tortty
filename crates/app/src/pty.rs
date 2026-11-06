@@ -1,7 +1,7 @@
 //! Child pty: spawn, read on its own thread and resize.
 //!
 //! `portable-pty` instead of raw `openpty`: it is what gives ConPTY on Windows the
-//! day that platform comes in (decision recorded in the TASK). The reader thread
+//! day that platform comes in. The reader thread
 //! pushes the bytes through a channel and wakes the loop with the `proxy`, so no
 //! read blocks the event loop.
 

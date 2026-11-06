@@ -9,9 +9,6 @@ Each fact lives in **one place only**. All of them are written for agent
 reading; only README.md is for humans.
 
 - `AGENTS.md` (this one) — conventions, architecture, tools.
-- `TASK-tortty-in-rust.md` — dated record of phase 1 (the feasibility
-  experiment): questions, decisions, what was measured that day. It is not
-  current reading; what still holds was promoted to the docs below.
 - `docs/MIGRATION.md` — **the record of the 2026-11 migration**: the inventory it
   came from and the order it was done in, closed at 195/195. A photograph of the
   past: it is not read as state, not a queue, and it is not edited.
