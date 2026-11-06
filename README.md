@@ -1,6 +1,6 @@
 # TorTTY — Torbie TTY
 
-<p align="center"><img src="assets/torbie-readme.png" width="220" alt="torbie, the cat: a grey and orange tabby sitting"></p>
+![torbie, the cat: a grey and orange tabby sitting](assets/torbie-readme.png)
 
 **Fast, GPU based terminal.**
 
