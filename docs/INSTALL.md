@@ -40,10 +40,11 @@ the shortcut with the right window.
 And it carries `StartupNotify=false`, because the app does not answer the
 startup notification contract (`DESKTOP_STARTUP_ID` → `_NET_STARTUP_INFO`): with
 `true`, the panel opens a phantom "Starting tortty" entry, leaves the pointer in
-busy mode and only removes it on its timeout → [`BACKLOG.md: B7`](BACKLOG.md).
-The "opening" notice lost with that depended on that answer, which never
-existed; when (and if) the app completes the notification, the key goes back to
-`true` together with the code that sustains it.
+busy mode and only removes it on its timeout (the case is `B7` in
+[`HISTORY.md`](HISTORY.md), 2026-11-03). The "opening" notice lost with that
+depended on that answer, which never existed; when (and if) the app completes the
+notification, the key goes back to `true` together with the code that sustains
+it.
 
 ## Coexistence
 
