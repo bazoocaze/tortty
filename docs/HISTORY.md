@@ -1679,3 +1679,21 @@ Verified by hand on an Xvfb, with `seq 1 200` as the load (history 193, window
 strip `state` says `view_off=193` and the two colours swap; and a drag from the top
 to the middle lands on `view_off=97` (half of 193). `tools/render-check.sh` still
 passes — with no history, nothing is drawn.
+
+## 2026-11-06 — build: `codegen-units` back to the cargo default
+
+`[profile.release]` carried `codegen-units = 1` (one thread, best optimization
+scope). Trying `4` cut the app-only rebuild from 51 s to 31 s, but the full
+rebuilds that followed looked alarming (102 s, 115 s) until the cause was clear:
+any profile change rebuilds all 191 dependencies, and with `lto = "thin"` every
+extra unit becomes a module in the serial thin-link — so those numbers measured
+"a whole world", never the tuning itself. The rematch under `schedutil` (the
+machine had been on `powersave`, which alone cost ~30 s on every build) settled
+it: incremental 18.6 s (default) vs 19.3 s (split 4/16) vs 22.4 s (all at 1),
+with a ~19 s link floor no tuning breaks. Runtime, default vs all-at-1 on the
+same battery (`bench.sh`, 600 frames, 2 shots): 61x18 772.8 vs 850.0/797.6 fps,
+70x21 755.1 vs 755.2 fps on the converging shots, `draw` 0.87–0.93 vs 0.87–1.07
+ms/call — inside the run-to-run spread (one binary alone swung 638–755 fps
+between shots), and `parsebench` 38.06 vs 38.28 MB/s best. So the two lines left:
+default everywhere, nothing to explain. Price, declared: the binary grows
+12.09 to 14.07 MB.

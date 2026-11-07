@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/core", "crates/app"]
 
 [workspace.package]
-version = "1.0.24"
+version = "1.0.25"
 edition = "2021"
 license = "MIT"
 
@@ -42,11 +42,9 @@ return_self_not_must_use = "allow"
 [profile.release]
 opt-level = 3
 lto = "thin"
-codegen-units = 1
 panic = "abort"
 
 # Parsing is the benchmark's hot path: without optimisation the number is worthless.
 [profile.bench]
 opt-level = 3
 lto = "thin"
-codegen-units = 1
