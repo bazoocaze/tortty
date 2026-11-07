@@ -1,6 +1,8 @@
 #!/bin/sh
 # devkill.sh — kills this repository's dev instance (and leftovers).
 #
+# Usage: tools/devkill.sh [--status]   (--status only reports, never kills)
+#
 # The criterion is `/proc/<pid>/exe` pointing at `target/{release,debug}/tortty`
 # of **this** checkout. That is specific enough not to touch another checkout or
 # another build. Never use `pkill -f tortty` (it matches the
@@ -38,18 +40,38 @@ kill_pid() {
 
 dead=0
 
+# `--status` answers what the PID file is worth without killing anything: the
+# line the manual promises. Killing is the default, and a forgotten flag must not
+# take down the instance someone is testing.
+status_only=0
+for arg in "$@"; do
+    case "$arg" in
+        --status) status_only=1 ;;
+        -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) echo "unknown option: $arg" >&2; exit 2 ;;
+    esac
+done
+
 # 1) the registered PID (checked first: the PID may have been recycled)
 if [ -f "$PIDFILE" ]; then
     pid=$(cat "$PIDFILE" 2>/dev/null || true)
     if [ -n "${pid:-}" ] && [ -d "/proc/$pid" ]; then
         if is_dev "$pid"; then
-            kill_pid "$pid"
-            echo "killed: pid $pid"
-            dead=1
+            if [ "$status_only" = 1 ]; then
+                echo "running: pid $pid exe=$(readlink "/proc/$pid/exe" 2>/dev/null)"
+                dead=1
+            else
+                kill_pid "$pid"
+                echo "killed: pid $pid"
+                dead=1
+            fi
         else
             echo "refusing to kill pid $pid: exe=$(readlink "/proc/$pid/exe" 2>/dev/null)" >&2
         fi
+    elif [ -n "${pid:-}" ] && [ "$status_only" = 1 ]; then
+        echo "stale pid file: pid $pid is gone"
     fi
+    # a dead PID is worth nothing: devrun would remove it anyway
     rm -f "$PIDFILE"
 fi
 
@@ -58,9 +80,14 @@ for d in /proc/[0-9]*; do
     pid=${d#/proc/}
     [ "$pid" = "$$" ] && continue
     if is_dev "$pid"; then
-        kill_pid "$pid"
-        echo "killed (leftover): pid $pid"
-        dead=1
+        if [ "$status_only" = 1 ]; then
+            echo "leftover: pid $pid exe=$(readlink "/proc/$pid/exe" 2>/dev/null)"
+            dead=1
+        else
+            kill_pid "$pid"
+            echo "killed (leftover): pid $pid"
+            dead=1
+        fi
     fi
 done
 
