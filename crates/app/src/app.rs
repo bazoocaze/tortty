@@ -310,6 +310,9 @@ pub struct App {
     /// Tab pressed on the bar, to drag and reorder (I10): index and the x of
     /// the press, so the drag only starts after actually moving.
     bar_press: Option<(usize, f64)>,
+    /// Dragging the scrollbar (`M-M`): the press started on the strip, so the
+    /// motion belongs to the view and not to the selection.
+    scroll_drag: bool,
     /// Last key eaten by a local shortcut: its release does not go to the
     /// child (the kitty protocol reports releases, and an eaten shortcut must
     /// not become `CSI ...:3u`).
@@ -419,6 +422,7 @@ impl App {
             parked: Vec::new(),
             ws_idx: 0,
             bar_press: None,
+            scroll_drag: false,
             consumed: None,
             rename: None,
             card_click: None,
@@ -955,6 +959,11 @@ impl App {
     /// Motion: only matters to the app when it asked for `?1002`/`?1003`.
     fn on_cursor_moved(&mut self, x: f64, y: f64) {
         self.cursor_px = (x, y);
+        // the scrollbar owns the motion while it is being dragged
+        if self.scroll_drag {
+            self.scroll_to_y(y);
+            return;
+        }
         // a drag on the bar reorders tabs (I10); on the grid it is selection
         if self.bar_press.is_some() {
             self.bar_drag();
@@ -1132,6 +1141,14 @@ impl App {
                 // exactly to copy from there
                 let px = self.cursor_px;
                 let (col, row) = self.cell_at(px.0, px.1);
+                // a press on the scrollbar drags the view, not the text
+                if let Some((x0, x1, y0, y1, _)) = self.scrollbar_rect() {
+                    if px.0 >= x0 && px.0 < x1 && px.1 >= y0 && px.1 < y0 + y1 {
+                        self.scroll_drag = true;
+                        self.scroll_to_y(px.1);
+                        return;
+                    }
+                }
                 // Ctrl+click opens the `OSC 8` link under the pointer (and does
                 // not select): it is the same modifier that underlines them
                 if self.mods.control_key() {
@@ -1165,6 +1182,7 @@ impl App {
             (ElementState::Released, Left) => {
                 // releasing on the bar ends the reorder drag (I10)
                 self.bar_press = None;
+                self.scroll_drag = false;
                 self.tabs[self.active].dragging = false;
                 self.tabs[self.active].press = None;
                 if self.tabs[self.active].sel.is_some_and(|s| s.a != s.b) {
@@ -1327,6 +1345,43 @@ impl App {
     }
 
     /// Scrolls the view by `n` lines (positive = into the history).
+    /// Geometry of the scrollbar in window pixels: the 3 px strip on the grid's
+    /// right edge. `None` when there is nothing to scroll — the same condition
+    /// `Renderer::scrollbar` draws with.
+    fn scrollbar_rect(&self) -> Option<(f64, f64, f64, f64, usize)> {
+        let hist = self.tabs[self.active].term.scrollback.len();
+        let rows = self.tabs[self.active].term.rows;
+        if hist == 0 || rows == 0 {
+            return None;
+        }
+        let (cw, ch, pad) = self.cell_metrics();
+        let cols = self.tabs[self.active].term.cols;
+        let grid_w = cols as f32 * cw;
+        let left = f64::from(pad) + f64::from(self.side_w(cw)) + f64::from(grid_w);
+        let top = f64::from(pad) + f64::from(self.bar_h(ch));
+        let w = f64::from(3.0f32.min(cw));
+        Some((left - w, left, top, rows as f64 * f64::from(ch), hist))
+    }
+
+    /// Puts the view where the pointer is on the bar: the thumb sits at the
+    /// bottom when the view follows the output and at the top when it is at the
+    /// oldest line.
+    fn scroll_to_y(&mut self, py: f64) {
+        let Some((_, _, top, h, hist)) = self.scrollbar_rect() else {
+            return;
+        };
+        let rows = self.tabs[self.active].term.rows;
+        let thumb = (h * rows as f64 / (rows + hist) as f64).max(12.0).min(h);
+        let travel = h - thumb;
+        if travel <= 0.0 {
+            return;
+        }
+        let y = ((py - top) - thumb / 2.0).clamp(0.0, travel);
+        let off = ((1.0 - y / travel) * hist as f64).round() as i64;
+        let cur = self.tabs[self.active].view_off as i64;
+        self.scroll_view(off - cur);
+    }
+
     fn scroll_view(&mut self, n: i64) {
         let sb = self.tabs[self.active].term.scrollback.len() as i64;
         self.tabs[self.active].view_off =

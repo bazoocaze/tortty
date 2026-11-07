@@ -1133,6 +1133,32 @@ impl Renderer {
         }
     }
 
+    /// The scrollbar: a 3 px strip on the grid's right edge, drawn only when
+    /// there is history to scroll. The thumb is the share of the buffer the view
+    /// shows and it sits at the bottom while the view follows the output
+    /// (`view_off == 0`). No track frame and a translucent thumb: the strip is
+    /// **over** the last column, and a solid one would eat the text under it.
+    fn scrollbar(&mut self, f: &Frame<'_>) {
+        let hist = f.term.scrollback.len();
+        let rows = f.term.rows;
+        if hist == 0 || rows == 0 {
+            return;
+        }
+        let cell_w = self.fonts.cw;
+        let cell_h = self.fonts.ch;
+        let strip = 3.0f32.min(cell_w);
+        let x = f.term.cols as f32 * cell_w - strip;
+        let track_h = rows as f32 * cell_h;
+        let thumb_h = (track_h * rows as f32 / (rows + hist) as f32)
+            .max(12.0)
+            .min(track_h);
+        let off = f.view_off.min(hist) as f32 / hist as f32;
+        let y = (track_h - thumb_h) * (1.0 - off);
+        let ink = self.color(Color::Default, self.fg);
+        self.push_rect(x, 0.0, strip, track_h, [ink[0], ink[1], ink[2], 0.10]);
+        self.push_rect(x, y, strip, thumb_h, [ink[0], ink[1], ink[2], 0.55]);
+    }
+
     pub fn build(&mut self, f: &Frame<'_>) {
         let Frame {
             tab,
@@ -1236,6 +1262,9 @@ impl Renderer {
         if let Some(cards) = sidebar {
             self.sidebar(cards);
         }
+
+        // 2d) scrollbar: over the grid's right edge, under the cursor/toast
+        self.scrollbar(f);
 
         // 3) cursor (on top; instance order is blend order)
         self.build_cursor(f);

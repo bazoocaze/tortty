@@ -37,7 +37,6 @@ with the same id, until it closes. One piece of work has one owner.
 | M-J | Splits (more than one terminal in the same view) | a split is a view in the same `wgpu` surface, no toolkit involved | when two terminals side by side become routine | high |
 | M-K | OSC 9/777 notification + urgency | "the build finished" without having to look at the window | when a long build requires watching | low |
 | M-L | Images: z-index, placement id, Unicode placeholder, source crop | today the image is drawn on top and there is no fine control over it | after the basic image (F6) is working with `icat` | medium |
-| M-M | Visible, draggable scrollbar | today only the wheel and `Shift+Pg` (which already work); the position indicator is missing | when scrolling a big log only with the wheel gets tiring | low: rectangle + state |
 | M-N | Socket transport on Windows (named pipe) | `benchrun.py` and automation need to work there too | together with `M-X` (Windows) | low |
 | M-P | Remap the selection anchor on reflow | today reflow kills the selection instead of shifting it. `reflow` already computes `(paragraph, offset)` for each old line, so the new anchor is one calculation | when losing a long selection on a resize annoys | low |
 | M-U | Parser: combining characters (compose into the previous cell) | a combining mark occupies its own cell today, and that is what breaks a dead accent in an app that sends `U+0301` separately (DECALN, the other half, closed on 2026-11-06) | the first decomposed accent coming out displaced | medium: touches `wcwidth`/advance |

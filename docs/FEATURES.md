@@ -34,8 +34,10 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   reflow there).
 - Reflow on resize: joins and splits soft lines and keeps the coloured
   background. **limit:** it kills the selection anchor (`M-P`).
-- Scrollback with a configurable cap ([`CONFIG.md`](CONFIG.md)).
-  **limit:** no search (`M-D`) and no visible scrollbar (`M-M`).
+- Scrollback with a configurable cap ([`CONFIG.md`](CONFIG.md)) and a 3 px
+  scrollbar on the grid's right edge: it appears only when there is history, the
+  thumb is the share of the buffer the view shows, a click jumps and a drag walks
+  it. **limit:** no search (`M-D`).
 - Wide cells carry a continuation mark. **limit:** a combining mark arriving in a
   later commit becomes its own cell (`M-U`).
 - `TERM=xterm-256color` with no terminfo of our own.

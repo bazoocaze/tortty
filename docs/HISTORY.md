@@ -1646,3 +1646,28 @@ y=16 — one row, four cells), and a Ctrl+click with a stub `xdg-open` in `PATH`
 that received exactly `https://example.com/x`. The same probe found the trap that
 `xdotool key` under `Xvfb` does nothing without `windowfocus` (no WM to set
 focus), now recorded in [`DEBUG.md`](DEBUG.md).
+
+## 2026-11-06 — `M-M`: the scrollbar
+
+A 3 px strip on the grid's right edge, drawn only when `scrollback` is not empty:
+a translucent track (10% of the foreground) and a thumb (55%) whose height is the
+share of the buffer the view shows, at the bottom while the view follows the
+output and at the top at the oldest line. A press on the strip jumps to that
+position, and the drag walks it — the motion belongs to the view, not to the text
+selection (`scroll_drag` in the app).
+
+It is drawn **over** the last column instead of reserving a strip: reserving would
+narrow every terminal for a control that only exists when there is history, and
+3 px of translucent ink over the last column costs less than the column would.
+
+Nothing here touches the core: the numbers were already there (`scrollback.len()`,
+`view_off`, `border` of the grid in `pad`/`bar`/`side`). The thumb enters the frame
+after the grid and before the chrome, so the bar, the sidebar and the toast stay
+on top.
+
+Verified by hand on an Xvfb, with `seq 1 200` as the load (history 193, window
+386x149, strip at x=384): at `view_off=0` the pixel at the bottom of the strip is
+`7f7f7f` (thumb) and at the top `161616` (track); after a click at the top of the
+strip `state` says `view_off=193` and the two colours swap; and a drag from the top
+to the middle lands on `view_off=97` (half of 193). `tools/render-check.sh` still
+passes — with no history, nothing is drawn.
