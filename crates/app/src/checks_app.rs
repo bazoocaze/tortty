@@ -225,7 +225,8 @@ fn mouse_modes_and_sgr() -> Result<(), String> {
             return Err(format!("{name}: {obtained:?}, expected {expected:?}"));
         }
     }
-    // a wheel release does not exist in the old protocol (only in SGR)
+    // a wheel release does not exist in any protocol: xterm sends the press
+    // only, and a TUI that counts both scrolls twice as far (B40)
     let run = mouse::Ev {
         button: 64,
         col: 0,
@@ -237,8 +238,8 @@ fn mouse_modes_and_sgr() -> Result<(), String> {
     if !mouse::encode(run, legacy).is_empty() {
         return Err("a wheel release should vanish in the old protocol".into());
     }
-    if mouse::encode(run, sgr).is_empty() {
-        return Err("a wheel release should go out in SGR".into());
+    if !mouse::encode(run, sgr).is_empty() {
+        return Err("a wheel release should vanish in SGR too".into());
     }
     // ?1005: the coordinate goes with 33 added and encoded in UTF-8 — 300 becomes
     // U+014D (`c5 8d`), while the old protocol saturates at 222 (`ff`)

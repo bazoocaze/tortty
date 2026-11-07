@@ -204,6 +204,11 @@ pub struct Tab {
     pub click: Option<(Anchor, u8, std::time::Instant)>,
     /// Accumulated row fraction from the wheel (a trackpad sends fractions).
     pub scroll_frac: f32,
+    /// Travel still owed to a mouse-reporting child, in detents, per axis
+    /// (vertical, horizontal): the fraction that did not complete a notch yet
+    /// (`B40`). Separate from `scroll_frac` because that one is worth 3 lines a
+    /// notch and belongs to our own history.
+    pub child_frac: (f32, f32),
     /// BELLs already handled (the `Term` counts them; the app decides what to play).
     pub bells_seen: u32,
     /// `OSC 9`/`777` already delivered (`M-K`): the toast fired and urgency
@@ -237,6 +242,7 @@ impl Tab {
             dragging: false,
             click: None,
             scroll_frac: 0.0,
+            child_frac: (0.0, 0.0),
             bells_seen: 0,
             notifs_seen: 0,
             notifs_acked: 0,
@@ -401,6 +407,10 @@ pub struct App {
     /// **two** events per notch (press and release), and without this one notch
     /// switches tab and the second undoes it.
     bar_wheel: Option<(std::time::Instant, i8)>,
+    /// Last detent handed to a mouse-reporting child (instant and direction), for
+    /// the same reason as `bar_wheel`: the press and the release of one notch
+    /// arrive as two `MouseWheel` events, and both would be reported (`B40`).
+    wheel_pair: Option<(std::time::Instant, i8)>,
     mods: ModifiersState,
     /// Last mouse position in physical pixels (the base of `cell_at`).
     cursor_px: (f64, f64),
@@ -502,6 +512,7 @@ impl App {
             rename: None,
             card_click: None,
             bar_wheel: None,
+            wheel_pair: None,
             mods: ModifiersState::empty(),
             cursor_px: (0.0, 0.0),
             held: None,
@@ -1172,35 +1183,52 @@ impl App {
             self.select_tab(at);
             return;
         }
-        // one notch is worth 3 lines; a trackpad
-        // sends a fraction of a line per event and the rest accumulates in
-        // `scroll_frac`
-        let (hx, lines) = match delta {
-            MouseScrollDelta::LineDelta(x, y) => {
-                (crate::mouse::wheel_lines(x), crate::mouse::wheel_lines(y))
-            },
-            MouseScrollDelta::PixelDelta(p) => {
-                let ch = self.renderer.as_ref().map_or(19.0, |r| r.fonts.ch);
-                (0.0, p.y as f32 / ch)
-            },
-        };
-        if self.tabs[self.active].term.mouse_mode != 0
-            && self.tabs[self.active].view_off == 0
-            && (lines != 0.0 || hx != 0.0)
-        {
-            for (v, up, down) in [
-                (lines, crate::mouse::WHEEL_UP, crate::mouse::WHEEL_DOWN),
-                (hx, crate::mouse::WHEEL_RIGHT, crate::mouse::WHEEL_LEFT),
+        if self.tabs[self.active].term.mouse_mode != 0 && self.tabs[self.active].view_off == 0 {
+            // The child decides how far one notch goes; what it needs is the
+            // *count*, and one event is not one notch: a touchpad delivers
+            // fractions of a detent at up to ~37 events/s (measured on
+            // 2026-11-04). Reporting one notch per event made `opencode 2` fly
+            // through dozens of screens on a whisper of the finger (B40).
+            //
+            // Here the units are the raw ones — detents, or cell heights for a
+            // pixel delta — never `wheel_lines`: the 3-line factor is ours, and
+            // it belongs to the history below.
+            let ch = self.renderer.as_ref().map_or(19.0, |r| r.fonts.ch);
+            let (vy, hx) = match delta {
+                MouseScrollDelta::LineDelta(x, y) => (y, x),
+                MouseScrollDelta::PixelDelta(p) => (p.y as f32 / ch, p.x as f32 / ch),
+            };
+            for (v, up, down, vertical) in [
+                (vy, crate::mouse::WHEEL_UP, crate::mouse::WHEEL_DOWN, true),
+                (
+                    hx,
+                    crate::mouse::WHEEL_RIGHT,
+                    crate::mouse::WHEEL_LEFT,
+                    false,
+                ),
             ] {
                 if v == 0.0 {
                     continue;
                 }
                 let btn = if v > 0.0 { up } else { down };
-                self.report_mouse(btn, true, false);
-                self.report_mouse(btn, false, false);
+                for _ in 0..self.child_wheel(v, vertical) {
+                    // a wheel has no release: `mouse::encode` drops it, so this
+                    // is the whole event (one press per notch)
+                    self.report_mouse(btn, true, false);
+                }
             }
             return;
         }
+        // one notch is worth 3 lines; a trackpad
+        // sends a fraction of a line per event and the rest accumulates in
+        // `scroll_frac`
+        let lines = match delta {
+            MouseScrollDelta::LineDelta(_, y) => crate::mouse::wheel_lines(y),
+            MouseScrollDelta::PixelDelta(p) => {
+                let ch = self.renderer.as_ref().map_or(19.0, |r| r.fonts.ch);
+                p.y as f32 / ch
+            },
+        };
         self.tabs[self.active].scroll_frac += lines;
         let n = self.tabs[self.active].scroll_frac.trunc();
         self.tabs[self.active].scroll_frac -= n;
@@ -1208,6 +1236,36 @@ impl App {
             // wheel up (positive delta) goes into the history
             self.scroll_view(n as i64);
         }
+    }
+
+    /// How many wheel notches this event is worth for a mouse-reporting child,
+    /// in the event's own direction.
+    ///
+    /// A detent — exactly ±1.0, which is what the X11 wheel buttons become — is
+    /// one notch, and X11 delivers it twice (press and release, same direction,
+    /// ~1 ms apart), so the second half is dropped like the tab bar does. A
+    /// touchpad fraction is carried in `Tab::child_frac` until it completes a
+    /// detent of travel (`B40`).
+    fn child_wheel(&mut self, lines: f32, vertical: bool) -> i32 {
+        // the same exact compare that `mouse::wheel_lines` documents: a detent
+        // is exactly ±1.0 and a touchpad never lands there
+        #[allow(clippy::float_cmp)]
+        let detent = lines.abs() == 1.0;
+        if detent {
+            let dir: i8 = if lines > 0.0 { 1 } else { -1 };
+            let now = std::time::Instant::now();
+            let repeated = self.wheel_pair.is_some_and(|(when, previous)| {
+                previous == dir && now.duration_since(when).as_millis() < 10
+            });
+            self.wheel_pair = Some((now, dir));
+            return i32::from(!repeated);
+        }
+        let frac = if vertical {
+            &mut self.tabs[self.active].child_frac.0
+        } else {
+            &mut self.tabs[self.active].child_frac.1
+        };
+        crate::mouse::child_notches(frac, lines).abs()
     }
 
     /// Terminal mouse: press sets the anchor, drag becomes selection, release

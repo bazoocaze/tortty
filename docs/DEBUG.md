@@ -353,6 +353,20 @@ is the latency wanted. The socket verbs that only read (`state`, `text`, `prof`,
 `log`, `osc`) must not draw either: `debug_read_only` keeps a poll loop from
 buying a frame per request, which is what `benchrun.py` does with `state`.
 
+## Pitfall: one input event is not one notch
+
+`on_wheel`'s branch for a child that reports mouse used the delta only as a sign:
+every `MouseWheel` became a full notch, so a touchpad — fractions of a detent at
+up to ~125 events/s from X — scrolled dozens of screens on a whisper of the
+finger (`B40`, 2026-11-07). The count has to follow the **travel**
+(`mouse::child_notches` + `Tab::child_frac`), one detent per notch. Two traps sit
+beside it: X11 turns one detent into button press *and* release, two
+`MouseWheel` events with the same direction (dedupe like `bar_wheel`), and no
+protocol has a wheel release — `mouse::encode` drops it, because a TUI that
+counts every report rolls twice. Probe without the owner's display: Xvfb plus a
+child that writes `?1000h`/`?1006h` and logs what arrives, then `xdotool click
+4` three times — three `<64;…M` and nothing else.
+
 ## Pitfall: a pending X error kills the app in `set_title`
 
 Symptom, on X11:

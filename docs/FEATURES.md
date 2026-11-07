@@ -64,9 +64,10 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   field (`CSI 33;2u`).
 - Mouse: X10 and SGR encodings, modifiers in the button code, wheel, buttons 8/9,
   motion with and without a button, and `?1016` (the SGR shape with the
-  coordinates in pixels from the grid origin). **limit:** the wheel handed to
-  the child keeps no magnitude — one event per event, so a touchpad scrolls many
-  screens inside a TUI (`B40`).
+  coordinates in pixels from the grid origin). The wheel handed to the child is
+  press only — no protocol has a wheel release — and its **count follows the
+  finger**: a detent is one notch, a touchpad fraction accumulates until it
+  completes one, and a direction change drops the remainder.
 - Selection: drag with a 3 px threshold, double click for the word (a word ends
   only at whitespace, so a path comes out whole), triple click for the whole
   line — a soft-wrapped line included —, absolute anchor that survives scrolling

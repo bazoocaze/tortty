@@ -1773,3 +1773,44 @@ Verified on an Xvfb 90×12 (cell 11.2 × 21.7 px): box 438 × 38 px, surface
 `#1e1e1e` = 14% of `#d6d6d6` over `#000000`, border `#cdcd00` on the four 1 px
 edges, marker at x+5, 12 px and 8 px from the window edges. `quality-check.sh
 --fast` and `tools/render-check.sh` still pass.
+
+## 2026-11-07 — `B40`: the wheel to a reporting child carries the finger's travel
+
+Reported as "the touchpad scroll inside `opencode 2` is hyper-sensitive: many
+lines with a minimal movement", while the same app under kitty is fine. The
+branch of `on_wheel` that hands the wheel to a child that reports mouse used the
+delta only as a **sign and a non-zero test**: every `MouseWheel` event became one
+whole notch. A touchpad delivers *fractions* of a detent at a high rate (X
+sends up to ~125 events/s), so a whisper of the finger was worth dozens of
+notches — the very defect that was fixed for the history on 2026-11-04
+(`wheel_lines` + `scroll_frac`) and never applied to the child's branch. Two
+more things in the same path: the SGR wheel **release** went out (`<64;x;ym`),
+which no xterm sends and which a TUI that counts reports rolls twice; and X11
+delivers one detent as button press *and* release — two `MouseWheel` events,
+both reported.
+
+The fix is the same rule, with the child's own units: `mouse::child_notches`
+accumulates the travel in a per-tab `child_frac` (one per axis) and emits one
+notch per detent, carrying the remainder and dropping it on a direction change
+(kitty's V120 rule, so a reversal does not eat the first event); a detent —
+exactly ±1.0 — is one notch and never enters the accumulator, with the
+press/release pair deduplicated in 10 ms (the guard the tab bar already had);
+`mouse::encode` drops **every** wheel release; and the units are the raw ones (a
+detent, or a cell height for a pixel delta), never the 3-line factor, which is
+ours and belongs to the history. The horizontal pixel delta, discarded before,
+now goes out too.
+
+Numbers: Xvfb + a child that enables `?1000/?1006` and logs what arrives, with
+`xdotool click 4` three times — **6 reports before** (`<64;…M` plus `<64;…m` per
+click), **3 after** (`<64;…M` only). Unit: three touchpad events of 0.4, 0.3 and
+0.4 detent were three notches and are now one notch plus 0.1 carried.
+
+What was **not** measured: the per-event delta of this machine's touchpad (the
+passive `xinput` capture did not land), so "one detent per notch" is the anchor —
+the same order as kitty, which spends one notch per cell of finger travel. If
+the feel still asks for less, the next step is a multiplier knob
+(`touch_scroll_multiplier`), and it belongs to `M-H`.
+
+Verified: `tools/quality-check.sh` (fmt, clippy, test, release build, selftest,
+parsebench all green), the Xvfb wheel probe above, and
+`tools/render-check.sh`.

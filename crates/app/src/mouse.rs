@@ -46,7 +46,8 @@ pub const MOD_CTRL: u8 = 16;
 /// Motion mark in the button code.
 pub const MOD_MOTION: u8 = 32;
 
-/// The wheel is press only in the old protocol (there is no release there).
+/// The wheel is press only: xterm has no release for it, and a TUI that counts
+/// every `<64;x;yM` scrolls twice as far when it also gets the `<64;x;ym`.
 #[inline]
 pub fn is_wheel(button: u8) -> bool {
     (WHEEL_UP..=WHEEL_RIGHT).contains(&button)
@@ -91,8 +92,8 @@ pub struct Ev {
     pub mods: u8,
 }
 
-/// Encodes an event. Returns empty when the event must not go out (wheel
-/// release in the old protocol, which does not exist there).
+/// Encodes an event. Returns empty when the event must not go out (a wheel
+/// release, which no protocol has).
 pub fn encode(ev: Ev, proto: Proto) -> Vec<u8> {
     let Ev {
         button,
@@ -107,7 +108,7 @@ pub fn encode(ev: Ev, proto: Proto) -> Vec<u8> {
     // protocol to fall back to, so it decides the shape on its own
     let sgr = sgr || pixels;
     let mods = mods & (MOD_SHIFT | MOD_ALT | MOD_CTRL);
-    if !pressed && !sgr && is_wheel(button) {
+    if !pressed && is_wheel(button) {
         return Vec::new();
     }
     let mut b = button | mods;
@@ -164,6 +165,34 @@ pub fn wheel_lines(v: f32) -> f32 {
     } else {
         v
     }
+}
+
+/// Notches owed to a child that reports mouse, from the distance the finger
+/// asked for.
+///
+/// The child decides how far one notch goes; what it needs from the terminal is
+/// the *count*, and one event is not one notch: a touchpad delivers fractions
+/// of a detent at up to ~37 events/s (measured on 2026-11-04), so the fraction
+/// accumulates here and one detent of travel buys one notch (B40). A detent —
+/// exactly ±1.0 — never comes through here: it is already a whole notch, and
+/// the caller sends it without touching the remainder. A direction change drops
+/// the remainder, which has the wrong sign and would otherwise eat the first
+/// event of the new direction (kitty does the same with its V120 carry).
+pub fn child_notches(frac: &mut f32, lines: f32) -> i32 {
+    if lines == 0.0 || !lines.is_finite() {
+        return 0;
+    }
+    if *frac * lines < 0.0 {
+        *frac = 0.0;
+    }
+    *frac += lines;
+    let n = frac.trunc();
+    if n == 0.0 {
+        return 0;
+    }
+    *frac -= n;
+    // bounded by construction: the remainder is always below one detent
+    n as i32
 }
 
 #[cfg(test)]
@@ -254,17 +283,54 @@ mod tests {
     }
 
     #[test]
-    fn wheel_in_legacy_protocol_sends_no_release() {
+    fn a_wheel_release_goes_out_in_no_protocol() {
         let mut released = ev(WHEEL_UP, 1, 1);
         released.pressed = false;
-        let empty = encode(released, old());
-        assert_eq!(empty.len(), 0);
+        // a TUI that counts every mouse report scrolled twice as far while the
+        // SGR release came out too (B40)
+        assert_eq!(encode(released, old()).len(), 0);
+        assert_eq!(encode(released, sgr()).len(), 0);
         assert_eq!(
             encode(ev(WHEEL_UP, 0, 0), old()),
             vec![0x1b, b'[', b'M', 32 + WHEEL_UP, 33, 33]
         );
-        // in SGR both go out
-        assert_ne!(encode(released, sgr()).len(), 0);
+    }
+
+    #[test]
+    fn a_touchpad_buys_one_notch_per_detent_of_travel() {
+        let mut frac = 0.0;
+        // the measured gesture: fractions of a detent, one event each, and none
+        // of them is worth a notch on its own
+        assert_eq!(child_notches(&mut frac, 0.4), 0);
+        assert_eq!(child_notches(&mut frac, 0.3), 0);
+        assert_eq!(child_notches(&mut frac, 0.4), 1, "1.1 detents is one notch");
+        assert!((frac - 0.1).abs() < 0.001, "and a tenth is carried: {frac}");
+        // a fast flick carries two or three detents in a single event
+        assert_eq!(child_notches(&mut frac, 2.06), 2);
+        assert_eq!(child_notches(&mut frac, 3.5), 3);
+    }
+
+    #[test]
+    fn a_direction_change_drops_the_carried_fraction() {
+        let mut frac = 0.0;
+        assert_eq!(child_notches(&mut frac, 0.9), 0);
+        // backwards: the 0.9 in the other direction would eat the first event
+        assert_eq!(child_notches(&mut frac, -0.2), 0);
+        assert_eq!(
+            child_notches(&mut frac, -0.8),
+            -1,
+            "the whole detent counts"
+        );
+        assert!((frac + 0.0).abs() < 0.001, "nothing left over: {frac}");
+    }
+
+    #[test]
+    fn no_delta_and_no_nonsense_buy_nothing() {
+        let mut frac = 0.0;
+        assert_eq!(child_notches(&mut frac, 0.0), 0);
+        assert_eq!(child_notches(&mut frac, f32::NAN), 0);
+        assert_eq!(child_notches(&mut frac, f32::INFINITY), 0);
+        assert_eq!(frac, 0.0);
     }
 
     #[test]
@@ -331,17 +397,18 @@ mod tests {
 
     #[test]
     fn wheel_and_modifiers_in_each_protocol() {
-        // in SGR the wheel has a release, and it goes out lowercase
+        // in SGR the wheel goes out as a press and never as a release (B40)
         assert_eq!(encode(ev(WHEEL_UP, 9, 4), sgr()), b"\x1b[<64;10;5M");
         let mut low = ev(WHEEL_DOWN, 9, 4);
         low.pressed = false;
-        assert_eq!(encode(low, sgr()), b"\x1b[<65;10;5m");
+        assert_eq!(encode(low, sgr()), Vec::<u8>::new());
         // ctrl+shift+wheel: 64 | 16 | 4 = 84
         let mut mods = ev(WHEEL_UP, 0, 0);
         mods.mods = MOD_SHIFT | MOD_CTRL;
         assert_eq!(encode(mods, sgr()), b"\x1b[<84;1;1M");
         // in the old protocol the modifier enters the button byte, and the
-        // wheel release does not exist: the app only sees the press
+        // wheel release does not exist in any protocol: the app only sees the
+        // press
         assert_eq!(encode(mods, old()), vec![0x1b, b'[', b'M', 32 + 84, 33, 33]);
         let mut release_key = ev(WHEEL_UP, 0, 0);
         release_key.pressed = false;
