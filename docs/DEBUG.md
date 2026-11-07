@@ -33,10 +33,39 @@ exists (it avoids two instances fighting over the same socket).
 | `--no-vsync` | draws as fast as possible (measure throughput) |
 | `--prof` | turns on the `draw`/`parse`/`pty` counters (queried by `prof`) |
 | `--debug-socket PATH\|auto` | JSON introspection socket (`auto` = `$XDG_RUNTIME_DIR/tortty-<pid>.sock`) |
-| `--debug-log FILE` | event log (`logln!`) |
+| `--debug-log FILE` | event log (`logln!`): state dumps, toasts, config reloads and every `?2026` transaction |
 | `WGPU_BACKEND=gl\|vulkan` | forces the `wgpu` backend (escape valve for a problematic GPU) |
 | `WGPU_ADAPTER_NAME=…` | picks the adapter (useful to test llvmpipe) |
 | `SHELL=…` | default shell when there is no `--cmd` |
+
+### The `?2026` log: what a synchronized update did
+
+`--debug-log` records every `?2026` (synchronized output) window the child
+opens, one line per window, with the counters of what happened inside it:
+
+```
+log start: +0.0ms epoch 1794081658402 ms
+tab 1 sync closed +4865.4ms after 0.0 ms — feeds 1, 0 B, view 0→0, hist 0 — ed0×0 ... el×18 home×0 stbm×0 alt×0 ris×0 decstr×0 hist+0
+```
+
+- `feeds 1, 0 B` — the window opened **and** closed inside one pty read, so the
+  parser never held the screen and the duration is `0.0 ms`. `feeds > 1` means
+  the app took several reads to finish the frame, and then the duration is the
+  time it kept us waiting.
+- `ed0..3`, `el`, `home`, `stbm`, `alt`, `ris`, `decstr` — the clears and resets
+  the window carried: `ed2` erases the screen, `ed3` erases the scrollback too,
+  `el` is the per-line erase a repaint uses, `home` is `CSI H` to `1;1`, `stbm`
+  is a scroll region, `alt` an alt-screen switch, `ris`/`decstr` the two resets.
+- `hist+N` — lines the window pushed into the scrollback. Each of them moves a
+  scrolled-up view by one line (`view_after_output`), so this is the number to
+  look at when the view seems to run away while an app repaints.
+- `view A→B` — our view offset before and after the read.
+
+The core counts and the app times: `SyncTrace` (`crates/core/src/term.rs`) has no
+clock, and the app stamps the window when it first sees it open. A window that
+never closes is logged once as `sync open` and then only at `state` (`"sync":
+true`); a `RIS` inside it closes the trace with `ris×1` because a full reset ends
+the DEC modes.
 
 ## Visual verification without stealing the owner's screen
 

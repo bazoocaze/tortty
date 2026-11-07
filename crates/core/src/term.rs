@@ -32,6 +32,42 @@ const OSC_SEEN_MAX: usize = 256;
 /// Ceiling for the title stack (`CSI 22/23 t`): an app that pushes without
 /// popping must not grow it without bound.
 const TITLE_STACK_MAX: usize = 16;
+/// Ceiling for the closed `?2026` traces waiting for the app to drain them: an
+/// app that never asks must not make the history grow without bound.
+const SYNC_TRACES_MAX: usize = 64;
+
+/// What one `?2026` (synchronized output) transaction carried — the raw
+/// material of the debug log.
+///
+/// Counters, never time: the core has no clock, so the *duration* belongs to
+/// whoever feeds it. What lives here is the content of the window, which is the
+/// question the log answers: what a repaint clears, resets and scrolls while it
+/// holds the screen.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SyncTrace {
+    /// Reads that carried the window, the one that opened it included.
+    pub feeds: u32,
+    /// Bytes of the reads that **found** the window open. The read that opens
+    /// it is not charged: its length is not the window's.
+    pub bytes: u64,
+    /// `ED` per argument (index 0..=3): `2` erases the screen, `3` erases the
+    /// scrollback too — the one that can make the view jump.
+    pub ed: [u32; 4],
+    /// Any `EL` (`CSI K`): the line-by-line redraw inside a repaint.
+    pub el: u32,
+    /// Cursor sent to the top-left cell (`CSI H`/`CSI f` at `1;1`).
+    pub home: u32,
+    /// `DECSTBM` (`CSI r`): the window played with the scroll region.
+    pub stbm: u32,
+    /// Alternate-screen switches (`?47`/`?1047`/`?1049`).
+    pub alt: u32,
+    /// `ESC c` — full reset (`RIS`).
+    pub ris: u32,
+    /// `CSI ! p` — soft reset (`DECSTR`).
+    pub decstr: u32,
+    /// Lines pushed into the scrollback while the window was open.
+    pub hist: u64,
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum State {
@@ -138,6 +174,11 @@ pub struct Term {
     pub focus_report: bool,
     pub bracketed_paste: bool,
     pub sync_output: bool,
+    /// Trace of the `?2026` window that is open right now.
+    sync_trace: Option<SyncTrace>,
+    /// Traces of the windows that already closed, waiting for the app to drain
+    /// them (capped: a log is a diagnostic, not a leak).
+    sync_closed: Vec<SyncTrace>,
     pub autowrap: bool,
     /// LNM (`CSI 20 h`): LF returns to column 0 as well.
     pub lnm: bool,
@@ -247,6 +288,8 @@ impl Term {
             focus_report: false,
             bracketed_paste: false,
             sync_output: false,
+            sync_trace: None,
+            sync_closed: Vec::new(),
             autowrap: true,
             lnm: false,
             origin: false,
@@ -354,10 +397,40 @@ impl Term {
         let limit = self.scrollback_limit;
         let hist = self.hist_gen + 1;
         let abs = self.abs_gen + 1;
+        // the log survives the reset (a `RIS` *is* one of the events it reports)
+        let mut closed = std::mem::take(&mut self.sync_closed);
+        if let Some(mut t) = self.sync_trace.take() {
+            // `RIS` resets the DEC modes, so the window ends here without a close
+            t.ris += 1;
+            if closed.len() < SYNC_TRACES_MAX {
+                closed.push(t);
+            }
+        }
         *self = Term::new(cols, rows);
         self.scrollback_limit = limit;
         self.hist_gen = hist;
         self.abs_gen = abs;
+        self.sync_closed = closed;
+    }
+
+    /// Counts one event in the open `?2026` window (nothing to do when none is
+    /// open: the tracing costs one `Option` test per event, not per byte).
+    fn sync_count(&mut self, f: impl FnOnce(&mut SyncTrace)) {
+        if let Some(t) = self.sync_trace.as_mut() {
+            f(t);
+        }
+    }
+
+    /// The `?2026` window that is open now, for the app to stamp when it began.
+    #[must_use]
+    pub fn sync_open(&self) -> Option<&SyncTrace> {
+        self.sync_trace.as_ref()
+    }
+
+    /// The `?2026` windows that closed since the last call (the app records
+    /// them; whoever does not call this loses the trace, by design).
+    pub fn take_sync_closed(&mut self) -> Vec<SyncTrace> {
+        std::mem::take(&mut self.sync_closed)
     }
 
     /// DECSTR (soft reset): touches neither the grid nor the scrollback.
@@ -696,6 +769,7 @@ impl Term {
             );
             let row = self.grid.remove(self.top);
             if keep {
+                self.sync_count(|t| t.hist += 1);
                 self.scrollback.push_back(row);
                 while self.scrollback.len() > self.scrollback_limit {
                     self.scrollback.pop_front();
@@ -843,6 +917,8 @@ impl Term {
     // -------------------------------------------------------------- erasing
 
     fn erase_display(&mut self, n: u32) {
+        let which = usize::try_from(n).map_or(3, |v| v.min(3));
+        self.sync_count(|t| t.ed[which] += 1);
         match n {
             2 | 3 => self.touch_all(),
             1 => self.mark_rows(0, self.cy + 1),
@@ -893,6 +969,7 @@ impl Term {
     }
 
     fn erase_line(&mut self, n: u32) {
+        self.sync_count(|t| t.el += 1);
         self.touch(self.cy);
         let cell = self.blank_cell();
         match n {
@@ -1126,6 +1203,7 @@ impl Term {
                 7 => self.autowrap = on,
                 25 => self.cursor_visible = on,
                 47 | 1047 | 1049 => {
+                    self.sync_count(|t| t.alt += 1);
                     if on {
                         self.enter_alt(p == 1049);
                     } else {
@@ -1148,7 +1226,25 @@ impl Term {
                 1016 => self.mouse_px = on,
                 1004 => self.focus_report = on,
                 2004 => self.bracketed_paste = on,
-                2026 => self.sync_output = on,
+                2026 => {
+                    if on && !self.sync_output {
+                        // a window opens: the trace starts here, and the read
+                        // that carries it counts as the first feed
+                        self.sync_trace = Some(SyncTrace {
+                            feeds: 1,
+                            ..SyncTrace::default()
+                        });
+                    } else if !on {
+                        // the close is what the app can time: the trace leaves
+                        // with whatever the window carried
+                        if let Some(t) = self.sync_trace.take() {
+                            if self.sync_closed.len() < SYNC_TRACES_MAX {
+                                self.sync_closed.push(t);
+                            }
+                        }
+                    }
+                    self.sync_output = on;
+                },
                 _ => {},
             }
         }
@@ -1272,6 +1368,10 @@ impl Term {
             b'H' | b'f' => {
                 let r = p(0, 1).max(1);
                 let c = p(1, 1).max(1);
+                if r == 1 && c == 1 {
+                    // the jump that a repaint makes before drawing over itself
+                    self.sync_count(|t| t.home += 1);
+                }
                 self.cursor_to(r as isize - 1, c as isize - 1);
             },
             b'I' => self.forward_tab(p(0, 1).max(1) as usize),
@@ -1341,6 +1441,7 @@ impl Term {
                     self.child_out
                         .extend_from_slice(format!("\x1b[{pre}{ps};{st}$y").as_bytes());
                 } else if inter == b'!' {
+                    self.sync_count(|t| t.decstr += 1);
                     self.soft_reset(); // DECSTR
                 }
             },
@@ -1356,6 +1457,7 @@ impl Term {
                 }
             },
             b'r' => {
+                self.sync_count(|t| t.stbm += 1);
                 let t = p(0, 1).max(1) as isize - 1;
                 let b = p(1, self.rows as u32).max(1) as isize - 1;
                 if t >= 0 && t < b && b < self.rows as isize {
@@ -1735,6 +1837,12 @@ impl Term {
     // ---------------------------------------------------------------- parser
 
     pub fn feed(&mut self, bytes: &[u8]) {
+        // one test per read, not per byte: the trace only grows while a `?2026`
+        // window is open, which is the rare case
+        if let Some(t) = self.sync_trace.as_mut() {
+            t.feeds += 1;
+            t.bytes += bytes.len() as u64;
+        }
         let mut i = 0usize;
         while i < bytes.len() {
             match self.state {
@@ -3489,6 +3597,76 @@ mod tests {
         assert_eq!(u.links.len(), LINK_MAX);
         u.feed(b"\x1b]8;;https://e/over\x07Q\x1b]8;;\x07");
         assert_eq!(u.grid[0].cells[0].link, 0);
+    }
+
+    #[test]
+    fn the_sync_trace_counts_what_the_window_cleared() {
+        let mut t = term();
+        t.feed(b"\x1b[?2026h");
+        assert!(t.sync_open().is_some());
+        t.feed(b"\x1b[2J\x1b[H\x1b[2K\x1b[?1049h\x1b[4;1r\x1b[!p");
+        assert_eq!(
+            t.take_sync_closed().len(),
+            0,
+            "still open, nothing to drain"
+        );
+        t.feed(b"\x1b[?2026l");
+        let closed = t.take_sync_closed();
+        assert_eq!(closed.len(), 1);
+        let tr = &closed[0];
+        assert_eq!(tr.ed[2], 1, "2J");
+        assert_eq!(tr.el, 1, "2K");
+        assert_eq!(tr.home, 1, "H");
+        assert_eq!(tr.alt, 1, "?1049h");
+        assert_eq!(tr.stbm, 1, "CSI r");
+        assert_eq!(tr.decstr, 1, "CSI ! p");
+        assert_eq!((tr.ris, tr.ed[3]), (0, 0), "no reset, no 3J");
+        // the read that opens the window counts as a feed but not as bytes
+        assert_eq!(tr.feeds, 3);
+        assert_eq!(
+            tr.bytes,
+            (b"\x1b[2J\x1b[H\x1b[2K\x1b[?1049h\x1b[4;1r\x1b[!p".len() + b"\x1b[?2026l".len())
+                as u64
+        );
+        // a second window is a second record
+        t.feed(b"\x1b[?2026h\x1b[3J\x1b[?2026l");
+        let closed = t.take_sync_closed();
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].ed[3], 1, "3J inside the second window");
+        assert_eq!(closed[0].feeds, 1, "one read carried the whole window");
+        assert_eq!(closed[0].bytes, 0);
+    }
+
+    #[test]
+    fn a_reset_inside_the_window_closes_the_trace() {
+        let mut t = term();
+        t.feed(b"\x1b[?2026h\x1b[2J");
+        t.feed(b"\x1bc");
+        assert!(!t.sync_output);
+        let closed = t.take_sync_closed();
+        assert_eq!(closed.len(), 1, "RIS ends the window");
+        assert_eq!(closed[0].ris, 1);
+        assert_eq!(closed[0].ed[2], 1);
+    }
+
+    #[test]
+    fn the_sync_trace_counts_the_lines_the_window_pushed_to_the_history() {
+        let mut t = term();
+        t.feed(b"\x1b[1000;1H"); // last row: the next line feeds scroll up
+        let before = t.scrollback.len();
+        t.feed(b"\x1b[?2026h");
+        for _ in 0..3 {
+            t.feed(b"\r\n");
+        }
+        t.feed(b"\x1b[?2026l");
+        let closed = t.take_sync_closed();
+        assert_eq!(closed.len(), 1);
+        let hist = (t.scrollback.len() - before) as u64;
+        assert!(
+            hist > 0,
+            "the cursor was at the bottom: lines went to history"
+        );
+        assert_eq!(closed[0].hist, hist);
     }
 
     #[test]

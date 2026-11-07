@@ -1840,3 +1840,37 @@ baseline at every step up to **7.5 s** (3710 px, box `270,106 106x35`) and are
 at 4.5 s.
 
 Verified: `tools/quality-check.sh`, the capture probe above.
+
+## 2026-11-07 — the `?2026` window gets a log
+
+The synchronized-output window was invisible: the core flipped
+`sync_output`, the gate held the frame, and nothing said what the child had done
+inside it. Debugging "the view runs to the top while an app repaints" needed the
+window's **content**, not the flag.
+
+Split on purpose. `SyncTrace` (`crates/core/src/term.rs`) is pure counters — it
+has no clock, so it can say what the window carried but not how long it lasted:
+`ed[0..3]`, `el`, `home`, `stbm`, `alt`, `ris`, `decstr`, the lines it pushed to
+the scrollback, the bytes of the reads that found it open, and how many reads
+carried it. The counting is one `Option` test on escapes that are already rare
+(and one per read, not per byte, in `feed`); a `RIS` closes the open trace with
+`ris×1`, because a full reset ends the DEC modes that keep it open. Closed traces
+wait for the app in a capped list, so a build that never logs does not grow it.
+
+`crates/app/src/app.rs` drains them after each read and writes one line per
+window into the `--debug-log`, with the only thing the core cannot know: the
+**duration**, taken between the read that opened the window and the one that
+closed it, plus the view offset before and after. Log format in `DEBUG.md`.
+
+Numbers from a real `pi` turn in 120×34 (the case that motivated it): every
+window came **atomic** — `feeds 1, 0 B`, `0.0 ms` — so the parser never held the
+screen for the dialect's own sync updates; the repaint is `EL` per line
+(`el×1` to `el×18`), never `2J`/`3J`, no `RIS`, no `DECSTR`, no scroll region, no
+alt screen. What they do carry is `hist+N` (1..7 lines pushed to the history per
+window): with the view scrolled up, each of those lines moves the anchor by one
+(`view_after_output`), which is the mechanism to look at when the view appears to
+run away — and the reason the log prints `view A→B`.
+
+Verified: `cargo test -p tortty-core` (three new tests: counters inside a window,
+`RIS` closing it, lines pushed to the history), `tools/quality-check.sh`, and the
+Xvfb run above against both a synthetic child and `pi`.

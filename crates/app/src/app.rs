@@ -177,6 +177,63 @@ pub fn logln(msg: &str) {
     }
 }
 
+/// When this process started: the `+ms` stamps of the debug log are relative to
+/// it, and the log says the epoch once so they can be turned into wall clock.
+static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+fn log_stamp() -> String {
+    let start = START.get_or_init(std::time::Instant::now);
+    format!("+{:.1}ms", start.elapsed().as_secs_f64() * 1000.0)
+}
+
+/// One `?2026` transaction in the debug log: when it opened, how long it held
+/// the screen, and what it cleared/reset while holding it (`SyncTrace`).
+///
+/// The duration is the app's alone — the core has no clock — and it measures
+/// what the window cost *us*: the time between the read that opened it and the
+/// one that closed it. A window that opens and closes in a single read is
+/// therefore `0.0 ms` with `feeds 1`, which is the honest answer: the parser
+/// never held anything.
+fn log_sync(tab: &mut Tab, who: &str, view_before: usize, now: std::time::Instant) {
+    let view_now = tab.view_off;
+    if let Some(t) = tab.term.sync_open() {
+        if tab.sync_at.is_none() {
+            tab.sync_at = Some(now);
+            logln(&format!(
+                "{who} sync open {} — feeds {}, {} B, view {view_before}, hist {}{}",
+                log_stamp(),
+                t.feeds,
+                t.bytes,
+                tab.term.scrollback.len(),
+                tally(t),
+            ));
+        }
+    }
+    for t in tab.term.take_sync_closed() {
+        let held = tab
+            .sync_at
+            .take()
+            .map_or(0.0, |at| now.duration_since(at).as_secs_f64() * 1000.0);
+        logln(&format!(
+            "{who} sync closed {} after {held:.1} ms — feeds {}, {} B, view {view_before}→{view_now}, \
+             hist {}{}",
+            log_stamp(),
+            t.feeds,
+            t.bytes,
+            tab.term.scrollback.len(),
+            tally(&t),
+        ));
+    }
+}
+
+/// The counters of one window, in a fixed order so two lines can be diffed.
+fn tally(t: &tortty_core::term::SyncTrace) -> String {
+    format!(
+        " — ed0×{} ed1×{} ed2×{} ed3×{} el×{} home×{} stbm×{} alt×{} ris×{} decstr×{} hist+{}",
+        t.ed[0], t.ed[1], t.ed[2], t.ed[3], t.el, t.home, t.stbm, t.alt, t.ris, t.decstr, t.hist
+    )
+}
+
 /// One tab: a terminal and the pty feeding it, plus the state that only makes
 /// sense while it is in front (view, selection, mouse drag).
 ///
@@ -209,6 +266,9 @@ pub struct Tab {
     /// (`B40`). Separate from `scroll_frac` because that one is worth 3 lines a
     /// notch and belongs to our own history.
     pub child_frac: (f32, f32),
+    /// When the `?2026` window currently open was first seen. This is the only
+    /// clock the transaction gets: the core counts, the app times.
+    sync_at: Option<std::time::Instant>,
     /// BELLs already handled (the `Term` counts them; the app decides what to play).
     pub bells_seen: u32,
     /// `OSC 9`/`777` already delivered (`M-K`): the toast fired and urgency
@@ -243,6 +303,7 @@ impl Tab {
             click: None,
             scroll_frac: 0.0,
             child_frac: (0.0, 0.0),
+            sync_at: None,
             bells_seen: 0,
             notifs_seen: 0,
             notifs_acked: 0,
@@ -1609,10 +1670,13 @@ impl App {
                 let tab = &self.parked[s].tabs[j];
                 let (sc, hist) = (tab.term.scrolled, tab.term.scrollback.len());
                 let t0 = std::time::Instant::now();
+                let view_before = self.parked[s].tabs[j].view_off;
                 self.parked[s].tabs[j].term.feed(&bytes);
                 if prof::enabled() {
                     prof::add_parse(t0.elapsed().as_nanos() as u64, bytes.len());
                 }
+                let who = format!("ws {s} tab {}", self.parked[s].tabs[j].id);
+                log_sync(&mut self.parked[s].tabs[j], &who, view_before, t0);
                 if self.parked[s].tabs[j].term.theme_dirty {
                     self.parked[s].tabs[j].term.theme_dirty = false;
                     let theme = self.parked[s].tabs[j].term.theme.clone();
@@ -1689,10 +1753,13 @@ impl App {
                 self.tabs[i].term.scrollback.len(),
             );
             let t0 = std::time::Instant::now();
+            let view_before = self.tabs[i].view_off;
             self.tabs[i].term.feed(&bytes);
             if prof::enabled() {
                 prof::add_parse(t0.elapsed().as_nanos() as u64, bytes.len());
             }
+            let who = format!("tab {}", self.tabs[i].id);
+            log_sync(&mut self.tabs[i], &who, view_before, t0);
             // `OSC 4/10/11/12` touched the colors: the renderer has to know. It
             // holds for any tab: the theme belongs to the emulator, not the tab.
             if self.tabs[i].term.theme_dirty {
@@ -3062,6 +3129,15 @@ impl ApplicationHandler<UserEvent> for App {
         }
         if let Some(path) = self.opts.debug_log.clone() {
             set_log(&path);
+            // the epoch is what turns the `+ms` stamps into wall clock
+            let epoch = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default();
+            logln(&format!(
+                "log start: {} epoch {} ms",
+                log_stamp(),
+                epoch.as_millis()
+            ));
         }
         logln(&format!(
             "tortty {} — {}x{} cells, cell {}x{}, font {} {}px",
