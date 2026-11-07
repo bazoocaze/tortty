@@ -1915,3 +1915,44 @@ new history.
 Verified: `cargo test -p tortty-core` (two new tests: a window does not move the
 reader, an erased history does not reach the top), `tools/quality-check.sh`,
 `tools/render-check.sh`, and the Xvfb run above.
+
+## 2026-11-07 — the touchpad audit: the bar's wheel and the bar's drag
+
+Reported as three mouse defects after `B40`, with a fourth sentence that was the
+real question: "every point where the touchpad is handled is super-sensitive
+from the start, except the ones already adjusted". The audit found **two** left,
+both on the tab bar:
+
+- **the wheel cycled one tab per event.** The bar's branch used the delta as a
+  sign — and, for a pixel delta, `signum() * 3.0`, so *any* fraction of a detent
+  was worth a whole tab. A touchpad sends fractions at ~37 events/s, so a
+  whisper of the finger became a storm of tabs. The `10 ms` dedupe that was there
+  only killed the press/release pair of one X11 notch; it could not help a
+  gesture. The bar now uses the same rule the child's wheel got in `B40`
+  (`mouse::notches`, renamed from `child_notches` because it is no longer the
+  child's): a detent is one notch, a touchpad fraction accumulates in
+  `App::bar_frac` until it completes one, and the direction change drops the
+  remainder.
+- **the reorder drag ran away from a resting hand.** `bar_drag` measured the
+  travel against the *press* point and never moved the press point, so after one
+  step the same travel was still there and every following motion event spent it
+  again: a tab moved one label, then walked to the end of the bar with the hand
+  standing still. The anchor now travels with the tab (`mouse::drag_crossed`
+  returns the destination **and** the travel consumed, and the anchor carries
+  what the tab actually moved — never what the finger asked, so a clamped move at
+  the end of the bar leaves no debt).
+
+The other paths were checked and hold: the history's wheel (`scroll_frac`, 2026-11-04),
+the child's wheel (`child_frac`, `B40`), the scrollbar drag (absolute `y`, not a
+delta) and the selection drag (3 px threshold). The remaining report — no
+scrollbar in the workspace list — is not a defect but a missing feature, and it
+went into the queue as `B42`.
+
+Verified: `mouse::notches` and `mouse::drag_crossed` unit tests (a shake does not
+reorder, half a label moves one, the anchor moves with it, the end of the bar
+leaves no debt); and an Xvfb probe with three tabs through the debug socket
+(`tab_titles` + `active`, `xdotool` for the mouse): one `click 4` on the bar from
+tab 1 lands on tab 3 and not on tab 2 (one detent, not two); a 2 px drag leaves
+the order alone; a drag of half a label plus **20 more 1 px motions** ends with
+the tab in slot 2 — with the old binary the same probe ends with it in slot 3.
+`tools/quality-check.sh` green.

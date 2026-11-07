@@ -167,18 +167,18 @@ pub fn wheel_lines(v: f32) -> f32 {
     }
 }
 
-/// Notches owed to a child that reports mouse, from the distance the finger
-/// asked for.
+/// Notches the finger asked for, from its travel.
 ///
-/// The child decides how far one notch goes; what it needs from the terminal is
-/// the *count*, and one event is not one notch: a touchpad delivers fractions
-/// of a detent at up to ~37 events/s (measured on 2026-11-04), so the fraction
-/// accumulates here and one detent of travel buys one notch (B40). A detent —
-/// exactly ±1.0 — never comes through here: it is already a whole notch, and
-/// the caller sends it without touching the remainder. A direction change drops
-/// the remainder, which has the wrong sign and would otherwise eat the first
-/// event of the new direction (kitty does the same with its V120 carry).
-pub fn child_notches(frac: &mut f32, lines: f32) -> i32 {
+/// Every surface where we own the wheel needs a *count*, and one event is not
+/// one notch: a touchpad delivers fractions of a detent at up to ~37 events/s
+/// (measured on 2026-11-04), so the fraction accumulates here and one detent of
+/// travel buys one notch — for the child that reports mouse (`B40`) and for the
+/// tab bar that cycles a tab per notch. A detent — exactly ±1.0 — never
+/// comes through here: it is already a whole notch, and the caller sends it
+/// without touching the remainder. A direction change drops the remainder,
+/// which has the wrong sign and would otherwise eat the first event of the new
+/// direction (kitty does the same with its V120 carry).
+pub fn notches(frac: &mut f32, lines: f32) -> i32 {
     if lines == 0.0 || !lines.is_finite() {
         return 0;
     }
@@ -195,10 +195,57 @@ pub fn child_notches(frac: &mut f32, lines: f32) -> i32 {
     n as i32
 }
 
+/// Where a drag on the tab bar takes the tab, and where the press point goes
+/// with it: `(destination, travel consumed)`.
+///
+/// A tab only changes place after half of its own label (otherwise it wobbles),
+/// and the press point travels with it. That second half is the difference
+/// between reordering and a runaway: with the press point fixed, the same travel
+/// is measured again by every following motion event, so a hand that barely
+/// moved walks the tab to the end of the bar (2026-11-07). What the anchor carries is
+/// the distance the tab **actually** moved, never what the finger asked — at the
+/// end of the bar the two differ, and a clamped move must not leave a debt.
+pub fn drag_crossed(i: usize, len: usize, step: f64, dx: f64) -> (usize, f64) {
+    if i >= len || !step.is_finite() || step <= 0.0 || !dx.is_finite() {
+        return (i, 0.0);
+    }
+    let n = (dx / step).round();
+    if n == 0.0 {
+        return (i, 0.0);
+    }
+    // the same cast the drag did before: the travel is bounded by the bar
+    let n = n as i64;
+    let dest = if n > 0 {
+        (i + n as usize).min(len - 1)
+    } else {
+        i.saturating_sub(n.unsigned_abs() as usize)
+    };
+    (dest, (dest as f64 - i as f64) * step)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tortty_core::term::Term;
+
+    #[test]
+    fn a_drag_moves_one_tab_per_label_and_the_anchor_goes_with_it() {
+        // a 1 px shake does not reorder anything
+        assert_eq!(drag_crossed(1, 3, 80.0, 1.0), (1, 0.0));
+        assert_eq!(drag_crossed(1, 3, 80.0, -1.0), (1, 0.0));
+        // half of the label is the threshold, and the anchor moves one label:
+        // the next event measures what is left, not the same travel again
+        assert_eq!(drag_crossed(1, 3, 80.0, 40.0), (2, 80.0));
+        assert_eq!(drag_crossed(2, 3, 80.0, 42.0 - 80.0), (2, 0.0));
+        assert_eq!(drag_crossed(2, 3, 80.0, -45.0), (1, -80.0));
+        // two labels in one motion move two, and the anchor keeps only the rest
+        assert_eq!(drag_crossed(0, 4, 80.0, 170.0), (2, 160.0));
+        // at the end of the bar the tab stops and leaves no debt behind
+        assert_eq!(drag_crossed(1, 2, 80.0, 1000.0), (1, 0.0));
+        assert_eq!(drag_crossed(0, 1, 80.0, 1000.0), (0, 0.0));
+        // a label without width (no font yet) cannot be crossed
+        assert_eq!(drag_crossed(1, 3, 0.0, 100.0), (1, 0.0));
+    }
 
     #[test]
     fn a_wheel_notch_is_three_lines_and_a_touchpad_fraction_is_kept() {
@@ -301,35 +348,31 @@ mod tests {
         let mut frac = 0.0;
         // the measured gesture: fractions of a detent, one event each, and none
         // of them is worth a notch on its own
-        assert_eq!(child_notches(&mut frac, 0.4), 0);
-        assert_eq!(child_notches(&mut frac, 0.3), 0);
-        assert_eq!(child_notches(&mut frac, 0.4), 1, "1.1 detents is one notch");
+        assert_eq!(notches(&mut frac, 0.4), 0);
+        assert_eq!(notches(&mut frac, 0.3), 0);
+        assert_eq!(notches(&mut frac, 0.4), 1, "1.1 detents is one notch");
         assert!((frac - 0.1).abs() < 0.001, "and a tenth is carried: {frac}");
         // a fast flick carries two or three detents in a single event
-        assert_eq!(child_notches(&mut frac, 2.06), 2);
-        assert_eq!(child_notches(&mut frac, 3.5), 3);
+        assert_eq!(notches(&mut frac, 2.06), 2);
+        assert_eq!(notches(&mut frac, 3.5), 3);
     }
 
     #[test]
     fn a_direction_change_drops_the_carried_fraction() {
         let mut frac = 0.0;
-        assert_eq!(child_notches(&mut frac, 0.9), 0);
+        assert_eq!(notches(&mut frac, 0.9), 0);
         // backwards: the 0.9 in the other direction would eat the first event
-        assert_eq!(child_notches(&mut frac, -0.2), 0);
-        assert_eq!(
-            child_notches(&mut frac, -0.8),
-            -1,
-            "the whole detent counts"
-        );
+        assert_eq!(notches(&mut frac, -0.2), 0);
+        assert_eq!(notches(&mut frac, -0.8), -1, "the whole detent counts");
         assert!((frac + 0.0).abs() < 0.001, "nothing left over: {frac}");
     }
 
     #[test]
     fn no_delta_and_no_nonsense_buy_nothing() {
         let mut frac = 0.0;
-        assert_eq!(child_notches(&mut frac, 0.0), 0);
-        assert_eq!(child_notches(&mut frac, f32::NAN), 0);
-        assert_eq!(child_notches(&mut frac, f32::INFINITY), 0);
+        assert_eq!(notches(&mut frac, 0.0), 0);
+        assert_eq!(notches(&mut frac, f32::NAN), 0);
+        assert_eq!(notches(&mut frac, f32::INFINITY), 0);
         assert_eq!(frac, 0.0);
     }
 

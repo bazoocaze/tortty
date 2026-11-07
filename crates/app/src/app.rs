@@ -468,6 +468,9 @@ pub struct App {
     /// **two** events per notch (press and release), and without this one notch
     /// switches tab and the second undoes it.
     bar_wheel: Option<(std::time::Instant, i8)>,
+    /// Travel still owed to the bar, in detents: the fraction of a notch a
+    /// touchpad sent that has not become a tab change yet (2026-11-07).
+    bar_frac: f32,
     /// Last detent handed to a mouse-reporting child (instant and direction), for
     /// the same reason as `bar_wheel`: the press and the release of one notch
     /// arrive as two `MouseWheel` events, and both would be reported (`B40`).
@@ -573,6 +576,7 @@ impl App {
             rename: None,
             card_click: None,
             bar_wheel: None,
+            bar_frac: 0.0,
             wheel_pair: None,
             mods: ModifiersState::empty(),
             cursor_px: (0.0, 0.0),
@@ -1220,28 +1224,23 @@ impl App {
         // the wheel on the tab bar cycles through them (I11); on the grid it
         // scrolls
         if self.tab_at(self.cursor_px.0, self.cursor_px.1).is_some() {
-            let dir: f32 = match delta {
+            let ch = self.renderer.as_ref().map_or(19.0, |r| r.fonts.ch);
+            // the units are the raw ones, as in the child's branch below: a
+            // detent is one notch, a pixel delta is cell heights of finger. One
+            // event per notch — with `signum` even a fraction of a detent — made
+            // a whisper of the touchpad a storm of tabs (2026-11-07).
+            let lines = match delta {
                 MouseScrollDelta::LineDelta(_, y) => y,
-                MouseScrollDelta::PixelDelta(p) => (p.y as f32).signum() * 3.0,
+                MouseScrollDelta::PixelDelta(p) => p.y as f32 / ch,
             };
-            // press and release of the same notch arrive almost together (1 ms)
-            // and have the same direction; two real turns are >10 ms apart
-            let now = std::time::Instant::now();
-            let direction: i8 = if dir > 0.0 { 1 } else { -1 };
-            let repeated = self.bar_wheel.is_some_and(|(when, previous)| {
-                previous == direction && now.duration_since(when).as_millis() < 10
-            });
-            if repeated {
+            let n = Self::wheel_notches(&mut self.bar_frac, &mut self.bar_wheel, lines);
+            if n == 0 {
                 return;
             }
-            self.bar_wheel = Some((now, direction));
-            let n = self.tabs.len();
-            let at = if dir > 0.0 {
-                (self.active + n - 1) % n
-            } else {
-                (self.active + 1) % n
-            };
-            self.select_tab(at);
+            // up (positive) goes to the previous tab, one notch at a time
+            let len = self.tabs.len() as i64;
+            let at = (self.active as i64 - i64::from(n)).rem_euclid(len);
+            self.select_tab(at as usize);
             return;
         }
         if self.tabs[self.active].term.mouse_mode != 0 && self.tabs[self.active].view_off == 0 {
@@ -1299,34 +1298,52 @@ impl App {
         }
     }
 
-    /// How many wheel notches this event is worth for a mouse-reporting child,
-    /// in the event's own direction.
+    /// How many wheel notches this event is worth, in the event's own direction.
     ///
     /// A detent — exactly ±1.0, which is what the X11 wheel buttons become — is
     /// one notch, and X11 delivers it twice (press and release, same direction,
-    /// ~1 ms apart), so the second half is dropped like the tab bar does. A
-    /// touchpad fraction is carried in `Tab::child_frac` until it completes a
-    /// detent of travel (`B40`).
-    fn child_wheel(&mut self, lines: f32, vertical: bool) -> i32 {
+    /// ~1 ms apart), so the second half is dropped. A touchpad fraction is
+    /// carried in `frac` until it completes a detent of travel: one event is not
+    /// one notch (`B40` for the child, and the same rule on the bar).
+    fn wheel_notches(
+        frac: &mut f32,
+        pair: &mut Option<(std::time::Instant, i8)>,
+        lines: f32,
+    ) -> i32 {
         // the same exact compare that `mouse::wheel_lines` documents: a detent
         // is exactly ±1.0 and a touchpad never lands there
         #[allow(clippy::float_cmp)]
         let detent = lines.abs() == 1.0;
-        if detent {
-            let dir: i8 = if lines > 0.0 { 1 } else { -1 };
-            let now = std::time::Instant::now();
-            let repeated = self.wheel_pair.is_some_and(|(when, previous)| {
-                previous == dir && now.duration_since(when).as_millis() < 10
-            });
-            self.wheel_pair = Some((now, dir));
-            return i32::from(!repeated);
+        if !detent {
+            return crate::mouse::notches(frac, lines);
         }
-        let frac = if vertical {
-            &mut self.tabs[self.active].child_frac.0
+        let dir: i8 = if lines > 0.0 { 1 } else { -1 };
+        let now = std::time::Instant::now();
+        let repeated = pair.is_some_and(|(when, previous)| {
+            previous == dir && now.duration_since(when).as_millis() < 10
+        });
+        *pair = Some((now, dir));
+        if repeated {
+            0
         } else {
-            &mut self.tabs[self.active].child_frac.1
+            i32::from(dir)
+        }
+    }
+
+    /// How many wheel notches this event is worth for a mouse-reporting child,
+    /// in the event's own direction.
+    ///
+    /// A detent is one notch (the press/release pair deduplicated); a touchpad
+    /// fraction is carried in `Tab::child_frac` until it completes a detent of
+    /// travel (`B40`).
+    fn child_wheel(&mut self, lines: f32, vertical: bool) -> i32 {
+        let Tab { child_frac, .. } = &mut self.tabs[self.active];
+        let frac = if vertical {
+            &mut child_frac.0
+        } else {
+            &mut child_frac.1
         };
-        crate::mouse::child_notches(frac, lines).abs()
+        Self::wheel_notches(frac, &mut self.wheel_pair, lines).abs()
     }
 
     /// Terminal mouse: press sets the anchor, drag becomes selection, release
@@ -1481,13 +1498,16 @@ impl App {
         };
         let dx = self.cursor_px.0 - x0;
         let step = width.max(f64::from(cw));
-        let n = ((dx / step).round() as i64).unsigned_abs() as usize;
-        if n == 0 || dx.abs() < step / 2.0 {
+        // the destination and the press point that goes with it: with the press
+        // point fixed, every following motion event would spend the same travel
+        // again and a hand that barely moved would walk the tab to the end of
+        // the bar (2026-11-07)
+        let (dest, consumed) = crate::mouse::drag_crossed(i, self.tabs.len(), step, dx);
+        if dest == i {
             return;
         }
-        let dest = if dx > 0.0 { i + n } else { i.saturating_sub(n) };
         self.move_tab(i, dest);
-        self.bar_press = Some((dest, x0));
+        self.bar_press = Some((dest, x0 + consumed));
         // motion path: a frame is asked for, not drawn (B4, the wheel's trap)
         self.ask_frame();
     }

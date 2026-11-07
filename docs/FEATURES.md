@@ -116,9 +116,14 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 
 - Tabs: own pty and term, new tab inherits the cwd of the deepest descendant
   (else the shell's `OSC 7` when `/proc` has no answer), close with Ctrl+Shift+W
-  or middle click, a dead shell closes itself, drag to reorder, wheel cycles.
+  or middle click, a dead shell closes itself, drag to reorder (half of the
+  label is the threshold, and the tab stays where the hand left it), wheel
+  cycles one tab per detent (the touchpad's travel accumulates, as in the
+  child's wheel).
 - Workspaces: a set of tabs with a name, sidebar cards (hidden when there is
-  only one), inline rename, stable numbering.
+  only one), inline rename, stable numbering. **limit:** the card list has no
+  scrollbar — a card past the bottom of the window cannot be clicked, and the
+  wheel over the sidebar does not reach it either (`B42`).
 - Title: OSC 0/2, else `basename(cwd)`, else `tortty`; the window title mirrors
   the active tab. **limit:** an app that sets a title without pushing it (`CSI
   22/23 t`) keeps the tab on it after leaving ([`EXTERNALS.md`](EXTERNALS.md)).

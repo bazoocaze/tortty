@@ -392,13 +392,31 @@ buying a frame per request, which is what `benchrun.py` does with `state`.
 every `MouseWheel` became a full notch, so a touchpad — fractions of a detent at
 up to ~125 events/s from X — scrolled dozens of screens on a whisper of the
 finger (`B40`, 2026-11-07). The count has to follow the **travel**
-(`mouse::child_notches` + `Tab::child_frac`), one detent per notch. Two traps sit
+(`mouse::notches` + `Tab::child_frac`), one detent per notch. Two traps sit
 beside it: X11 turns one detent into button press *and* release, two
-`MouseWheel` events with the same direction (dedupe like `bar_wheel`), and no
-protocol has a wheel release — `mouse::encode` drops it, because a TUI that
+`MouseWheel` events with the same direction (dedupe in `App::wheel_notches`), and
+no protocol has a wheel release — `mouse::encode` drops it, because a TUI that
 counts every report rolls twice. Probe without the owner's display: Xvfb plus a
 child that writes `?1000h`/`?1006h` and logs what arrives, then `xdotool click
 4` three times — three `<64;…M` and nothing else.
+
+The same rule holds for the two places where the **terminal** owns the wheel and
+a step: the tab bar cycles a tab per notch (`App::bar_frac`), and the history
+accumulates in `scroll_frac`. A `signum()` on a delta is the smell — it turns a
+fraction of a detent into a whole step, and with a touchpad the events are many
+and the steps are wrong.
+
+## Pitfall: a drag anchor that does not move spends the same travel twice
+
+`bar_drag` compared the cursor with the x of the **press** and reordered by the
+whole steps that travel was worth — but never moved the press point. The travel
+stayed there, so the next motion event spent it again: one label of movement
+moved the tab one place, and then every following pixel walked it to the end of
+the bar with the hand standing still (reported as "the slightest movement throws
+the tab to the other side", 2026-11-07). The anchor has to travel with the tab
+(`mouse::drag_crossed` returns the destination **and** the consumed travel), and
+what it carries is the distance the tab actually moved: at the end of the bar a
+clamped move must leave no debt, or the next event pushes it back.
 
 ## Pitfall: a pending X error kills the app in `set_title`
 
