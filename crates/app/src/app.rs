@@ -1344,9 +1344,12 @@ impl App {
         self.redraw();
     }
 
-    /// Scrolls the view by `n` lines (positive = into the history).
-    /// Geometry of the scrollbar in window pixels: the 3 px strip on the grid's
-    /// right edge. `None` when there is nothing to scroll — the same condition
+    /// Geometry of the scrollbar in window pixels: `(x0, x1, top, height,
+    /// history)`. The strip is drawn on the grid's right edge, but the target
+    /// runs all the way to the window's edge: `cols * cw` is rounded down, so
+    /// the last column does not reach the border and a click there would fall
+    /// through to the text (`cell_at` clamps) and start a selection.
+    /// `None` when there is nothing to scroll — the same condition
     /// `Renderer::scrollbar` draws with.
     fn scrollbar_rect(&self) -> Option<(f64, f64, f64, f64, usize)> {
         let hist = self.tabs[self.active].term.scrollback.len();
@@ -1359,8 +1362,23 @@ impl App {
         let grid_w = cols as f32 * cw;
         let left = f64::from(pad) + f64::from(self.side_w(cw)) + f64::from(grid_w);
         let top = f64::from(pad) + f64::from(self.bar_h(ch));
-        let w = f64::from(3.0f32.min(cw));
-        Some((left - w, left, top, rows as f64 * f64::from(ch), hist))
+        let w = f64::from(self.scrollbar_w());
+        let right = self
+            .window
+            .as_ref()
+            .map_or(left, |w| f64::from(w.inner_size().width));
+        // the target is the last `w` px of the window: with the grid rounded down
+        // that is the strip plus the sliver to its right, and it stays inside the
+        // window even when a window manager hands back a narrower one
+        let x0 = (left - w).min(right - w).max(0.0);
+        Some((x0, right, top, rows as f64 * f64::from(ch), hist))
+    }
+
+    /// Width of the scrollbar in px. It sits over the last column, so it is
+    /// capped by the cell: a wider strip would hide the column it overlaps.
+    fn scrollbar_w(&self) -> f32 {
+        let (cw, _, _) = self.cell_metrics();
+        f32::min(crate::render::SCROLLBAR_W, cw)
     }
 
     /// Puts the view where the pointer is on the bar: the thumb sits at the

@@ -24,6 +24,8 @@ use crate::prof;
 /// Background and foreground used when the configuration says nothing.
 pub const BG: (u8, u8, u8) = (0, 0, 0);
 pub const FG: (u8, u8, u8) = (214, 214, 214);
+/// Width of the scrollbar strip in px (the app hit-tests the same number).
+pub const SCROLLBAR_W: f32 = 8.0;
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -1133,11 +1135,12 @@ impl Renderer {
         }
     }
 
-    /// The scrollbar: a 3 px strip on the grid's right edge, drawn only when
+    /// The scrollbar: an 8 px strip on the grid's right edge, drawn only when
     /// there is history to scroll. The thumb is the share of the buffer the view
     /// shows and it sits at the bottom while the view follows the output
     /// (`view_off == 0`). No track frame and a translucent thumb: the strip is
     /// **over** the last column, and a solid one would eat the text under it.
+    /// Width lives in `SCROLLBAR_W` because the app hit-tests the same strip.
     fn scrollbar(&mut self, f: &Frame<'_>) {
         let hist = f.term.scrollback.len();
         let rows = f.term.rows;
@@ -1146,7 +1149,7 @@ impl Renderer {
         }
         let cell_w = self.fonts.cw;
         let cell_h = self.fonts.ch;
-        let strip = 3.0f32.min(cell_w);
+        let strip = SCROLLBAR_W.min(cell_w);
         let x = f.term.cols as f32 * cell_w - strip;
         let track_h = rows as f32 * cell_h;
         let thumb_h = (track_h * rows as f32 / (rows + hist) as f32)

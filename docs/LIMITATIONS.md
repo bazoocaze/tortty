@@ -87,8 +87,9 @@ The limitations of the project.
   the desktop portal.
 - **The scrollbar is drawn over the last column**, not beside it: the window
   does not reserve a strip for it, and reserving one would narrow every terminal
-  for a control that appears only when there is history. It is 3 px wide and
-  translucent, so what is under it stays readable.
+  for a control that appears only when there is history. It is 8 px wide (a
+  target that can be hit) and translucent, so what is under it stays readable —
+  but on the last column the text is behind the thumb.
 - **No context menu and no DnD** of a file onto the window. The menu is `M-V` in
   [`BACKLOG.md`](BACKLOG.md); dragging a file onto the window has no id yet.
 - **An `OSC 8` link opens through `xdg-open`, and only for five schemes**

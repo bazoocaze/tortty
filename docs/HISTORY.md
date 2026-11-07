@@ -1649,7 +1649,7 @@ focus), now recorded in [`DEBUG.md`](DEBUG.md).
 
 ## 2026-11-06 — `M-M`: the scrollbar
 
-A 3 px strip on the grid's right edge, drawn only when `scrollback` is not empty:
+An 8 px strip on the grid's right edge, drawn only when `scrollback` is not empty:
 a translucent track (10% of the foreground) and a thumb (55%) whose height is the
 share of the buffer the view shows, at the bottom while the view follows the
 output and at the top at the oldest line. A press on the strip jumps to that
@@ -1659,6 +1659,14 @@ selection (`scroll_drag` in the app).
 It is drawn **over** the last column instead of reserving a strip: reserving would
 narrow every terminal for a control that only exists when there is history, and
 3 px of translucent ink over the last column costs less than the column would.
+
+The first version was 3 px and did not work in practice: clicks near the right
+edge started a selection instead. Two reasons, both now fixed — 3 px is a hard
+target, and the hit test ended at the grid's edge (`cols * cw`, rounded down),
+so the window's right margin was dead and a click there fell through to
+`cell_at`, which clamps to the last column and starts a selection. The strip is
+now 8 px (`render::SCROLLBAR_W`, the same number on both sides) and the target
+runs from the strip all the way to the window's edge.
 
 Nothing here touches the core: the numbers were already there (`scrollback.len()`,
 `view_off`, `border` of the grid in `pad`/`bar`/`side`). The thumb enters the frame

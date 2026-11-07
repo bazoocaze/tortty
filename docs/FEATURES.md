@@ -34,7 +34,7 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   reflow there).
 - Reflow on resize: joins and splits soft lines and keeps the coloured
   background. **limit:** it kills the selection anchor (`M-P`).
-- Scrollback with a configurable cap ([`CONFIG.md`](CONFIG.md)) and a 3 px
+- Scrollback with a configurable cap ([`CONFIG.md`](CONFIG.md)) and an 8 px
   scrollbar on the grid's right edge: it appears only when there is history, the
   thumb is the share of the buffer the view shows, a click jumps and a drag walks
   it. **limit:** no search (`M-D`).
