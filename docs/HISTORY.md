@@ -1593,3 +1593,23 @@ click, `5*10+5` and `2*19+9` in pixels. A child that printed
 Found on the way: **DECALN (`ESC # 8`) was already implemented** (`term.rs`,
 screen full of `E`, confirmed by test) while `M-U` listed it as missing; the row
 became combining-characters-only.
+
+## 2026-11-06 — `M-G`: kitty flag 4, the alternate keys
+
+The protocol has three slots in the first field: the key as it is on the board,
+the same key with Shift, and the key in the base layout — `CSI 97:65:97;2u` for
+Shift+A. Only the first was sent, and it was the **post**-Shift code (`CSI 65;2u`),
+which is what `winit` delivers: the logical key already has the layout applied.
+
+With flag 4 the letters are the case that can be undone without a layout table of
+our own: `A` in `0x41..=0x5a` is `a` shifted, so the pair is written out. A
+shifted punctuation mark stays single-field on purpose — the base of `!` is `1` on
+a US board and another key on ABNT2 — and an absent field is honest where a wrong
+one is not. Ctrl+Shift+a already travels as the base key (`97;6u`), so flag 4 adds
+nothing there.
+
+Verified: one new test in `keys.rs` covering the four cases (no flag 4, with flag
+4, a punctuation mark, Ctrl+Shift), and through the socket on the real binary — a
+child that prints `ESC[>12u` (flags 4|8) and then `{"cmd":"keys","data":"shift+A"}`
+answers `1b5b39373a36353a39373b3275` (`ESC[97:65:97;2u`); with `ESC[>8u` it
+answers `ESC[65;2u`, which is the difference the flag makes.

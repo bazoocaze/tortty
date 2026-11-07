@@ -196,9 +196,11 @@ fn with_mods(seq: &str, ctrl: bool, alt: bool, shift: bool) -> Vec<u8> {
 
 // ------------------------------------------------------ kitty protocol
 
-/// Flags of `CSI > u` (kitty bits; 4 = alternate keys, out of scope).
+/// Flags of `CSI > u` (kitty bits).
 pub const F_DISAMBIGUATE: u32 = 1;
 pub const F_EVENT_TYPES: u32 = 2;
+/// 4: the alternate keys (`97:65:97`) come along.
+pub const F_ALT_KEYS: u32 = 4;
 pub const F_ALL_KEYS: u32 = 8;
 pub const F_TEXT: u32 = 16;
 
@@ -269,11 +271,11 @@ fn kitty_functional(n: NamedKey) -> Option<(u32, char)> {
 
 /// `CSI key ; mods[:event] [;text] trailer`, with no field the terminal does not
 /// need to see.
-fn kitty_csi(key: u32, mods: u8, trailer: char, event: Option<u8>, text: &str) -> Vec<u8> {
+fn kitty_csi(field: &str, mods: u8, trailer: char, event: Option<u8>, text: &str) -> Vec<u8> {
     let event = event.filter(|e| *e != PRESS);
     let mut out = String::from("\x1b[");
-    if key != 1 || mods != 1 || event.is_some() || !text.is_empty() {
-        out.push_str(&key.to_string());
+    if field != "1" || mods != 1 || event.is_some() || !text.is_empty() {
+        out.push_str(field);
     }
     if mods != 1 || event.is_some() {
         out.push(';');
@@ -351,7 +353,7 @@ fn kitty_encode(
         if special && m == 1 && !(dis || all_keys) {
             return Kitty::Legacy; // classic ESC, CR, TAB, DEL
         }
-        return Kitty::Seq(kitty_csi(key, m, trailer, ev, text));
+        return Kitty::Seq(kitty_csi(&key.to_string(), m, trailer, ev, text));
     }
 
     let Some(cp) = character.and_then(|s| s.chars().next()) else {
@@ -371,7 +373,19 @@ fn kitty_encode(
     if !(dis || all_keys) {
         return Kitty::Legacy; // modifier without disambiguate: classic xterm
     }
-    Kitty::Seq(kitty_csi(cp, m, 'u', ev, text))
+    // Flag 4 (`97:65:97`): the key as it is on the board, then the shifted one,
+    // then the base-layout one — so Shift+a stops looking like a key named `A`.
+    // Only the ASCII letters carry a known pair: the digit row would need the
+    // layout (`!` is `1` on a US board and something else elsewhere), and a
+    // wrong guess is worse than an absent field.
+    let letters = (0x41..=0x5a).contains(&cp);
+    let field = if flags & F_ALT_KEYS != 0 && mods.shift_key() && letters {
+        let base = cp + 32;
+        format!("{base}:{cp}:{base}")
+    } else {
+        cp.to_string()
+    };
+    Kitty::Seq(kitty_csi(&field, m, 'u', ev, text))
 }
 
 /// Translates the event. `None` = send nothing (modifier, WM Super, etc.).
@@ -604,6 +618,56 @@ mod tests {
                 F_DISAMBIGUATE
             ),
             "\x1b[1;2R"
+        );
+    }
+
+    #[test]
+    fn flag_4_sends_the_alternate_keys_of_a_shifted_letter() {
+        // the case that motivated flag 4: with all keys in CSI u form, Shift+a
+        // came out as a key named `A` (65)
+        assert_eq!(
+            enc(None, Some("A"), ModifiersState::SHIFT, F_ALL_KEYS),
+            "\x1b[65;2u"
+        );
+        // with flag 4 the key goes back to `a` and the pair rides along
+        assert_eq!(
+            enc(
+                None,
+                Some("A"),
+                ModifiersState::SHIFT,
+                F_ALL_KEYS | F_ALT_KEYS
+            ),
+            "\x1b[97:65:97;2u"
+        );
+        // a key without a known pair keeps a single field
+        assert_eq!(
+            enc(
+                None,
+                Some("!"),
+                ModifiersState::SHIFT,
+                F_ALL_KEYS | F_ALT_KEYS
+            ),
+            "\x1b[33;2u"
+        );
+        // Ctrl+Shift+a already reports the base key: flag 4 adds nothing
+        assert_eq!(
+            enc(
+                None,
+                Some("A"),
+                ModifiersState::CONTROL | ModifiersState::SHIFT,
+                F_ALL_KEYS | F_ALT_KEYS
+            ),
+            "\x1b[97;6u"
+        );
+        // and without flag 8 the key is still text: flag 4 alone changes nothing
+        assert_eq!(
+            enc(
+                None,
+                Some("A"),
+                ModifiersState::SHIFT,
+                F_DISAMBIGUATE | F_ALT_KEYS
+            ),
+            "A"
         );
     }
 

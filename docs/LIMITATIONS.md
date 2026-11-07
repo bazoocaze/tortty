@@ -70,11 +70,13 @@ The limitations of the project.
   terminal in that mode. The keypad itself works; what is missing is the mode. The
   `xterm-256color` installed here declares no `kp*` capability, so a program that
   set the mode would have nothing to read back.
-- **Shift+letter in the kitty protocol comes out with the *post*-Shift code**:
-  Shift+A becomes `CSI 65;2u`, not `CSI 97;2u`. `winit` delivers the key already
-  applied to the layout and the **base** key would require its own layout table
-  (`xkb`/`keymap`) only to undo Shift. Whoever needs the base key for a shortcut
-  (`ctrl+shift+a` distinct from `ctrl+a`) only has the shifted code.
+- **The alternate keys of the kitty protocol exist for the ASCII letters only**:
+  with flag 4, Shift+A is `CSI 97:65:97;2u` (key, shifted, base). A shifted
+  punctuation mark stays single-field (`CSI 33;2u`), because the base of `!` is
+  `1` on a US board and another key elsewhere — `winit` delivers the key already
+  applied to the layout, and undoing that would need a layout table
+  (`xkb`/`keymap`) of our own. Without flag 4 the field is the post-Shift code
+  (`CSI 65;2u`), which is what the protocol asks for.
 
 ## Interface
 

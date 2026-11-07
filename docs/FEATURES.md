@@ -48,9 +48,11 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   mode, never the application-keypad form, because `DECKPAM` is ignored
   ([`LIMITATIONS.md`](LIMITATIONS.md)).
 - kitty keyboard protocol: push/pop/set/query, flag 1 (disambiguate), flag 2
-  (event types, release `:3`), flag 8 (all keys as CSI u), flag 16 (associated
-  text). **limit:** flag 4, the alternate keys, is not done (`M-G`), and
-  Shift+letter reports the post-Shift code (`CSI 65;2u`).
+  (event types, release `:3`), flag 4 (alternate keys: `CSI 97:65:97;2u`), flag 8
+  (all keys as CSI u), flag 16 (associated text). **limit:** the alternate pair
+  exists only for the ASCII letters — the digit row would need the layout (`!` is
+  `1` on a US board and something else elsewhere), so it goes out with a single
+  field (`CSI 33;2u`).
 - Mouse: X10 and SGR encodings, modifiers in the button code, wheel, buttons 8/9,
   motion with and without a button, and `?1016` (the SGR shape with the
   coordinates in pixels from the grid origin).
