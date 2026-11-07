@@ -49,6 +49,12 @@ pub struct Cell {
     pub flags: u8,
     /// Underline style, `UL_*`.
     pub ul: u8,
+    /// `OSC 8` hyperlink: an index into `Term::links`, 0 = none. It is an index
+    /// and not the URI because the URI repeats in every cell of the span, and a
+    /// `String` per cell would cost more than the whole row. `u16` on purpose:
+    /// it fills the padding the struct already had, so the cell stays at 20
+    /// bytes and the parser's hot path does not pay for the feature.
+    pub link: u16,
 }
 
 impl Cell {
@@ -59,6 +65,7 @@ impl Cell {
         ul_color: Color::Default,
         flags: 0,
         ul: UL_NONE,
+        link: 0,
     };
 
     /// Empty cell: nothing drawn beyond the default background.
@@ -83,5 +90,14 @@ impl Cell {
 impl Default for Cell {
     fn default() -> Self {
         Cell::BLANK
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_link_field_does_not_make_the_cell_bigger() {
+        // the parser's hot path copies cells: 20 bytes is the budget
+        assert_eq!(std::mem::size_of::<super::Cell>(), 20);
     }
 }

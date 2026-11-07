@@ -87,6 +87,10 @@ The limitations of the project.
   the desktop portal.
 - **No context menu and no DnD** of a file onto the window. The menu is `M-V` in
   [`BACKLOG.md`](BACKLOG.md); dragging a file onto the window has no id yet.
+- **An `OSC 8` link opens through `xdg-open`, and only for five schemes**
+  (`http`, `https`, `file`, `ftp`, `mailto`). No portal, no D-Bus, no browser
+  integration: the URI comes from the child, and anything else becomes a toast
+  instead of a handler the desktop happened to register.
 
 ## Development
 

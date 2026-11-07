@@ -29,6 +29,9 @@ pub struct Signature {
     pub view_off: usize,
     /// Visible selection, already clipped to the screen: `(row1, col1, row2, col2)`.
     pub sel: Option<(usize, usize, usize, usize)>,
+    /// Ctrl held: the `OSC 8` links are underlined, which changes the instances
+    /// of every line that carries one.
+    pub links: bool,
     /// Blink phase **when** an SGR 5 cell is on screen. Without it the cursor
     /// blink would force a full rebuild twice a second.
     pub blink: bool,
@@ -83,6 +86,7 @@ mod tests {
             rows: 24,
             view_off: 0,
             sel: None,
+            links: false,
             blink: false,
             theme: 1,
             fg: (0xd6, 0xd6, 0xd6),

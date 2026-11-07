@@ -21,6 +21,8 @@ const REPLACEMENT: char = '\u{FFFD}';
 /// Ceiling for the payload of an in-flight OSC: a sequence that never closes
 /// must not grow without bound.
 const MAX_OSC: usize = 4096;
+/// How many distinct `OSC 8` URIs are kept (a span reuses its index).
+pub const LINK_MAX: usize = 4096;
 /// How many OSC the probe keeps, and how much of each (the socket's `osc` verb).
 const OSC_SEEN: usize = 8;
 const OSC_SEEN_MAX: usize = 256;
@@ -152,6 +154,11 @@ pub struct Term {
     /// Where the shell says it is (`OSC 7`, `file://host/path`). Only the app
     /// uses it, as the last resort for the cwd of a new tab.
     pub cwd: Option<String>,
+    /// `OSC 8` URIs, by the index a cell carries (`0` is not in the list: a cell
+    /// with `link == 0` has none).
+    pub links: Vec<String>,
+    /// The open `OSC 8` span: the index every new cell gets.
+    link: u16,
     /// Titles saved by `CSI 22 t`, restored by `CSI 23 t` — how an app gives the
     /// title back when it leaves (`mc` pushes, sets its own with OSC 0 and pops).
     title_stack: Vec<String>,
@@ -242,6 +249,8 @@ impl Term {
             child_out: Vec::new(),
             title: String::from("tortty"),
             cwd: None,
+            links: Vec::new(),
+            link: 0,
             title_stack: Vec::new(),
             osc_seen: VecDeque::with_capacity(OSC_SEEN),
             theme: Theme::default(),
@@ -287,6 +296,7 @@ impl Term {
             ul_color: Color::Default,
             flags: 0,
             ul: UL_NONE,
+            link: 0,
         }
     }
 
@@ -470,6 +480,7 @@ impl Term {
             let ul_color = self.ul_color;
             let flags = self.flags;
             let ul = self.ul;
+            let link = self.link;
             let dec = self.dec_active();
             let cx = self.cx;
             let cy = self.cy;
@@ -484,6 +495,7 @@ impl Term {
                         ul_color,
                         flags,
                         ul,
+                        link,
                     };
                 }
             } else {
@@ -496,6 +508,7 @@ impl Term {
                         ul_color,
                         flags,
                         ul,
+                        link,
                     };
                 }
             }
@@ -543,6 +556,7 @@ impl Term {
                 ul_color: self.ul_color,
                 flags: self.flags,
                 ul: self.ul,
+                link: self.link,
             };
             self.grid[self.cy].cells[self.cx] = cell;
             self.dirty[self.cy] = true;
@@ -569,8 +583,15 @@ impl Term {
         } else {
             ch
         };
-        let pen = (self.fg, self.bg, self.ul_color, self.flags, self.ul);
-        let (fg, bg, ul_color, flags, ul) = pen;
+        let pen = (
+            self.fg,
+            self.bg,
+            self.ul_color,
+            self.flags,
+            self.ul,
+            self.link,
+        );
+        let (fg, bg, ul_color, flags, ul, link) = pen;
         let first = Cell {
             ch,
             fg,
@@ -578,6 +599,7 @@ impl Term {
             ul_color,
             flags,
             ul,
+            link,
         };
         let cont = Cell {
             ch: WIDE_CONT,
@@ -586,6 +608,7 @@ impl Term {
             ul_color,
             flags,
             ul,
+            link,
         };
         let cx = self.cx;
         let cy = self.cy;
@@ -1422,6 +1445,7 @@ impl Term {
             11 => self.osc_color(11, arg),
             12 => self.osc_color(12, arg),
             7 => self.osc_cwd(arg),
+            8 => self.osc_link(arg),
             104 => self.osc_reset_palette(arg),
             110 => self.reset_color(10),
             111 => self.reset_color(11),
@@ -1521,6 +1545,53 @@ impl Term {
             .filter(|c| !c.is_control())
             .collect();
         self.cwd = if clean.is_empty() { None } else { Some(clean) };
+    }
+
+    /// `OSC 8`: `8;params;uri` opens a hyperlink over the cells that follow, and
+    /// an empty `uri` closes it. The `params` (`id=`, `foo=`) are ignored: they
+    /// exist for the running app to correlate its own spans, and nothing here
+    /// needs the correlation.
+    fn osc_link(&mut self, arg: &[u8]) {
+        let uri = arg
+            .iter()
+            .position(|&b| b == b';')
+            .map_or(&arg[arg.len()..], |i| &arg[i + 1..]);
+        if uri.is_empty() {
+            self.link = 0;
+            return;
+        }
+        // the URI comes from the child and ends up in a menu/`xdg-open`: a
+        // control character in it is never part of a real link
+        let clean: String = String::from_utf8_lossy(uri)
+            .chars()
+            .filter(|c| !c.is_control())
+            .collect();
+        if clean.is_empty() {
+            self.link = 0;
+            return;
+        }
+        // repeated URIs are the normal case (`ls` re-links every name): the span
+        // reuses the index instead of growing the table
+        if let Some(i) = self.links.iter().position(|l| *l == clean) {
+            self.link = i as u16 + 1;
+            return;
+        }
+        if self.links.len() >= LINK_MAX {
+            // a child that invents a URI per cell must not grow this without a
+            // limit: past the cap the text is still text, it just has no link
+            self.link = 0;
+            return;
+        }
+        self.links.push(clean);
+        self.link = self.links.len() as u16;
+    }
+
+    /// URI of the link a cell carries, if any.
+    #[must_use]
+    pub fn link_uri(&self, id: u16) -> Option<&str> {
+        id.checked_sub(1)
+            .and_then(|i| self.links.get(i as usize))
+            .map(String::as_str)
     }
 
     /// `OSC 10/11/12`: text color, background and cursor — query (`?`) or define.
@@ -3200,6 +3271,49 @@ mod tests {
         assert_eq!(t.cwd.as_deref(), Some("/tmp/100%"));
         t.feed(b"\x1b]7;file://h/tmp/%zz\x07");
         assert_eq!(t.cwd.as_deref(), Some("/tmp/%zz"));
+    }
+
+    #[test]
+    fn osc8_links_the_cells_between_open_and_close() {
+        let mut t = term();
+        t.feed(b"\x1b]8;;https://a.example/x\x1b\\hi\x1b]8;;\x1b\\yo");
+        assert_eq!(t.grid[0].cells[0].link, 1);
+        assert_eq!(t.grid[0].cells[1].link, 1);
+        assert_eq!(t.grid[0].cells[2].link, 0, "the close ends the span");
+        assert_eq!(t.link_uri(1), Some("https://a.example/x"));
+        assert_eq!(t.link_uri(0), None);
+        assert_eq!(t.link_uri(9), None);
+    }
+
+    #[test]
+    fn osc8_reuses_the_index_and_carries_the_link_to_a_wide_char() {
+        let mut t = term();
+        t.feed(b"\x1b]8;;https://a\x1b\\a\x1b]8;;\x1b\\ \x1b]8;;https://a\x1b\\b");
+        // same URI, same index: the table does not grow per span
+        assert_eq!(t.links.len(), 1);
+        assert_eq!(t.grid[0].cells[0].link, 1);
+        assert_eq!(t.grid[0].cells[2].link, 1);
+        // both halves of a wide char carry it, so a redraw of the pair keeps it
+        let mut u = term();
+        u.feed("\x1b]8;;https://b\x1b\\漢".as_bytes());
+        assert_eq!(u.grid[0].cells[0].link, 1);
+        assert_eq!(u.grid[0].cells[1].link, 1);
+        assert!(u.grid[0].cells[1].is_cont());
+    }
+
+    #[test]
+    fn osc8_drops_control_characters_and_stops_at_the_cap() {
+        let mut t = term();
+        t.feed(b"\x1b]8;;https://a\x07x\x1b]8;;\x07");
+        assert_eq!(t.link_uri(1), Some("https://a"), "BEL ends the OSC");
+        // past the cap the text stays text, without a link
+        let mut u = term();
+        for i in 0..(LINK_MAX + 4) {
+            u.feed(format!("\x1b]8;;https://e/{i}\x07\x1b]8;;\x07").as_bytes());
+        }
+        assert_eq!(u.links.len(), LINK_MAX);
+        u.feed(b"\x1b]8;;https://e/over\x07Q\x1b]8;;\x07");
+        assert_eq!(u.grid[0].cells[0].link, 0);
     }
 
     #[test]

@@ -703,6 +703,36 @@ impl App {
         }
     }
 
+    /// `OSC 8` URI of the cell under the pointer, in the visible grid.
+    fn link_at(&self, row: usize, col: usize) -> Option<String> {
+        let tab = &self.tabs[self.active];
+        let lines = tab.term.visible_rows(tab.view_off);
+        let id = lines.get(row)?.cells.get(col)?.link;
+        tab.term.link_uri(id).map(str::to_string)
+    }
+
+    /// Hands the URI to the desktop (`xdg-open`): we do not speak portal or
+    /// D-Bus, and a browser that is already running does not need another.
+    fn open_link(&mut self, uri: &str) {
+        // only the schemes a terminal link plausibly carries: the URI comes from
+        // the child, and `xdg-open` would happily execute a `.desktop` handler
+        // for anything else
+        const OK: [&str; 5] = ["http://", "https://", "file://", "ftp://", "mailto:"];
+        if !OK.iter().any(|p| uri.starts_with(p)) {
+            self.toast(format!("link refused: {uri}"));
+            return;
+        }
+        match std::process::Command::new("xdg-open")
+            .arg(uri)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(_) => self.toast(format!("opening {uri}")),
+            Err(e) => self.toast(format!("xdg-open failed: {e}")),
+        }
+    }
+
     fn mouse_mods(&self) -> u8 {
         let mut m = 0;
         if self.mods.shift_key() {
@@ -1102,6 +1132,14 @@ impl App {
                 // exactly to copy from there
                 let px = self.cursor_px;
                 let (col, row) = self.cell_at(px.0, px.1);
+                // Ctrl+click opens the `OSC 8` link under the pointer (and does
+                // not select): it is the same modifier that underlines them
+                if self.mods.control_key() {
+                    if let Some(uri) = self.link_at(row, col) {
+                        self.open_link(&uri);
+                        return;
+                    }
+                }
                 let t = &mut self.tabs[self.active];
                 let at = t.term.anchor_at(t.view_off, row, col);
                 // a second click on the same cell selects the word, a third the
@@ -1665,6 +1703,7 @@ impl App {
             toast: toast.as_deref(),
             tabs: tabs.as_deref(),
             sidebar: sidebar.as_deref(),
+            links: self.mods.control_key(),
         };
         let drew = {
             let Some(renderer) = self.renderer.as_mut() else {
@@ -2754,7 +2793,14 @@ impl ApplicationHandler<UserEvent> for App {
                 self.redraw();
             },
             WindowEvent::ModifiersChanged(m) => {
+                let ctrl = self.mods.control_key();
                 self.mods = m.state();
+                // Ctrl is what shows and opens the `OSC 8` links: the underline
+                // has to appear and vanish with the modifier, and no other event
+                // arrives to ask for that frame
+                if ctrl != self.mods.control_key() {
+                    self.redraw();
+                }
             },
             WindowEvent::KeyboardInput { event, .. } => {
                 // the release only has value under the kitty protocol (flag 2);

@@ -1613,3 +1613,36 @@ Verified: one new test in `keys.rs` covering the four cases (no flag 4, with fla
 child that prints `ESC[>12u` (flags 4|8) and then `{"cmd":"keys","data":"shift+A"}`
 answers `1b5b39373a36353a39373b3275` (`ESC[97:65:97;2u`); with `ESC[>8u` it
 answers `ESC[65;2u`, which is the difference the flag makes.
+
+## 2026-11-06 — `M-C`: OSC 8, hyperlink on the cell
+
+The escape was consumed and thrown away; now it is state. `Cell` carries a
+`link: u16` — an index into `Term::links`, `0` = none — and the span is the pair
+of `OSC 8` (`8;params;uri` opens, an empty URI closes). The index and not the URI
+because the URI repeats in every cell of the span, and a `String` per cell would
+cost more than the row. Repeated URIs share their index (`ls --hyperlink` re-links
+every name), the params (`id=`) are ignored, and the table stops at 512: past
+that the text is still text, without a link.
+
+The width is the interesting part. The first version used `u32` and the cell went
+from 20 to 24 bytes: `parsebench` on the `dmesg` load fell from **12,26–12,43** to
+**10,51–10,57 MB/s** (-14%), which is far outside the spread. With `u16` the field
+lands in the padding the struct already had, the cell stays at **20 bytes**
+(asserted by a test) and the same parsebench reads **12,20–12,29 MB/s** — inside
+the run-to-run spread of the measurement. That is the whole reason for the type.
+
+On screen: Ctrl underlines every link at once (the modifier that opens them, so
+nothing has to be discovered with the mouse), Ctrl+click hands the URI to
+`xdg-open`, and only `http`/`https`/`file`/`ftp`/`mailto` are opened — the URI
+comes from the child, and `xdg-open` would run whatever handler the desktop
+registered for anything else. The underline enters the per-line damage signature
+(`Signature::links`), otherwise the toggle would never repaint.
+
+Verified: 3 new core tests (open/close, index reuse, wide char carrying the link,
+control characters dropped, the cap), 1 test pinning the cell size, and by hand
+on an Xvfb: a child that prints `OSC 8;;https://example.com/x` around `LINK`, a
+capture before and after holding Ctrl (**39 pixels** changing, in a `39x1` box at
+y=16 — one row, four cells), and a Ctrl+click with a stub `xdg-open` in `PATH`
+that received exactly `https://example.com/x`. The same probe found the trap that
+`xdotool key` under `Xvfb` does nothing without `windowfocus` (no WM to set
+focus), now recorded in [`DEBUG.md`](DEBUG.md).

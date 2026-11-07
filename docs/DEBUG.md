@@ -254,6 +254,12 @@ encoder keeps the shape and the caller fills `col`/`row` with pixel offsets from
 the grid origin (`App::grid_px`, the same origin `cell_at` divides by the cell
 size).
 
+**Pitfall**: `xdotool key`/`keydown` under `Xvfb` goes **nowhere** without
+`xdotool windowfocus $XID` first — there is no window manager to give the window
+focus, so the app never sees `ModifiersChanged` and a probe of anything that
+depends on a modifier (the `OSC 8` underline, Ctrl+click) reports "nothing
+happened" for the wrong reason.
+
 Probe that closes the loop (what the app *received*, not what it did):
 
 ```sh

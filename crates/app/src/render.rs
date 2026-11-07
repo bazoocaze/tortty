@@ -843,6 +843,7 @@ impl Renderer {
         py: f32,
         swap: bool,
         glyph: Option<(usize, u16, f32)>,
+        links: bool,
     ) {
         use tortty_core::cell::{
             BOLD, FAINT, ITALIC, OVERLINE, STRIKE, UL_CURLY, UL_DASHED, UL_DOTTED, UL_DOUBLE,
@@ -945,6 +946,18 @@ impl Renderer {
         }
         if cell.flags & OVERLINE != 0 {
             self.push_rect(x as f32 * cw, py + 1.0, cw, 1.0, [c[0], c[1], c[2], 1.0]);
+        }
+        // `OSC 8` link: the underline is the only thing that says "this text is a
+        // link", and it is drawn while Ctrl is held — the modifier that opens it.
+        // A cell with an underline of its own keeps its style.
+        if links && cell.link != 0 && cell.ul == tortty_core::cell::UL_NONE {
+            self.push_rect(
+                x as f32 * cw,
+                py + ascent + 1.0,
+                cw,
+                1.0,
+                [c[0], c[1], c[2], 1.0],
+            );
         }
     }
 
@@ -1130,6 +1143,7 @@ impl Renderer {
             toast,
             tabs,
             sidebar,
+            links,
         } = *f;
         let cols = term.cols;
         // selection rectangle in the view (stuck to the screen); outside it
@@ -1141,6 +1155,7 @@ impl Renderer {
             sel,
             blink,
             cursor: break_no_cursor(term, view_off, rows.len()),
+            links,
         };
 
         // A17/G17: which rows to rebuild. `blink` only enters the signature if
@@ -1152,6 +1167,7 @@ impl Renderer {
             rows: rows.len(),
             view_off,
             sel,
+            links,
             blink: blink.phase && Self::has_blink(&rows),
             theme: self.theme_gen,
             fg: self.fg,
@@ -1345,6 +1361,7 @@ impl Renderer {
             sel,
             blink,
             cursor,
+            links,
         } = ctx;
         // `y` here is the grid index (selection and cursor), **not** pixels: the
         // vertical position comes in `concat_linhas`. Adding `y * ch` in both
@@ -1406,7 +1423,7 @@ impl Renderer {
                     Some((face, plan)) => plan.piece_at(i).map(|p| (*face, p.gid, p.x)),
                     None => None,
                 };
-                self.draw_cell(&c, cx, py, is_swap(&c, sel, y, cx), glyph);
+                self.draw_cell(&c, cx, py, is_swap(&c, sel, y, cx), glyph, links);
             }
             x = end;
         }
@@ -1713,6 +1730,9 @@ struct RowCtx {
     blink: Blink,
     /// Cursor cell, when it is in this view (breaks the ligature).
     cursor: Option<(usize, usize)>,
+    /// Ctrl is held: every `OSC 8` link underlines itself, so the reader sees
+    /// what a click would open before clicking it.
+    links: bool,
 }
 
 /// The cursor breaks the ligature: its cell is shaped on its own, otherwise it
@@ -1750,6 +1770,8 @@ pub struct Frame<'a> {
     pub toast: Option<&'a str>,
     pub tabs: Option<&'a [TabInfo]>,
     pub sidebar: Option<&'a [WsCard]>,
+    /// Ctrl is held: the `OSC 8` links underline themselves.
+    pub links: bool,
 }
 
 /// What the sidebar needs from each workspace (I6).
