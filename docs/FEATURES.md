@@ -23,7 +23,9 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   truecolor `38;2`/`48;2`, and `:` subparameters.
 - OSC: 0/2 window title, 1 icon title, 4 palette query, 7 shell cwd, 8 hyperlink,
   10/11 default colour query. **limit:** everything else is discarded — OSC 52
-  (remote clipboard) and OSC 133 (prompt marks) are examples (`M-R`).
+  (remote clipboard) and OSC 133 (prompt marks) are examples (`M-R`). Shell
+  integration (`B39`) is the layer that would feed those escapes; it is an
+  addition on top, not a gap in what exists here.
 - Hyperlinks (`OSC 8`): the cell carries the URI (an index into `Term::links`,
   repeated URIs share it), Ctrl underlines every link on screen and Ctrl+click
   hands it to `xdg-open`. **limit:** only `http`, `https`, `file`, `ftp` and
