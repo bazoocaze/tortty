@@ -1455,6 +1455,11 @@ impl Term {
             12 => self.osc_color(12, arg),
             7 => self.osc_cwd(arg),
             8 => self.osc_link(arg),
+            // `9;4;state[;progress]` is not a message — it is the mintty/ConEmu
+            // progress form (which some TUIs send as a keepalive while busy).
+            // Swallowed, not toasted: a 1 Hz repeater would pin the toast and
+            // the badge forever, and `4;3` is a state, not a sentence.
+            9 if Self::osc_progress(arg) => {},
             9 => self.osc_notify(arg),
             777 => self.osc_notify777(arg),
             104 => self.osc_reset_palette(arg),
@@ -1562,6 +1567,21 @@ impl Term {
     /// an empty `uri` closes it. The `params` (`id=`, `foo=`) are ignored: they
     /// exist for the running app to correlate its own spans, and nothing here
     /// needs the correlation.
+    /// The mintty/ConEmu progress form hiding inside `OSC 9`: `4;state` with
+    /// an optional `;progress`, all digits. An iTerm2 message has no such
+    /// shape.
+    fn osc_progress(arg: &[u8]) -> bool {
+        let mut parts = arg.split(|&b| b == b';');
+        if parts.next() != Some(b"4".as_slice()) {
+            return false;
+        }
+        let rest: Vec<&[u8]> = parts.collect();
+        (1..=2).contains(&rest.len())
+            && rest
+                .iter()
+                .all(|p| !p.is_empty() && p.iter().all(u8::is_ascii_digit))
+    }
+
     /// A notification the child wants seen (`M-K`): the text lands in
     /// `notif_text` and the count moves, exactly like `bells` — the app
     /// decides toast, badge and urgency. Capped: a child that notifies in a
@@ -2552,6 +2572,21 @@ mod tests {
         assert_eq!(t.cx, 0);
         // none of this may dirty the grid
         assert!(screen(&t)[0].trim().is_empty(), "{:?}", screen(&t));
+    }
+
+    #[test]
+    fn osc9_progress_state_is_not_a_notification() {
+        // the mintty/ConEmu progress form (a TUI keepalive): swallowed
+        let mut t = Term::new(20, 4);
+        for body in ["\x1b]9;4;3\x07", "\x1b]9;4;0\x07", "\x1b]9;4;3;50\x1b\\"] {
+            t.feed(body.as_bytes());
+        }
+        assert_eq!(t.notifs, 0, "progress never notifies");
+        assert_eq!(t.notif_text, "");
+        // but a message that merely starts with a digit still does
+        t.feed(b"\x1b]9;4;3 done\x07");
+        assert_eq!(t.notifs, 1);
+        assert_eq!(t.notif_text, "4;3 done");
     }
 
     #[test]

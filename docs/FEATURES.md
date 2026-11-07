@@ -121,7 +121,7 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   and the window always asks for urgency. The toast and the badges ignore keys
   for 3 s (whoever types must not lose them); after that the first key or the
   visit acknowledges. **limit:** inside the window + urgency only — no desktop
-  notification daemon.
+  notification daemon, and the progress form `9;4;...` is swallowed, not shown.
 - Shortcuts: Ctrl+Shift+T/W/N/Q/F2, Ctrl+Shift+1…9, Alt+1…9, Super+N/Q/1…9, with
   the digit taken from the physical key so ABNT2 layouts still work.
   **limit:** they are fixed, no remapping yet (`M-H`).

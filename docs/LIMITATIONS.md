@@ -95,6 +95,12 @@ The limitations of the project.
   `org.freedesktop.Notifications`: a desktop notice carries a sender identity,
   and anything the child sends would arrive wearing the terminal's face — a
   remote `ssh` session popping system-level notices is spoofing, not a feature.
+- **No progress display.** `OSC 9` carries two protocols: the iTerm2 message
+  (`9;text`, shown) and the mintty/ConEmu progress form (`9;4;state[;progress]`,
+  swallowed). The progress state goes nowhere — no taskbar bar, no percentage
+  — because a 1 Hz keepalive repeater (what the form is for) would pin any
+  toast or badge forever. If progress UI ever pays, it is its own item, not a
+  notification.
 - **No context menu and no DnD** of a file onto the window. The menu is `M-V` in
   [`BACKLOG.md`](BACKLOG.md); dragging a file onto the window has no id yet.
 - **An `OSC 8` link opens through `xdg-open`, and only for five schemes**
