@@ -9,9 +9,9 @@ The limitations of the project.
 - **One terminal, not a window environment.** No splits at this stage
   (`BACKLOG.md` M-J), no layout manager; tabs and workspaces exist, but they do
   not survive closing (`BACKLOG.md` M-I).
-- **Image embedded in the escape (base64), kitty protocol.** The image has to
-  arrive inside the escape itself; carrying it over file/temp/SHM, animating
-  frames and speaking sixel/iTerm2 are not accepted limits: they are the
+- **One image, drawn as it arrived.** The kitty protocol is accepted for what
+  `icat` needs (direct, file, temp and SHM transmission); animating frames and
+  speaking sixel/iTerm2 are not limits: they are the
   [`BACKLOG.md`](BACKLOG.md) queue.
 - **`TERM=xterm-256color`.** We do not invent our own terminfo entry: the goal
   is that `vim`, `mc`, `less` and `dmesg` work with what already exists.

@@ -14,9 +14,8 @@
 //! `f=24` RGB, `f=32` RGBA, `f=100` PNG, `m=1` (image in chunks), `o=z`
 //! (zlib), `i=`/`c=`/`r=`/`X=`/`Y=`/`C=`/`q=`.
 //!
-//! Out, on purpose: animation (`a=f`/`a=a`), z-index and transmission by
-//! file/temp/shared-memory (`t=f`/`t=t`/`t=s`) — all three are in
-//! `LIMITATIONS.md`.
+//! Out, on purpose: animation (`a=f`/`a=a`) and z-index — the child cannot
+//! move what is already drawn, so there is nothing to animate or stack.
 
 use std::collections::HashMap;
 
@@ -60,6 +59,27 @@ pub struct Placement {
     pub dy: i32,
 }
 
+/// A transmission by file/temp/shared-memory (`B1`): what the app must load.
+///
+/// The payload of `t=f`/`t=t`/`t=s` is a path, not pixels. The core keeps the
+/// request's context (who asked, where to show) and the app answers with
+/// `Graphics::provide` — or the image stays missing and the child gets
+/// `ENOENT`. Shell expansion (`~`) belongs to the app: the path here is raw.
+#[derive(Clone, Debug)]
+pub struct FileRequest {
+    pub path: String,
+    /// `t=t`: the file is temporary — the app deletes it after reading.
+    /// `t=s` reads shared memory and never deletes.
+    pub delete: bool,
+    /// `a=T` also places the image once loaded; `a=t` only transmits.
+    pub display: bool,
+    pub ident: u32,
+    pub quiet: bool,
+    pub kv: HashMap<String, String>,
+    pub cursor: (u16, u16),
+    pub cell: (u32, u32),
+}
+
 /// What the `Term` must do after an APC.
 #[derive(Default, Debug)]
 pub struct Output {
@@ -69,6 +89,10 @@ pub struct Output {
     pub lines: u16,
     /// Should the cursor move down `linhas`?
     pub move_cursor: bool,
+    /// The image lives in a file: its path, decoded from the payload. The
+    /// core never touches the filesystem — the app loads it and answers with
+    /// `provide`, and only then does the child get `OK`/`ENOENT`.
+    pub file: Option<FileRequest>,
 }
 
 #[derive(Default)]
@@ -221,9 +245,33 @@ impl Graphics {
             return Output::default();
         };
         let kv = buf.kv;
-        let Some(mut data) = base64_decode(&buf.b64) else {
+        let Some(data) = base64_decode(&buf.b64) else {
             return Self::error(&kv, "EINVAL:base64");
         };
+        let param = |k: &str| kv.get(k).map(String::as_str);
+        let action = param("a").unwrap_or("t");
+        let medium = param("t").unwrap_or("d");
+        let quiet = param("q").is_some_and(|q| q != "0");
+        let ident = param("i").and_then(|i| i.parse::<u32>().ok()).unwrap_or(0);
+        if (action == "t" || action == "T") && matches!(medium, "f" | "t" | "s") {
+            // the payload names a file — the app reads it and answers with
+            // `provide`. No response yet: `OK`/`ENOENT` comes with the bytes
+            // (or without them).
+            return Output {
+                file: Some(FileRequest {
+                    path: String::from_utf8_lossy(&data).into_owned(),
+                    delete: medium == "t",
+                    display: action == "T",
+                    ident,
+                    quiet,
+                    kv,
+                    cursor,
+                    cell,
+                }),
+                ..Output::default()
+            };
+        }
+        let mut data = data;
         if kv.get("o").is_some_and(|o| o == "z") && !data.is_empty() {
             // `o=z`: the payload comes compressed (`icat --place` sends the
             // decoded PNG + zlib to scale it without re-encoding)
@@ -232,10 +280,6 @@ impl Graphics {
                 None => return Self::error(&kv, "EINVAL:zlib"),
             }
         }
-        let param = |k: &str| kv.get(k).map(String::as_str);
-        let action = param("a").unwrap_or("t");
-        let quiet = param("q").is_some_and(|q| q != "0");
-        let ident = param("i").and_then(|i| i.parse::<u32>().ok()).unwrap_or(0);
         self.dispatch(action, &kv, &data, ident, quiet, cursor, cell)
     }
 
@@ -264,7 +308,7 @@ impl Graphics {
                 // support the graphics protocol".
                 let middle = param("t").unwrap_or("d");
                 let fmt = param("f").and_then(|f| f.parse::<u32>().ok()).unwrap_or(32);
-                let ok = middle == "d" && [24, 32, 100].contains(&fmt);
+                let ok = matches!(middle, "d" | "f" | "t" | "s") && [24, 32, 100].contains(&fmt);
                 let name = if ok {
                     "OK"
                 } else {
@@ -315,6 +359,7 @@ impl Graphics {
                         },
                         lines,
                         move_cursor: param("C") != Some("1"),
+                        file: None,
                     }
                 },
             },
@@ -397,6 +442,24 @@ impl Graphics {
             out.move_cursor = param("C") != Some("1");
         }
         out
+    }
+
+    /// Completes a file transmission (`B1`): the app loaded `req.path` and
+    /// hands the bytes over — from here it is a direct transmission, same
+    /// checks, same answers. Oversize answers like an overlong chunked one.
+    pub fn provide(&mut self, req: &FileRequest, data: &[u8]) -> Output {
+        if data.len() > MAX_APC {
+            return Self::error(&req.kv, "EINVAL:too big");
+        }
+        self.transmit(&req.kv, data, req.ident, req.quiet, req.cursor, req.cell)
+    }
+
+    /// The app could not load the file (`B1`): missing, unreadable, a
+    /// directory — the child cannot tell which, it only learns the image is
+    /// not coming. Existence still leaks (as with any readable path), which is
+    /// why the app never sends bytes back, only this verdict.
+    pub fn missing(req: &FileRequest) -> Output {
+        Self::error(&req.kv, "ENOENT")
     }
 
     fn error(kv: &HashMap<String, String>, msg: &str) -> Output {
@@ -504,7 +567,8 @@ mod checks_graphics {
 
     #[test]
     fn capacity_query_answers_by_medium_and_by_format() {
-        // `kitten icat`'s `a=q`: direct (d) with 24/32/100 is OK; file is not
+        // `kitten icat`'s `a=q`: direct, file, temp and shm with 24/32/100
+        // are OK (`B1` unlocked the three file media)
         let mut g = Graphics::new();
         for (f, ok) in [(24, true), (32, true), (100, true), (16, false)] {
             let body = format!("Ga=q,i=1,f={f},t=d");
@@ -516,11 +580,78 @@ mod checks_graphics {
             };
             assert_eq!(out.responses, [expected.as_bytes().to_vec()], "f={f}");
         }
-        let out = g.handle(b"Ga=q,i=1,f=32,t=f", (0, 0), cell());
-        assert_eq!(
-            out.responses,
-            [b"Gi=1;EINVAL:unsupported transmission".to_vec()]
-        );
+        for t in ["f", "t", "s"] {
+            let body = format!("Ga=q,i=1,f=32,t={t}");
+            let out = g.handle(body.as_bytes(), (0, 0), cell());
+            assert_eq!(out.responses, [b"Gi=1;OK".to_vec()], "t={t}");
+        }
+    }
+
+    fn file_body(t: &str, action: &str) -> Vec<u8> {
+        let path = b64(b"/tmp/x.png");
+        format!("Ga={action},f=100,t={t},i=7;{path}").into_bytes()
+    }
+
+    #[test]
+    fn file_transmission_waits_for_the_app_instead_of_answering() {
+        let mut g = Graphics::new();
+        let out = g.handle(&file_body("f", "T"), (1, 2), cell());
+        assert!(out.responses.is_empty(), "no verdict before the bytes");
+        assert!(g.images().is_empty(), "no image before the bytes");
+        let req = out.file.expect("the path waits for the app");
+        assert_eq!(req.path, "/tmp/x.png");
+        assert!(!req.delete, "t=f never deletes");
+        assert!(req.display, "a=T also places");
+        assert_eq!((req.ident, req.cursor, req.quiet), (7, (1, 2), false));
+    }
+
+    #[test]
+    fn temp_marks_for_delete_and_transmit_only_does_not_place() {
+        let mut g = Graphics::new();
+        let out = g.handle(&file_body("t", "t"), (0, 0), cell());
+        let req = out.file.expect("t=t also waits");
+        assert!(req.delete, "t=t deletes after reading");
+        assert!(!req.display, "a=t only transmits");
+        let mut g = Graphics::new();
+        let out = g.handle(&file_body("s", "T"), (0, 0), cell());
+        assert!(!out.file.expect("t=s waits").delete, "shm never deletes");
+    }
+
+    #[test]
+    fn provide_turns_the_loaded_bytes_into_an_image() {
+        let mut g = Graphics::new();
+        let path = b64(b"/tmp/x.rgba");
+        let body = format!("Ga=T,f=32,s=2,v=2,t=f,i=7;{path}").into_bytes();
+        let out = g.handle(&body, (0, 1), cell());
+        let req = out.file.expect("request");
+        let data = [9, 8, 7, 255].repeat(4);
+        let out = g.provide(&req, &data);
+        assert_eq!(out.responses, [b"Gi=7;OK".to_vec()]);
+        assert!(out.move_cursor);
+        assert_eq!(out.lines, 1);
+        let img = g.images().get(&7).expect("image stored");
+        assert_eq!((img.width, img.height), (2, 2));
+        assert_eq!(g.placements().len(), 1, "a=T placed it");
+    }
+
+    #[test]
+    fn missing_file_answers_enoent_and_stores_nothing() {
+        let mut g = Graphics::new();
+        let out = g.handle(&file_body("f", "T"), (0, 0), cell());
+        let req = out.file.expect("request");
+        let out = Graphics::missing(&req);
+        assert_eq!(out.responses, [b"Gi=7;ENOENT".to_vec()]);
+        assert!(g.images().is_empty());
+    }
+
+    #[test]
+    fn oversize_file_answers_like_an_overlong_chunk() {
+        let mut g = Graphics::new();
+        let out = g.handle(&file_body("f", "t"), (0, 0), cell());
+        let req = out.file.expect("request");
+        let out = g.provide(&req, &vec![0; super::MAX_APC + 1]);
+        assert_eq!(out.responses, [b"Gi=7;EINVAL:too big".to_vec()]);
+        assert!(g.images().is_empty());
     }
 
     #[test]

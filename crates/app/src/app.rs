@@ -1,6 +1,6 @@
 //! The app: window, pty, keyboard, drawing and the introspection socket.
 
-use std::io::Write as _;
+use std::io::{Read as _, Write as _};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -604,6 +604,33 @@ impl App {
     }
 
     /// pty write with counters (`prof`): bytes and repeats per `EAGAIN`.
+    /// Loads an image file for the kitty protocol (`B1`): `t=f` reads, `t=t`
+    /// reads and deletes, `t=s` reads shared memory like a file. `~` expands
+    /// to the home directory — the only expansion, done here so the core
+    /// never resolves paths. Reads at most one byte over the cap: anything
+    /// bigger answers `EINVAL:too big` from the core instead of growing here.
+    fn read_image_file(path: &str, delete: bool) -> Option<Vec<u8>> {
+        let path = match path.strip_prefix('~') {
+            Some(rest) if rest.is_empty() || rest.starts_with('/') => {
+                std::path::PathBuf::from(std::env::var_os("HOME")?)
+                    .join(rest.trim_start_matches('/'))
+            },
+            _ => std::path::PathBuf::from(path),
+        };
+        let file = std::fs::File::open(&path).ok()?;
+        if file.metadata().ok()?.is_dir() {
+            return None;
+        }
+        let mut data = Vec::new();
+        std::io::Read::take(file, u64::from(tortty_core::graphics::MAX_APC as u32) + 1)
+            .read_to_end(&mut data)
+            .ok()?;
+        if delete {
+            let _ = std::fs::remove_file(&path);
+        }
+        Some(data)
+    }
+
     fn pty_write(&mut self, bytes: &[u8]) {
         let Some(pty) = self.tabs[self.active].pty.as_mut() else {
             return;
@@ -1551,6 +1578,9 @@ impl App {
                     self.urgency();
                 }
                 // no toast: a parked tab must not write over the foreground
+                self.parked[s].tabs[j]
+                    .term
+                    .serve_images(Self::read_image_file);
                 let out = self.parked[s].tabs[j].term.take_child_out();
                 if !out.is_empty() {
                     prof::add_write(out.len());
@@ -1640,6 +1670,7 @@ impl App {
             if let Some(text) = pumped.toast {
                 self.toast_notif(&text);
             }
+            self.tabs[i].term.serve_images(Self::read_image_file);
             if i == self.active {
                 self.blink_text = self.tabs[i].term.grid.iter().any(|r| {
                     r.cells

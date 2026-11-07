@@ -203,6 +203,9 @@ pub struct Term {
     osc: Vec<u8>,
     /// APC body (`ESC _`): this is how the kitty image arrives.
     apc: Vec<u8>,
+    /// Image files waiting for the app (`t=f`/`t=t`/`t=s`, `B1`): the payload
+    /// named them, the bytes have not arrived yet.
+    pub image_files: Vec<crate::graphics::FileRequest>,
     /// The in-flight `Str` is an APC (not DCS/PM/SOS, which are discarded).
     apc_active: bool,
     csi_prefix: u8,
@@ -283,6 +286,7 @@ impl Term {
             csi: Vec::with_capacity(64),
             osc: Vec::with_capacity(128),
             apc: Vec::new(),
+            image_files: Vec::new(),
             apc_active: false,
             csi_prefix: 0,
             csi_inter: 0,
@@ -1854,7 +1858,18 @@ impl Term {
             u16::try_from(self.cx).unwrap_or(0),
             u16::try_from(self.cy).unwrap_or(0),
         );
-        let out = self.graphics.handle(&body, cursor, self.cell_size);
+        let mut out = self.graphics.handle(&body, cursor, self.cell_size);
+        // `t=f`/`t=t`/`t=s`: the payload named a file — it waits for the app,
+        // which answers with `serve_images` (`B1`)
+        if let Some(req) = out.file.take() {
+            self.image_files.push(req);
+        }
+        self.apc_output(out);
+    }
+
+    /// Frames the responses and moves the cursor — the same tail for an APC
+    /// that arrived and for a file the app loaded later (`B1`).
+    fn apc_output(&mut self, out: crate::graphics::Output) {
         for r in out.responses {
             self.child_out.extend_from_slice(b"\x1b_");
             self.child_out.extend_from_slice(&r);
@@ -1867,6 +1882,19 @@ impl Term {
             }
         }
         self.touch_all();
+    }
+
+    /// Serves pending image-file loads (`B1`): the app reads (and, for `t=t`,
+    /// deletes) the file — the core never touches the filesystem. Called from
+    /// the drain so the answers ride the same frame's `child_out`.
+    pub fn serve_images(&mut self, mut load: impl FnMut(&str, bool) -> Option<Vec<u8>>) {
+        for req in std::mem::take(&mut self.image_files) {
+            let out = match load(&req.path, req.delete) {
+                Some(data) => self.graphics.provide(&req, &data),
+                None => crate::graphics::Graphics::missing(&req),
+            };
+            self.apc_output(out);
+        }
     }
 
     fn control(&mut self, b: u8) {
@@ -2575,6 +2603,26 @@ mod tests {
     }
 
     #[test]
+    fn file_apc_waits_for_serve_and_then_replies_like_direct() {
+        use base64::Engine as _;
+        let path = base64::engine::general_purpose::STANDARD.encode("/tmp/x.rgba");
+        let mut t = Term::new(20, 4);
+        t.feed(&apc(&format!("Ga=T,f=32,s=2,v=2,t=f,i=3;{path}")));
+        assert_eq!(t.image_files.len(), 1);
+        assert!(t.graphics.images().is_empty(), "no bytes yet, no image");
+        assert!(t.take_child_out().is_empty(), "no verdict before the load");
+        // the app read the file: the image lands and the child hears OK
+        t.serve_images(|p, d| {
+            assert_eq!((p, d), ("/tmp/x.rgba", false));
+            Some([9, 8, 7, 255].repeat(4))
+        });
+        assert_eq!(t.graphics.images().len(), 1);
+        assert_eq!(t.graphics.placements().len(), 1);
+        assert_eq!(t.take_child_out(), b"\x1b_Gi=3;OK\x1b\\".to_vec());
+        assert!(t.image_files.is_empty());
+    }
+
+    #[test]
     fn osc9_progress_state_is_not_a_notification() {
         // the mintty/ConEmu progress form (a TUI keepalive): swallowed
         let mut t = Term::new(20, 4);
@@ -2587,6 +2635,17 @@ mod tests {
         t.feed(b"\x1b]9;4;3 done\x07");
         assert_eq!(t.notifs, 1);
         assert_eq!(t.notif_text, "4;3 done");
+    }
+
+    #[test]
+    fn unreadable_image_file_answers_enoent() {
+        use base64::Engine as _;
+        let path = base64::engine::general_purpose::STANDARD.encode("/no/such.png");
+        let mut t = Term::new(20, 4);
+        t.feed(&apc(&format!("Ga=T,f=100,t=f,i=5;{path}")));
+        t.serve_images(|_, _| None);
+        assert!(t.graphics.images().is_empty());
+        assert_eq!(t.take_child_out(), b"\x1b_Gi=5;ENOENT\x1b\\".to_vec());
     }
 
     #[test]

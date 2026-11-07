@@ -1725,3 +1725,27 @@ still diffs), late key clears (`notifs=0`), background tab (no toast, 1824 px
 diff on the bar, visit clears), parked workspace (1003 px diff on the sidebar,
 switch clears), `777` joining (`notif='make: all done'`), urgency in `WM_HINTS`,
 plus 3 core tests. `tools/render-check.sh` still passes.
+
+## 2026-11-07 — `B1`: kitty image by file, temp file and shared memory
+
+`icat --transfer-mode=file` used to stop at the capability query: answering
+`t=f` with `EINVAL` made it report "terminal does not support the graphics
+protocol". Now the payload of `t=f`/`t=t`/`t=s` is read for what it is — a
+path, base64'd — and the protocol answers `OK` for all three media.
+
+The core still does no I/O: `Graphics::handle` returns a `FileRequest` (path,
+whether `t=t` means delete-after-read, `a=T` or `a=t`, plus the request's
+context), `Term` queues it, and the app drains it with `serve_images` before
+collecting `child_out`, so the reply rides the same frame. The answer is
+`Graphics::provide` (the bytes go through the same direct-transmission path, so
+`f=`, `s=`/`v=` and the 64 MiB cap apply unchanged) or `Graphics::missing`
+(`ENOENT` — the child learns the image is not coming, never which of missing /
+unreadable / directory it was). The app expands a leading `~` and reads at most
+one byte over the cap, so an oversized file is refused instead of buffered.
+
+Verified on an Xvfb with a 40×38 red PNG: `t=f` loads and draws (`ff0000` at the
+placement, `images: 1`); `t=t` draws and the file is gone afterwards; `t=s`
+draws and the shm file stays; a missing path leaves `images: 0`; and with the
+image covering the right edge the scrollbar thumb still wins the last pixels
+(`e67f7f` = 55% foreground over `ff0000`). Six new core tests cover the request
+per medium, `provide`, `missing` and the oversize verdict; 115 core tests pass.
