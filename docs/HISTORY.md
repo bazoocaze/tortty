@@ -1697,3 +1697,31 @@ ms/call — inside the run-to-run spread (one binary alone swung 638–755 fps
 between shots), and `parsebench` 38.06 vs 38.28 MB/s best. So the two lines left:
 default everywhere, nothing to explain. Price, declared: the binary grows
 12.09 to 14.07 MB.
+
+## 2026-11-07 — `M-K`: OSC 9/777 notification with tab badge and card alert
+
+The bell could flash but carried no text; now the child can say what finished.
+`Term` counts `notifs` and keeps `notif_text` (capped at 512 chars), `OSC 9`
+takes the whole payload as the message and `OSC 777` only the `notify`
+subcommand (`title: body`). The app mirrors the bell drain through one `pump`:
+the foreground tab toasts, every tab fires window urgency (a notification is an
+explicit request — `bell` governs only `BEL`), and the old `ring()` is gone,
+its three arms covered identically.
+
+Two watermarks because delivery is not acknowledgement: the drain advances
+`notifs_seen` (toast + urgency, exactly once), while the badge lives on
+`notifs_acked` — the tab label while in front, the sidebar card (new
+`WsCard.alert`) while parked. The toast and the badges ignore keys for 3 s
+(`NOTIF_FLOOR`; the toast already lives 3.5 s), then the first delivered key or
+the visit acknowledges; a parked card survives keys typed elsewhere and clears
+on entry. The drain also feeds parked workspaces now (feed only, no title or
+draw) — before, a bell in workspace 3 waited for the return; the view still
+follows the output so the switch back lands where it would have.
+
+The probe tripped on the design once: the first version marked seen at drain
+and no badge ever stuck. Verified on an Xvfb: foreground toast (1724 px diff on
+the bottom row, `state` `notif='build ok'`), early key keeps (`notifs=1`, toast
+still diffs), late key clears (`notifs=0`), background tab (no toast, 1824 px
+diff on the bar, visit clears), parked workspace (1003 px diff on the sidebar,
+switch clears), `777` joining (`notif='make: all done'`), urgency in `WM_HINTS`,
+plus 3 core tests. `tools/render-check.sh` still passes.

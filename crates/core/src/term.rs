@@ -23,6 +23,9 @@ const REPLACEMENT: char = '\u{FFFD}';
 const MAX_OSC: usize = 4096;
 /// How many distinct `OSC 8` URIs are kept (a span reuses its index).
 pub const LINK_MAX: usize = 4096;
+/// How many chars of an `OSC 9`/`777` notification are kept: it is shown in one
+/// toast line, and a child that notifies in a loop must not grow it.
+pub const NOTIF_MAX: usize = 512;
 /// How many OSC the probe keeps, and how much of each (the socket's `osc` verb).
 const OSC_SEEN: usize = 8;
 const OSC_SEEN_MAX: usize = 256;
@@ -170,6 +173,10 @@ pub struct Term {
     pub theme_dirty: bool,
     pub cell_size: (u32, u32),
     pub bells: u32,
+    /// `OSC 9`/`777` notifications waiting for the app (`M-K`): the count is
+    /// the app's cursor (as `bells`/`bells_seen`), the text is the last one.
+    pub notifs: u32,
+    pub notif_text: String,
     pub respond_size: bool,
     tabstops: Vec<bool>,
     pub dirty: Vec<bool>,
@@ -257,6 +264,8 @@ impl Term {
             theme_dirty: false,
             cell_size: (10, 19),
             bells: 0,
+            notifs: 0,
+            notif_text: String::new(),
             respond_size: false,
             tabstops: (0..cols).map(|i| i % 8 == 0).collect(),
             dirty: vec![true; rows],
@@ -1446,6 +1455,8 @@ impl Term {
             12 => self.osc_color(12, arg),
             7 => self.osc_cwd(arg),
             8 => self.osc_link(arg),
+            9 => self.osc_notify(arg),
+            777 => self.osc_notify777(arg),
             104 => self.osc_reset_palette(arg),
             110 => self.reset_color(10),
             111 => self.reset_color(11),
@@ -1551,6 +1562,48 @@ impl Term {
     /// an empty `uri` closes it. The `params` (`id=`, `foo=`) are ignored: they
     /// exist for the running app to correlate its own spans, and nothing here
     /// needs the correlation.
+    /// A notification the child wants seen (`M-K`): the text lands in
+    /// `notif_text` and the count moves, exactly like `bells` — the app
+    /// decides toast, badge and urgency. Capped: a child that notifies in a
+    /// loop must not grow this without a limit.
+    fn osc_notify_text(&mut self, text: &str) {
+        let clean: String = text
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(NOTIF_MAX)
+            .collect();
+        if clean.is_empty() {
+            return;
+        }
+        self.notif_text = clean;
+        self.notifs = self.notifs.wrapping_add(1);
+    }
+
+    /// `OSC 9;message` (iTerm2): the whole payload is the message.
+    fn osc_notify(&mut self, arg: &[u8]) {
+        let text = String::from_utf8_lossy(arg).into_owned();
+        self.osc_notify_text(&text);
+    }
+
+    /// `OSC 777;notify;title;body` (urxvt): only `notify` is a notification,
+    /// the other subcommands stay discarded with everything else unknown.
+    fn osc_notify777(&mut self, arg: &[u8]) {
+        let text = String::from_utf8_lossy(arg);
+        let mut it = text.splitn(3, ';');
+        if it.next() != Some("notify") {
+            return;
+        }
+        let title = it.next().unwrap_or_default();
+        let body = it.next().unwrap_or_default();
+        if title.is_empty() {
+            self.osc_notify_text(body);
+        } else if !body.is_empty() {
+            self.osc_notify_text(&format!("{title}: {body}"));
+        } else {
+            self.osc_notify_text(title);
+        }
+    }
+
     fn osc_link(&mut self, arg: &[u8]) {
         let uri = arg
             .iter()
@@ -3248,6 +3301,34 @@ mod tests {
         let mut v = term();
         v.feed(b"\x1b[20h\x1b[20lab\ncd");
         assert_eq!(v.row_text(1), "  cd");
+    }
+
+    #[test]
+    fn osc9_counts_the_notification_and_keeps_its_text() {
+        let mut t = term();
+        t.feed(b"\x1b]9;build ok\x07");
+        assert_eq!((t.notifs, t.notif_text.as_str()), (1, "build ok"));
+        // empty and control-only payloads are not notifications
+        t.feed(b"\x1b]9;\x07");
+        t.feed(b"\x1b]9;\x01\x02\x07");
+        assert_eq!((t.notifs, t.notif_text.as_str()), (1, "build ok"));
+    }
+
+    #[test]
+    fn osc777_notify_joins_title_and_body() {
+        let mut t = term();
+        t.feed(b"\x1b]777;notify;make;all done\x07");
+        assert_eq!((t.notifs, t.notif_text.as_str()), (1, "make: all done"));
+        t.feed(b"\x1b]777;notify;;body only\x07");
+        assert_eq!(t.notif_text.as_str(), "body only");
+    }
+
+    #[test]
+    fn osc777_ignores_anything_but_notify() {
+        let mut t = term();
+        t.feed(b"\x1b]777;foo;bar\x07");
+        t.feed(b"\x1b]777\x07");
+        assert_eq!((t.notifs, t.notif_text.as_str()), (0, ""));
     }
 
     #[test]

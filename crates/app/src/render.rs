@@ -760,7 +760,13 @@ impl Renderer {
                 (bg, self.color(Color::Idx(8), self.fg))
             };
             self.push_rect(x0, y0, width, card_h, [bg[0], bg[1], bg[2], 1.0]);
-            // row 1: "n name"
+            // row 1: "n name" — in the alert colour while a notification waits
+            // (`M-K`), like a tab label does
+            let fg = if c.alert {
+                self.color(Color::Idx(3), self.fg)
+            } else {
+                fg
+            };
             let n = cards.len();
             let name = format!("{} {}", i + 1, c.name);
             self.text_line(x0, y0 + 3.0, &name, fg, width);
@@ -1812,6 +1818,8 @@ pub struct WsCard {
     pub title: String,
     pub n_tabs: usize,
     pub ativa: bool,
+    /// A tab of this workspace has an unacknowledged notification (`M-K`).
+    pub alert: bool,
 }
 
 pub enum FrameOutcome {

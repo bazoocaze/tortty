@@ -94,12 +94,25 @@ pub enum UserEvent {
 }
 
 /// Transient notice from the terminal itself (I12): "config: 3 errors — ...".
+/// What a tab's `pump` asks the app to do: toast (foreground tab only),
+/// window urgency and audible beeps. Executed by the caller so the tab logic
+/// stays borrow-free.
+#[derive(Default)]
+struct PumpOut {
+    toast: Option<String>,
+    urgency: bool,
+    beeps: u32,
+}
+
 struct Toast {
     text: String,
     since: std::time::Instant,
     /// How many equal messages arrived in a row (the toast adds up, it does not
     /// stack).
     times: u32,
+    /// From `OSC 9`/`777` (`M-K`): only a notification toast is dismissed by
+    /// the first key after the floor — a config notice keeps its own time.
+    notif: bool,
 }
 
 /// How long the toast stays on screen.
@@ -124,6 +137,10 @@ const BLINK_MS: u64 = 500;
 
 /// How long the tab label stays highlighted after a BEL (I13).
 const FLASH_DUR: Duration = Duration::from_millis(800);
+/// A notification stays immune to keys this long (`M-K`): whoever is typing
+/// must not lose it. The toast already lives 3.5 s; the floor guards the
+/// badges, which have no other expiry.
+const NOTIF_FLOOR: Duration = Duration::from_secs(3);
 
 /// Bytes in hex (the socket's `keys` verb returns this to check the encoder).
 fn hex(bytes: &[u8]) -> String {
@@ -189,6 +206,17 @@ pub struct Tab {
     pub scroll_frac: f32,
     /// BELLs already handled (the `Term` counts them; the app decides what to play).
     pub bells_seen: u32,
+    /// `OSC 9`/`777` already delivered (`M-K`): the toast fired and urgency
+    /// went out at drain time. Delivery is not acknowledgement — the badge
+    /// lives on `notifs_acked`.
+    pub notifs_seen: u32,
+    /// `OSC 9`/`777` acknowledged (`M-K`): pending while
+    /// `notifs_acked != term.notifs`. Unlike the 800 ms bell flash, a badge
+    /// stays until the tab is visited or a key lands after the floor.
+    pub notifs_acked: u32,
+    /// When the last notification arrived: keys before `NOTIF_FLOOR` must not
+    /// eat it (whoever types must not lose it).
+    pub notif_at: Option<std::time::Instant>,
     /// Title requested by OSC 0/2 (empty = derive from the cwd).
     pub osc_title: String,
     /// Last BEL, for the label flash (I13).
@@ -210,8 +238,55 @@ impl Tab {
             click: None,
             scroll_frac: 0.0,
             bells_seen: 0,
+            notifs_seen: 0,
+            notifs_acked: 0,
             osc_title: String::new(),
             bell_at: None,
+            notif_at: None,
+        }
+    }
+
+    /// A notification is pending on this tab (`M-K`): delivered but neither
+    /// visited nor acknowledged by key.
+    fn notif_pending(&self) -> bool {
+        self.notifs_acked != self.term.notifs
+    }
+
+    /// Marks every notification of this tab acknowledged (`M-K`).
+    fn ack_tab(&mut self) {
+        self.notifs_seen = self.term.notifs;
+        self.notifs_acked = self.term.notifs;
+        self.notif_at = None;
+    }
+
+    /// Advances the seen counters and reports what the app owes the user.
+    /// One logic for the front tab and the parked ones: a background tab's
+    /// bell behaves the same wherever the tab lives; only the toast stays
+    /// with the foreground tab.
+    fn pump(&mut self, bell: Bell, foreground: bool, out: &mut PumpOut) {
+        let now = std::time::Instant::now();
+        let bells = self.term.bells;
+        while self.bells_seen != bells {
+            self.bells_seen = self.bells_seen.wrapping_add(1);
+            // I13: the tab label flashes for 800 ms, even if it is not in
+            // front (it is the "something happened here" alert)
+            self.bell_at = Some(now);
+            match bell {
+                Bell::None => {},
+                Bell::Visual => out.urgency = true,
+                Bell::Audible => out.beeps += 1,
+            }
+        }
+        let notifs = self.term.notifs;
+        while self.notifs_seen != notifs {
+            self.notifs_seen = self.notifs_seen.wrapping_add(1);
+            self.notif_at = Some(now);
+            // a notification is an explicit "look here": urgency is not
+            // governed by `bell`, which rules only BEL
+            out.urgency = true;
+            if foreground {
+                out.toast = Some(self.term.notif_text.clone());
+            }
         }
     }
 
@@ -570,6 +645,7 @@ impl App {
                     title: self.tabs[self.active].title(),
                     n_tabs: self.tabs.len(),
                     ativa: true,
+                    alert: self.tabs.iter().any(Tab::notif_pending),
                 });
             } else {
                 let slot = if i < self.ws_idx { i } else { i - 1 };
@@ -579,6 +655,7 @@ impl App {
                     title: w.tabs[w.active].title(),
                     n_tabs: w.tabs.len(),
                     ativa: false,
+                    alert: w.tabs.iter().any(Tab::notif_pending),
                 });
             }
         }
@@ -605,7 +682,8 @@ impl App {
                 ativa: i == self.active,
                 alert: t
                     .bell_at
-                    .is_some_and(|when| now.duration_since(when) < FLASH_DUR),
+                    .is_some_and(|when| now.duration_since(when) < FLASH_DUR)
+                    || t.notif_pending(),
             })
             .collect()
     }
@@ -874,6 +952,7 @@ impl App {
         ) else {
             return;
         };
+        self.ack_notifs();
         self.pty_write(&bytes);
         if let Some(w) = self.window.as_ref() {
             w.request_redraw();
@@ -1422,25 +1501,97 @@ impl App {
         for i in 0..self.tabs.len() {
             self.drain_tab(i);
         }
+        self.drain_parked();
     }
 
-    fn drain_tab(&mut self, i: usize) {
+    /// Feeds the parked workspaces (`M-K`): a notification in workspace 3 has
+    /// to fire while workspace 1 is in front, and the pty produces whether
+    /// anybody looks. Feed only — no title, blink or draw belongs to a parked
+    /// tab. The view still follows the output so the switch back lands where
+    /// it would have; toasts stay with the foreground tab, badges with whoever
+    /// owns them. Mirrors the signal half of `drain_tab` through the same
+    /// `pump` (hence no second formula for who owes what).
+    fn drain_parked(&mut self) {
+        for s in 0..self.parked.len() {
+            for j in 0..self.parked[s].tabs.len() {
+                let (bytes, eof) = Self::read_pty(self.parked[s].tabs[j].rx.as_ref());
+                if eof {
+                    self.eof = true;
+                }
+                if bytes.is_empty() {
+                    continue;
+                }
+                let tab = &self.parked[s].tabs[j];
+                let (sc, hist) = (tab.term.scrolled, tab.term.scrollback.len());
+                let t0 = std::time::Instant::now();
+                self.parked[s].tabs[j].term.feed(&bytes);
+                if prof::enabled() {
+                    prof::add_parse(t0.elapsed().as_nanos() as u64, bytes.len());
+                }
+                if self.parked[s].tabs[j].term.theme_dirty {
+                    self.parked[s].tabs[j].term.theme_dirty = false;
+                    let theme = self.parked[s].tabs[j].term.theme.clone();
+                    if let Some(r) = self.renderer.as_mut() {
+                        r.apply_theme(&theme);
+                    }
+                }
+                if self.parked[s].tabs[j].view_off > 0 {
+                    let off = self.parked[s].tabs[j].view_off;
+                    let off = self.parked[s].tabs[j].term.view_after_output(off, sc, hist);
+                    self.parked[s].tabs[j].view_off =
+                        off.min(self.parked[s].tabs[j].term.scrollback.len());
+                }
+                let mut pumped = PumpOut::default();
+                let bell = self.opts.cfg.bell;
+                self.parked[s].tabs[j].pump(bell, false, &mut pumped);
+                for _ in 0..pumped.beeps {
+                    Self::beep();
+                }
+                if pumped.urgency {
+                    self.urgency();
+                }
+                // no toast: a parked tab must not write over the foreground
+                let out = self.parked[s].tabs[j].term.take_child_out();
+                if !out.is_empty() {
+                    prof::add_write(out.len());
+                    if let Some(pty) = self.parked[s].tabs[j].pty.as_mut() {
+                        if !pty.write(&out) {
+                            prof::add_eagain();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Non-blocking read of a tab's pty channel. Shared by the front drain
+    /// and the parked one (`M-K` feeds tabs nobody looks at).
+    fn read_pty(rx: Option<&Receiver<Vec<u8>>>) -> (Vec<u8>, bool) {
         let mut bytes: Vec<u8> = Vec::new();
-        if let Some(rx) = &self.tabs[i].rx {
+        let mut eof = false;
+        if let Some(rx) = rx {
             loop {
                 match rx.try_recv() {
                     Ok(v) if v.is_empty() => {
-                        self.eof = true;
+                        eof = true;
                         break;
                     },
                     Ok(v) => bytes.extend_from_slice(&v),
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => {
-                        self.eof = true;
+                        eof = true;
                         break;
                     },
                 }
             }
+        }
+        (bytes, eof)
+    }
+
+    fn drain_tab(&mut self, i: usize) {
+        let (bytes, eof) = Self::read_pty(self.tabs[i].rx.as_ref());
+        if eof {
+            self.eof = true;
         }
         if !bytes.is_empty() {
             // D10: whoever is reading the history cannot be dragged by the
@@ -1477,13 +1628,17 @@ impl App {
                     self.sync_title();
                 }
             }
-            let bells = self.tabs[i].term.bells;
-            while self.tabs[i].bells_seen != bells {
-                self.tabs[i].bells_seen = self.tabs[i].bells_seen.wrapping_add(1);
-                // I13: the tab label flashes for 800 ms, even if it is not in
-                // front (it is the "something happened here" alert)
-                self.tabs[i].bell_at = Some(std::time::Instant::now());
-                self.ring();
+            let mut pumped = PumpOut::default();
+            let bell = self.opts.cfg.bell;
+            self.tabs[i].pump(bell, i == self.active, &mut pumped);
+            for _ in 0..pumped.beeps {
+                Self::beep();
+            }
+            if pumped.urgency {
+                self.urgency();
+            }
+            if let Some(text) = pumped.toast {
+                self.toast_notif(&text);
             }
             if i == self.active {
                 self.blink_text = self.tabs[i].term.grid.iter().any(|r| {
@@ -1572,14 +1727,25 @@ impl App {
     /// notices.
     #[allow(clippy::needless_pass_by_value)] // the caller builds the text on the spot
     fn toast(&mut self, text: String) {
-        let times = match self.toast.take() {
-            Some(t) if t.text == text => t.times + 1,
-            _ => 1,
+        self.toast_impl(&text, false);
+    }
+
+    /// A notification toast (`M-K`): the same strip, but the first key after
+    /// the floor acknowledges it.
+    fn toast_notif(&mut self, text: &str) {
+        self.toast_impl(text, true);
+    }
+
+    fn toast_impl(&mut self, text: &str, notif: bool) {
+        let (times, old) = match self.toast.take() {
+            Some(t) if t.text == text => (t.times + 1, t.notif),
+            _ => (1, false),
         };
         self.toast = Some(Toast {
-            text: text.clone(),
+            text: text.to_string(),
             since: std::time::Instant::now(),
             times,
+            notif: notif || old,
         });
         logln(&format!("toast: {text}"));
         if let Some(w) = self.window.as_ref() {
@@ -1600,23 +1766,40 @@ impl App {
         })
     }
 
-    /// BEL: the app asks (the count lives in the `Term`), the configuration
-    /// decides what happens. `audible` writes the BEL to our stdout (a real
-    /// terminal beeps; in a graphical session that is what is left without an
-    /// audio library).
-    fn ring(&mut self) {
-        match self.opts.cfg.bell {
-            Bell::None => {},
-            Bell::Visual => {
-                if let Some(w) = self.window.as_ref() {
-                    w.request_user_attention(Some(UserAttentionType::Informational));
-                }
-            },
-            Bell::Audible => {
-                let mut out = std::io::stdout();
-                let _ = out.write_all(b"\x07");
-                let _ = out.flush();
-            },
+    /// One audible BEL to our stdout (a real terminal beeps; in a graphical
+    /// session that is what is left without an audio library).
+    fn beep() {
+        let mut out = std::io::stdout();
+        let _ = out.write_all(b"\x07");
+        let _ = out.flush();
+    }
+
+    /// Window urgency outside the bell config: a notification is an explicit
+    /// "look here", while `bell` governs only BEL.
+    fn urgency(&self) {
+        if let Some(w) = self.window.as_ref() {
+            w.request_user_attention(Some(UserAttentionType::Informational));
+        }
+    }
+
+    /// A key delivered to the child acknowledges the notification (`M-K`):
+    /// whoever types already saw it. Guarded by `NOTIF_FLOOR` — keys typed
+    /// while the toast is fresh must not eat it. Parked workspaces keep
+    /// their card until visited: nobody looked there.
+    fn ack_notifs(&mut self) {
+        let now = std::time::Instant::now();
+        if let Some(t) = &self.toast {
+            if t.notif && now.duration_since(t.since) >= NOTIF_FLOOR {
+                self.toast = None;
+            }
+        }
+        for t in &mut self.tabs {
+            if t.notif_pending()
+                && t.notif_at
+                    .is_some_and(|at| now.duration_since(at) >= NOTIF_FLOOR)
+            {
+                t.ack_tab();
+            }
         }
     }
 
@@ -1921,6 +2104,20 @@ impl App {
                     // kitty images: without this there is no way to check the
                     // placement without looking at the screen
                     "images": self.tabs[self.active].term.graphics.images().len(),
+                    // notifications (M-K): what is still unacknowledged, for
+                    // probes that cannot watch the toast
+                    "notifs": self.tabs.iter().filter(|t| t.notif_pending()).count()
+                        + self
+                            .parked
+                            .iter()
+                            .flat_map(|w| w.tabs.iter())
+                            .filter(|t| t.notif_pending())
+                            .count(),
+                    "notif": if self.tabs[self.active].notif_pending() {
+                        self.tabs[self.active].term.notif_text.clone()
+                    } else {
+                        String::new()
+                    },
                     "placements": self.tabs[self.active]
                         .term
                         .graphics
@@ -2453,6 +2650,10 @@ impl App {
             .map(|(_, w)| w.expect("only the target slot stays empty"))
             .collect();
         new.into_current(self);
+        // entering acknowledges every badge of the workspace (`M-K`)
+        for t in &mut self.tabs {
+            t.ack_tab();
+        }
         self.after_ws_change();
     }
 
@@ -2538,6 +2739,8 @@ impl App {
             return;
         }
         self.active = i;
+        // visiting acknowledges the badge (`M-K`): it did its job
+        self.tabs[i].ack_tab();
         self.sync_title();
         if let Some(w) = self.window.as_ref() {
             w.request_redraw();

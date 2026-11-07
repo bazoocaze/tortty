@@ -90,6 +90,11 @@ The limitations of the project.
   for a control that appears only when there is history. It is 8 px wide (a
   target that can be hit) and translucent, so what is under it stays readable —
   but on the last column the text is behind the thumb.
+- **Notifications stay inside the window.** `OSC 9`/`777` toast, badge and
+  ask the window manager for urgency, but there is no D-Bus, no portal and no
+  `org.freedesktop.Notifications`: a desktop notice carries a sender identity,
+  and anything the child sends would arrive wearing the terminal's face — a
+  remote `ssh` session popping system-level notices is spoofing, not a feature.
 - **No context menu and no DnD** of a file onto the window. The menu is `M-V` in
   [`BACKLOG.md`](BACKLOG.md); dragging a file onto the window has no id yet.
 - **An `OSC 8` link opens through `xdg-open`, and only for five schemes**

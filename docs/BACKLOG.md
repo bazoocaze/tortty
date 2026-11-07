@@ -35,7 +35,6 @@ with the same id, until it closes. One piece of work has one owner.
 | M-H | Config v2: shortcut remapping (the palette is already done: `color0..15`, fg/bg/cursor) | a shortcut is the first thing someone wants to change after the font, and today it is a `match` in the code | when a WM shortcut collides with one of the terminal's | low-medium: parser ready, the action table is missing |
 | M-I | Tabs/workspaces persistent across runs | today closing the window costs the layout; the socket's `state` is already JSON | when closing the window costs a day's layout | low |
 | M-J | Splits (more than one terminal in the same view) | a split is a view in the same `wgpu` surface, no toolkit involved | when two terminals side by side become routine | high |
-| M-K | OSC 9/777 notification + urgency | "the build finished" without having to look at the window | when a long build requires watching | low |
 | M-L | Images: z-index, placement id, Unicode placeholder, source crop | today the image is drawn on top and there is no fine control over it | after the basic image (F6) is working with `icat` | medium |
 | M-N | Socket transport on Windows (named pipe) | `benchrun.py` and automation need to work there too | together with `M-X` (Windows) | low |
 | M-P | Remap the selection anchor on reflow | today reflow kills the selection instead of shifting it. `reflow` already computes `(paragraph, offset)` for each old line, so the new anchor is one calculation | when losing a long selection on a resize annoys | low |

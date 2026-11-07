@@ -116,6 +116,12 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - Title: OSC 0/2, else `basename(cwd)`, else `tortty`; the window title mirrors
   the active tab.
 - Chrome: toast with a queue and timeout, visual bell, audible bell.
+- Notifications (`OSC 9`/`777`): the foreground tab toasts the text, a
+  background tab wears a badge on its label, a parked workspace on its card,
+  and the window always asks for urgency. The toast and the badges ignore keys
+  for 3 s (whoever types must not lose them); after that the first key or the
+  visit acknowledges. **limit:** inside the window + urgency only — no desktop
+  notification daemon.
 - Shortcuts: Ctrl+Shift+T/W/N/Q/F2, Ctrl+Shift+1…9, Alt+1…9, Super+N/Q/1…9, with
   the digit taken from the physical key so ABNT2 layouts still work.
   **limit:** they are fixed, no remapping yet (`M-H`).
