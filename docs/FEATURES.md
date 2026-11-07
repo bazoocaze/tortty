@@ -127,9 +127,9 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   not cell width, so a wide glyph (emoji, CJK) can overflow the box.
 - Notifications (`OSC 9`/`777`): the foreground tab toasts the text, a
   background tab wears a badge on its label, a parked workspace on its card,
-  and the window always asks for urgency. The toast and the badges ignore keys
-  for 3 s (whoever types must not lose them); after that the first key or the
-  visit acknowledges. **limit:** inside the window + urgency only — no desktop
+  and the window always asks for urgency. The toast lives 8 s and no key takes
+  it out; the badges ignore keys for 8 s (whoever types must not lose them), and
+  after that the first key or the visit acknowledges. **limit:** inside the window + urgency only — no desktop
   notification daemon, and the progress form `9;4;...` is swallowed, not shown.
 - Shortcuts: Ctrl+Shift+T/W/N/Q/F2, Ctrl+Shift+1…9, Alt+1…9, Super+N/Q/1…9, with
   the digit taken from the physical key so ABNT2 layouts still work.

@@ -110,13 +110,12 @@ struct Toast {
     /// How many equal messages arrived in a row (the toast adds up, it does not
     /// stack).
     times: u32,
-    /// From `OSC 9`/`777` (`M-K`): only a notification toast is dismissed by
-    /// the first key after the floor — a config notice keeps its own time.
-    notif: bool,
 }
 
-/// How long the toast stays on screen.
-const TOAST_DUR: Duration = Duration::from_millis(3500);
+/// How long the toast stays on screen. Every toast gets the same time and no
+/// key takes it out: a notice that vanishes before it can be read is a notice
+/// that was never delivered.
+const TOAST_DUR: Duration = Duration::from_secs(8);
 
 /// Text of the configuration notice (K13). Deliberately fits in ~60 columns:
 /// the toast is cut at the width of the grid, and "line and key" is what one
@@ -138,9 +137,10 @@ const BLINK_MS: u64 = 500;
 /// How long the tab label stays highlighted after a BEL (I13).
 const FLASH_DUR: Duration = Duration::from_millis(800);
 /// A notification stays immune to keys this long (`M-K`): whoever is typing
-/// must not lose it. The toast already lives 3.5 s; the floor guards the
-/// badges, which have no other expiry.
-const NOTIF_FLOOR: Duration = Duration::from_secs(3);
+/// must not lose it. It is the toast's own time, because the toast outlives the
+/// key that would dismiss it — what the floor now guards is the badge, which has
+/// no other expiry.
+const NOTIF_FLOOR: Duration = TOAST_DUR;
 
 /// Bytes in hex (the socket's `keys` verb returns this to check the encoder).
 fn hex(bytes: &[u8]) -> String {
@@ -1726,7 +1726,7 @@ impl App {
                 self.urgency();
             }
             if let Some(text) = pumped.toast {
-                self.toast_notif(&text);
+                self.toast(text);
             }
             self.tabs[i].term.serve_images(Self::read_image_file);
             if i == self.active {
@@ -1814,29 +1814,17 @@ impl App {
     /// Shows a notice on screen. An equal message in a row becomes a count
     /// ("×3"), not a queue — whoever saves the file ten times does not want ten
     /// notices.
-    #[allow(clippy::needless_pass_by_value)] // the caller builds the text on the spot
     fn toast(&mut self, text: String) {
-        self.toast_impl(&text, false);
-    }
-
-    /// A notification toast (`M-K`): the same strip, but the first key after
-    /// the floor acknowledges it.
-    fn toast_notif(&mut self, text: &str) {
-        self.toast_impl(text, true);
-    }
-
-    fn toast_impl(&mut self, text: &str, notif: bool) {
-        let (times, old) = match self.toast.take() {
-            Some(t) if t.text == text => (t.times + 1, t.notif),
-            _ => (1, false),
+        let times = match self.toast.take() {
+            Some(t) if t.text == text => t.times + 1,
+            _ => 1,
         };
+        logln(&format!("toast: {text}"));
         self.toast = Some(Toast {
-            text: text.to_string(),
+            text,
             since: std::time::Instant::now(),
             times,
-            notif: notif || old,
         });
-        logln(&format!("toast: {text}"));
         if let Some(w) = self.window.as_ref() {
             w.request_redraw();
         }
@@ -1871,17 +1859,13 @@ impl App {
         }
     }
 
-    /// A key delivered to the child acknowledges the notification (`M-K`):
-    /// whoever types already saw it. Guarded by `NOTIF_FLOOR` — keys typed
-    /// while the toast is fresh must not eat it. Parked workspaces keep
-    /// their card until visited: nobody looked there.
+    /// A key delivered to the child acknowledges the notification badge
+    /// (`M-K`): whoever types already saw it. Guarded by `NOTIF_FLOOR` — keys
+    /// typed while the notification is fresh must not eat it. The toast is not
+    /// in this list: it has its own time and leaves by the tick alone. Parked
+    /// workspaces keep their card until visited: nobody looked there.
     fn ack_notifs(&mut self) {
         let now = std::time::Instant::now();
-        if let Some(t) = &self.toast {
-            if t.notif && now.duration_since(t.since) >= NOTIF_FLOOR {
-                self.toast = None;
-            }
-        }
         for t in &mut self.tabs {
             if t.notif_pending()
                 && t.notif_at

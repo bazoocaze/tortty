@@ -1814,3 +1814,29 @@ the feel still asks for less, the next step is a multiplier knob
 Verified: `tools/quality-check.sh` (fmt, clippy, test, release build, selftest,
 parsebench all green), the Xvfb wheel probe above, and
 `tools/render-check.sh`.
+
+## 2026-11-07 — the toast lives 8 s and no key takes it out
+
+The toast was 3.5 s and a notification toast could be dismissed at 3 s by the
+first key delivered to the child. Both were short of what the notice needs: the
+toast carries the *content* of a notification whose *signal* (the badge) already
+lives longer, so the text disappeared before the reader finished the line it was
+sitting under.
+
+One lifetime now: `TOAST_DUR` is 8 s and every toast — config notice, `link
+refused`, notification — gets it. `NOTIF_FLOOR` became the same constant, so a
+key never acknowledges a notification before the toast itself would have left;
+what the floor still guards is the badge, which has no other expiry (it stays
+until the tab is visited or a key lands after it). With the two equal, the early
+dismissal path became dead code and went: `Toast` lost its `notif` flag,
+`toast_notif` and `toast_impl` collapsed into `toast`, and `ack_notifs` now
+answers for the badges only. A repeated identical message still counts (`×N`)
+and still restarts the clock.
+
+Numbers: Xvfb, a child that prints `OSC 9` two seconds after starting, and
+captures at 2.0/4.0/6.0/7.5/8.6/9.5 s of age — pixels differ from the no-toast
+baseline at every step up to **7.5 s** (3710 px, box `270,106 106x35`) and are
+**0 at 8.6 s**. The same probe on the previous build (1.0.29) was already empty
+at 4.5 s.
+
+Verified: `tools/quality-check.sh`, the capture probe above.
