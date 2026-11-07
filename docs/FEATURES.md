@@ -115,7 +115,11 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   only one), inline rename, stable numbering.
 - Title: OSC 0/2, else `basename(cwd)`, else `tortty`; the window title mirrors
   the active tab.
-- Chrome: toast with a queue and timeout, visual bell, audible bell.
+- Chrome: toast as a floating box in the bottom-right corner — theme background
+  veiled 14% towards the foreground, 1 px border in the alert colour, 6 px
+  geometric marker, 1.5-cell gutter, right edge pinned — with a queue and a
+  timeout, visual bell, audible bell. **limit:** truncation counts characters,
+  not cell width, so a wide glyph (emoji, CJK) can overflow the box.
 - Notifications (`OSC 9`/`777`): the foreground tab toasts the text, a
   background tab wears a badge on its label, a parked workspace on its card,
   and the window always asks for urgency. The toast and the badges ignore keys

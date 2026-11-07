@@ -1749,3 +1749,27 @@ draws and the shm file stays; a missing path leaves `images: 0`; and with the
 image covering the right edge the scrollbar thumb still wins the last pixels
 (`e67f7f` = 55% foreground over `ff0000`). Six new core tests cover the request
 per medium, `provide`, `missing` and the oversize verdict; 115 core tests pass.
+
+## 2026-11-07 — the toast becomes a box (`B8` follow-up)
+
+The toast was a strip across the last row with the colours inverted: it erased
+whatever was on that line and did not read as an aviso. The owner asked for the
+box, and the box cannot have the theme background as its own surface — a black
+rectangle on a black screen only shows the border. The surface is therefore the
+background veiled 14% towards the foreground, which is also what keeps it honest
+in a light theme (it darkens instead of lightening) and needs no key in
+`CONFIG.md`. Two rects, not one: the opaque background goes first, or the text
+underneath shows through the veil.
+
+Geometry: 1.5-cell gutter on each side of the text (the marker lives in the left
+gutter), 8 px above and below, 1 cell from the grid's right edge and 8 px from
+the bottom, so the box spans two rows — the chrome is drawn after the grid, so
+covering text costs nothing. The right edge is pinned: a long text grows to the
+left instead of pushing the margin out of the window. The marker is a 6 px
+`push_rect` rather than a glyph, because the atlas is `Format::Alpha` and a
+coloured bell emoji would draw as a silhouette.
+
+Verified on an Xvfb 90×12 (cell 11.2 × 21.7 px): box 438 × 38 px, surface
+`#1e1e1e` = 14% of `#d6d6d6` over `#000000`, border `#cdcd00` on the four 1 px
+edges, marker at x+5, 12 px and 8 px from the window edges. `quality-check.sh
+--fast` and `tools/render-check.sh` still pass.

@@ -797,28 +797,57 @@ impl Renderer {
         self.chrome_text(&text, x0 + self.pad, y, fg, 0.0);
     }
 
-    /// Toast (I12): a strip on the last row, with the colours inverted.
+    /// Toast (I12/K13): a box floating in the bottom-right corner.
     ///
     /// It sits at the bottom because the top holds the tab bar (the header is
-    /// its own); the warning belongs to the terminal, not to the program, so it
-    /// covers the last grid row instead of fighting for the top. The text is cut
-    /// to the grid width — wrapping in a transient warning only confuses.
+    /// its own); the warning belongs to the terminal, not to the program. It
+    /// used to be a strip across the last row with the colours inverted — that
+    /// erased the line and did not read as an aviso. The box erases only what
+    /// it occupies.
+    ///
+    /// The surface is the theme background pulled 14% towards the foreground,
+    /// so it works in a light theme too (it darkens instead of lightening) and
+    /// needs no key. Two rects, not one: the opaque background goes first, or
+    /// the text underneath would show through the veil.
     fn toast(&mut self, text: &str, cols: usize, rows: usize) {
+        // gutter on both sides of the text, in cells, so the box lines up with
+        // the grid; the vertical respiro is in px, independent of the line
+        // height of the theme
+        const PAD_X: f32 = 1.5;
+        const PAD_Y: f32 = 8.0;
+        const MARGIN_X: f32 = 1.0;
+        const MARGIN_Y: f32 = 8.0;
+        // geometric marker, not a glyph: the atlas is alpha-only (B8)
+        const MARK: f32 = 6.0;
+        const VEIL: f32 = 0.14;
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
-        let bg = self.color(Color::Default, self.fg);
-        let fg = self.color(Color::Default, self.bg);
-        let n = cols.saturating_sub(2);
+        let n = (cols as f32 - MARGIN_X - 2.0 * PAD_X).floor().max(1.0) as usize;
         let short: String = text.chars().take(n).collect();
         let w = short.chars().count();
         if w == 0 {
             return;
         }
-        // half a cell of margin on each side so the text does not touch the edge
-        let x0 = -self.side;
-        let y0 = rows.saturating_sub(1) as f32 * chh;
-        self.push_rect(x0, y0, (w + 2) as f32 * cw, chh, [bg[0], bg[1], bg[2], 1.0]);
-        self.chrome_text(&short, x0 + cw, y0, fg, 0.0);
+        let bw = (w as f32 + 2.0 * PAD_X) * cw;
+        let bh = chh + 2.0 * PAD_Y;
+        // the right edge is pinned: a long text grows to the left, it never
+        // pushes the margin out of the window
+        let x1 = (cols as f32 - MARGIN_X) * cw - bw;
+        let y1 = rows as f32 * chh - MARGIN_Y - bh;
+        let base = self.color(Color::Default, self.bg);
+        let ink = self.color(Color::Default, self.fg);
+        let alert = self.color(Color::Idx(3), self.fg);
+        let edge = [alert[0], alert[1], alert[2], 1.0];
+        self.push_rect(x1, y1, bw, bh, [base[0], base[1], base[2], 1.0]);
+        self.push_rect(x1, y1, bw, bh, [ink[0], ink[1], ink[2], VEIL]);
+        // the quad has no stroke: the border is four 1 px rects
+        self.push_rect(x1, y1, bw, 1.0, edge);
+        self.push_rect(x1, y1 + bh - 1.0, bw, 1.0, edge);
+        self.push_rect(x1, y1, 1.0, bh, edge);
+        self.push_rect(x1 + bw - 1.0, y1, 1.0, bh, edge);
+        let mx = x1 + (PAD_X * cw - MARK) / 2.0;
+        self.push_rect(mx, y1 + bh / 2.0 - MARK / 2.0, MARK, MARK, edge);
+        self.chrome_text(&short, x1 + PAD_X * cw, y1 + PAD_Y, ink, 0.0);
     }
 
     fn badge(&mut self, text: &str, cols: usize) {
