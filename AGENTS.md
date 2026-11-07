@@ -30,6 +30,8 @@ reading; only README.md is for humans.
   session, probes, the debug socket contract and the pitfalls
   (winit/wgpu/pty/parser). **Read before running any graphical tool.**
 - `docs/LIMITATIONS.md` — the limitations of the project.
+- `docs/EXTERNALS.md` — bugs of other software that were measured and are not
+  ours, with the proof and the workaround.
 - `docs/HISTORY.md` — dated record of what was done (narrative).
 - `README.md` — the human view: run, measure, structure.
 

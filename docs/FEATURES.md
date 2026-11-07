@@ -120,7 +120,8 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - Workspaces: a set of tabs with a name, sidebar cards (hidden when there is
   only one), inline rename, stable numbering.
 - Title: OSC 0/2, else `basename(cwd)`, else `tortty`; the window title mirrors
-  the active tab.
+  the active tab. **limit:** an app that sets a title without pushing it (`CSI
+  22/23 t`) keeps the tab on it after leaving ([`EXTERNALS.md`](EXTERNALS.md)).
 - Chrome: toast as a floating box in the bottom-right corner — theme background
   veiled 14% towards the foreground, 1 px border in the alert colour, 6 px
   geometric marker, 1.5-cell gutter, right edge pinned — with a queue and a

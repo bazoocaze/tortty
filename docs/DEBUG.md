@@ -155,6 +155,9 @@ bar.
 
 ## Pitfalls
 
+A bug of the child application (or of another program) is not a pitfall of ours:
+it goes to [`EXTERNALS.md`](EXTERNALS.md), with the proof.
+
 ### winit
 
 - **`request_inner_size` is a suggestion.** Asking for `cols * cw` pixels can

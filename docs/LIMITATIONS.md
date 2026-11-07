@@ -107,6 +107,11 @@ The limitations of the project.
   (`http`, `https`, `file`, `ftp`, `mailto`). No portal, no D-Bus, no browser
   integration: the URI comes from the child, and anything else becomes a toast
   instead of a handler the desktop happened to register.
+- **No expiry for an `OSC 0/2` title.** The tab shows it until another title
+  arrives or the screen is reset (`RIS`): the terminal cannot know that the author
+  of the title is gone, and the protocol's answer is the app pushing and popping
+  it (`B37`). An app that sets one and does not restore it leaves the tab frozen
+  ([`EXTERNALS.md`](EXTERNALS.md)).
 
 ## Development
 
