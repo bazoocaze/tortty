@@ -141,7 +141,7 @@ fn scroll_anchor() -> Result<(), String> {
     let anchor = t.scrolled as i64 - 2;
     let top = t.visible_rows(2)[0].text();
     expected("top line read", top.clone(), "6".to_string())?;
-    let (antes_scrolled, antes_hist) = (t.scrolled, t.scrollback.len());
+    let antes = t.mark();
     for i in 10..15 {
         t.feed(format!("{i}\r\n").as_bytes());
     }
@@ -154,7 +154,7 @@ fn scroll_anchor() -> Result<(), String> {
     // and the app's incremental arithmetic (D10) reaches the same offset
     expected(
         "view_after_output",
-        t.view_after_output(2, antes_scrolled, antes_hist),
+        t.view_after_output(2, antes),
         off_of_anchor(&t, anchor),
     )?;
     // at the history ceiling `len()` stops growing: the size-difference
@@ -165,7 +165,7 @@ fn scroll_anchor() -> Result<(), String> {
     expected("history at the ceiling", t.scrollback.len(), 1000)?;
     let anchor = t.scrolled as i64 - 3;
     let top = t.visible_rows(3)[0].text();
-    let (cap_scrolled, cap_hist) = (t.scrolled, t.scrollback.len());
+    let cap = t.mark();
     for i in 1100..1110 {
         t.feed(format!("{i}\r\n").as_bytes());
     }
@@ -176,7 +176,7 @@ fn scroll_anchor() -> Result<(), String> {
     // lost one line of content per new line, the opposite of D10
     expected(
         "view_after_output at the ceiling",
-        t.view_after_output(3, cap_scrolled, cap_hist),
+        t.view_after_output(3, cap),
         off,
     )?;
     expected(

@@ -1874,3 +1874,44 @@ run away — and the reason the log prints `view A→B`.
 Verified: `cargo test -p tortty-core` (three new tests: counters inside a window,
 `RIS` closing it, lines pushed to the history), `tools/quality-check.sh`, and the
 Xvfb run above against both a synthetic child and `pi`.
+
+## 2026-11-07 — a repaint does not move the reader (`B41`)
+
+The log of a real `pi` session (5685 `?2026` windows, `--debug-log`) separated the
+two kinds of synchronized update the dialect sends: **5673** carry only `EL`
+(incremental repaint) and are atomic — one read, `0.0 ms`. **10** carry
+`ED 2` + `ED 3` + `CSI H` with **no** `EL`: the transcript is wiped and reprinted,
+25 KB to 1.1 MB inside one window, 1.1 to 33.7 ms of held screen and up to 534
+reads. Those ten are the ones that moved the view, and only when the reader was
+scrolled up: `view 59 → 207` with `hist 60 → 207` and `view 108 → 387` with
+`hist 19 → 392`.
+
+The arithmetic gave it away: the closing `hist` equals the window's own `hist+`
+(207 = 207, 392 = 392), so `CSI 3J` had emptied the scrollback inside the window
+(60 + 207 ≠ 207). What happened then was ours: `view_after_output` added the
+reprinted lines to the offset and clamped at `scrollback.len()` — and the ceiling
+of a brand-new history is its **top**. The reader was not following output; he was
+teleported to the oldest line of a history he had never read.
+
+The rule now has two parts, and the difference is who asked for the wipe:
+
+- rows a `?2026` window scrolled count as a **repaint**, not as output — the offset
+  survives (`scrolled_sync` counts them, `view_after_output` subtracts them);
+- a history erased **inside** a window is a repaint too: the offset stays, clamped
+  to the lines the reader could already see (`FeedMark` carries them) — never
+  carried to the top by the reprinted lines;
+- a history erased **outside** a window is a `clear`: the saved lines are gone and
+  the view returns to the live screen, as before.
+
+`view_after_output` also lost its dead `prev_hist` parameter for a `FeedMark`
+snapshot (`scrolled`, `redraw`, `history`, `hist_gen`), so the app no longer keeps
+two loose numbers and a clamp of its own in each drain path.
+
+Numbers: Xvfb, child scrolls the screen inside one window with `2J`+`3J`+300
+lines, reader at `view_off 42` — after the window **42**, and the next three lines
+of real output take it to **45**. Before, the same case ended at the top of the
+new history.
+
+Verified: `cargo test -p tortty-core` (two new tests: a window does not move the
+reader, an erased history does not reach the top), `tools/quality-check.sh`,
+`tools/render-check.sh`, and the Xvfb run above.

@@ -133,6 +133,20 @@ enum Slot {
     Ul,
 }
 
+/// History counters taken before a read, so the view can stay on the line the
+/// reader was reading (see `Term::view_after_output`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FeedMark {
+    /// Absolute rows that had left through the top.
+    scrolled: u64,
+    /// Of those, the ones a `?2026` repaint scrolled.
+    redraw: u64,
+    /// Lines the reader could look at.
+    history: usize,
+    /// `CSI 3J`/`RIS` generation: a new number means the history was erased.
+    hist_gen: u64,
+}
+
 #[allow(clippy::struct_excessive_bools)] // VT state is boolean by nature
 pub struct Term {
     pub cols: usize,
@@ -236,6 +250,13 @@ pub struct Term {
     pub scroll_conflict: bool,
     /// Rows that left through the top since the start (absolute index).
     pub scrolled: u64,
+    /// Rows that left through the top while a `?2026` window was open: a
+    /// repaint of what is already on screen, not output the reader follows.
+    pub scrolled_sync: u64,
+    /// The `hist_gen` produced by the last history erase, when it happened
+    /// inside a `?2026` window (a repaint, not a `clear`). `hist_gen` only
+    /// grows, so a match means "this wipe came from inside a window".
+    quiet_wipe_gen: u64,
     pub abs_gen: u64,
     pub hist_gen: u64,
     last_char: char,
@@ -323,6 +344,8 @@ impl Term {
             scrolled: 0,
             abs_gen: 0,
             hist_gen: 0,
+            scrolled_sync: 0,
+            quiet_wipe_gen: 0,
             last_char: ' ',
             state: State::Ground,
             graphics: crate::graphics::Graphics::new(),
@@ -398,6 +421,7 @@ impl Term {
         let hist = self.hist_gen + 1;
         let abs = self.abs_gen + 1;
         // the log survives the reset (a `RIS` *is* one of the events it reports)
+        let in_sync = self.sync_trace.is_some();
         let mut closed = std::mem::take(&mut self.sync_closed);
         if let Some(mut t) = self.sync_trace.take() {
             // `RIS` resets the DEC modes, so the window ends here without a close
@@ -411,6 +435,9 @@ impl Term {
         self.hist_gen = hist;
         self.abs_gen = abs;
         self.sync_closed = closed;
+        if in_sync {
+            self.quiet_wipe_gen = hist;
+        }
     }
 
     /// Counts one event in the open `?2026` window (nothing to do when none is
@@ -449,27 +476,54 @@ impl Term {
         self.wrap_pending = false;
     }
 
-    /// How far the view must move so the reader does not lose the line they
-    /// were on, after `prev_scrolled`/`prev_hist` (D10).
-    ///
-    /// `d` rows left through the top since the previous read: the content moved
-    /// up `d`, so the view moves down `d`. But if the scrollback hit its cap,
-    /// the oldest `dropped` lines died — and those do not count.
+    /// The history as it was before a read: what `view_after_output` needs to
+    /// keep the reader on the line they were reading (D10).
     #[must_use]
-    pub fn view_after_output(&self, off: usize, prev_scrolled: u64, prev_hist: usize) -> usize {
+    pub fn mark(&self) -> FeedMark {
+        FeedMark {
+            scrolled: self.scrolled,
+            redraw: self.scrolled_sync,
+            history: self.scrollback.len(),
+            hist_gen: self.hist_gen,
+        }
+    }
+
+    /// How far the view must move so the reader does not lose the line they
+    /// were on, after `mark` was taken before the read (D10).
+    ///
+    /// Only the rows **output** pushed count. Rows a synchronized update
+    /// (`?2026`) scrolled are a repaint of what is already on screen: the app is
+    /// saying "this is one frame", so the frame does not move the reader either.
+    ///
+    /// A history erased (`CSI 3J`, `RIS`) splits in two, and the difference is
+    /// who asked for it: **inside** a window it is a repaint — the transcript is
+    /// being rewritten, the reader stays where he was (clamped to what he could
+    /// already see), because adding the reprinted lines to the offset throws the
+    /// view at the top of an unrelated history. **Outside** a window it is a
+    /// `clear`: the saved lines are gone for good and there is nothing above the
+    /// live screen to look at.
+    #[must_use]
+    pub fn view_after_output(&self, off: usize, mark: FeedMark) -> usize {
         if off == 0 {
             return 0;
         }
-        let d = self.scrolled.saturating_sub(prev_scrolled) as usize;
+        if self.hist_gen != mark.hist_gen {
+            return if self.quiet_wipe_gen == self.hist_gen {
+                off.min(mark.history)
+            } else {
+                0
+            };
+        }
+        let quiet = self.scrolled - self.scrolled_sync;
+        let d = quiet.saturating_sub(mark.scrolled - mark.redraw) as usize;
         if d == 0 {
             return off;
         }
         // Only the distance from the live area matters: a row that left the
-        // scrollback (by cap or by `CSI 3J`) is already handled by the clamp in
-        // `sb`. Subtracting the discarded ones made the view move the wrong way
-        // for every row the grid dropped — at the cap, `off` froze and the
-        // reader lost one row of content per new row (the opposite of D10).
-        let _ = prev_hist;
+        // scrollback (by cap) is already handled by the clamp in `sb`.
+        // Subtracting the discarded ones made the view move the wrong way for
+        // every row the grid dropped — at the cap, `off` froze and the reader
+        // lost one row of content per new row (the opposite of D10).
         (off + d).min(self.scrollback.len())
     }
 
@@ -785,6 +839,10 @@ impl Term {
                 *d = true; // new row: there is no ready version to shift
             }
             self.scrolled += 1;
+            if self.sync_trace.is_some() {
+                // a repaint scrolls too, and a repaint must not move the reader
+                self.scrolled_sync += 1;
+            }
         }
         // damage travels with the content: the row that was dirty before the
         // scroll is another one now, and the renderer rotates its cache with the
@@ -939,6 +997,10 @@ impl Term {
                     self.scrollback.clear();
                     self.abs_gen += 1;
                     self.hist_gen += 1;
+                    // the reader keeps his place only when this is a repaint
+                    if self.sync_trace.is_some() {
+                        self.quiet_wipe_gen = self.hist_gen;
+                    }
                 }
                 self.cx = 0;
                 self.cy = 0;
@@ -3290,15 +3352,73 @@ mod tests {
             t.feed(format!("l{i}\r\n").as_bytes());
         }
         // the reader went 3 rows back
-        let (sc, hist, off) = (t.scrolled, t.scrollback.len(), 3usize);
+        let (mark, off) = (t.mark(), 3usize);
         let before = t.abs_row(t.scrolled as i64 - off as i64).map(Row::text);
         // 2 more rows arrive: it stays on the same absolute row
         t.feed(b"new1\r\nnew2\r\n");
-        let off2 = t.view_after_output(off, sc, hist);
+        let off2 = t.view_after_output(off, mark);
         let after = t.abs_row(t.scrolled as i64 - off2 as i64).map(Row::text);
         assert_eq!(before, after, "the view moved along with the output");
         // at the bottom (off=0) it stays at the bottom
-        assert_eq!(t.view_after_output(0, sc, hist), 0);
+        assert_eq!(t.view_after_output(0, mark), 0);
+    }
+
+    #[test]
+    fn a_synchronized_repaint_does_not_move_the_reader() {
+        let mut t = Term::new(20, 4);
+        for i in 0..10 {
+            t.feed(format!("l{i}\r\n").as_bytes());
+        }
+        let (mark, off) = (t.mark(), 3usize);
+        // a `?2026` window that scrolls the screen: repaint, not output
+        t.feed(b"\x1b[?2026h");
+        for i in 0..6 {
+            t.feed(format!("r{i}\r\n").as_bytes());
+        }
+        t.feed(b"\x1b[?2026l");
+        assert!(t.scrolled_sync > 0, "the window did scroll rows");
+        assert_eq!(
+            t.view_after_output(off, mark),
+            off,
+            "a repaint moved the reader"
+        );
+        // output outside the window still moves it (D10)
+        t.feed(b"\x1b[?2026h\x1b[?2026l");
+        let mark = t.mark();
+        t.feed(b"out1\r\nout2\r\n");
+        assert_eq!(t.view_after_output(off, mark), off + 2);
+    }
+
+    #[test]
+    fn erasing_the_history_does_not_throw_the_view_at_the_top() {
+        // the `pi` case: `2J` + `3J` + a reprinted transcript inside one window,
+        // with the reader 59 rows up
+        let mut t = Term::new(20, 4);
+        for i in 0..60 {
+            t.feed(format!("old{i}\r\n").as_bytes());
+        }
+        let off = 50usize.min(t.scrollback.len());
+        let mark = t.mark();
+        t.feed(b"\x1b[?2026h\x1b[2J\x1b[3J\x1b[H");
+        for i in 0..200 {
+            t.feed(format!("new{i}\r\n").as_bytes());
+        }
+        t.feed(b"\x1b[?2026l");
+        assert!(t.scrollback.len() > 150, "the history was rebuilt");
+        assert_eq!(
+            t.view_after_output(off, mark),
+            off,
+            "the view was carried to the top of the new history"
+        );
+        // a `3J` outside any window is a `clear`: the saved lines are gone, so the
+        // view goes back to the live screen instead of freezing over nothing
+        let mark = t.mark();
+        t.feed(b"\x1b[3J");
+        assert_eq!(
+            t.view_after_output(off, mark),
+            0,
+            "nothing above to look at"
+        );
     }
 
     #[test]
@@ -3308,12 +3428,12 @@ mod tests {
         for i in 0..5 {
             t.feed(format!("l{i}\r\n").as_bytes());
         }
-        let (sc, hist, off) = (t.scrolled, t.scrollback.len(), 2usize);
+        let (mark, off) = (t.mark(), 2usize);
         // 5 rows at once: the scrollback (cap 3) drops the oldest
         for i in 5..10 {
             t.feed(format!("l{i}\r\n").as_bytes());
         }
-        let off2 = t.view_after_output(off, sc, hist);
+        let off2 = t.view_after_output(off, mark);
         assert!(
             off2 <= t.scrollback.len(),
             "it cannot point past the scrollback"

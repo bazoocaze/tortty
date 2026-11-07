@@ -1667,8 +1667,7 @@ impl App {
                 if bytes.is_empty() {
                     continue;
                 }
-                let tab = &self.parked[s].tabs[j];
-                let (sc, hist) = (tab.term.scrolled, tab.term.scrollback.len());
+                let mark = self.parked[s].tabs[j].term.mark();
                 let t0 = std::time::Instant::now();
                 let view_before = self.parked[s].tabs[j].view_off;
                 self.parked[s].tabs[j].term.feed(&bytes);
@@ -1686,9 +1685,10 @@ impl App {
                 }
                 if self.parked[s].tabs[j].view_off > 0 {
                     let off = self.parked[s].tabs[j].view_off;
-                    let off = self.parked[s].tabs[j].term.view_after_output(off, sc, hist);
+                    // only real output moves the reader: a `?2026` repaint and an
+                    // erased history are handled inside (D10)
                     self.parked[s].tabs[j].view_off =
-                        off.min(self.parked[s].tabs[j].term.scrollback.len());
+                        self.parked[s].tabs[j].term.view_after_output(off, mark);
                 }
                 let mut pumped = PumpOut::default();
                 let bell = self.opts.cfg.bell;
@@ -1748,10 +1748,7 @@ impl App {
         if !bytes.is_empty() {
             // D10: whoever is reading the history cannot be dragged by the
             // output that arrives — the view moves along with the lines that left.
-            let (sc, hist) = (
-                self.tabs[i].term.scrolled,
-                self.tabs[i].term.scrollback.len(),
-            );
+            let mark = self.tabs[i].term.mark();
             let t0 = std::time::Instant::now();
             let view_before = self.tabs[i].view_off;
             self.tabs[i].term.feed(&bytes);
@@ -1805,11 +1802,10 @@ impl App {
             }
             if self.tabs[i].view_off > 0 {
                 let off = self.tabs[i].view_off;
-                let off = self.tabs[i].term.view_after_output(off, sc, hist);
-                // `CSI 3J` (or a reflow) may have emptied the history: without
-                // this the view points at lines that no longer exist and the
-                // screen shows garbage (or the "jump" F2 had to avoid)
-                self.tabs[i].view_off = off.min(self.tabs[i].term.scrollback.len());
+                // only real output moves the reader: a `?2026` repaint is one
+                // frame of what is already on screen, and a `3J` takes the anchor
+                // with it instead of throwing the view at the top (B41)
+                self.tabs[i].view_off = self.tabs[i].term.view_after_output(off, mark);
             }
         }
         let out = self.tabs[i].term.take_child_out();
