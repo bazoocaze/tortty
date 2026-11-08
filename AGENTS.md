@@ -33,7 +33,8 @@ reading; only README.md is for humans.
 - `docs/EXTERNALS.md` — bugs of other software that were measured and are not
   ours, with the proof and the workaround.
 - `docs/HISTORY.md` — dated record of what was done (narrative).
-- `README.md` — the human view: run, measure, structure.
+- `README.md` — the human view: run, measure, structure. The project owner must
+  approve changes before committing.
 
 ### A rule is not created by itself
 
