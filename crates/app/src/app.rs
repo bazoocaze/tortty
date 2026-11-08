@@ -1260,23 +1260,18 @@ impl App {
         }
         match state {
             ElementState::Pressed => {
-                // a click on a workspace card does not go to the child either
+                // a click on a workspace card or on the bar does not go to the
+                // child either: it is chrome, and it behaves exactly as it does
+                // without the mouse reported (`mc` is where the missing rename
+                // showed up)
                 if let Some(i) = self.card_at(self.cursor_px.0, self.cursor_px.1) {
-                    self.select_workspace(i);
+                    self.press_card(i);
                     self.held = None;
-                    if let Some(w) = self.window.as_ref() {
-                        w.request_redraw();
-                    }
                     return;
                 }
-                // a click on the bar does not go to the child (it switches tab,
-                // as in the selection)
                 if let Some(i) = self.tab_at(self.cursor_px.0, self.cursor_px.1) {
-                    self.select_tab(i);
+                    self.press_tab(i);
                     self.held = None;
-                    if let Some(w) = self.window.as_ref() {
-                        w.request_redraw();
-                    }
                     return;
                 }
                 // F19: the app draws live; a click on the history only makes
@@ -1439,36 +1434,48 @@ impl App {
         Self::wheel_notches(frac, &mut self.wheel_pair, lines).abs()
     }
 
+    /// A press on a sidebar card: switches workspace (`I9`), and the second
+    /// press on the same card inside 400 ms opens the rename (`I8`). One copy,
+    /// used by both mouse paths — the card is chrome and does not go silent
+    /// because the child asked for the mouse (`?1000/1002/1003`).
+    fn press_card(&mut self, i: usize) {
+        self.bar_press = None;
+        let double = self
+            .card_click
+            .is_some_and(|(j, when)| j == i && when.elapsed().as_millis() < 400);
+        self.card_click = Some((i, std::time::Instant::now()));
+        if double {
+            self.card_click = None;
+            self.start_rename(i);
+        } else {
+            self.select_workspace(i);
+        }
+    }
+
+    /// A press on the tab bar: switches tab (it does not select text) and keeps
+    /// the press for the reorder drag (`I10`). Same rule as `press_card`.
+    fn press_tab(&mut self, i: usize) {
+        self.bar_press = Some((i, self.cursor_px.0));
+        self.select_tab(i);
+        self.tabs[self.active].dragging = false;
+        self.tabs[self.active].press = None;
+        self.redraw();
+    }
+
     /// Terminal mouse: press sets the anchor, drag becomes selection, release
     /// copies. A single click paints no cell and does not touch PRIMARY.
     fn select_input(&mut self, state: ElementState, button: winit::event::MouseButton) {
         use winit::event::MouseButton::{Left, Middle};
         match (state, button) {
             (ElementState::Pressed, Left) => {
-                // a click on the sidebar card switches workspace (I9) and a
-                // double click edits the name in place (I8)
+                // the sidebar and the bar are chrome: they answer first, with
+                // or without the child asking for the mouse
                 if let Some(i) = self.card_at(self.cursor_px.0, self.cursor_px.1) {
-                    self.bar_press = None;
-                    let double = self
-                        .card_click
-                        .is_some_and(|(j, when)| j == i && when.elapsed().as_millis() < 400);
-                    self.card_click = Some((i, std::time::Instant::now()));
-                    if double {
-                        self.card_click = None;
-                        self.start_rename(i);
-                    } else {
-                        self.select_workspace(i);
-                    }
+                    self.press_card(i);
                     return;
                 }
-                // a click on the tab bar switches tab (it does not select text);
-                // the "press" is kept for the drag (I10)
                 if let Some(i) = self.tab_at(self.cursor_px.0, self.cursor_px.1) {
-                    self.bar_press = Some((i, self.cursor_px.0));
-                    self.select_tab(i);
-                    self.tabs[self.active].dragging = false;
-                    self.tabs[self.active].press = None;
-                    self.redraw();
+                    self.press_tab(i);
                     return;
                 }
                 self.bar_press = None;

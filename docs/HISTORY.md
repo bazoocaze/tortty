@@ -2059,3 +2059,17 @@ workspaces — `1 vim ~/.zshrc` / `2 tortty` / `3 tortty`, the double click on t
 third becoming `3 build` over `tortty` and going back to one row when the name was
 erased; a state file with `workspace 1`/`build`/`workspace 3` reopened with the two
 defaults dropped and `build` kept. `render-check.sh` and `quality-check.sh` green.
+
+## 2026-11-08 — `I8`: the rename answers while the child holds the mouse
+
+`mc` enables `?1002`, and the press on chrome had two implementations: the one
+used with the mouse reported only switched workspace and tab, so the double click
+that starts the rename (`I8`) and the drag that reorders tabs (`I10`) did not
+exist inside `mc`.
+
+- `press_card`/`press_tab` are the one copy now, called by both paths: the
+  sidebar and the bar answer first, with or without the mouse reported.
+
+Verified: an Xvfb probe with `mc` in front (`mouse_mode` 2) — the same double
+click on the card of the front workspace names it; with the code before this, the
+typing went to `mc` and the card kept `workspace 1`.
