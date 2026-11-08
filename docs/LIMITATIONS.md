@@ -9,8 +9,9 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
 - **One user, one machine.** No session multiplexing, no server, no
   reconnection, no daemon. Closing the window ends everything.
 - **One terminal, not a window environment.** No splits at this stage
-  (`BACKLOG.md` M-J), no layout manager; tabs and workspaces exist, but they do
-  not survive closing (`BACKLOG.md` M-I).
+  (`BACKLOG.md` M-J), no layout manager; tabs and workspaces are reopened by the
+  next run, but the scrollback and the running processes are not — a new shell
+  starts in the directory the old one was in.
 - **One image, drawn as it arrived.** The kitty protocol is accepted for what
   `icat` needs (direct, file, temp and SHM transmission); animating frames and
   speaking sixel/iTerm2 are not limits: they are the

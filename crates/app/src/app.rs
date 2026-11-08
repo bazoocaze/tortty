@@ -478,6 +478,9 @@ pub struct App {
     /// Travel still owed to the card list, in detents (a touchpad fraction), for
     /// the same reason as `bar_frac`.
     card_frac: f32,
+    /// Workspaces and tabs to reopen, read from the state file before the first
+    /// tab is born (`M-I`). `None` = open one tab, as always.
+    restore: Option<crate::state::Layout>,
     /// Last detent handed to a mouse-reporting child (instant and direction), for
     /// the same reason as `bar_wheel`: the press and the release of one notch
     /// arrive as two `MouseWheel` events, and both would be reported (`B40`).
@@ -586,6 +589,7 @@ impl App {
             bar_frac: 0.0,
             card_off: 0,
             card_frac: 0.0,
+            restore: None,
             wheel_pair: None,
             mods: ModifiersState::empty(),
             cursor_px: (0.0, 0.0),
@@ -2263,7 +2267,11 @@ impl App {
         if !self.spawned {
             if let Some(wake) = self.wake.clone() {
                 self.spawned = true;
-                self.spawn_shell(cols, rows, wake);
+                if let Some(layout) = self.restore.take() {
+                    self.restore_layout(&layout, &wake, cols, rows);
+                } else {
+                    self.spawn_shell(cols, rows, wake);
+                }
             }
         }
         // the socket target rules: if the WM delivered fewer cells, ask for the
@@ -2710,14 +2718,27 @@ impl App {
             })
             .collect();
         let remembered = crate::state::load();
-        let maximized = remembered.is_some_and(|g| g.maximized);
+        let maximized = remembered.as_ref().is_some_and(|s| s.geometry.maximized);
+        // the layout of the last session (`M-I`): it is only worth reopening when
+        // the command line did not ask for a grid (a measurement) nor for a
+        // command of its own (a probe, `mc` in a fresh terminal)
+        self.restore = remembered.as_ref().and_then(|s| {
+            if self.opts.cmd.is_none() {
+                s.layout.clone()
+            } else {
+                None
+            }
+        });
         // J2/J4: with no state (or invalid state: monitor unplugged, garbage in
         // the file) it opens at the 980x640 default, not at the grid size —
         // whoever wants an exact grid asks for `--cols/--rows`, which turns the
         // remembering off. Invalid remembered geometry falls back to this same
         // default.
         let geom = remembered
-            .and_then(|g| crate::state::fit(g.x, g.y, g.w, g.h, &monitors))
+            .and_then(|s| {
+                let g = s.geometry;
+                crate::state::fit(g.x, g.y, g.w, g.h, &monitors)
+            })
             .unwrap_or_default();
         self.geom_normal = (geom.w.max(1), geom.h.max(1));
         // J6: only X11 accepts a window position; on Wayland it does not exist
@@ -2725,9 +2746,9 @@ impl App {
         (geom.w.max(1), geom.h.max(1), pos, maximized)
     }
 
-    /// Saves position, normal size and maximized state (J2–J6). Failing here
-    /// cannot get in the way of closing — `state::save` already swallows I/O
-    /// errors.
+    /// Saves position, normal size, maximized state (`J2`–`J6`) and the layout of
+    /// the session (`M-I`). Failing here cannot get in the way of closing —
+    /// `state::save` already swallows I/O errors.
     fn save_geometry(&mut self) {
         if !self.remember_geom {
             return; // grid requested on the command line: no remembering (a measurement)
@@ -2737,13 +2758,90 @@ impl App {
             Some((x, y)) => (Some(x), Some(y)),
             None => (None, None), // Wayland: no position to remember (J6)
         };
-        crate::state::save(&crate::state::Geometry {
-            x,
-            y,
-            w: self.geom_normal.0,
-            h: self.geom_normal.1,
-            maximized,
+        crate::state::save(&crate::state::State {
+            geometry: crate::state::Geometry {
+                x,
+                y,
+                w: self.geom_normal.0,
+                h: self.geom_normal.1,
+                maximized,
+            },
+            layout: Some(self.session_layout()),
         });
+    }
+
+    /// The workspaces and tabs as they are now, for the next run (`M-I`).
+    fn session_layout(&self) -> crate::state::Layout {
+        use crate::state::{Layout, WorkspaceMemory};
+        let memory = |name: &str, tabs: &[Tab]| WorkspaceMemory {
+            name: name.to_string(),
+            cwds: tabs
+                .iter()
+                .map(|t| t.cwd().map(|p| p.display().to_string()))
+                .collect(),
+        };
+        let mut workspaces = Vec::with_capacity(self.ws_count());
+        let mut parked = self.parked.iter();
+        for j in 0..self.ws_count() {
+            if j == self.ws_idx {
+                workspaces.push(memory(&self.ws_name, &self.tabs));
+            } else if let Some(w) = parked.next() {
+                workspaces.push(memory(&w.name, &w.tabs));
+            }
+        }
+        Layout {
+            workspaces,
+            ws: self.ws_idx,
+            tab: self.active,
+        }
+    }
+
+    /// Reopens the workspaces and tabs of the last session (`M-I`).
+    ///
+    /// The workspaces are rebuilt in logical order with the one in front last,
+    /// which is exactly the `parked` invariant; a directory that no longer exists
+    /// is not fatal — that tab opens on the shell's default, like a new one.
+    fn restore_layout(
+        &mut self,
+        l: &crate::state::Layout,
+        wake: &std::sync::Arc<dyn Fn() + Send + Sync>,
+        cols: usize,
+        rows: usize,
+    ) {
+        let total = l.workspaces.len();
+        let front = l.ws.min(total.saturating_sub(1));
+        let order: Vec<usize> = (0..total).filter(|j| *j != front).chain([front]).collect();
+        for (i, j) in order.iter().copied().enumerate() {
+            if i > 0 {
+                let cur = Workspace::take(self);
+                self.parked.push(cur);
+                self.ws_idx = self.parked.len();
+                let mut tab = Tab::new(cols, rows);
+                tab.term.scrollback_limit = self.opts.scrollback;
+                self.tabs = vec![tab];
+                self.active = 0;
+            }
+            let w = &l.workspaces[j];
+            self.ws_name.clone_from(&w.name);
+            for (k, cwd) in w.cwds.iter().enumerate() {
+                if k > 0 {
+                    let mut tab = Tab::new(cols, rows);
+                    tab.term.scrollback_limit = self.opts.scrollback;
+                    self.tabs.push(tab);
+                }
+                // a path that is gone falls back to the default directory
+                let dir = cwd
+                    .as_ref()
+                    .map(std::path::PathBuf::from)
+                    .filter(|p| p.is_dir());
+                self.spawn_tab(k, cols, rows, wake.clone(), dir.as_deref(), None);
+            }
+            self.active = if j == front {
+                l.tab.min(w.cwds.len().saturating_sub(1))
+            } else {
+                0
+            };
+        }
     }
 
     /// How many workspaces exist (the one in front + the parked ones).

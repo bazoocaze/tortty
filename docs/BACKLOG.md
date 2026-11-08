@@ -13,7 +13,6 @@ Completed activities do not stay here; they go to `HISTORY.md`.
 | M-D | Scrollback search with highlight | today you only find it by scrolling; in a big log it is the function that is missing | the first build log that has to be mined | medium: per-line index or scan on demand |
 | M-F | IME and composition (CJK, compose) | whoever types CJK cannot use it | the first user who types CJK | medium: `winit::Ime` + pre-editing in the view |
 | M-H | Config v2: shortcut remapping (the palette is already done: `color0..15`, fg/bg/cursor) | a shortcut is the first thing someone wants to change after the font, and today it is a `match` in the code | when a WM shortcut collides with one of the terminal's | low-medium: parser ready, the action table is missing |
-| M-I | Tabs/workspaces persistent across runs | today closing the window costs the layout; the socket's `state` is already JSON | when closing the window costs a day's layout | low |
 | M-J | Splits (more than one terminal in the same view) | a split is a view in the same `wgpu` surface, no toolkit involved | when two terminals side by side become routine | high |
 | M-L | Images: z-index, placement id, Unicode placeholder, source crop | today the image is drawn on top and there is no fine control over it | after the basic image (F6) is working with `icat` | medium |
 | M-N | Socket transport on Windows (named pipe) | `benchrun.py` and automation need to work there too | together with `M-X` (Windows) | low |

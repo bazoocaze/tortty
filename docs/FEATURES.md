@@ -143,9 +143,11 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   the digit taken from the physical key so ABNT2 layouts still work.
   **limit:** they are fixed, no remapping yet (`M-H`).
 - Geometry: 980×640 without state, size restored, maximized tracked separately
-  from the normal size, invalid geometry rejected. **limit:** tabs and workspaces
-  do not survive closing (`M-I`); on Wayland the position is not stored, because
-  the client does not choose it.
+  from the normal size, invalid geometry rejected; the workspaces and tabs of the
+  last session come back with the workspace and tab that were in front, each
+  shell in the directory it had. **limit:** the content is not reopened — a fresh
+  shell per tab, no scrollback (`M-I` is layout, not a session) — and on Wayland
+  the position is not stored, because the client does not choose it.
 - Lifecycle: the window closes when the shell ends; `SIGUSR1` dumps,
   `SIGTERM` dumps and exits cleanly, `--quit-after` for automation.
 - **Not implemented:** context menu (`M-V`), drag-and-drop of a file onto the

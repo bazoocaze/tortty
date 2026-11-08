@@ -271,9 +271,28 @@ fn window_state() -> Result<(), String> {
         h: 656,
         maximized: false,
     };
-    state::save_to(&file, &g);
+    // the layout of the session is part of the same file (`M-I`)
+    let layout = state::Layout {
+        workspaces: vec![
+            state::WorkspaceMemory {
+                name: "workspace 1".into(),
+                cwds: vec![Some("/tmp".into()), None],
+            },
+            state::WorkspaceMemory {
+                name: "build".into(),
+                cwds: vec![Some("/tmp".into())],
+            },
+        ],
+        ws: 1,
+        tab: 0,
+    };
+    let full = state::State {
+        geometry: g,
+        layout: Some(layout.clone()),
+    };
+    state::save_to(&file, &full);
     match state::load_from(&file) {
-        Some(lido) if lido == g => {},
+        Some(lido) if lido == full => {},
         other => return Err(format!("round trip lost the geometry: {other:?}")),
     }
     // a crooked file must not become a panic nor an invented geometry

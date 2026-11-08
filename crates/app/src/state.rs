@@ -43,6 +43,35 @@ impl Default for Geometry {
     }
 }
 
+/// What the window hands back next time: geometry (`J2`–`J6`) and the layout of
+/// the session (`M-I`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct State {
+    pub geometry: Geometry,
+    /// `None` when the file has no layout (an older file), which means "one tab,
+    /// as always".
+    pub layout: Option<Layout>,
+}
+
+/// The workspaces and tabs of the last session, in logical order (`M-I`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Layout {
+    pub workspaces: Vec<WorkspaceMemory>,
+    /// Workspace in front, in `0..workspaces.len()`.
+    pub ws: usize,
+    /// Tab in front of that workspace, in `0..workspaces[ws].cwds.len()`.
+    pub tab: usize,
+}
+
+/// One remembered workspace: its name and the cwd of each tab.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkspaceMemory {
+    pub name: String,
+    /// `None` = the tab opened on the shell's default directory (no `OSC 7` and
+    /// no readable `/proc`).
+    pub cwds: Vec<Option<String>>,
+}
+
 /// Monitor rectangle, as `winit` delivers it: (x, y, width, height).
 pub type Monitor = (i32, i32, u32, u32);
 
@@ -59,19 +88,19 @@ pub fn state_path() -> Option<PathBuf> {
 /// Reads the file; `None` for missing, unreadable, crooked JSON or wrong type.
 /// Never an error: corrupted state only means "opens at the default".
 #[must_use]
-pub fn load() -> Option<Geometry> {
+pub fn load() -> Option<State> {
     load_from(&state_path()?)
 }
 
 /// `load` on a given path (what the test uses: environment is not test state).
 #[must_use]
-pub fn load_from(path: &std::path::Path) -> Option<Geometry> {
+pub fn load_from(path: &std::path::Path) -> Option<State> {
     let text = std::fs::read_to_string(path).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
     let obj = v.as_object()?;
     let num = |k: &str| obj.get(k).and_then(serde_json::Value::as_i64);
     // `w`/`h` are mandatory: without them there is no geometry, only a `max: true`
-    Some(Geometry {
+    let geometry = Geometry {
         x: num("x").and_then(|n| i32::try_from(n).ok()),
         y: num("y").and_then(|n| i32::try_from(n).ok()),
         w: u32::try_from(num("w")?).ok()?,
@@ -80,19 +109,67 @@ pub fn load_from(path: &std::path::Path) -> Option<Geometry> {
             .get("max")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false),
+    };
+    Some(State {
+        geometry,
+        layout: layout_of(obj.get("layout")),
+    })
+}
+
+/// The `layout` member, or `None` when it is absent or says nothing usable.
+///
+/// It is read defensively because it is a hand-editable file and because it
+/// points at directories that can be gone by the next run: a workspace without
+/// a tab is dropped, an index out of range falls back to the first entry.
+#[must_use]
+fn layout_of(v: Option<&serde_json::Value>) -> Option<Layout> {
+    let v = v?;
+    let workspaces: Vec<WorkspaceMemory> = v
+        .get("workspaces")?
+        .as_array()?
+        .iter()
+        .filter_map(|w| {
+            let cwds: Vec<Option<String>> = w
+                .get("cwds")?
+                .as_array()?
+                .iter()
+                .map(|c| c.as_str().map(str::to_string))
+                .collect();
+            if cwds.is_empty() {
+                return None;
+            }
+            Some(WorkspaceMemory {
+                name: w.get("name")?.as_str().unwrap_or_default().to_string(),
+                cwds,
+            })
+        })
+        .collect();
+    if workspaces.is_empty() {
+        return None;
+    }
+    let idx = |key: &str, len: usize| {
+        let n = v.get(key).and_then(serde_json::Value::as_u64).unwrap_or(0);
+        usize::try_from(n).unwrap_or(0).min(len.saturating_sub(1))
+    };
+    let ws = idx("ws", workspaces.len());
+    Some(Layout {
+        tab: idx("tab", workspaces[ws].cwds.len()),
+        ws,
+        workspaces,
     })
 }
 
 /// Writes **atomically** (tmp + rename): never leaves half a JSON behind.
 /// Failing to save cannot bring the shutdown down.
-pub fn save(g: &Geometry) {
+pub fn save(s: &State) {
     if let Some(path) = state_path() {
-        save_to(&path, g);
+        save_to(&path, s);
     }
 }
 
 /// `save` on a given path.
-pub fn save_to(path: &std::path::Path, g: &Geometry) {
+pub fn save_to(path: &std::path::Path, s: &State) {
+    let g = &s.geometry;
     if let Some(dir) = path.parent() {
         // a directory that cannot be created is not a fatal error: the terminal
         // has to run confined (sandbox, read-only home). It just cannot be
@@ -110,6 +187,25 @@ pub fn save_to(path: &std::path::Path, g: &Geometry) {
     v.insert("w".into(), g.w.into());
     v.insert("h".into(), g.h.into());
     v.insert("max".into(), g.maximized.into());
+    if let Some(l) = &s.layout {
+        let workspaces: Vec<serde_json::Value> = l
+            .workspaces
+            .iter()
+            .map(|w| {
+                serde_json::json!({
+                    "name": w.name,
+                    "cwds": w.cwds.iter().map(|c| match c {
+                        Some(p) => serde_json::Value::from(p.as_str()),
+                        None => serde_json::Value::Null,
+                    }).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        v.insert(
+            "layout".into(),
+            serde_json::json!({"ws": l.ws, "tab": l.tab, "workspaces": workspaces}),
+        );
+    }
     let tmp = path.with_extension("json.tmp");
     let Ok(mut f) = std::fs::File::create(&tmp) else {
         eprintln!(
@@ -178,7 +274,18 @@ pub fn fit(
 
 #[cfg(test)]
 mod checks_state {
-    use super::{fit, load_from, save_to, Geometry, Monitor, DEFAULT, MIN_H, MIN_W};
+    use super::{
+        fit, load_from, save_to, Geometry, Layout, Monitor, State, WorkspaceMemory, DEFAULT, MIN_H,
+        MIN_W,
+    };
+
+    /// A `State` with no layout: the file as the old version wrote it.
+    fn st(g: Geometry) -> State {
+        State {
+            geometry: g,
+            layout: None,
+        }
+    }
     use std::path::{Path, PathBuf};
 
     fn monitors() -> Vec<Monitor> {
@@ -262,8 +369,8 @@ mod checks_state {
             h: 700,
             maximized: true,
         };
-        save_to(&path, &g);
-        assert_eq!(load_from(&path), Some(g));
+        save_to(&path, &st(g));
+        assert_eq!(load_from(&path), Some(st(g)));
         let leftovers: Vec<String> = std::fs::read_dir(path.parent().expect("dir"))
             .expect("directory created")
             .filter_map(Result::ok)
@@ -276,8 +383,8 @@ mod checks_state {
             y: None,
             ..g
         };
-        save_to(&path, &s);
-        assert_eq!(load_from(&path), Some(s));
+        save_to(&path, &st(s));
+        assert_eq!(load_from(&path), Some(st(s)));
         let _ = std::fs::remove_dir_all(Path::new(&path).ancestors().nth(2).expect("root"));
     }
 
@@ -288,16 +395,68 @@ mod checks_state {
         let path = std::path::Path::new("/proc/tortty-does-not-exist/window.json");
         save_to(
             path,
-            &Geometry {
+            &st(Geometry {
                 x: None,
                 y: None,
                 w: 800,
                 h: 600,
                 maximized: false,
-            },
+            }),
         );
         assert!(!path.exists());
         assert!(!path.with_extension("json.tmp").exists());
+    }
+
+    #[test]
+    fn the_layout_survives_a_round_trip_and_loses_only_what_it_cannot_open() {
+        let path = tmp("layout");
+        let g = Geometry {
+            x: Some(10),
+            y: Some(20),
+            w: 900,
+            h: 600,
+            maximized: false,
+        };
+        let l = Layout {
+            workspaces: vec![
+                WorkspaceMemory {
+                    name: "one".into(),
+                    cwds: vec![Some("/tmp".into())],
+                },
+                WorkspaceMemory {
+                    name: "two".into(),
+                    cwds: vec![None, Some("/".into())],
+                },
+            ],
+            ws: 1,
+            tab: 1,
+        };
+        save_to(
+            &path,
+            &State {
+                geometry: g,
+                layout: Some(l.clone()),
+            },
+        );
+        assert_eq!(load_from(&path).and_then(|s| s.layout), Some(l));
+        // a workspace with no tab is dropped and the index falls back to the
+        // survivors: the file is hand-editable and points at directories
+        let hand = r#"{"w":900,"h":600,"layout":{"ws":5,"tab":9,"workspaces":
+            [{"name":"a","cwds":[]},{"name":"b","cwds":["/tmp"]}]}}"#;
+        std::fs::write(&path, hand).expect("write");
+        let want = Some(Layout {
+            workspaces: vec![WorkspaceMemory {
+                name: "b".into(),
+                cwds: vec![Some("/tmp".into())],
+            }],
+            ws: 0,
+            tab: 0,
+        });
+        assert_eq!(load_from(&path).and_then(|s| s.layout), want);
+        // a file from before the layout existed still opens, with one tab
+        std::fs::write(&path, r#"{"w":900,"h":600}"#).expect("write");
+        assert_eq!(load_from(&path).map(|s| s.layout), Some(None));
+        let _ = std::fs::remove_dir_all(Path::new(&path).ancestors().nth(2).expect("root"));
     }
 
     #[test]
@@ -310,7 +469,7 @@ mod checks_state {
         }
         // a number that does not fit in i32/x/y becomes None, but w/h rule
         std::fs::write(&path, r#"{"x":1e300,"y":3,"w":900,"h":600}"#).expect("write");
-        let g = load_from(&path).expect("valid w/h");
+        let g = load_from(&path).expect("valid w/h").geometry;
         assert_eq!((g.x, g.y, g.w, g.h), (None, Some(3), 900, 600));
         // a file that does not even exist: default, no error
         assert_eq!(load_from(&path.with_extension("doesnotexist")), None);

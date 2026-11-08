@@ -2001,3 +2001,24 @@ socket (`cards_off`, `cards_visible` are in `state`): 7 × `Ctrl+Shift+N` leaves
 top visible card picks workspace 7; `Ctrl+Shift+1` takes `off` back to 0. The
 captures show cards 7/8 with the active one highlighted, and no half glyph at the
 cut. `tools/render-check.sh` and `quality-check.sh` green.
+
+## 2026-11-08 — `M-I`: the workspaces and tabs come back
+
+Closing the window cost the layout: every run started with one tab, whatever the
+day had been. The file that remembered the geometry (`J2`–`J6`) already existed.
+
+- `state::State` now carries `geometry` and an optional `layout`: one entry per
+  workspace with its name and the cwd of each tab, plus the workspace and tab in
+  front. A file without a layout (the old format) still opens, with one tab.
+- `session_layout` writes it on the way out; `restore_layout` rebuilds it before
+  the first frame, in the order the `parked` invariant wants; a directory that is
+  gone opens the tab on the shell's default, and the workspaces with no tab and
+  the out-of-range indices in a hand-edited file are dropped. `--cmd` and
+  `--cols/--rows` do not restore: a probe and a measurement want a clean terminal.
+
+Verified: `the_layout_survives_a_round_trip_and_loses_only_what_it_cannot_open`,
+the extended `window_state` check, and three Xvfb probes through the socket: two
+workspaces with two tabs come back as two workspaces with two tabs and `ws=1`;
+a layout pointing at `/nao/existe` opens both workspaces without an error; the
+shell of a restored tab really starts in the saved `/tmp/mi-cwd` (the app saves
+that same path again on the way out).
