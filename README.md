@@ -24,7 +24,6 @@ Whether you're coding, managing your system, or working with command-line tools,
 - **Mouse support** — Full terminal mouse reporting for interactive applications.
 - **Scrollback history** — Navigate through previous terminal output.
 - **Live configuration** — Customize fonts, colors, cursor, scrollback and more, with automatic configuration reload.
-- **Terminal resizing** — Reflows terminal content when the window changes size.
 
 ## 🚀 Getting Started
 
@@ -70,6 +69,12 @@ tortty --cmd 'vim'
 tortty --cmd 'mc'
 ```
 
+To run the tree you are editing instead of the installed binary:
+
+```bash
+./run.sh   # builds the debug binary and runs it
+```
+
 ## 🎨 Customization
 
 TorTTY works out of the box with sensible defaults. No configuration file is required.
@@ -103,6 +108,7 @@ See [Configuration Reference](docs/CONFIG.md) for all available options.
 
 ## 📖 Documentation
 
+- [Features](docs/FEATURES.md)
 - [Configuration Reference](docs/CONFIG.md)
 - [Installation Guide](docs/INSTALL.md)
 - [Known Limitations](docs/LIMITATIONS.md)
