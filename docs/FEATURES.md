@@ -122,9 +122,9 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   cycles one tab per detent (the touchpad's travel accumulates, as in the
   child's wheel).
 - Workspaces: a set of tabs with a name, sidebar cards (hidden when there is
-  only one), inline rename, stable numbering. **limit:** the card list has no
-  scrollbar — a card past the bottom of the window cannot be clicked, and the
-  wheel over the sidebar does not reach it either (`B42`).
+  only one), inline rename, stable numbering; the card list scrolls — the wheel
+  over the column walks it one card per detent (the touchpad's travel
+  accumulates) and entering a workspace by keyboard brings its card into sight.
 - Title: OSC 0/2, else `basename(cwd)`, else `tortty`; the window title mirrors
   the active tab. **limit:** an app that sets a title without pushing it (`CSI
   22/23 t`) keeps the tab on it after leaving ([`EXTERNALS.md`](EXTERNALS.md)).

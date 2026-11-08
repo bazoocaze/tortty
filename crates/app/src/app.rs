@@ -471,6 +471,13 @@ pub struct App {
     /// Travel still owed to the bar, in detents: the fraction of a notch a
     /// touchpad sent that has not become a tab change yet (2026-11-07).
     bar_frac: f32,
+    /// First card shown in the sidebar (`B42`): the list is drawn from here, and
+    /// the wheel over the column walks it. Without it a workspace past the bottom
+    /// of the window exists and cannot be reached by the mouse.
+    card_off: usize,
+    /// Travel still owed to the card list, in detents (a touchpad fraction), for
+    /// the same reason as `bar_frac`.
+    card_frac: f32,
     /// Last detent handed to a mouse-reporting child (instant and direction), for
     /// the same reason as `bar_wheel`: the press and the release of one notch
     /// arrive as two `MouseWheel` events, and both would be reported (`B40`).
@@ -577,6 +584,8 @@ impl App {
             card_click: None,
             bar_wheel: None,
             bar_frac: 0.0,
+            card_off: 0,
+            card_frac: 0.0,
             wheel_pair: None,
             mods: ModifiersState::empty(),
             cursor_px: (0.0, 0.0),
@@ -869,22 +878,83 @@ impl App {
 
     /// Workspace under the cursor, if it is on the sidebar (I9).
     fn card_at(&self, px: f64, py: f64) -> Option<usize> {
-        let (cw, ch, pad) = self.cell_metrics();
-        let side = f64::from(self.side_w(cw));
-        if side <= 0.0 || px >= f64::from(pad) + side || px < f64::from(pad) {
+        let (_cw, ch, pad) = self.cell_metrics();
+        if !self.in_sidebar(px, py) {
             return None;
         }
-        // the sidebar starts on line 1, beside the tab bar (not below)
-        let top = f64::from(pad);
-        if py < top {
-            return None;
-        }
+        // the cards are drawn from `card_off` (`B42`): the pointer is on the
+        // card `off` above it
         let card_h = f64::from(ch) * 2.4;
-        let i = ((py - top) / card_h) as usize;
+        let i = ((py - f64::from(pad)) / card_h) as usize + self.card_off;
         if i < self.ws_count() {
             Some(i)
         } else {
             None
+        }
+    }
+
+    /// The pointer is on the sidebar column (`B42`).
+    ///
+    /// Broader than `card_at` on purpose: the wheel over the column belongs to
+    /// the card list even where a card is missing (a short list) or cut (the end
+    /// of the window), and there it would fall through to the grid.
+    fn in_sidebar(&self, px: f64, py: f64) -> bool {
+        let (cw, _ch, pad) = self.cell_metrics();
+        let side = f64::from(self.side_w(cw));
+        // the column starts on the tab bar's line, beside the grid
+        side > 0.0 && px >= f64::from(pad) && px < f64::from(pad) + side && py >= f64::from(pad)
+    }
+
+    /// How many cards fit in the sidebar column, at least one.
+    ///
+    /// The column runs from the bar's line to the bottom of the grid: it is
+    /// taller than the grid by one bar, and the bottom padding is not part of it
+    /// (a card there would hang past the last row of text).
+    fn cards_visible(&self) -> usize {
+        let (_cw, ch, _pad) = self.cell_metrics();
+        let card_h = f64::from(ch) * 2.4;
+        if card_h <= 0.0 || self.tabs.is_empty() {
+            return 1;
+        }
+        let rows = self.tabs[self.active].term.rows;
+        let band = f64::from(self.bar_h(ch) + rows as f32 * ch);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        // the band is positive and bounded by the window height
+        let n = (band / card_h) as usize;
+        n.max(1)
+    }
+
+    /// Walks the sidebar card list by `delta` cards, clamped to it (`B42`).
+    fn scroll_cards(&mut self, delta: i64) {
+        let max = self.ws_count().saturating_sub(self.cards_visible());
+        let at = (self.card_off as i64 + delta).clamp(0, max as i64);
+        #[allow(clippy::cast_sign_loss)] // clamped to `0..=max` above
+        let at = at as usize;
+        if at != self.card_off {
+            self.card_off = at;
+            self.redraw();
+        }
+    }
+
+    /// Keeps the offset inside the list: closing a workspace or growing the
+    /// window can leave it past the end (`B42`).
+    fn clamp_cards(&mut self) {
+        if self.tabs.is_empty() {
+            self.card_off = 0;
+            return;
+        }
+        let max = self.ws_count().saturating_sub(self.cards_visible());
+        self.card_off = self.card_off.min(max);
+    }
+
+    /// Scrolls the list the least it takes to put card `i` in it (`B42`):
+    /// switching workspace by keyboard must not leave the card out of sight.
+    fn reveal_card(&mut self, i: usize) {
+        let n = self.cards_visible();
+        if i < self.card_off {
+            self.card_off = i;
+        } else if i >= self.card_off + n {
+            self.card_off = i + 1 - n;
         }
     }
 
@@ -1222,6 +1292,22 @@ impl App {
     /// Wheel: the child's when it asked for mouse and we are live; otherwise it
     /// is history rolling (the wheel reading history is still ours).
     fn on_wheel(&mut self, delta: MouseScrollDelta) {
+        // the wheel on the sidebar walks the card list (`B42`): a workspace past
+        // the bottom of the window has no other way in with the mouse
+        if self.in_sidebar(self.cursor_px.0, self.cursor_px.1) {
+            let ch = self.renderer.as_ref().map_or(19.0, |r| r.fonts.ch);
+            let lines = match delta {
+                MouseScrollDelta::LineDelta(_, y) => y,
+                MouseScrollDelta::PixelDelta(p) => p.y as f32 / ch,
+            };
+            let n = Self::wheel_notches(&mut self.card_frac, &mut self.bar_wheel, lines);
+            if n == 0 {
+                return;
+            }
+            // up (positive) goes back one card, like the history above
+            self.scroll_cards(-i64::from(n));
+            return;
+        }
         // the wheel on the tab bar cycles through them (I11); on the grid it
         // scrolls
         if self.tab_at(self.cursor_px.0, self.cursor_px.1).is_some() {
@@ -2094,6 +2180,7 @@ impl App {
 
     fn redraw(&mut self) {
         self.drain();
+        self.clamp_cards();
         let blink = self.blink();
         let toast = self.toast_text();
         let tabs = if self.tabs.len() > 1 {
@@ -2116,6 +2203,7 @@ impl App {
             toast: toast.as_deref(),
             tabs: tabs.as_deref(),
             sidebar: sidebar.as_deref(),
+            cards_off: self.card_off,
             links: self.mods.control_key(),
         };
         let drew = {
@@ -2297,6 +2385,10 @@ impl App {
                     "workspaces": self.ws_count(),
                     "ws": self.ws_idx,
                     "ws_names": self.wscards().into_iter().map(|c| c.name).collect::<Vec<_>>(),
+                    // sidebar scroll (B42): a probe can drive the wheel and check
+                    // the list without looking at the screen
+                    "cards_off": self.card_off,
+                    "cards_visible": self.cards_visible(),
                     "errors": self.cfg_errors,
                     "xid": self.xid(),
                     "config": self.opts.cfg_path.as_ref().map_or_else(String::new, |p| p.display().to_string()),
@@ -2868,6 +2960,9 @@ impl App {
             let s = w.inner_size();
             self.apply_size(s.width, s.height);
         }
+        // the card of the workspace now in front has to be in sight (`B42`): the
+        // keyboard can enter one the column is not showing
+        self.reveal_card(self.ws_idx);
         self.sync_title();
         self.redraw();
     }

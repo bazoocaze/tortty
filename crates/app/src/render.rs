@@ -740,7 +740,11 @@ impl Renderer {
     /// Workspace sidebar (I6): a column on the left with one card per workspace.
     /// It occupies the strip the `origin` reserved (x = -side) and starts on row
     /// 1, together with the tab bar (y = -bar).
-    fn sidebar(&mut self, cards: &[WsCard]) {
+    ///
+    /// It is drawn from card `off` (`B42`): the list scrolls, so the first card
+    /// can start above the column and the last one is cut at the bottom of the
+    /// grid — the strip ends there, not at the window's edge.
+    fn sidebar(&mut self, cards: &[WsCard], off: usize) {
         if self.side <= 0.0 {
             return;
         }
@@ -751,15 +755,25 @@ impl Renderer {
         let bg = self.color(Color::Idx(0), self.bg);
         let over = self.color(Color::Default, self.bg);
         let top = -self.bar;
-        for (i, c) in cards.iter().enumerate() {
-            let y0 = top + i as f32 * card_h;
+        // the bottom of the grid, in this coordinate space (y = 0 is the first
+        // grid row): the cards are cut here
+        let bottom = self.config.height as f32 - self.pad - self.bar;
+        for (i, c) in cards.iter().enumerate().skip(off) {
+            let y0 = top + (i - off) as f32 * card_h;
+            if y0 >= bottom {
+                break;
+            }
+            let y1 = (y0 + card_h).min(bottom);
             let active = c.ativa;
             let (bg, fg) = if active {
                 (self.color(Color::Default, self.fg), over)
             } else {
                 (bg, self.color(Color::Idx(8), self.fg))
             };
-            self.push_rect(x0, y0, width, card_h, [bg[0], bg[1], bg[2], 1.0]);
+            self.push_rect(x0, y0, width, y1 - y0, [bg[0], bg[1], bg[2], 1.0]);
+            // a text row is drawn only when the whole cell fits: half a glyph
+            // at the cut is worse than no glyph
+            let fits = |y: f32| y + chh <= bottom;
             // row 1: "n name" — in the alert colour while a notification waits
             // (`M-K`), like a tab label does
             let fg = if c.alert {
@@ -767,9 +781,10 @@ impl Renderer {
             } else {
                 fg
             };
-            let n = cards.len();
             let name = format!("{} {}", i + 1, c.name);
-            self.text_line(x0, y0 + 3.0, &name, fg, width);
+            if fits(y0 + 3.0) {
+                self.text_line(x0, y0 + 3.0, &name, fg, width);
+            }
             // row 2: "title (k tab)"
             let info = format!(
                 "{} ({} tab{})",
@@ -777,8 +792,9 @@ impl Renderer {
                 c.n_tabs,
                 if c.n_tabs == 1 { "" } else { "s" }
             );
-            self.text_line(x0, y0 + chh + 3.0, &info, fg, width);
-            let _ = n;
+            if fits(y0 + chh + 3.0) {
+                self.text_line(x0, y0 + chh + 3.0, &info, fg, width);
+            }
         }
     }
 
@@ -1207,6 +1223,7 @@ impl Renderer {
             toast,
             tabs,
             sidebar,
+            cards_off,
             links,
         } = *f;
         let cols = term.cols;
@@ -1298,7 +1315,7 @@ impl Renderer {
         }
         // 2c) workspace sidebar: column on the left, in the reserved strip
         if let Some(cards) = sidebar {
-            self.sidebar(cards);
+            self.sidebar(cards, cards_off);
         }
 
         // 2d) scrollbar: over the grid's right edge, under the cursor/toast
@@ -1837,6 +1854,8 @@ pub struct Frame<'a> {
     pub toast: Option<&'a str>,
     pub tabs: Option<&'a [TabInfo]>,
     pub sidebar: Option<&'a [WsCard]>,
+    /// First card of the sidebar list to draw (`B42`).
+    pub cards_off: usize,
     /// Ctrl is held: the `OSC 8` links underline themselves.
     pub links: bool,
 }

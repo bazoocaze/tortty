@@ -1978,3 +1978,26 @@ express it, since winit hands over only the character.
 
 Verified: three tests in the two crates, and an Xvfb probe with `cat -v` — `^[Ow`
 with the mode, `7` without.
+
+## 2026-11-08 — `B42`: the workspace list scrolls
+
+The cards were drawn from the top at a fixed 2.4 rows and nothing moved them: a
+workspace past the bottom of the window was reachable only by `Ctrl+Shift+1..9`,
+and the wheel over the column fell through to the grid's history.
+
+- `App::card_off` is the first card drawn; the wheel over the column walks it,
+  hatched with the same rule as the bar and the history (a detent is one card, a
+  touchpad fraction accumulates in `card_frac`). `card_at` adds the offset, so a
+  click lands on the card the eye sees.
+- `sidebar` cuts the list at the bottom of the grid and draws a text row only
+  when the whole cell fits; `reveal_card` (in `after_ws_change`) brings the card
+  of the workspace entering from the keyboard into sight, and `clamp_cards` keeps
+  the offset inside the list. No track is drawn — the item's cost line is the
+  offset, not a scrollbar.
+
+Verified: an Xvfb probe with 8 workspaces in a 5-row window through the debug
+socket (`cards_off`, `cards_visible` are in `state`): 7 × `Ctrl+Shift+N` leaves
+`off` at 6 (the maximum) with `ws` 7; six wheel-downs hold at 6; a click on the
+top visible card picks workspace 7; `Ctrl+Shift+1` takes `off` back to 0. The
+captures show cards 7/8 with the active one highlighted, and no half glyph at the
+cut. `tools/render-check.sh` and `quality-check.sh` green.
