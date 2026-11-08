@@ -1966,3 +1966,15 @@ lost the selection (the Python's behaviour, and what `M-P` was about).
 
 Verified: three new `term.rs` tests (carried, spans a wrap, dies at the ceiling)
 plus `tools/quality-check.sh --fast` green.
+
+## 2026-11-08 — `DECKPAM`/`DECKPNM`: the keypad application mode
+
+The parser took `ESC =`/`ESC >` and threw them away, so a keypad key always sent
+`7` or `+` and a program could not tell `KP_7` from the digit, nor `KP_Enter`
+from `Return`. `Term::keypad_app` is that mode now — cleared by `DECSTR`/`RIS`,
+answered by `DECRQM` as 66 — and `keys::encode` sends the VT100 `\EO` table for
+the bare key (`KP_7` → `\x1bOw`, `KP_Enter` → `\x1bOM`): the numeric mode cannot
+express it, since winit hands over only the character.
+
+Verified: three tests in the two crates, and an Xvfb probe with `cat -v` — `^[Ow`
+with the mode, `7` without.

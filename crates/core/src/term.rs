@@ -175,6 +175,10 @@ pub struct Term {
     pub wrap_pending: bool,
     pub cursor_visible: bool,
     pub app_cursor: bool,
+    /// `DECKPAM` (`ESC =`): the keypad sends the `ESC O` application forms
+    /// instead of `7`, `+`, … — the app turns this into bytes, since the key
+    /// table lives there.
+    pub keypad_app: bool,
     /// `(shape 1..6, blink)` from DECSCUSR; None = from the config.
     pub app_cursor_style: Option<(u8, bool)>,
     /// `?1000`=1 press, `?1002`=2 with drag, `?1003`=3 everything (0 = no).
@@ -302,6 +306,7 @@ impl Term {
             wrap_pending: false,
             cursor_visible: true,
             app_cursor: false,
+            keypad_app: false,
             app_cursor_style: None,
             mouse_mode: 0,
             mouse_sgr: false,
@@ -470,6 +475,7 @@ impl Term {
         self.ul = UL_NONE;
         self.cursor_visible = true;
         self.app_cursor = false;
+        self.keypad_app = false;
         self.origin = false;
         self.autowrap = true;
         self.top = 0;
@@ -1412,6 +1418,7 @@ impl Term {
         }
         match p {
             1 => onoff(self.app_cursor),
+            66 => onoff(self.keypad_app),
             6 => onoff(self.origin),
             7 => onoff(self.autowrap),
             25 => onoff(self.cursor_visible),
@@ -2214,8 +2221,18 @@ impl Term {
                 self.state = State::Ground;
                 self.reset();
             },
+            // DECKPAM / DECKPNM: the keypad application mode. The terminal keeps
+            // the state; the bytes are the app's business.
+            b'=' => {
+                self.keypad_app = true;
+                self.state = State::Ground;
+            },
+            b'>' => {
+                self.keypad_app = false;
+                self.state = State::Ground;
+            },
             _ => {
-                // ESC = / ESC > (keypad), ESC \ (ST), and the rest: no effect
+                // ESC \ (ST) and the rest: no effect
                 self.state = State::Ground;
             },
         }
@@ -3937,6 +3954,33 @@ mod tests {
             "the cursor was at the bottom: lines went to history"
         );
         assert_eq!(closed[0].hist, hist);
+    }
+
+    #[test]
+    fn deckpam_sets_the_keypad_application_mode() {
+        let mut t = term();
+        assert!(!t.keypad_app, "the numeric keypad is the default");
+        assert_eq!(t.mode_state(66, true), 2);
+        t.feed(b"\x1b="); // DECKPAM
+        assert!(t.keypad_app);
+        assert_eq!(t.mode_state(66, true), 1, "DECRQM has to see the mode");
+        t.feed(b"\x1b>"); // DECKPNM
+        assert!(!t.keypad_app);
+        // ESC = inside a sequence of its own does not eat what follows
+        t.feed(b"\x1b=7");
+        assert!(t.keypad_app);
+        assert_eq!(t.row_text(0), "7");
+    }
+
+    #[test]
+    fn a_soft_reset_and_a_ris_take_the_keypad_back_to_numeric() {
+        let mut t = term();
+        t.feed(b"\x1b=");
+        t.feed(b"\x1b[!p"); // DECSTR
+        assert!(!t.keypad_app);
+        t.feed(b"\x1b=");
+        t.feed(b"\x1bc"); // RIS
+        assert!(!t.keypad_app);
     }
 
     #[test]

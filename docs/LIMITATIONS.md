@@ -66,12 +66,10 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
 
 ### Keyboard
 
-- **The numeric keypad has no application mode** (`DECKPAM`/`DECKPNM`, `ESC =` /
-  `ESC >`): the parser takes both escapes and does nothing with them, so a keypad
-  key always sends its character (`7`, `+`) and never the `\EOw` form of a
-  terminal in that mode. The keypad itself works; what is missing is the mode. The
-  `xterm-256color` installed here declares no `kp*` capability, so a program that
-  set the mode would have nothing to read back.
+- **A modified keypad key keeps the numeric form under `DECKPAM`**: the `\EO`
+  application sequences go out for the bare key only. The mode is decided before
+  the key becomes a character, and a modified keypad key takes the legacy path
+  like every other key.
 - **The alternate keys of the kitty protocol exist for the ASCII letters only**:
   with flag 4, Shift+A is `CSI 97:65:97;2u` (key, shifted, base). A shifted
   punctuation mark stays single-field (`CSI 33;2u`), because the base of `!` is
