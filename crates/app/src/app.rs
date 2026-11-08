@@ -2807,9 +2807,10 @@ impl App {
 
     /// Reopens the workspaces and tabs of the last session (`M-I`).
     ///
-    /// The workspaces are rebuilt in logical order with the one in front last,
-    /// which is exactly the `parked` invariant; a directory that no longer exists
-    /// is not fatal — that tab opens on the shell's default, like a new one.
+    /// The one in front is the last one **built** — it is the one that lives in
+    /// `tabs`/`active`, and building it anywhere else would mean parking it again
+    /// — but it keeps the number the file gave it. A directory that no longer
+    /// exists is not fatal: that tab opens on the shell's default, like a new one.
     fn restore_layout(
         &mut self,
         l: &crate::state::Layout,
@@ -2817,9 +2818,7 @@ impl App {
         cols: usize,
         rows: usize,
     ) {
-        let total = l.workspaces.len();
-        let front = l.ws.min(total.saturating_sub(1));
-        let order: Vec<usize> = (0..total).filter(|j| *j != front).chain([front]).collect();
+        let (order, front) = restore_order(l.workspaces.len(), l.ws);
         for (i, j) in order.iter().copied().enumerate() {
             if i > 0 {
                 let cur = Workspace::take(self);
@@ -2854,6 +2853,10 @@ impl App {
                 0
             };
         }
+        // the rebuild leaves `ws_idx` at the last position, which turned the
+        // workspace in front into the last one and shifted every other left on
+        // the next run (`B44`)
+        self.ws_idx = front;
     }
 
     /// How many workspaces exist (the one in front + the parked ones).
@@ -3691,6 +3694,17 @@ fn prefer_cwd(
     path.is_dir().then_some(path)
 }
 
+/// The order in which a saved layout is rebuilt: the workspaces that are not in
+/// front, in the file's order, and the one in front **last** (it is the one that
+/// lives in `tabs`/`active`; the others go to `parked`). The second value is the
+/// logical index the front keeps afterwards — being built last is a matter of
+/// where it is stored, and it must not renumber the session (`B44`).
+fn restore_order(total: usize, ws: usize) -> (Vec<usize>, usize) {
+    let front = ws.min(total.saturating_sub(1));
+    let order = (0..total).filter(|j| *j != front).chain([front]).collect();
+    (order, front)
+}
+
 /// A name remembered by a run before `B43` was not a name: the card was born
 /// saying `workspace {n}`. Reading that back would paint the word on the card
 /// again, and there is no way to tell it from an owner who typed it — so the
@@ -3717,6 +3731,32 @@ mod tests {
         // and a real name survives untouched
         assert_eq!(drop_legacy_default("build", 2), "build");
         assert_eq!(drop_legacy_default("", 0), "");
+    }
+
+    #[test]
+    fn a_restored_session_keeps_the_order_of_the_file() {
+        // the front is built last, and the parked prefix is every other
+        // workspace in the file's order
+        assert_eq!(restore_order(3, 0), (vec![1, 2, 0], 0));
+        assert_eq!(restore_order(3, 1), (vec![0, 2, 1], 1));
+        assert_eq!(restore_order(3, 2), (vec![0, 1, 2], 2));
+        assert_eq!(restore_order(1, 0), (vec![0], 0));
+        // an index out of range in a hand-edited file climbs back into the list
+        assert_eq!(restore_order(3, 9), (vec![0, 1, 2], 2));
+        // read through the mapping the cards use (`slot` in `wscards`), the
+        // session opens with the logical order of the file — 0, 1, 2, and not
+        // the 1, 2, 0 that leaving the front last produced
+        for front in 0..3 {
+            let (order, front) = restore_order(3, front);
+            let logical = |i: usize| {
+                if i == front {
+                    order[order.len() - 1]
+                } else {
+                    order[if i < front { i } else { i - 1 }]
+                }
+            };
+            assert_eq!((0..3).map(logical).collect::<Vec<_>>(), vec![0, 1, 2]);
+        }
     }
 
     #[test]

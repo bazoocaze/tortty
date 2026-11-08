@@ -2073,3 +2073,22 @@ exist inside `mc`.
 Verified: an Xvfb probe with `mc` in front (`mouse_mode` 2) — the same double
 click on the card of the front workspace names it; with the code before this, the
 typing went to `mc` and the card kept `workspace 1`.
+
+## 2026-11-08 — `B44`: the restored session keeps the order
+
+`restore_layout` rebuilt the workspaces with the one in front **last** and left
+`ws_idx` there: that is the `parked` invariant (the front is not in the list, it
+*is* `tabs`/`active`), but read as an order it renumbered the session — a front in
+position 1 reopened in the last one and every other workspace shifted left, so
+`Ctrl+Shift+1..9`, the card and the `dump` header pointed at a different workspace
+after a restart.
+
+- `restore_order(total, ws)` returns the build order (the others in file order,
+  the front last) **and** the number the front keeps; `restore_layout` puts that
+  number back in `ws_idx` once the rebuild is done.
+
+Verified: `a_restored_session_keeps_the_order_of_the_file` (the mapping the cards
+use reads back `0, 1, 2` for every position of the front), and an Xvfb
+round trip — three workspaces, the middle one named `MID`, the front in the middle,
+quit and reopened: `ws: 1` and `['', 'MID', '']` both times. With the code before
+this, the same file reopened as `ws: 2` and `['', '', 'MID']`.
