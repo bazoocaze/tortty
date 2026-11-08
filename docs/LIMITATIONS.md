@@ -71,6 +71,13 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   application sequences go out for the bare key only. The mode is decided before
   the key becomes a character, and a modified keypad key takes the legacy path
   like every other key.
+- **`DECKPAM` speaks only for a keypad key with no face of its own**: with
+  NumLock off, `KP_7` is `Home` and `KP_4` is `ArrowLeft`, and the navigation
+  face wins even under `DECKPAM`. The programs that ask for the mode cannot read
+  `ESC O` anyway (`xterm-256color` declares no `k0`..`k9`: `zsh`'s line editor
+  beeps at `ESC O w` and `vim` turns it into `7`), so the mode stays with the
+  keys that would otherwise be a bare digit — the NumLock-on case, where it is
+  the only way to tell `KP_1` from `End`.
 - **The alternate keys of the kitty protocol exist for the ASCII letters only**:
   with flag 4, Shift+A is `CSI 97:65:97;2u` (key, shifted, base). A shifted
   punctuation mark stays single-field (`CSI 33;2u`), because the base of `!` is

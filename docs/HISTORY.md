@@ -1979,6 +1979,15 @@ express it, since winit hands over only the character.
 Verified: three tests in the two crates, and an Xvfb probe with `cat -v` — `^[Ow`
 with the mode, `7` without.
 
+Correction, same day: the `\EO` table fired for *any* keypad key, and with
+NumLock off `KP_7` is `Home` — `ESC O w` is not something the programs asking for
+the mode can read (`xterm-256color` declares no `k0`..`k9`: `zsh`'s line editor
+beeped and `vim` typed `7`), so the mode broke the shell to please the program.
+`keypad_for` now asks the key first: only what has no face of its own takes the
+application form. Verified with `vim` (keypad 4 moves the cursor left, 7 goes to
+column 0) and `zsh -i` (keypad 7 = `Home`) through the debug socket, and `cat -v`
+with NumLock off (bare `KP_Home` → `^[[H`) against NumLock on (`KP_7` → `^[Ow`).
+
 ## 2026-11-08 — `B42`: the workspace list scrolls
 
 The cards were drawn from the top at a fixed 2.4 rows and nothing moved them: a

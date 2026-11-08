@@ -195,12 +195,31 @@ fn numpad_app(p: PhysicalKey) -> Option<&'static str> {
 
 /// The bytes the keypad sends in application mode, when the mode is on and the
 /// key is bare: a modified keypad key keeps the legacy form, like every other
-/// key.
+/// key. It only speaks for a key that has no face of its own — see `keypad_for`.
 fn keypad_app_seq(physical: PhysicalKey, mods: ModifiersState) -> Option<Vec<u8>> {
     if !mods.is_empty() {
         return None;
     }
     numpad_app(physical).map(|s| s.as_bytes().to_vec())
+}
+
+/// `keypad_app_seq` gated by the mode and by the key's own face: a keypad key
+/// that winit already knows (`Home`, `ArrowLeft`, with NumLock off) is not the
+/// mode's business. Out of `encode` so a test can ask it without a `KeyEvent`.
+fn keypad_for(
+    logical: &Key,
+    physical: PhysicalKey,
+    mods: ModifiersState,
+    keypad_app: bool,
+) -> Option<Vec<u8>> {
+    if !keypad_app {
+        return None;
+    }
+    let (named, _) = resolve_key(logical, physical);
+    if named.is_some() {
+        return None;
+    }
+    keypad_app_seq(physical, mods)
 }
 
 /// Applies modifiers in the xterm format.
@@ -449,13 +468,16 @@ pub fn encode(
     if ev.state != ElementState::Pressed && kbd_flags & F_EVENT_TYPES == 0 {
         return None;
     }
-    // The application keypad is a mode of the *key*, not of the text: it is
-    // decided before the key becomes `7` or `+` (which is all the numeric mode
-    // has).
-    if keypad_app {
-        if let Some(seq) = keypad_app_seq(ev.physical_key, mods) {
-            return Some(seq);
-        }
+    // The application keypad is a mode of the *key*, not of the text: it decides
+    // a key that would otherwise be a bare digit (NumLock on, where winit hands
+    // over no keysym). A keypad key that winit already resolved to a navigation
+    // key — `Home` for `KP_7` with NumLock off — keeps that face: the programs
+    // that ask for `DECKPAM` cannot read `ESC O` anyway (`xterm-256color`'s
+    // terminfo declares no `k0`..`k9`, so `zsh`'s line editor beeps at `ESC O w`
+    // and `vim` turns it into `7`), and overriding it would break the shell to
+    // please the program.
+    if let Some(seq) = keypad_for(&ev.logical_key, ev.physical_key, mods, keypad_app) {
+        return Some(seq);
     }
     let (named, character) = resolve_key(&ev.logical_key, ev.physical_key);
     encode_event(
@@ -890,6 +912,49 @@ mod tests {
         assert_eq!(seq(KeyCode::Numpad7, ModifiersState::SHIFT), None);
         // and the mode does not touch the ordinary keys
         assert_eq!(seq(KeyCode::KeyA, NONE), None);
+    }
+
+    #[test]
+    fn deckpam_speaks_only_for_a_key_with_no_face_of_its_own() {
+        use winit::keyboard::NativeKey;
+
+        // NumLock on: winit gives no keysym, the physical key is all there is, and
+        // without `DECKPAM` it would be a bare `7` — this is the case the mode
+        // exists for
+        let app = |logical: Key, c: KeyCode, on: bool| {
+            keypad_for(&logical, PhysicalKey::Code(c), NONE, on)
+                .map(|v| String::from_utf8_lossy(&v).to_string())
+        };
+        assert_eq!(
+            app(
+                Key::Unidentified(NativeKey::Unidentified),
+                KeyCode::Numpad7,
+                true
+            )
+            .as_deref(),
+            Some("\x1bOw")
+        );
+        // NumLock off: winit resolved `KP_7` to `Home`. The programs that ask for
+        // `DECKPAM` cannot read `ESC O w` (`xterm-256color` declares no `k0`..`k9`:
+        // `zsh` beeps, `vim` types `7`), so the navigation face wins and the
+        // keypad keeps being the arrow cluster
+        assert_eq!(
+            app(Key::Named(NamedKey::Home), KeyCode::Numpad7, true),
+            None
+        );
+        assert_eq!(
+            app(Key::Named(NamedKey::ArrowLeft), KeyCode::Numpad4, true),
+            None
+        );
+        // the mode off changes nothing either way
+        assert_eq!(
+            app(
+                Key::Unidentified(NativeKey::Unidentified),
+                KeyCode::Numpad7,
+                false
+            ),
+            None
+        );
     }
 }
 

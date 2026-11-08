@@ -53,10 +53,12 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   with Shift, which is what xterm's terminfo says) and the numeric keypad (its
   digits and operators in every NumLock state, and the navigation cluster with
   NumLock off; `DECKPAM` (`ESC =`) turns it into the `ESC O` application forms
-  and `DECKPNM` takes it back); modifiers as a parameter; DECCKM; Shift+Tab;
+  for the keys that have no face of their own, and `DECKPNM` takes it back;
+  modifiers as a parameter; DECCKM; Shift+Tab;
   Ctrl+letter; Alt as an ESC prefix; dead keys and composition (ABNT2 `~ ^ ´`);
   printable text from the event on non-US layouts. **limit:** a modified keypad
-  key keeps the numeric form even under `DECKPAM`
+  key keeps the numeric form even under `DECKPAM`, and a keypad key that is a
+  navigation key with NumLock off keeps that face
   ([`LIMITATIONS.md`](LIMITATIONS.md)).
 - kitty keyboard protocol: push/pop/set/query, flag 1 (disambiguate), flag 2
   (event types, release `:3`), flag 4 (alternate keys: `CSI 97:65:97;2u`), flag 8
