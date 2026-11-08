@@ -34,8 +34,8 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - DEC Special Graphics charset (G0).
 - Alt screen: separate grid, swap preserving the cursor, crop/pad on resize (no
   reflow there).
-- Reflow on resize: joins and splits soft lines and keeps the coloured
-  background. **limit:** it kills the selection anchor (`M-P`).
+- Reflow on resize: joins and splits soft lines, keeps the coloured background
+  and carries the selection to the same characters.
 - Scrollback with a configurable cap ([`CONFIG.md`](CONFIG.md)) and an 8 px
   scrollbar on the grid's right edge: it appears only when there is history, the
   thumb is the share of the buffer the view shows, a click jumps and a drag walks

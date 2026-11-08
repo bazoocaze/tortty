@@ -2164,7 +2164,7 @@ impl App {
         for t in &mut self.tabs {
             t.term.cell_size = cell_u;
             if cols != t.term.cols || rows != t.term.rows {
-                t.term.resize(cols, rows);
+                t.sel = t.term.resize_keep(cols, rows, t.sel);
                 if let Some(pty) = t.pty.as_mut() {
                     pty.resize(cols as u16, rows as u16, cell);
                 }

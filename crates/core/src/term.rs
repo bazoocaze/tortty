@@ -15,6 +15,7 @@ use crate::charset::dec_graphics;
 use crate::color::Color;
 use crate::config::Theme;
 use crate::grid::Row;
+use crate::select::Span;
 
 const REPLACEMENT: char = '\u{FFFD}';
 
@@ -528,10 +529,24 @@ impl Term {
     }
 
     pub fn resize(&mut self, cols: usize, rows: usize) {
+        self.resize_keep(cols, rows, None);
+    }
+
+    /// `resize` that carries a selection across the reflow (`M-P`).
+    ///
+    /// The anchors come back on the same characters of the same text; `None`
+    /// means they could not be carried (the rows they named left the scrollback
+    /// or the screen went to the alt buffer, where nothing reflows) and the
+    /// selection dies, as it did before.
+    ///
+    /// The anchors are the caller's — the core does not keep a selection — so
+    /// they arrive and leave by parameter, and the mapping is done here because
+    /// it is the reflow that knows where each cell went.
+    pub fn resize_keep(&mut self, cols: usize, rows: usize, sel: Option<Span>) -> Option<Span> {
         let cols = cols.max(1);
         let rows = rows.max(1);
         if (cols, rows) == (self.cols, self.rows) {
-            return;
+            return sel;
         }
         self.mark_global("resize");
         self.abs_gen += 1;
@@ -550,13 +565,31 @@ impl Term {
             .drain(..)
             .chain(std::mem::take(&mut self.grid))
             .collect();
-        let mut re = reflow(all, cols, hist + cur_row, cur_col);
+        // the anchors arrive in the absolute space; the reflow works on indexes
+        // of `all`, whose first row is the first absolute line that still exists
+        let first_old = self.scrolled as i64 - hist as i64;
+        let total_old = all.len();
+        let mut carried = [false; 2];
+        let mut pts: Vec<(usize, usize)> = Vec::new();
+        if let Some(s) = sel {
+            for (k, a) in [s.a, s.b].iter().enumerate() {
+                let i = a.line - first_old;
+                if i >= 0 && (i as usize) < total_old {
+                    carried[k] = true;
+                    pts.push((i as usize, a.col));
+                }
+            }
+        }
+        let mut re = reflow(all, cols, hist + cur_row, cur_col, &pts);
         let first_live = re.rows.len().saturating_sub(rows);
         let live = re.rows.split_off(first_live);
         self.scrollback.extend(re.rows);
         while self.scrollback.len() > self.scrollback_limit {
             self.scrollback.pop_front();
         }
+        // rows the ceiling ate at the front: everything the reflow numbered is
+        // shifted by this much in the space that survives
+        let dropped = first_live.saturating_sub(self.scrollback.len());
         self.grid = live;
         // always `rows` live rows: the missing ones are born blank at the bottom
         while self.grid.len() < rows {
@@ -586,6 +619,24 @@ impl Term {
         self.bottom = rows - 1;
         self.wrap_pending = wrap;
         self.dirty = vec![true; rows];
+        // the base of the new absolute space, now that the ceiling and `scrolled`
+        // have both had their say
+        let base = self.scrolled as i64 - self.scrollback.len() as i64;
+        let mut mapped = sel?;
+        let mut it = re.points.into_iter();
+        for (k, a) in [&mut mapped.a, &mut mapped.b].iter_mut().enumerate() {
+            if !carried[k] {
+                return None;
+            }
+            let (row, col) = it.next()?;
+            if row < dropped {
+                return None;
+            }
+            a.line = base + (row - dropped) as i64;
+            a.col = col;
+            a.gen = self.abs_gen;
+        }
+        Some(mapped)
     }
 
     // -------------------------------------------------------------- writing
@@ -2514,12 +2565,23 @@ fn crop_rows(grid: &mut Vec<Row>, cols: usize, rows: usize) {
 
 /// What the reflow returned: absolute rows (scrollback + grid) and the cursor.
 struct Reflowed {
+    /// Where the points the caller asked about landed, in the order asked.
+    points: Vec<(usize, usize)>,
     rows: Vec<Row>,
     cur_row: usize,
     cur_col: usize,
     /// The cursor fell at the end of a full row: the next character wraps
     /// (the VT's `wrap_pending`), it does not overwrite the last column.
     wrap: bool,
+}
+
+/// Where the cell `off` cells into a paragraph lands: row `first + ci` of the
+/// reflowed vector, and the column inside it.
+fn chunk_at(chunks: &[(usize, usize)], first: usize, off: usize, cols: usize) -> (usize, usize) {
+    let last = chunks.len() - 1;
+    let ci = chunks.iter().position(|(_, b)| off < *b).unwrap_or(last);
+    let (a, _) = chunks[ci];
+    (first + ci, off.saturating_sub(a).min(cols - 1))
 }
 
 /// Joins the "soft" (`wrapped`) rows into paragraphs and rewraps everything at
@@ -2533,17 +2595,33 @@ struct Reflowed {
 ///   erasing them eats the drawing;
 /// - a wide pair (`CJK`, emoji) is not split in half: if the cut would fall
 ///   between the cell and its continuation, the row breaks one column earlier.
-fn reflow(all: Vec<Row>, cols: usize, cur_abs: usize, cur_col: usize) -> Reflowed {
+fn reflow(
+    all: Vec<Row>,
+    cols: usize,
+    cur_abs: usize,
+    cur_col: usize,
+    pts: &[(usize, usize)],
+) -> Reflowed {
     let cols = cols.max(1);
     // -- 1. paragraphs, in reading order
     let mut paragraphs: Vec<Vec<Cell>> = Vec::new();
     let mut cur_to = 0usize;
     let mut cur_off = 0usize;
+    // `(paragraph, cell offset)` of each point, in the order asked
+    let mut pts_at: Vec<(usize, usize)> = vec![(0, 0); pts.len()];
     let mut to: Vec<Cell> = Vec::new();
     for (i, mut row) in all.into_iter().enumerate() {
         if i == cur_abs {
             cur_to = paragraphs.len();
             cur_off = to.len() + cur_col.min(row.cells.len().saturating_sub(1));
+        }
+        for (k, (line, col)) in pts.iter().enumerate() {
+            if *line == i {
+                pts_at[k] = (
+                    paragraphs.len(),
+                    to.len() + (*col).min(row.cells.len().saturating_sub(1)),
+                );
+            }
         }
         let soft = row.wrapped;
         if !soft {
@@ -2562,6 +2640,7 @@ fn reflow(all: Vec<Row>, cols: usize, cur_abs: usize, cur_col: usize) -> Reflowe
 
     // -- 2. rewrap
     let mut rows: Vec<Row> = Vec::new();
+    let mut points: Vec<(usize, usize)> = vec![(0, 0); pts.len()];
     let mut cur_row = 0usize;
     let mut cur_col_new = 0usize;
     let mut wrap = false;
@@ -2588,6 +2667,11 @@ fn reflow(all: Vec<Row>, cols: usize, cur_abs: usize, cur_col: usize) -> Reflowe
                 cells: chunk,
                 wrapped: !last,
             });
+        }
+        for (k, (para, off)) in pts_at.iter().enumerate() {
+            if *para == pi {
+                points[k] = chunk_at(&chunks, first, *off, cols);
+            }
         }
         if pi == cur_to {
             let last_i = chunks.len() - 1;
@@ -2618,6 +2702,7 @@ fn reflow(all: Vec<Row>, cols: usize, cur_abs: usize, cur_col: usize) -> Reflowe
         rows.pop();
     }
     Reflowed {
+        points,
         rows,
         cur_row,
         cur_col: cur_col_new,
@@ -2742,6 +2827,7 @@ mod damage_precision_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Anchor;
 
     fn term() -> Term {
         Term::new(10, 4)
@@ -3471,6 +3557,70 @@ mod tests {
         t.feed(b"!");
         assert_eq!(t.row_text(2), "klmno");
         assert_eq!(t.row_text(3), "!", "the pending wrap has to count");
+    }
+
+    #[test]
+    fn reflow_carries_the_selection_to_the_same_text() {
+        let mut t = Term::new(20, 4);
+        t.feed(b"alpha beta gamma delta");
+        // "beta" in the first row of the paragraph
+        let sel = Span::new(t.anchor_at(0, 0, 6), t.anchor_at(0, 0, 9));
+        assert_eq!(t.span_text(&sel).as_deref(), Some("beta"));
+        let kept = t
+            .resize_keep(10, 4, Some(sel))
+            .expect("the anchor survives");
+        assert_eq!(t.cols, 10);
+        assert_eq!(
+            t.span_text(&kept).as_deref(),
+            Some("beta"),
+            "the same characters, on a row that moved"
+        );
+        // and back to the original width
+        let back = t
+            .resize_keep(20, 4, Some(kept))
+            .expect("the anchor survives the way back");
+        assert_eq!(t.span_text(&back).as_deref(), Some("beta"));
+    }
+
+    #[test]
+    fn reflow_carries_a_selection_that_spans_a_wrap() {
+        let mut t = Term::new(20, 4);
+        t.feed(b"alpha beta gamma delta");
+        // from "beta" to the end of "gamma": two rows after the narrowing
+        let sel = Span::new(t.anchor_at(0, 0, 6), t.anchor_at(0, 0, 16));
+        let before = t.span_text(&sel).expect("alive");
+        let kept = t
+            .resize_keep(10, 4, Some(sel))
+            .expect("the anchor survives");
+        assert_eq!(t.span_text(&kept), Some(before));
+    }
+
+    #[test]
+    fn reflow_lets_the_selection_die_when_the_ceiling_eats_its_rows() {
+        let mut t = Term::new(20, 3);
+        t.scrollback_limit = 2;
+        for i in 0..8 {
+            t.feed(format!("line {i}\r\n").as_bytes());
+        }
+        // the oldest row the scrollback still has: narrowing doubles the rows
+        // and the ceiling throws this one away
+        let sel = Span::new(
+            Anchor {
+                line: t.abs_first(),
+                col: 0,
+                gen: t.abs_gen,
+            },
+            Anchor {
+                line: t.abs_first(),
+                col: 3,
+                gen: t.abs_gen,
+            },
+        );
+        assert!(t.span_text(&sel).is_some());
+        assert!(
+            t.resize_keep(4, 3, Some(sel)).is_none(),
+            "a row that left the history cannot be carried"
+        );
     }
 
     #[test]

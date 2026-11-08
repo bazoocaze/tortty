@@ -1952,3 +1952,17 @@ tab 1 lands on tab 3 and not on tab 2 (one detent, not two); a 2 px drag leaves
 the order alone; a drag of half a label plus **20 more 1 px motions** ends with
 the tab in slot 2 — with the old binary the same probe ends with it in slot 3.
 `tools/quality-check.sh` green.
+
+## 2026-11-08 — `M-P`: the reflow carries the selection
+
+`resize` bumped `abs_gen` and every anchor died: a resize in the middle of a copy
+lost the selection (the Python's behaviour, and what `M-P` was about).
+
+- `Term::resize_keep` takes the span by parameter — the core keeps no selection —
+  and returns it remapped: the reflow records `(paragraph, cell offset)` of the
+  points asked about before the rewrap and `(row, col)` after it, the arithmetic
+  the cursor already did. A row the ceiling ate returns `None`; `apply_size`
+  passes `tab.sel`, so the app no longer gives up the span.
+
+Verified: three new `term.rs` tests (carried, spans a wrap, dies at the ceiling)
+plus `tools/quality-check.sh --fast` green.
