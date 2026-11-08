@@ -162,66 +162,6 @@ fn resolve_key(logical: &Key, physical: PhysicalKey) -> (Option<NamedKey>, Optio
     }
 }
 
-/// The `ESC O` form of a keypad key, for `DECKPAM`.///
-/// A program that asked for the application keypad mode wants to tell `KP_1`
-/// from `End` and `KP_Enter` from `Return`; in numeric mode both are the same
-/// character, which is what the app can send. The table is the VT100 one.
-fn numpad_app(p: PhysicalKey) -> Option<&'static str> {
-    let PhysicalKey::Code(c) = p else {
-        return None;
-    };
-    Some(match c {
-        KeyCode::Numpad0 => "\x1bOp",
-        KeyCode::Numpad1 => "\x1bOq",
-        KeyCode::Numpad2 => "\x1bOr",
-        KeyCode::Numpad3 => "\x1bOs",
-        KeyCode::Numpad4 => "\x1bOt",
-        KeyCode::Numpad5 => "\x1bOu",
-        KeyCode::Numpad6 => "\x1bOv",
-        KeyCode::Numpad7 => "\x1bOw",
-        KeyCode::Numpad8 => "\x1bOx",
-        KeyCode::Numpad9 => "\x1bOy",
-        KeyCode::NumpadDecimal => "\x1bOn",
-        KeyCode::NumpadComma => "\x1bOl",
-        KeyCode::NumpadDivide => "\x1bOo",
-        KeyCode::NumpadMultiply => "\x1bOj",
-        KeyCode::NumpadSubtract => "\x1bOm",
-        KeyCode::NumpadAdd => "\x1bOk",
-        KeyCode::NumpadEqual => "\x1bOX",
-        KeyCode::NumpadEnter => "\x1bOM",
-        _ => return None,
-    })
-}
-
-/// The bytes the keypad sends in application mode, when the mode is on and the
-/// key is bare: a modified keypad key keeps the legacy form, like every other
-/// key. It only speaks for a key that has no face of its own — see `keypad_for`.
-fn keypad_app_seq(physical: PhysicalKey, mods: ModifiersState) -> Option<Vec<u8>> {
-    if !mods.is_empty() {
-        return None;
-    }
-    numpad_app(physical).map(|s| s.as_bytes().to_vec())
-}
-
-/// `keypad_app_seq` gated by the mode and by the key's own face: a keypad key
-/// that winit already knows (`Home`, `ArrowLeft`, with NumLock off) is not the
-/// mode's business. Out of `encode` so a test can ask it without a `KeyEvent`.
-fn keypad_for(
-    logical: &Key,
-    physical: PhysicalKey,
-    mods: ModifiersState,
-    keypad_app: bool,
-) -> Option<Vec<u8>> {
-    if !keypad_app {
-        return None;
-    }
-    let (named, _) = resolve_key(logical, physical);
-    if named.is_some() {
-        return None;
-    }
-    keypad_app_seq(physical, mods)
-}
-
 /// Applies modifiers in the xterm format.
 fn with_mods(seq: &str, ctrl: bool, alt: bool, shift: bool) -> Vec<u8> {
     // Shift+Tab arrives as `\t` with shift: the canonical form is backtab
@@ -453,7 +393,6 @@ pub fn encode(
     ev: &KeyEvent,
     mods: ModifiersState,
     app_cursor: bool,
-    keypad_app: bool,
     kbd_flags: u32,
 ) -> Option<Vec<u8>> {
     let event = if ev.state == ElementState::Released {
@@ -467,17 +406,6 @@ pub fn encode(
     // the key going up)
     if ev.state != ElementState::Pressed && kbd_flags & F_EVENT_TYPES == 0 {
         return None;
-    }
-    // The application keypad is a mode of the *key*, not of the text: it decides
-    // a key that would otherwise be a bare digit (NumLock on, where winit hands
-    // over no keysym). A keypad key that winit already resolved to a navigation
-    // key — `Home` for `KP_7` with NumLock off — keeps that face: the programs
-    // that ask for `DECKPAM` cannot read `ESC O` anyway (`xterm-256color`'s
-    // terminfo declares no `k0`..`k9`, so `zsh`'s line editor beeps at `ESC O w`
-    // and `vim` turns it into `7`), and overriding it would break the shell to
-    // please the program.
-    if let Some(seq) = keypad_for(&ev.logical_key, ev.physical_key, mods, keypad_app) {
-        return Some(seq);
     }
     let (named, character) = resolve_key(&ev.logical_key, ev.physical_key);
     encode_event(
@@ -879,83 +807,6 @@ mod tests {
             (None, None)
         );
     }
-
-    #[test]
-    fn the_application_keypad_sends_the_esc_o_form() {
-        // `DECKPAM` reaches the encoder as a flag; the key is the physical one,
-        // because with NumLock on the character is all winit gives (`7`, `+`)
-        let app = |c| numpad_app(PhysicalKey::Code(c)).map(str::to_string);
-        assert_eq!(app(KeyCode::Numpad0).as_deref(), Some("\x1bOp"));
-        assert_eq!(app(KeyCode::Numpad7).as_deref(), Some("\x1bOw"));
-        assert_eq!(app(KeyCode::Numpad9).as_deref(), Some("\x1bOy"));
-        assert_eq!(app(KeyCode::NumpadEnter).as_deref(), Some("\x1bOM"));
-        assert_eq!(app(KeyCode::NumpadAdd).as_deref(), Some("\x1bOk"));
-        assert_eq!(app(KeyCode::NumpadDecimal).as_deref(), Some("\x1bOn"));
-        assert_eq!(app(KeyCode::KeyA), None, "not a keypad key");
-    }
-
-    #[test]
-    fn deckpam_changes_what_the_keypad_sends() {
-        let seq = |c: KeyCode, mods: ModifiersState| {
-            keypad_app_seq(PhysicalKey::Code(c), mods)
-                .map(|v| String::from_utf8_lossy(&v).to_string())
-        };
-        // NumLock on: winit hands over no keysym, only the physical key
-        let kp7 = || seq(KeyCode::Numpad7, NONE);
-        assert_eq!(kp7().as_deref(), Some("\x1bOw"));
-        assert_eq!(
-            seq(KeyCode::NumpadEnter, NONE).as_deref(),
-            Some("\x1bOM"),
-            "the keypad return is not `Return` in that mode"
-        );
-        // a modified keypad key keeps the legacy form, like every other key
-        assert_eq!(seq(KeyCode::Numpad7, ModifiersState::SHIFT), None);
-        // and the mode does not touch the ordinary keys
-        assert_eq!(seq(KeyCode::KeyA, NONE), None);
-    }
-
-    #[test]
-    fn deckpam_speaks_only_for_a_key_with_no_face_of_its_own() {
-        use winit::keyboard::NativeKey;
-
-        // NumLock on: winit gives no keysym, the physical key is all there is, and
-        // without `DECKPAM` it would be a bare `7` — this is the case the mode
-        // exists for
-        let app = |logical: Key, c: KeyCode, on: bool| {
-            keypad_for(&logical, PhysicalKey::Code(c), NONE, on)
-                .map(|v| String::from_utf8_lossy(&v).to_string())
-        };
-        assert_eq!(
-            app(
-                Key::Unidentified(NativeKey::Unidentified),
-                KeyCode::Numpad7,
-                true
-            )
-            .as_deref(),
-            Some("\x1bOw")
-        );
-        // NumLock off: winit resolved `KP_7` to `Home`. The programs that ask for
-        // `DECKPAM` cannot read `ESC O w` (`xterm-256color` declares no `k0`..`k9`:
-        // `zsh` beeps, `vim` types `7`), so the navigation face wins and the
-        // keypad keeps being the arrow cluster
-        assert_eq!(
-            app(Key::Named(NamedKey::Home), KeyCode::Numpad7, true),
-            None
-        );
-        assert_eq!(
-            app(Key::Named(NamedKey::ArrowLeft), KeyCode::Numpad4, true),
-            None
-        );
-        // the mode off changes nothing either way
-        assert_eq!(
-            app(
-                Key::Unidentified(NativeKey::Unidentified),
-                KeyCode::Numpad7,
-                false
-            ),
-            None
-        );
-    }
 }
 
 /// N3: the `kitty_keyboard()` check of `checks.py`, end to end — the parser in
@@ -1000,6 +851,31 @@ mod checks_keyboard {
     ) -> Option<String> {
         encode_event(named, ch, ch, mods, t.app_cursor, t.kbd_flags, event)
             .map(|v| String::from_utf8_lossy(&v).to_string())
+    }
+
+    #[test]
+    fn deckpam_does_not_change_the_bytes_of_the_keypad() {
+        // The mode is tracked and answered by `DECRQM` 66, and it stops there: the
+        // programs that ask for it cannot read the `ESC O` form (`xterm-256color`
+        // declares no `k0`..`k9`, so `zsh`'s line editor beeps and `vim` turns
+        // `ESC O w` into `7`). What goes out is what the key is: a digit with
+        // NumLock on, the navigation key with it off.
+        let mut t = term();
+        t.feed(b"\x1b=");
+        assert!(t.keypad_app);
+        // NumLock off: `KP_7` reaches the encoder as `Home`
+        assert_eq!(
+            enc(&t, Some(NamedKey::Home), None, NONE).as_deref(),
+            Some("\x1b[H")
+        );
+        // NumLock on: winit hands no keysym, the physical key says the digit
+        assert_eq!(
+            resolve_key(
+                &Key::Unidentified(winit::keyboard::NativeKey::Unidentified),
+                PhysicalKey::Code(KeyCode::Numpad7)
+            ),
+            (None, Some("7"))
+        );
     }
 
     #[test]

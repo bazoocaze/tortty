@@ -175,9 +175,10 @@ pub struct Term {
     pub wrap_pending: bool,
     pub cursor_visible: bool,
     pub app_cursor: bool,
-    /// `DECKPAM` (`ESC =`): the keypad sends the `ESC O` application forms
-    /// instead of `7`, `+`, … — the app turns this into bytes, since the key
-    /// table lives there.
+    /// `DECKPAM` (`ESC =`): the keypad application mode, answered by `DECRQM` as
+    /// 66 and cleared by `DECSTR`/`RIS`. The encoder does **not** turn it into
+    /// bytes (`LIMITATIONS.md`: the programs that ask for it cannot read
+    /// `ESC O`).
     pub keypad_app: bool,
     /// `(shape 1..6, blink)` from DECSCUSR; None = from the config.
     pub app_cursor_style: Option<(u8, bool)>,
@@ -2221,8 +2222,9 @@ impl Term {
                 self.state = State::Ground;
                 self.reset();
             },
-            // DECKPAM / DECKPNM: the keypad application mode. The terminal keeps
-            // the state; the bytes are the app's business.
+            // DECKPAM / DECKPNM: the keypad application mode. The state is kept
+            // (DECRQM 66 answers it, DECSTR/RIS clear it) and it goes no further:
+            // see `keypad_app` for why the bytes do not change.
             b'=' => {
                 self.keypad_app = true;
                 self.state = State::Ground;

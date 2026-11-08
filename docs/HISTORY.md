@@ -1979,14 +1979,19 @@ express it, since winit hands over only the character.
 Verified: three tests in the two crates, and an Xvfb probe with `cat -v` — `^[Ow`
 with the mode, `7` without.
 
-Correction, same day: the `\EO` table fired for *any* keypad key, and with
-NumLock off `KP_7` is `Home` — `ESC O w` is not something the programs asking for
-the mode can read (`xterm-256color` declares no `k0`..`k9`: `zsh`'s line editor
-beeped and `vim` typed `7`), so the mode broke the shell to please the program.
-`keypad_for` now asks the key first: only what has no face of its own takes the
-application form. Verified with `vim` (keypad 4 moves the cursor left, 7 goes to
-column 0) and `zsh -i` (keypad 7 = `Home`) through the debug socket, and `cat -v`
-with NumLock off (bare `KP_Home` → `^[[H`) against NumLock on (`KP_7` → `^[Ow`).
+Correction, same day: the `\EO` table fired for *any* keypad key, and the
+programs asking for the mode cannot read it (`xterm-256color` declares no
+`k0`..`k9`: `zsh`'s line editor beeped and `vim` turned `ESC O w` into `7`). The
+first attempt was to let a navigation key win over the mode — still wrong with
+NumLock on, where winit hands over no keysym and the keypad answered `ESC O w` to
+a shell that then swallowed it. Measured, at last, what the system terminal does
+(ghostty 1.3.1 in the same `cat -v` scene under `DECKPAM`): NumLock off → `^[OH`
+/ `^[OD` (the navigation key, application cursor form), NumLock on → `7`, `4`,
+`+`. So the table went out: `DECKPAM` is state only (`DECRQM` 66) and the keypad
+sends the digit or the navigation key, which is what every program reads.
+Verified through the socket with `zsh -i` on Xvfb: NumLock on types `hello781+-`,
+NumLock off takes the cursor from 33 to 28 with keypad Home and back to 33 with
+keypad End; `vim` still moves with keypad 4 and 7.
 
 ## 2026-11-08 — `B42`: the workspace list scrolls
 

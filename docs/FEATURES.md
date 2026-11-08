@@ -51,15 +51,12 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 
 - Keyboard: arrows, Home/End, Ins/Del, PgUp/PgDn, F1–F24 (F13–F24 as F1–F12
   with Shift, which is what xterm's terminfo says) and the numeric keypad (its
-  digits and operators in every NumLock state, and the navigation cluster with
-  NumLock off; `DECKPAM` (`ESC =`) turns it into the `ESC O` application forms
-  for the keys that have no face of their own, and `DECKPNM` takes it back;
-  modifiers as a parameter; DECCKM; Shift+Tab;
-  Ctrl+letter; Alt as an ESC prefix; dead keys and composition (ABNT2 `~ ^ ´`);
-  printable text from the event on non-US layouts. **limit:** a modified keypad
-  key keeps the numeric form even under `DECKPAM`, and a keypad key that is a
-  navigation key with NumLock off keeps that face
-  ([`LIMITATIONS.md`](LIMITATIONS.md)).
+  digits and operators in every NumLock state, the navigation cluster with
+  NumLock off; `DECKPAM` (`ESC =`) is tracked and answered by `DECRQM` as 66, and
+  `DECKPNM`/`DECSTR`/`RIS` take it back); modifiers as a parameter; DECCKM;
+  Shift+Tab; Ctrl+letter; Alt as an ESC prefix; dead keys and composition (ABNT2
+  `~ ^ ´`); printable text from the event on non-US layouts. **limit:** `DECKPAM`
+  does not change the bytes of the keypad ([`LIMITATIONS.md`](LIMITATIONS.md)).
 - kitty keyboard protocol: push/pop/set/query, flag 1 (disambiguate), flag 2
   (event types, release `:3`), flag 4 (alternate keys: `CSI 97:65:97;2u`), flag 8
   (all keys as CSI u), flag 16 (associated text). **limit:** the alternate pair

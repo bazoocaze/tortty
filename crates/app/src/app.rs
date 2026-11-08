@@ -1125,7 +1125,6 @@ impl App {
             event,
             self.mods,
             self.tabs[self.active].term.app_cursor,
-            self.tabs[self.active].term.keypad_app,
             self.tabs[self.active].term.kbd_flags,
         ) else {
             return;
