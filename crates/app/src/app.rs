@@ -440,7 +440,8 @@ pub struct App {
     /// Live tabs (each with its pty running), and which one is in front.
     tabs: Vec<Tab>,
     active: usize,
-    /// Name of the workspace in front (`workspace 1`, renamable — I8).
+    /// Name of the workspace in front — empty until the owner renames it
+    /// (`I8`); an empty name is a valid state, not a missing one (`B43`).
     ws_name: String,
     /// The workspaces that are not in front. The one in front does not live
     /// here: it **is** `tabs`/`active`. Invariant: `parked.len() + 1 ==
@@ -577,7 +578,7 @@ impl App {
             renderer: None,
             tabs: vec![tab],
             active: 0,
-            ws_name: "workspace 1".to_string(),
+            ws_name: String::new(),
             parked: Vec::new(),
             ws_idx: 0,
             bar_press: None,
@@ -631,7 +632,11 @@ impl App {
         let mut i_ws = 0usize;
         let mut empurra = |tabs: &[Tab], active: usize, name: &str, parts: &mut Vec<String>| {
             if multi_ws {
-                parts.push(format!("=== workspace {}: {name} ===", i_ws + 1));
+                parts.push(if name.is_empty() {
+                    format!("=== workspace {} ===", i_ws + 1)
+                } else {
+                    format!("=== workspace {}: {name} ===", i_ws + 1)
+                });
             }
             let multi_tab = tabs.len() > 1;
             for (i, t) in tabs.iter().enumerate() {
@@ -759,7 +764,6 @@ impl App {
                 cards.push(crate::render::WsCard {
                     name: editing.unwrap_or_else(|| self.ws_name.clone()),
                     title: self.tabs[self.active].title(),
-                    n_tabs: self.tabs.len(),
                     ativa: true,
                     alert: self.tabs.iter().any(Tab::notif_pending),
                 });
@@ -769,7 +773,6 @@ impl App {
                 cards.push(crate::render::WsCard {
                     name: editing.unwrap_or_else(|| w.name.clone()),
                     title: w.tabs[w.active].title(),
-                    n_tabs: w.tabs.len(),
                     ativa: false,
                     alert: w.tabs.iter().any(Tab::notif_pending),
                 });
@@ -2821,7 +2824,10 @@ impl App {
                 self.active = 0;
             }
             let w = &l.workspaces[j];
-            self.ws_name.clone_from(&w.name);
+            // the default name of the runs before `B43` was `workspace {n}`:
+            // reading it back would put the word on the card again, so it is
+            // dropped as if the workspace had never been renamed
+            self.ws_name = drop_legacy_default(&w.name, j);
             for (k, cwd) in w.cwds.iter().enumerate() {
                 if k > 0 {
                     let mut tab = Tab::new(cols, rows);
@@ -2866,7 +2872,7 @@ impl App {
         tab.term.scrollback_limit = self.opts.scrollback;
         self.tabs = vec![tab];
         self.active = 0;
-        self.ws_name = format!("workspace {}", self.ws_idx + 1);
+        self.ws_name.clear();
         self.after_ws_change();
         let (cols, rows) = (
             self.tabs[self.active].term.cols,
@@ -2907,12 +2913,10 @@ impl App {
         }
         // the name goes to the card and to the `dump` header: same rule as the
         // tab title (control, zero-width, direction) — the field is free typing,
-        // not terminal payload
+        // not terminal payload. An empty result is the "never renamed" state,
+        // and it is what clearing the field means (`B43`): the card goes back to
+        // the automatic title instead of refusing the key
         let new = tortty_core::term::sanitize_title(&text).trim().to_string();
-        if new.is_empty() {
-            self.redraw();
-            return;
-        }
         if i == self.ws_idx {
             self.ws_name = new;
         } else {
@@ -3680,9 +3684,33 @@ fn prefer_cwd(
     path.is_dir().then_some(path)
 }
 
+/// A name remembered by a run before `B43` was not a name: the card was born
+/// saying `workspace {n}`. Reading that back would paint the word on the card
+/// again, and there is no way to tell it from an owner who typed it — so the
+/// one string the program itself used to write is dropped, and only for the
+/// workspace whose number it names.
+fn drop_legacy_default(name: &str, idx: usize) -> String {
+    if name == format!("workspace {}", idx + 1) {
+        String::new()
+    } else {
+        name.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_legacy_workspace_name_is_dropped_on_restore() {
+        // what the old default wrote, for the workspace it numbered
+        assert_eq!(drop_legacy_default("workspace 3", 2), String::new());
+        // the number is the workspace's, so another one's default is a name
+        assert_eq!(drop_legacy_default("workspace 3", 1), "workspace 3");
+        // and a real name survives untouched
+        assert_eq!(drop_legacy_default("build", 2), "build");
+        assert_eq!(drop_legacy_default("", 0), "");
+    }
 
     #[test]
     fn the_next_tab_prefers_proc_and_takes_osc7_as_the_last_resort() {

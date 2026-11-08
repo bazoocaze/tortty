@@ -774,26 +774,21 @@ impl Renderer {
             // a text row is drawn only when the whole cell fits: half a glyph
             // at the cut is worse than no glyph
             let fits = |y: f32| y + chh <= bottom;
-            // row 1: "n name" — in the alert colour while a notification waits
-            // (`M-K`), like a tab label does
+            // the card is tinted by the alert colour while a notification
+            // waits (`M-K`), like a tab label does
             let fg = if c.alert {
                 self.color(Color::Idx(3), self.fg)
             } else {
                 fg
             };
-            let name = format!("{} {}", i + 1, c.name);
+            let (first, second) = card_lines(i + 1, &c.name, &c.title);
             if fits(y0 + 3.0) {
-                self.text_line(x0, y0 + 3.0, &name, fg, width);
+                self.text_line(x0, y0 + 3.0, &first, fg, width);
             }
-            // row 2: "title (k tab)"
-            let info = format!(
-                "{} ({} tab{})",
-                c.title,
-                c.n_tabs,
-                if c.n_tabs == 1 { "" } else { "s" }
-            );
-            if fits(y0 + chh + 3.0) {
-                self.text_line(x0, y0 + chh + 3.0, &info, fg, width);
+            // the second row only exists when the first took the name (`B43`):
+            // an empty row is not drawn, the card keeps its 2.4-row height
+            if !second.is_empty() && fits(y0 + chh + 3.0) {
+                self.text_line(x0, y0 + chh + 3.0, &second, fg, width);
             }
         }
     }
@@ -1862,9 +1857,10 @@ pub struct Frame<'a> {
 
 /// What the sidebar needs from each workspace (I6).
 pub struct WsCard {
+    /// The name the owner typed (`I8`); empty means never renamed (`B43`).
     pub name: String,
+    /// Title of the selected tab — the automatic half of the card.
     pub title: String,
-    pub n_tabs: usize,
     pub ativa: bool,
     /// A tab of this workspace has an unacknowledged notification (`M-K`).
     pub alert: bool,
@@ -1905,4 +1901,55 @@ fn grow_buffer(
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     }))
+}
+
+/// The two rows of one card (`B43`): the number never stands alone, and the
+/// tab title drops to the second row only when an explicit name took the
+/// first one. Without a name, the second row is empty — the card keeps its
+/// 2.4 rows and the title does not move down for nothing.
+fn card_lines(n: usize, name: &str, title: &str) -> (String, String) {
+    // a name of spaces is no name: `finish_rename` trims, but the state file
+    // is hand-editable
+    let name = name.trim();
+    if name.is_empty() {
+        (format!("{n} {title}"), String::new())
+    } else {
+        (format!("{n} {name}"), title.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::card_lines;
+
+    /// `B43`: the card is the number plus one explicit name, the title of the
+    /// selected tab underneath — and the number alone is never the whole card.
+    #[test]
+    fn the_card_never_stands_on_the_number_alone() {
+        // renamed: the name takes the first row and the title the second
+        assert_eq!(
+            card_lines(2, "build", "make"),
+            ("2 build".to_string(), "make".to_string())
+        );
+        // never renamed: the title climbs to the first row and nothing is drawn
+        // underneath — no `(3 tabs)`, no placeholder
+        assert_eq!(
+            card_lines(1, "", "vim ~/.zshrc"),
+            ("1 vim ~/.zshrc".to_string(), String::new())
+        );
+        // the title is whatever `Tab::title` answers, fallback included
+        assert_eq!(
+            card_lines(3, "", "tortty"),
+            ("3 tortty".to_string(), String::new())
+        );
+        // a name cleared in the rename field is the same as never renamed
+        assert_eq!(
+            card_lines(4, "   ", "htop"),
+            ("4 htop".to_string(), String::new())
+        );
+        // and the word the column already is does not come back
+        for (line, _) in [card_lines(1, "", "tortty"), card_lines(2, "build", "make")] {
+            assert!(!line.contains("workspace"), "{line}");
+        }
+    }
 }

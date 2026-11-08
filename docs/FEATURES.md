@@ -120,10 +120,13 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   label is the threshold, and the tab stays where the hand left it), wheel
   cycles one tab per detent (the touchpad's travel accumulates, as in the
   child's wheel).
-- Workspaces: a set of tabs with a name, sidebar cards (hidden when there is
-  only one), inline rename, stable numbering; the card list scrolls — the wheel
-  over the column walks it one card per detent (the touchpad's travel
-  accumulates) and entering a workspace by keyboard brings its card into sight.
+- Workspaces: a set of tabs, sidebar cards (hidden when there is only one),
+  inline rename, stable numbering; the card is the number plus the name the owner
+  typed (`B43`) over the title of the selected tab, and a workspace never renamed
+  shows that title on the first row with the second one empty — clearing the name
+  in the field goes back to it; the card list scrolls — the wheel over the column
+  walks it one card per detent (the touchpad's travel accumulates) and entering a
+  workspace by keyboard brings its card into sight.
 - Title: OSC 0/2, else `basename(cwd)`, else `tortty`; the window title mirrors
   the active tab. **limit:** an app that sets a title without pushing it (`CSI
   22/23 t`) keeps the tab on it after leaving ([`EXTERNALS.md`](EXTERNALS.md)).

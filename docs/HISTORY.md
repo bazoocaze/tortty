@@ -2036,3 +2036,26 @@ workspaces with two tabs come back as two workspaces with two tabs and `ws=1`;
 a layout pointing at `/nao/existe` opens both workspaces without an error; the
 shell of a restored tab really starts in the saved `/tmp/mi-cwd` (the app saves
 that same path again on the way out).
+
+## 2026-11-08 — `B43`: the card says what is in it
+
+Every card said `workspace {n}` over `{title} ({k} tabs)`: the first row repeated
+the word the whole column already is, and the tab counter answered a question
+nobody asks — what decides a visit is *which* program is there.
+
+- The card is now `N <name>` over the title of the selected tab, and `N <title>`
+  alone when the workspace was never renamed (the second row stays empty; the
+  card keeps its 2.4 rows, so `B42`'s offset arithmetic did not move).
+- `ws_name` is born **empty**, and empty means "never renamed": `finish_rename`
+  accepts it instead of refusing the key, and clearing the field in the rename
+  goes back to the automatic title. `n_tabs` left `WsCard` with the counter.
+- `restore_layout` drops the `workspace {n}` of the runs before this one (for the
+  workspace it numbered only), so an old state file does not paint the word back.
+  The `dump` header says `=== workspace N ===` when there is no name.
+
+Verified: `the_card_never_stands_on_the_number_alone` and
+`a_legacy_workspace_name_is_dropped_on_restore`, plus an Xvfb probe with three
+workspaces — `1 vim ~/.zshrc` / `2 tortty` / `3 tortty`, the double click on the
+third becoming `3 build` over `tortty` and going back to one row when the name was
+erased; a state file with `workspace 1`/`build`/`workspace 3` reopened with the two
+defaults dropped and `build` kept. `render-check.sh` and `quality-check.sh` green.
