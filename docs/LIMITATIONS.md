@@ -1,6 +1,8 @@
 # Limits
 
-The limitations of the project.
+Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
+(`B<n>`); here the id is `L<n>`. Overcome limitations leave this file and go to
+`HISTORY.md` (probably through a `BACKLOG` activity).
 
 ## Scope
 

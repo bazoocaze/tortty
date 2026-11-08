@@ -1,27 +1,7 @@
 # Backlog — the queue
 
-The work: **not started** or **in progress**. A half-done feature lives here,
-with the same id, until it closes. One piece of work has one owner.
-
-## Queue rules
-
-- **Id: `B<numero>`, exclusive.** A new item gets the next free number —
-  `B1`, `B2`, … — and the number **never** goes back into use, not even after
-  the item closes: an id is identity, not position in the queue. Items already
-  registered as `M-*` keep the id they have: renumbering does not pay for the
-  diff and breaks the references that [`CONFIG.md`](CONFIG.md),
-  [`LIMITATIONS.md`](LIMITATIONS.md) and the code already make.
-- **Every item has a trigger.** An improvement without a trigger becomes a wish:
-  only what has a sentence of the sort "when X appears" enters the table. An item
-  without a trigger is a wish.
-- **In progress stays here**: the row keeps its id, and the "cost" column says
-  what is done and what is still missing.
-- **When closing an item**: it leaves the table of this file and gets a dated
-  line in [`HISTORY.md`](HISTORY.md) with what was verified. A closed item does
-  not stay here: the past has a single owner.
-- **A bug fixed outside an item** enters the numbered list of `HISTORY.md`; if it
-  is an environment/tool trap, it enters [`DEBUG.md`](DEBUG.md).
-- **A decision not to do** goes to [`LIMITATIONS.md`](LIMITATIONS.md).
+Current and future activities. Id: `B<n>`.
+Completed activities do not stay here; they go to `HISTORY.md`.
 
 ## Open
 

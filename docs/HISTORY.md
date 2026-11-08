@@ -1,10 +1,6 @@
 # History
 
-Dated record of what was done: the day's narrative. What still holds is promoted
-to [`FEATURES.md`](FEATURES.md) (state), [`BENCHMARKS.md`](BENCHMARKS.md) (number)
-or [`DEBUG.md`](DEBUG.md) (pitfall).
-
-Format of each line: **date — what — how it was verified**.
+Concise history of past activities. A maximum of 10 lines per activity.
 
 ## 2026-11-01 — phase 1: the feasibility experiment
 
