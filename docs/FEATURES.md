@@ -149,16 +149,23 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   last session come back with the workspace and tab that were in front, each
   shell in the directory it had. **limit:** on Wayland the position is not
   stored, because the client does not choose it.
-- `restore_state`: `none` (one tab, nothing of the session written), `layout`
+- `restore_state`: `none` (one tab, nothing of the session written — not even
+  the geometry, since only the owner writes and `none` never owns), `layout`
   (the default: what the bullet above describes) or `content` (the layout **and**
   the screen and the history of every tab, fed back before the shell exists,
   closed by a marker line that separates the photograph from this run; the
   window closes with a hangup and the ptys are drained for a quarter of a second
   before the snapshot, so the child's last words travel with it).
   **limit:** a photograph, not the process — a new shell starts in the same
-  directory and the previous programs are gone; and only the window that opens
-  the session saves it: a second instance restores the same structure and the
-  last one to close wins (`B46`).
+  directory and the previous programs are gone.
+- One owner of the state: the window that opens the session holds a `flock` on
+  `state.lock`, and that is the one that restores, applies the remembered
+  geometry and writes. A window that finds the lock taken is a **scratch**
+  window: one tab in the directory it was called from, the 980×640 default (a
+  window exactly over the first one is the one case where restoring the position
+  hurts) and it never writes. `restore_state = none`, `--cmd`, `--cols` and
+  `--rows` never even try the lock, so a probe or `none` leaves the state of the
+  hot session untouched.
 - Lifecycle: the window closes when the shell ends; `SIGUSR1` dumps,
   `SIGTERM` dumps and exits cleanly, `--quit-after` for automation.
 - **Not implemented:** context menu (`M-V`), drag-and-drop of a file onto the

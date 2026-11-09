@@ -482,6 +482,11 @@ pub struct App {
     /// Workspaces and tabs to reopen, read from the state file before the first
     /// tab is born (`M-I`). `None` = open one tab, as always.
     restore: Option<crate::state::Layout>,
+    /// The `flock` that makes this window the owner of the state (`B46`): it
+    /// restores, applies the remembered geometry and is the only one that
+    /// writes. `None` = a scratch window, which forgets nothing because it owns
+    /// nothing. It lives as long as the app: dropping it releases the lock.
+    owner: Option<crate::state::Owner>,
     /// Last detent handed to a mouse-reporting child (instant and direction), for
     /// the same reason as `bar_wheel`: the press and the release of one notch
     /// arrive as two `MouseWheel` events, and both would be reported (`B40`).
@@ -591,6 +596,7 @@ impl App {
             card_off: 0,
             card_frac: 0.0,
             restore: None,
+            owner: None,
             wheel_pair: None,
             mods: ModifiersState::empty(),
             cursor_px: (0.0, 0.0),
@@ -2714,9 +2720,31 @@ impl App {
             ((self.opts.rows as f32 * fonts.ch + pad).ceil() as u32).max(1),
         );
         self.geom_normal = default;
-        self.remember_geom = !self.opts.grid_explicito;
+        // `B46`: only the window that opened the session owns the state, and only
+        // the owner reads and writes it. The kernel says who that is (a `flock`
+        // held for the life of the process), so a second window is a scratch
+        // window instead of a second owner — this is what stops two runs from
+        // overwriting each other's `window.json`.
+        //
+        // Three runs never even try the lock, because they are not the session:
+        // a grid on the command line (`--cols`/`--rows`, a measurement), a
+        // command of its own (`--cmd`, a probe), and `restore_state = none`,
+        // which is the owner saying "this terminal has no state".
+        let asks_for_state = !self.opts.grid_explicito
+            && self.opts.cmd.is_none()
+            && self.opts.cfg.restore_state != RestoreState::None;
+        self.owner = asks_for_state.then(crate::state::lock).flatten();
+        self.remember_geom = self.owner.is_some();
         if !self.remember_geom {
-            return (default.0, default.1, None, false);
+            // a measurement wants the grid it asked for; a probe, `none` and a
+            // scratch window open at the same default a first-ever run uses
+            let size = if self.opts.grid_explicito {
+                default
+            } else {
+                crate::state::DEFAULT
+            };
+            self.geom_normal = size;
+            return (size.0, size.1, None, false);
         }
         let monitors: Vec<crate::state::Monitor> = event_loop
             .available_monitors()
@@ -2762,22 +2790,20 @@ impl App {
     /// the session (`M-I`). Failing here cannot get in the way of closing —
     /// `state::save` already swallows I/O errors.
     fn save_geometry(&mut self) {
-        if !self.remember_geom {
-            return; // grid requested on the command line: no remembering (a measurement)
+        if self.owner.is_none() {
+            // not the owner: a measurement, a probe, `restore_state = none`, or a
+            // second window (`B46`). Writing here is what used to erase the layout
+            // of a session that was still open.
+            return;
         }
         let maximized = self.window.as_ref().is_some_and(|w| w.is_maximized());
         let (x, y) = match self.geom_pos.filter(|_| backend_x11()) {
             Some((x, y)) => (Some(x), Some(y)),
             None => (None, None), // Wayland: no position to remember (J6)
         };
-        // `none` writes no layout at all; a `--cmd` run is a probe and hands the
-        // session of the real run back untouched (writing its own single tab
-        // would erase a layout nobody asked to erase)
-        let layout = match (self.opts.cfg.restore_state, self.opts.cmd.is_none()) {
-            (RestoreState::None, _) => None,
-            (_, true) => Some(self.session_layout()),
-            (_, false) => crate::state::load().and_then(|s| s.layout),
-        };
+        // the owner writes what it opened: `--cmd` and `none` never get here, and a
+        // second window does not either, so this tab list is the session's own
+        let layout = Some(self.session_layout());
         crate::state::save(&crate::state::State {
             geometry: crate::state::Geometry {
                 x,
@@ -2788,9 +2814,6 @@ impl App {
             },
             layout,
         });
-        if self.opts.cmd.is_some() {
-            return; // a probe does not touch the content of the real session
-        }
         if self.opts.cfg.restore_state == RestoreState::Content {
             crate::state::save_snapshots(&self.session_snapshots());
         } else {

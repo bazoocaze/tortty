@@ -14,9 +14,12 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   directory the old one was in. The content of the screen comes back only with
   `restore_state = content`, and it is a picture: text, SGR and `OSC 8` links,
   never the process that wrote them, and it stops at the `scrollback` cap.
-- **The state file has one owner and no protocol.** Two windows opened at once
-  read the same `window.json`, so the second one restores the same structure and
-  the last to close decides what the next run gets (`B46`).
+- **The state has one owner, and the second window is a scratch.** The window
+  that opens the session holds a `flock` on `state.lock` (`B46`): it restores,
+  applies the geometry and writes on the way out. A window that finds the lock
+  taken opens one tab in the directory it was called from, at the 980×640
+  default, and never writes — so what the *second* window saw is not remembered,
+  and closing one window never edits another's session.
 - **One image, drawn as it arrived.** The kitty protocol is accepted for what
   `icat` needs (direct, file, temp and SHM transmission); animating frames and
   speaking sixel/iTerm2 are not limits: they are the

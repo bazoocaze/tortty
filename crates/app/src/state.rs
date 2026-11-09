@@ -85,6 +85,66 @@ pub fn state_path() -> Option<PathBuf> {
     Some(base.join("tortty").join("window.json"))
 }
 
+/// The `flock` that makes one window the **owner** of the state (`B46`).
+///
+/// The owner is the window that opened the session: it restores, it applies the
+/// remembered geometry and it is the only one that writes. The owner is asked of
+/// the kernel, not of a PID file — a lock held for the life of the process has no
+/// stale entry and no recycled PID to defend against, the lesson `devkill.sh`
+/// learned with `/proc/<pid>/exe`.
+pub struct Owner {
+    /// Held for the life of the process and never read: closing the descriptor is
+    /// what releases the lock, so the field exists to not be dropped.
+    _file: std::fs::File,
+}
+
+impl Owner {
+    /// Path of the lock file: beside `window.json`.
+    #[must_use]
+    pub fn path() -> Option<PathBuf> {
+        state_path().map(|p| p.with_file_name("state.lock"))
+    }
+}
+
+/// Tries to become the owner; `None` when another instance already is.
+///
+/// Never blocks: the lock is taken with `LOCK_NB`, and an instance that finds it
+/// taken is a scratch window, not a second owner. A lock file that cannot be
+/// created means "no remembered state", which is the same as not owning it.
+#[must_use]
+pub fn lock() -> Option<Owner> {
+    let path = Owner::path()?;
+    lock_at(&path)
+}
+
+/// `lock` on a given path (the test uses its own file: environment is not test
+/// state).
+///
+/// `unsafe`: `flock(2)` has no wrapper in the standard library, and an advisory
+/// lock is a descriptor property — there is no safe way to ask for it.
+#[must_use]
+#[allow(unsafe_code)]
+pub fn lock_at(path: &std::path::Path) -> Option<Owner> {
+    use std::os::unix::io::AsRawFd;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).ok()?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)
+        .ok()?;
+    // SAFETY: `flock(2)` with a valid descriptor and a valid operation flag;
+    // there is no Rust wrapper for it in the standard library.
+    let got = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
+    if got {
+        Some(Owner { _file: file })
+    } else {
+        None
+    }
+}
+
 /// Reads the file; `None` for missing, unreadable, crooked JSON or wrong type.
 /// Never an error: corrupted state only means "opens at the default".
 #[must_use]
@@ -346,8 +406,8 @@ pub fn fit(
 #[cfg(test)]
 mod checks_state {
     use super::{
-        fit, load_from, load_snapshot_from, save_snapshots_to, save_to, Geometry, Layout, Monitor,
-        State, WorkspaceMemory, DEFAULT, MIN_H, MIN_W,
+        fit, load_from, load_snapshot_from, lock_at, save_snapshots_to, save_to, Geometry, Layout,
+        Monitor, State, WorkspaceMemory, DEFAULT, MIN_H, MIN_W,
     };
 
     /// A `State` with no layout: the file as the old version wrote it.
@@ -545,6 +605,19 @@ mod checks_state {
         // a file that does not even exist: default, no error
         assert_eq!(load_from(&path.with_extension("doesnotexist")), None);
         let _ = std::fs::remove_dir_all(Path::new(&path).ancestors().nth(2).expect("root"));
+    }
+
+    #[test]
+    fn only_one_window_owns_the_state() {
+        let path = tmp("lock").with_file_name("state.lock");
+        let first = lock_at(&path).expect("the first window is the owner");
+        // the second instance finds the lock taken: it is a scratch window
+        assert!(lock_at(&path).is_none());
+        // the lock is the process's, and it dies with it
+        drop(first);
+        let again = lock_at(&path).expect("the lock is free after the owner is gone");
+        drop(again);
+        let _ = std::fs::remove_dir_all(path.ancestors().nth(2).expect("root"));
     }
 
     #[test]

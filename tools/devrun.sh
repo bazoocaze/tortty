@@ -20,6 +20,12 @@ BIN="$HERE/target/debug/tortty"
 
 PIDFILE=${TORTTY_RS_PIDFILE:-/tmp/tortty-rs.pid}
 LOGFILE=${TORTTY_RS_LOG:-/tmp/tortty-rs.log}
+# The state of whoever runs this is not test state (B46): the debug instance gets a
+# `window.json` and snapshots of its own, otherwise it takes the flock of the hot
+# session (so it opens as a scratch window, which hides what is being tested) or,
+# with the hot session closed, restores and then overwrites it.
+STATEDIR=${TORTTY_RS_STATE:-${PIDFILE%.pid}-state}
+export XDG_STATE_HOME=$STATEDIR
 
 if [ -f "$PIDFILE" ]; then
     old=$(cat "$PIDFILE")
@@ -32,4 +38,4 @@ fi
 
 nohup "$BIN" "$@" >/dev/null 2>"$LOGFILE" &
 echo $! > "$PIDFILE"
-echo "pid $(cat "$PIDFILE") — log $LOGFILE"
+echo "pid $(cat "$PIDFILE") — log $LOGFILE — state $STATEDIR"

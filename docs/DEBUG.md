@@ -22,6 +22,13 @@ The tools only kill a registered PID, checking `/proc/<pid>/exe` first:
 `devrun.sh` refuses to start if a live process with that PID file already
 exists (it avoids two instances fighting over the same socket).
 
+The debug instance also gets a **state of its own**: the script exports
+`XDG_STATE_HOME` to `${TORTTY_RS_STATE:-<pidfile minus .pid>-state}`
+(`/tmp/tortty-rs-state` by default), so the window being tested never takes the
+lock of the hot session nor overwrites its `window.json` and snapshots (`B46`).
+Point it elsewhere with `TORTTY_RS_STATE=/dir`, and wipe the directory when the
+probe wants a clean start.
+
 ## Probes (what you can turn on without recompiling)
 
 | probe | effect |

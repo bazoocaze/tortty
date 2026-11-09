@@ -2037,6 +2037,38 @@ a layout pointing at `/nao/existe` opens both workspaces without an error; the
 shell of a restored tab really starts in the saved `/tmp/mi-cwd` (the app saves
 that same path again on the way out).
 
+## 2026-11-09 — one owner of the state (`B46`)
+
+Two windows open at once read the same `window.json`: the second one restored the
+same tabs and directories and, on the way out, decided what the next run got — the
+last to close won, and the session that was open lost its layout. The owner's own
+debug runs did exactly that.
+
+- `state::lock` takes a **non-blocking `flock`** on `state.lock`, beside the
+  state file, and returns an `Owner` held for the life of the app: the owner is
+  asked of the kernel, so there is no stale lock and no recycled PID to defend
+  against (`devkill.sh` learned the same lesson with `/proc/<pid>/exe`). The lock
+  is a property of the *file*, so an instance pointed at another state (an
+  `XDG_STATE_HOME` of its own) never disputes this one.
+- The window that gets it restores the layout and the content, applies the
+  remembered geometry and is the **only** writer: `save_geometry` starts with
+  `owner.is_none() → return`.
+- A window that finds it taken is a **scratch** window: one tab in the directory
+  it was called from, the 980×640 default instead of the remembered rectangle (a
+  window exactly over the first one is the one case where restoring the position
+  hurts), no restore, no write. `restore_state = none`, `--cmd`, `--cols` and
+  `--rows` do not even try the lock — a probe leaves the hot session untouched.
+- `tools/devrun.sh` stops taking the hot session as its state: it exports
+  `XDG_STATE_HOME` to `${TORTTY_RS_STATE:-<pidfile minus .pid>-state}`, so the
+  window under test has a `window.json` and snapshots of its own by default.
+
+Verified with two instances on one state dir from a hand-written `window.json`
+(2 workspaces, `ws = 1`, 700×500): the owner came back at 72×26 with both
+workspaces and wrote them on the way out; the scratch came back at 101×34 with
+one workspace and left the file **byte for byte** the same. A `restore_state =
+none` instance opened beside a default one does not hold the lock: the default one
+restored as the owner.
+
 ## 2026-11-09 — the child's last words are in the snapshot
 
 `restore_state = content` kept the screen but never the last line a program
