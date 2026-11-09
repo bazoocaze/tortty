@@ -221,6 +221,77 @@ pub fn save_to(path: &std::path::Path, s: &State) {
     }
 }
 
+/// Writes the snapshots of the session, dropping the ones of tabs that do not
+/// exist any more (`restore_state = content`, `B45`).
+///
+/// Failing here cannot bring the shutdown down — a tab that cannot be written
+/// simply starts clean on the next run, which is the old behaviour.
+pub fn save_snapshots(snaps: &[(usize, usize, Vec<u8>)]) {
+    let Some(path) = state_path() else {
+        return;
+    };
+    let Some(dir) = path.parent() else {
+        return;
+    };
+    save_snapshots_to(dir, snaps);
+}
+
+/// `save_snapshots` on a given directory.
+pub fn save_snapshots_to(dir: &std::path::Path, snaps: &[(usize, usize, Vec<u8>)]) {
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        eprintln!("tortty: no remembered content ({}: {e})", dir.display());
+        return;
+    }
+    // a tab that was closed must not come back: every snapshot is rewritten, so
+    // whatever is left over is from a session that no longer exists
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.flatten() {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with("session-") && name.ends_with(".ans") {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    for (ws, tab, bytes) in snaps {
+        let path = dir.join(format!("session-{ws}-{tab}.ans"));
+        write_atomic(&path, bytes);
+    }
+}
+
+/// Reads back the snapshot of one tab; `None` for missing or empty.
+#[must_use]
+pub fn load_snapshot(ws: usize, tab: usize) -> Option<Vec<u8>> {
+    let dir = state_path()?.parent().map(std::path::Path::to_path_buf)?;
+    load_snapshot_from(&dir, ws, tab)
+}
+
+/// `load_snapshot` on a given directory.
+#[must_use]
+pub fn load_snapshot_from(dir: &std::path::Path, ws: usize, tab: usize) -> Option<Vec<u8>> {
+    let bytes = std::fs::read(dir.join(format!("session-{ws}-{tab}.ans"))).ok()?;
+    (!bytes.is_empty()).then_some(bytes)
+}
+
+/// tmp + rename: never leaves half a file behind, and a reader never sees one.
+fn write_atomic(path: &std::path::Path, bytes: &[u8]) {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    let Ok(mut f) = std::fs::File::create(&tmp) else {
+        eprintln!(
+            "tortty: no remembered content ({} not writable)",
+            tmp.display()
+        );
+        return;
+    };
+    let ok = f.write_all(bytes).is_ok() && f.sync_all().is_ok();
+    drop(f);
+    if !ok || std::fs::rename(&tmp, path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
 /// Usable geometry: healthy size and the corner **inside some monitor**.
 ///
 /// `None` means "nothing usable left" — monitor disconnected, hand-edited file,
@@ -275,8 +346,8 @@ pub fn fit(
 #[cfg(test)]
 mod checks_state {
     use super::{
-        fit, load_from, save_to, Geometry, Layout, Monitor, State, WorkspaceMemory, DEFAULT, MIN_H,
-        MIN_W,
+        fit, load_from, load_snapshot_from, save_snapshots_to, save_to, Geometry, Layout, Monitor,
+        State, WorkspaceMemory, DEFAULT, MIN_H, MIN_W,
     };
 
     /// A `State` with no layout: the file as the old version wrote it.
@@ -473,6 +544,39 @@ mod checks_state {
         assert_eq!((g.x, g.y, g.w, g.h), (None, Some(3), 900, 600));
         // a file that does not even exist: default, no error
         assert_eq!(load_from(&path.with_extension("doesnotexist")), None);
+        let _ = std::fs::remove_dir_all(Path::new(&path).ancestors().nth(2).expect("root"));
+    }
+
+    #[test]
+    fn a_snapshot_comes_back_and_the_closed_tab_does_not() {
+        let path = tmp("snapshot");
+        let dir = path.parent().expect("dir").to_path_buf();
+        save_snapshots_to(
+            &dir,
+            &[
+                (0, 0, b"first".to_vec()),
+                (0, 1, b"second".to_vec()),
+                (1, 0, b"other workspace".to_vec()),
+            ],
+        );
+        assert_eq!(
+            load_snapshot_from(&dir, 0, 1).as_deref(),
+            Some(&b"second"[..])
+        );
+        assert_eq!(
+            load_snapshot_from(&dir, 1, 0).as_deref(),
+            Some(&b"other workspace"[..])
+        );
+        // a tab closed between the two runs does not come back on the third
+        save_snapshots_to(&dir, &[(0, 0, b"only one now".to_vec())]);
+        assert_eq!(load_snapshot_from(&dir, 0, 1), None);
+        assert_eq!(load_snapshot_from(&dir, 1, 0), None);
+        assert_eq!(
+            load_snapshot_from(&dir, 0, 0).as_deref(),
+            Some(&b"only one now"[..])
+        );
+        // nothing written is not an error, it is a clean start
+        assert_eq!(load_snapshot_from(&dir, 7, 7), None);
         let _ = std::fs::remove_dir_all(Path::new(&path).ancestors().nth(2).expect("root"));
     }
 }

@@ -147,9 +147,16 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - Geometry: 980×640 without state, size restored, maximized tracked separately
   from the normal size, invalid geometry rejected; the workspaces and tabs of the
   last session come back with the workspace and tab that were in front, each
-  shell in the directory it had. **limit:** the content is not reopened — a fresh
-  shell per tab, no scrollback (`M-I` is layout, not a session) — and on Wayland
-  the position is not stored, because the client does not choose it.
+  shell in the directory it had. **limit:** on Wayland the position is not
+  stored, because the client does not choose it.
+- `restore_state`: `none` (one tab, nothing of the session written), `layout`
+  (the default: what the bullet above describes) or `content` (the layout **and**
+  the screen and the history of every tab, fed back before the shell exists,
+  closed by a marker line that separates the photograph from this run).
+  **limit:** a photograph, not the process — a new shell starts in the same
+  directory and the previous programs are gone; and only the window that opens
+  the session saves it: a second instance restores the same structure and the
+  last one to close wins (`B46`).
 - Lifecycle: the window closes when the shell ends; `SIGUSR1` dumps,
   `SIGTERM` dumps and exits cleanly, `--quit-after` for automation.
 - **Not implemented:** context menu (`M-V`), drag-and-drop of a file onto the

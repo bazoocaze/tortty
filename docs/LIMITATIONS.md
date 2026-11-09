@@ -10,8 +10,13 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   reconnection, no daemon. Closing the window ends everything.
 - **One terminal, not a window environment.** No splits at this stage
   (`BACKLOG.md` M-J), no layout manager; tabs and workspaces are reopened by the
-  next run, but the scrollback and the running processes are not — a new shell
-  starts in the directory the old one was in.
+  next run, but the running processes are not — a new shell starts in the
+  directory the old one was in. The content of the screen comes back only with
+  `restore_state = content`, and it is a picture: text, SGR and `OSC 8` links,
+  never the process that wrote them, and it stops at the `scrollback` cap.
+- **The state file has one owner and no protocol.** Two windows opened at once
+  read the same `window.json`, so the second one restores the same structure and
+  the last to close decides what the next run gets (`B46`).
 - **One image, drawn as it arrived.** The kitty protocol is accepted for what
   `icat` needs (direct, file, temp and SHM transmission); animating frames and
   speaking sixel/iTerm2 are not limits: they are the

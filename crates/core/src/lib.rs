@@ -14,6 +14,7 @@ pub mod config;
 pub mod graphics;
 pub mod grid;
 pub mod select;
+pub mod snapshot;
 pub mod term;
 
 pub use cell::Cell;

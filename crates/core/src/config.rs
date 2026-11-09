@@ -36,6 +36,13 @@ ligatures standard
 cursor_shape block
 cursor_blink off
 
+# what comes back on the next run: none (one tab, a clean screen), layout
+# (the workspaces and tabs of the last run) or content (the layout plus what the
+# tabs had on screen and in the history — a photograph, not the process: the
+# shell starts again). The window position and size are always remembered,
+# whatever this says.
+restore_state layout
+
 # history lines kept above the screen
 scrollback 10000
 
@@ -75,6 +82,26 @@ color13 #ff00ff
 color14 #00ffff
 color15 #ffffff
 ";
+
+/// What comes back on the next run (`B45`).
+///
+/// The three degrees are a ladder: each one includes the previous. It says
+/// nothing about the window — position, size and maximized state are remembered
+/// whatever this is, because that is what anyone expects of an application with
+/// a window.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum RestoreState {
+    /// `none`: no layout is written at all — one tab on a clean screen.
+    None,
+    /// `layout` (the default): the workspaces and the tabs of the last run, in
+    /// their order, the front where it was (`M-I`).
+    #[default]
+    Layout,
+    /// `content`: the layout **and** what each tab had on screen and in the
+    /// history. It is a photograph: the shell starts again in the same
+    /// directory, the processes do not come back.
+    Content,
+}
 
 /// How the app's BEL manifests itself.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -183,6 +210,7 @@ pub struct Config {
     pub ligatures: Ligatures,
     pub cursor_shape: CursorShape,
     pub cursor_blink: bool,
+    pub restore_state: RestoreState,
     pub scrollback: usize,
     pub padding: u32,
     pub bell: Bell,
@@ -209,6 +237,7 @@ const KNOWN: &[&str] = &[
     "ligatures",
     "cursor_shape",
     "cursor_blink",
+    "restore_state",
     "scrollback",
     "window_padding_width",
     "bell",
@@ -259,6 +288,7 @@ impl Config {
             ligatures: Ligatures::Standard,
             cursor_shape: CursorShape::Block,
             cursor_blink: false,
+            restore_state: RestoreState::Layout,
             scrollback: 1000,
             padding: 0,
             bell: Bell::None,
@@ -372,6 +402,14 @@ impl Config {
                 "cursor_blink" => match parse_bool(value) {
                     Some(b) => cfg.cursor_blink = b,
                     None => errors.push(bad(format!("\"{value}\" is not on/off"))),
+                },
+                "restore_state" => match value {
+                    "none" => cfg.restore_state = RestoreState::None,
+                    "layout" => cfg.restore_state = RestoreState::Layout,
+                    "content" => cfg.restore_state = RestoreState::Content,
+                    other => {
+                        errors.push(bad(format!("\"{other}\" is not none, layout or content")));
+                    },
                 },
                 "scrollback" => match value.parse::<usize>() {
                     Ok(v) if v <= SCROLLBACK_MAX => cfg.scrollback = v,
@@ -494,6 +532,7 @@ mod tests {
         assert_eq!(cfg.font_family, "Monospace");
         assert!((cfg.font_size - 12.0).abs() < f32::EPSILON);
         assert_eq!(cfg.scrollback, 10_000);
+        assert_eq!(cfg.restore_state, RestoreState::Layout);
         assert_eq!(cfg.bell, Bell::None);
         assert!(!cfg.copy_on_select);
         assert_eq!(cfg.debug_log, None);
@@ -502,6 +541,29 @@ mod tests {
         // the classic xterm palette: mc/htop rely on it (see CONFIG.md)
         assert!(matches!(cfg.palette[1], Color::Rgb(0xcd, 0x00, 0x00)));
         assert_eq!(cfg.bg, Color::Rgb(0, 0, 0));
+    }
+
+    /// `restore_state` is a ladder — none, layout, content — and `layout` is the
+    /// default because it is what the app did before the key existed (`B45`).
+    #[test]
+    fn restore_state_has_three_degrees_and_layout_is_the_default() {
+        assert_eq!(Config::parse("").0.restore_state, RestoreState::Layout);
+        let (cfg, errs) = Config::parse("restore_state none");
+        assert_eq!(errs.len(), 0, "{errs:?}");
+        assert_eq!(cfg.restore_state, RestoreState::None);
+        let (cfg, errs) = Config::parse("restore_state content");
+        assert_eq!(errs.len(), 0, "{errs:?}");
+        assert_eq!(cfg.restore_state, RestoreState::Content);
+        // a wrong value costs the line, not the file: the default holds
+        let (cfg, errs) = Config::parse("restore_state session\nfont_size 14");
+        assert_eq!(cfg.restore_state, RestoreState::Layout);
+        assert!((cfg.font_size - 14.0).abs() < f32::EPSILON);
+        assert_eq!(errs.len(), 1);
+        assert!(
+            errs[0].msg.contains("none, layout or content"),
+            "{}",
+            errs[0]
+        );
     }
 
     #[test]

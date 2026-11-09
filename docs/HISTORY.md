@@ -2037,6 +2037,38 @@ a layout pointing at `/nao/existe` opens both workspaces without an error; the
 shell of a restored tab really starts in the saved `/tmp/mi-cwd` (the app saves
 that same path again on the way out).
 
+## 2026-11-09 — `B45`: `restore_state`, and what comes back
+
+`M-I` gave back the arrangement and nothing else: the same tabs in the same
+directories, every screen empty. That is one of three reasonable answers, so it
+became a config key with a ladder — `none`, `layout` (the default, today's
+behaviour) and `content`.
+
+- The snapshot is **ANSI**, written by `tortty_core::snapshot`: text, SGR and
+  `OSC 8` links, from the primary screen (a photograph of `vim` is not what
+  anyone wants back) with the alt screen dropped. Soft-wrapped rows come back
+  without a hard newline, so reopening in another width reflows the paragraph by
+  the same code that reflows a live resize. Nothing that acts goes in: no image,
+  no `OSC 52`, no notification, no title; a control character inside a link URI
+  is dropped instead of ending the sequence early.
+- Each tab's snapshot is a file of its own (`session-<ws>-<tab>.ans`, tmp +
+  rename) so `window.json` keeps its schema and a failed snapshot cannot take the
+  geometry with it; the files of closed tabs are dropped on the next save.
+- The replay happens **before** the shell exists, so the child's output lands
+  below a marker line: above it is the previous run, below it is this one.
+- `none` writes no layout; `--cmd` hands the real session back untouched instead
+  of overwriting it with the probe's single tab; the geometry is written whatever
+  the key says, because that is what anyone expects of a window.
+
+Verified: five `tortty-core` tests (same screen, cursor, soft wrap reopened
+wider, alt screen excluded, link with a control character), the `state` round
+trip with a closed tab, the config test for the three degrees, and Xvfb probes of
+the real binary: `content` reopens the previous screen of every tab (two
+workspaces, three tabs, each with its own line) with the marker and a live prompt
+below it, `layout` opens the same tabs empty, `none` opens one tab and writes no
+layout, and a `--cmd` probe leaves `window.json` and the snapshots byte for byte
+intact.
+
 ## 2026-11-08 — `B43`: the card says what is in it
 
 Every card said `workspace {n}` over `{title} ({k} tabs)`: the first row repeated

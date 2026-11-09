@@ -40,6 +40,7 @@ const KEYS: &[&str] = &[
     "font_size",
     "cursor_shape",
     "cursor_blink",
+    "restore_state",
     "scrollback",
     "window_padding_width",
     "bell",

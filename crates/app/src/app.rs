@@ -5,7 +5,7 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tortty_core::config::Bell;
+use tortty_core::config::{Bell, RestoreState};
 use tortty_core::{Anchor, Span, Term};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
@@ -2731,8 +2731,11 @@ impl App {
         // the layout of the last session (`M-I`): it is only worth reopening when
         // the command line did not ask for a grid (a measurement) nor for a
         // command of its own (a probe, `mc` in a fresh terminal)
+        // `restore_state = none` says the layout is not written, so there is
+        // nothing worth reopening either (`B45`); `--cmd` is a probe and opens a
+        // single tab of its own
         self.restore = remembered.as_ref().and_then(|s| {
-            if self.opts.cmd.is_none() {
+            if self.opts.cmd.is_none() && self.opts.cfg.restore_state != RestoreState::None {
                 s.layout.clone()
             } else {
                 None
@@ -2767,6 +2770,14 @@ impl App {
             Some((x, y)) => (Some(x), Some(y)),
             None => (None, None), // Wayland: no position to remember (J6)
         };
+        // `none` writes no layout at all; a `--cmd` run is a probe and hands the
+        // session of the real run back untouched (writing its own single tab
+        // would erase a layout nobody asked to erase)
+        let layout = match (self.opts.cfg.restore_state, self.opts.cmd.is_none()) {
+            (RestoreState::None, _) => None,
+            (_, true) => Some(self.session_layout()),
+            (_, false) => crate::state::load().and_then(|s| s.layout),
+        };
         crate::state::save(&crate::state::State {
             geometry: crate::state::Geometry {
                 x,
@@ -2775,8 +2786,35 @@ impl App {
                 h: self.geom_normal.1,
                 maximized,
             },
-            layout: Some(self.session_layout()),
+            layout,
         });
+        if self.opts.cmd.is_some() {
+            return; // a probe does not touch the content of the real session
+        }
+        if self.opts.cfg.restore_state == RestoreState::Content {
+            crate::state::save_snapshots(&self.session_snapshots());
+        } else {
+            crate::state::save_snapshots(&[]); // the key turned the content off
+        }
+    }
+
+    /// The content of every tab, ready for `state::save_snapshots` (`B45`).
+    fn session_snapshots(&self) -> Vec<(usize, usize, Vec<u8>)> {
+        let mut out = Vec::new();
+        let mut parked = self.parked.iter();
+        for j in 0..self.ws_count() {
+            let tabs: &[Tab] = if j == self.ws_idx {
+                &self.tabs
+            } else if let Some(w) = parked.next() {
+                &w.tabs
+            } else {
+                continue;
+            };
+            for (k, t) in tabs.iter().enumerate() {
+                out.push((j, k, t.term.snapshot()));
+            }
+        }
+        out
     }
 
     /// The workspaces and tabs as they are now, for the next run (`M-I`).
@@ -2845,6 +2883,7 @@ impl App {
                     .as_ref()
                     .map(std::path::PathBuf::from)
                     .filter(|p| p.is_dir());
+                self.replay_snapshot(j, k);
                 self.spawn_tab(k, cols, rows, wake.clone(), dir.as_deref(), None);
             }
             self.active = if j == front {
@@ -2857,6 +2896,32 @@ impl App {
         // workspace in front into the last one and shifted every other left on
         // the next run (`B44`)
         self.ws_idx = front;
+    }
+
+    /// Puts the content of the previous run back into tab `tab` of workspace
+    /// `ws` (`restore_state = content`, `B45`).
+    ///
+    /// It runs **before** the shell exists, so what the shell writes lands below
+    /// the marker: above it is a photograph, below it is this run. The marker is
+    /// the whole contract — a restored screen that looks live would be a lie.
+    fn replay_snapshot(&mut self, ws: usize, tab: usize) {
+        if self.opts.cfg.restore_state != RestoreState::Content {
+            return;
+        }
+        let Some(bytes) = crate::state::load_snapshot(ws, tab) else {
+            return;
+        };
+        let t = &mut self.tabs[tab];
+        t.term.feed(&bytes);
+        let rows = t.term.rows;
+        // bottom left, one scroll for the marker to have a line of its own, and
+        // the prompt of the new shell takes the line after it
+        t.term.feed(
+            format!(
+                "\x1b[0m\x1b[{rows};1H\r\n\x1b[2m── content restored from the previous run ──\x1b[0m\r\n"
+            )
+            .as_bytes(),
+        );
     }
 
     /// How many workspaces exist (the one in front + the parked ones).

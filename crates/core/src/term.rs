@@ -2373,6 +2373,19 @@ impl Term {
     pub fn in_alt_screen(&self) -> bool {
         self.alt.is_some()
     }
+
+    /// The screen that is the terminal's own: the live grid, or the one stashed
+    /// under the alt screen while an app owns the view. The snapshot reads this
+    /// one — a photograph of `vim` is not what anyone wants back (`B45`).
+    pub fn primary(&self) -> &[Row] {
+        self.alt.as_deref().unwrap_or(&self.grid)
+    }
+
+    /// The whole content (history + primary screen) as ANSI: see
+    /// [`crate::snapshot`]. Feeding it into a fresh `Term` rebuilds the picture.
+    pub fn snapshot(&self) -> Vec<u8> {
+        crate::snapshot::snapshot(self)
+    }
 }
 
 #[inline]
