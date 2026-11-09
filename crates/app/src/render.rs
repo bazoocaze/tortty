@@ -13,6 +13,7 @@ use bytemuck::{Pod, Zeroable};
 use swash::scale::ScaleContext;
 use tortty_core::cell::{Cell, INV};
 use tortty_core::config::{Config, CursorShape, Theme};
+use tortty_core::select::Rect;
 use tortty_core::term::sanitize_title;
 use tortty_core::{Color, Span, Term};
 use winit::window::Window;
@@ -39,13 +40,18 @@ struct Instance {
 /// Is the cell inverted on this row/column? `SGR 7` always inverts; the
 /// selection inverts whatever is inside it.
 #[inline]
-fn is_swap(cell: &Cell, sel: Option<(usize, usize, usize, usize)>, y: usize, x: usize) -> bool {
+fn is_swap(cell: &Cell, sel: Option<Rect>, y: usize, x: usize) -> bool {
     let inv = cell.flags & INV != 0;
-    let inside = sel.is_some_and(|(r1, c1, r2, c2)| {
-        y >= r1
-            && y <= r2
-            && x >= (if y == r1 { c1 } else { 0 })
-            && x <= (if y == r2 { c2 } else { usize::MAX })
+    let inside = sel.is_some_and(|s| {
+        // a rectangle cuts the same columns on every row; a flow selection only
+        // cuts the first and the last one (`B5`)
+        let in_cols = if s.block {
+            x >= s.c1 && x <= s.c2
+        } else {
+            x >= (if y == s.r1 { s.c1 } else { 0 })
+                && x <= (if y == s.r2 { s.c2 } else { usize::MAX })
+        };
+        y >= s.r1 && y <= s.r2 && in_cols
     });
     inv ^ inside
 }
@@ -1564,7 +1570,7 @@ impl Renderer {
     fn style(
         &self,
         cell: &tortty_core::cell::Cell,
-        sel: Option<(usize, usize, usize, usize)>,
+        sel: Option<Rect>,
         y: usize,
         x: usize,
     ) -> (Option<usize>, bool, bool, bool) {
@@ -1805,7 +1811,7 @@ fn decode(img: &tortty_core::graphics::Image) -> Option<(u32, u32, Vec<u8>)> {
 #[derive(Clone, Copy)]
 struct RowCtx {
     cols: usize,
-    sel: Option<(usize, usize, usize, usize)>,
+    sel: Option<Rect>,
     blink: Blink,
     /// Cursor cell, when it is in this view (breaks the ligature).
     cursor: Option<(usize, usize)>,
@@ -1920,7 +1926,48 @@ fn card_lines(n: usize, name: &str, title: &str) -> (String, String) {
 
 #[cfg(test)]
 mod tests {
-    use super::card_lines;
+    use super::{card_lines, is_swap};
+    use tortty_core::cell::Cell;
+    use tortty_core::select::Rect;
+
+    /// `B5`: the rectangle inverts the same columns on every one of its rows,
+    /// while a flow selection only cuts the first and the last.
+    #[test]
+    fn a_block_inverts_a_column_and_a_flow_inverts_lines() {
+        let cell = Cell::default();
+        let block = Rect {
+            r1: 1,
+            c1: 3,
+            r2: 3,
+            c2: 5,
+            block: true,
+        };
+        assert!(is_swap(&cell, Some(block), 1, 3));
+        assert!(is_swap(&cell, Some(block), 2, 4), "the middle row too");
+        assert!(!is_swap(&cell, Some(block), 2, 6), "outside the column");
+        assert!(!is_swap(&cell, Some(block), 2, 2), "left of the column");
+        assert!(!is_swap(&cell, Some(block), 4, 4), "below the rectangle");
+        let flow = Rect {
+            block: false,
+            ..block
+        };
+        assert!(
+            is_swap(&cell, Some(flow), 2, 4),
+            "a flow selection covers the whole middle row"
+        );
+        assert!(
+            is_swap(&cell, Some(flow), 2, 0),
+            "even where the block does not reach"
+        );
+        assert!(
+            is_swap(&cell, Some(flow), 2, 6),
+            "the middle row of a flow selection is whole"
+        );
+        assert!(
+            !is_swap(&cell, Some(flow), 3, 6),
+            "and its last row stops at the end column"
+        );
+    }
 
     /// `B43`: the card is the number plus one explicit name, the title of the
     /// selected tab underneath — and the number alone is never the whole card.

@@ -145,6 +145,7 @@ or `ok: false` with `err`. The protocol is stable on purpose:
 | `resize` | `cols`, `rows` | `requested` (the grid **asked for**; check it in `state`) |
 | `prof` | `on` (bool, optional) | counters: `draw_ms_call`, `draw_calls`, `parse_*`, `pty_*` |
 | `osc` | `tab` (optional, default the active one) | the last 8 OSC the parser saw, newest to oldest: `hex`, `text` (lossy), `truncated`, `title` (the resulting one). It is the probe for "why is the tab title full of garbage" |
+| `sel` | — | `text` (what `Ctrl+Shift+C` would copy) and `block` (the selection is a rectangle, `B5`) |
 | `log` | `data` | writes to the debug log |
 | `quit` | — | closes the window |
 

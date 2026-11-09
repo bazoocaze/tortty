@@ -253,6 +253,10 @@ pub struct Tab {
     pub view_off: usize,
     /// Text selection, in absolute anchors.
     pub sel: Option<Span>,
+    /// The selection being dragged is a **block** (`B5`): decided by Alt at the
+    /// press and kept for the whole drag, because the shape cannot change under
+    /// the hand that is drawing it.
+    pub sel_block: bool,
     /// Anchor and pixel of the press: the drag only starts after 3 px.
     pub press: Option<(Anchor, (f64, f64))>,
     pub dragging: bool,
@@ -298,6 +302,7 @@ impl Tab {
             rx: None,
             view_off: 0,
             sel: None,
+            sel_block: false,
             press: None,
             dragging: false,
             click: None,
@@ -1502,13 +1507,18 @@ impl App {
                 }
                 let t = &mut self.tabs[self.active];
                 let at = t.term.anchor_at(t.view_off, row, col);
-                // a second click on the same cell selects the word, a third the
-                // line and a fourth starts over
-                let count = match t.click {
-                    Some((prev, n, when)) if prev == at && when.elapsed().as_millis() < 400 => {
-                        n % 3 + 1
-                    },
-                    _ => 1,
+                // Alt draws a rectangle from the press (`B5`); a block has no
+                // word and no line, so the click count is not consulted
+                t.sel_block = self.mods.alt_key();
+                let count = if t.sel_block {
+                    1
+                } else {
+                    match t.click {
+                        Some((prev, n, when)) if prev == at && when.elapsed().as_millis() < 400 => {
+                            n % 3 + 1
+                        },
+                        _ => 1,
+                    }
                 };
                 t.click = Some((at, count, std::time::Instant::now()));
                 let span = match count {
@@ -1641,12 +1651,15 @@ impl App {
             return;
         }
         let (col, row) = self.cell_at(x, y);
-        let new = Span::new(
-            anchor,
+        let other =
             self.tabs[self.active]
                 .term
-                .anchor_at(self.tabs[self.active].view_off, row, col),
-        );
+                .anchor_at(self.tabs[self.active].view_off, row, col);
+        let new = if self.tabs[self.active].sel_block {
+            Span::block(anchor, other)
+        } else {
+            Span::new(anchor, other)
+        };
         if self.tabs[self.active].sel != Some(new) {
             self.tabs[self.active].sel = Some(new);
             // motion path: a frame is asked for, not drawn (B4, the wheel's trap)
@@ -2470,6 +2483,13 @@ impl App {
                 },
                 None => debugsock::err("drop needs path (string)"),
             },
+            // the text Ctrl+Shift+C would put in the clipboard, without the
+            // clipboard: the shape of a selection (a block, `B5`) is only visible
+            // in what it copies
+            "sel" => debugsock::ok(serde_json::json!({
+                "text": self.selection_text(),
+                "block": self.tabs[self.active].sel.is_some_and(|s| s.is_block()),
+            })),
             "resize" => {
                 let cols = req
                     .get("cols")

@@ -72,7 +72,12 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - Selection: drag with a 3 px threshold, double click for the word (a word ends
   only at whitespace, so a path comes out whole), triple click for the whole
   line — a soft-wrapped line included —, absolute anchor that survives scrolling
-  and output, drawn as inversion. **limit:** no rectangular selection (`B5`).
+  and output, drawn as inversion. **Alt+drag** takes a **block**: the same
+  columns on every row, dragged from any corner, copied one line each — the
+  column of a table, not the ends of its lines. **limit:** a block is carried
+  across a resize by its two corners (the reflow does not re-derive the
+  rectangle), and with the child asking for the mouse the drag is reported to it
+  instead (`B5` closed 2026-11-09).
 - Clipboard: PRIMARY on release, CLIPBOARD with `copy_on_select`,
   Ctrl+Shift+C/V, button 2 pastes PRIMARY, bracketed paste. **limit:** PRIMARY
   dies with the app — it owns the selection; CLIPBOARD survives.

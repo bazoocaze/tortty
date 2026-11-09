@@ -28,6 +28,34 @@ pub struct Anchor {
 pub struct Span {
     pub a: Anchor,
     pub b: Anchor,
+    /// A stream selection follows the text; a block one is a rectangle (`B5`).
+    pub shape: Shape,
+}
+
+/// Which of the two selections this is.
+///
+/// `Flow` takes everything between the two anchors, wrapped rows included: it is
+/// what a drag over text means. `Block` takes a **column range on every row**
+/// between them — the shape of a table, where the ends of the lines are not what
+/// the reader wants. The columns of a block are its two ends regardless of order,
+/// because a rectangle is dragged from any corner.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Shape {
+    Flow,
+    Block,
+}
+
+/// The part of a selection that lands on the screen, in view coordinates.
+///
+/// `block` travels with it: the edge rule (only the first and the last row are
+/// cut) is the flow one, and a rectangle cuts the same columns everywhere.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Rect {
+    pub r1: usize,
+    pub c1: usize,
+    pub r2: usize,
+    pub c2: usize,
+    pub block: bool,
 }
 
 impl Span {
@@ -35,10 +63,51 @@ impl Span {
     #[must_use]
     pub fn new(p: Anchor, q: Anchor) -> Span {
         if (p.line, p.col) <= (q.line, q.col) {
-            Span { a: p, b: q }
+            Span {
+                a: p,
+                b: q,
+                shape: Shape::Flow,
+            }
         } else {
-            Span { a: q, b: p }
+            Span {
+                a: q,
+                b: p,
+                shape: Shape::Flow,
+            }
         }
+    }
+
+    /// A rectangle with the corners `p` and `q`, dragged from any direction.
+    ///
+    /// Only the lines are sorted: the columns stay the two corners', because the
+    /// block is bounded by both of them (and a right-to-left drag is as normal as
+    /// a left-to-right one).
+    #[must_use]
+    pub fn block(p: Anchor, q: Anchor) -> Span {
+        if p.line <= q.line {
+            Span {
+                a: p,
+                b: q,
+                shape: Shape::Block,
+            }
+        } else {
+            Span {
+                a: q,
+                b: p,
+                shape: Shape::Block,
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn is_block(&self) -> bool {
+        self.shape == Shape::Block
+    }
+
+    /// The columns of the block, low to high.
+    #[must_use]
+    fn columns(&self) -> (usize, usize) {
+        (self.a.col.min(self.b.col), self.a.col.max(self.b.col))
     }
 
     /// Intersection with the screen: `(r1, c1, r2, c2)` in the view at `view_off`.
@@ -47,7 +116,7 @@ impl Span {
     /// is pinned to the edge: the drawing paints the visible piece and the copy
     /// uses the whole anchor.
     #[must_use]
-    pub fn visible(&self, t: &Term, view_off: usize) -> Option<(usize, usize, usize, usize)> {
+    pub fn visible(&self, t: &Term, view_off: usize) -> Option<Rect> {
         if !t.anchor_alive(&self.a) || !t.anchor_alive(&self.b) {
             return None;
         }
@@ -57,13 +126,23 @@ impl Span {
         if r1 >= rows || r2 < 0 {
             return None;
         }
-        let c1 = if r1 >= 0 { self.a.col } else { 0 };
-        let c2 = if r2 < rows {
+        let block = self.is_block();
+        let (left, right) = self.columns();
+        let c1 = if block || r1 >= 0 { left } else { 0 };
+        let c2 = if block {
+            right
+        } else if r2 < rows {
             self.b.col
         } else {
             t.cols.saturating_sub(1)
         };
-        Some((r1.max(0) as usize, c1, (r2.min(rows - 1)) as usize, c2))
+        Some(Rect {
+            r1: r1.max(0) as usize,
+            c1,
+            r2: (r2.min(rows - 1)) as usize,
+            c2,
+            block,
+        })
     }
 }
 
@@ -120,6 +199,9 @@ impl Term {
         if !self.anchor_alive(&span.a) || !self.anchor_alive(&span.b) {
             return None;
         }
+        if span.is_block() {
+            return self.block_text(span);
+        }
         let cols = self.cols;
         let mut out = String::new();
         let mut prev_wrapped = false;
@@ -139,6 +221,33 @@ impl Term {
             out.push_str(&row_text(row, from, to + 1));
         }
         Some(out)
+    }
+
+    /// The rectangle as text: the same column range of every row, one line each
+    /// (`B5`).
+    ///
+    /// A `wrapped` row does **not** continue into the one below here: a block is
+    /// cut per row, because the point of it is the columns — the text continues
+    /// where the screen says it continues. Commas, tabs and half characters are
+    /// nobody's business: the cells are copied as they are.
+    fn block_text(&self, span: &Span) -> Option<String> {
+        let cols = self.cols;
+        let (left, right) = span.columns();
+        let from = left.min(cols);
+        let to = (right + 1).min(cols);
+        if from >= to {
+            return None;
+        }
+        let mut out = String::new();
+        for line in span.a.line..=span.b.line {
+            let row = self.abs_row(line)?;
+            if line > span.a.line {
+                out.push('\n');
+            }
+            let piece = row.text_cols(from, to);
+            out.push_str(piece.trim_end());
+        }
+        (!out.is_empty()).then_some(out)
     }
 
     /// The word around `at` (double click), as a span of the line it is on.
@@ -324,6 +433,49 @@ mod tests {
     }
 
     #[test]
+    fn a_block_takes_the_same_columns_of_every_row() {
+        let mut t = term();
+        t.feed(b"0123456789\r\n0123456789\r\n0123456789");
+        let s = Span::block(t.anchor_at(0, 0, 2), t.anchor_at(0, 2, 4));
+        assert_eq!(t.span_text(&s).unwrap(), "234\n234\n234");
+        // and it is drawn as a rectangle: the same columns on every row
+        let r = s.visible(&t, 0).expect("on screen");
+        assert!(r.block);
+        assert_eq!((r.r1, r.c1, r.r2, r.c2), (0, 2, 2, 4));
+    }
+
+    #[test]
+    fn a_block_can_be_dragged_from_any_corner() {
+        let mut t = term();
+        t.feed(b"0123456789\r\n0123456789\r\n0123456789");
+        // from the bottom right to the top left: the rectangle is the same
+        let s = Span::block(t.anchor_at(0, 2, 7), t.anchor_at(0, 0, 5));
+        assert_eq!(t.span_text(&s).unwrap(), "567\n567\n567");
+        let r = s.visible(&t, 0).expect("on screen");
+        assert_eq!((r.c1, r.c2), (5, 7));
+    }
+
+    #[test]
+    fn a_block_does_not_join_a_wrapped_row_with_the_next() {
+        // the soft wrap below belongs to the same logical line; the block is cut
+        // by column on each row, which is what makes it a table and not a line
+        let mut t = term();
+        t.feed(b"abcdefghijklmn");
+        let s = Span::block(t.anchor_at(0, 0, 0), t.anchor_at(0, 1, 9));
+        assert_eq!(t.span_text(&s).unwrap(), "abcdefghij\nklmn");
+    }
+
+    #[test]
+    fn a_flow_selection_keeps_the_edge_rule() {
+        // and the old shape is untouched: only the first and the last row are cut
+        let mut t = term();
+        t.feed(b"0123456789\r\n0123456789\r\n0123456789");
+        let s = Span::new(t.anchor_at(0, 0, 2), t.anchor_at(0, 2, 4));
+        assert_eq!(t.span_text(&s).unwrap(), "23456789\n0123456789\n01234");
+        assert!(!s.visible(&t, 0).expect("on screen").block);
+    }
+
+    #[test]
     fn anchor_survives_scroll() {
         let mut t = term();
         // three lines: fills the screen, then scrolls one
@@ -363,8 +515,8 @@ mod tests {
         // selects from line 2 to line 3, but the view shows 2 lines
         let a = t.anchor_at(0, 0, 0);
         let b = t.anchor_at(0, 1, 5);
-        let (r1, c1, r2, c2) = Span::new(a, b).visible(&t, 0).unwrap();
-        assert_eq!((r1, c1, r2, c2), (0, 0, 1, 5));
+        let r = Span::new(a, b).visible(&t, 0).unwrap();
+        assert_eq!((r.r1, r.c1, r.r2, r.c2), (0, 0, 1, 5));
         // scrolling two lines back takes the selection off screen
         assert_eq!(Span::new(a, b).visible(&t, 3), None);
     }

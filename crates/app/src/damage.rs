@@ -27,8 +27,8 @@ pub struct Signature {
     pub rows: usize,
     /// How many lines the history scrolled: changes the content of every line.
     pub view_off: usize,
-    /// Visible selection, already clipped to the screen: `(row1, col1, row2, col2)`.
-    pub sel: Option<(usize, usize, usize, usize)>,
+    /// Visible selection, already clipped to the screen (`Rect`).
+    pub sel: Option<tortty_core::select::Rect>,
     /// Ctrl held: the `OSC 8` links are underlined, which changes the instances
     /// of every line that carries one.
     pub links: bool,
@@ -147,7 +147,13 @@ mod tests {
     fn selection_rebuilds_all() {
         let mut previous = signature();
         let mut next = signature();
-        next.sel = Some((3, 1, 3, 5));
+        next.sel = Some(tortty_core::select::Rect {
+            r1: 3,
+            c1: 1,
+            r2: 3,
+            c2: 5,
+            block: false,
+        });
         assert_eq!(
             decide(&next, &mut previous, false, &[false; 24], 24),
             Damage::All

@@ -2037,6 +2037,33 @@ a layout pointing at `/nao/existe` opens both workspaces without an error; the
 shell of a restored tab really starts in the saved `/tmp/mi-cwd` (the app saves
 that same path again on the way out).
 
+## 2026-11-09 — the block selection (`B5`)
+
+`ls -l` and a log table have their columns in the middle of the line, and a drag
+between two anchors takes every character between them. **Alt+drag** is the
+rectangle now.
+
+- The shape travels in `Span` (`Shape::Flow` | `Shape::Block`): a block keeps the
+  two corners' columns unsorted and sorts only the lines, so a drag from the
+  bottom right is the same rectangle. `visible` returns a `Rect` with the flag,
+  and `is_swap` cuts a block by **columns on every row** where a flow selection
+  cuts only its first and last.
+- `span_text` has a block half: the same column range per row, one line each, no
+  soft-wrap joining — the wrap continues on the screen, and that is where the
+  block reads it. Trailing blanks are dropped per line.
+- The app decides at the press: Alt sets `tab.sel_block` for the whole drag (the
+  shape cannot change under the hand), and a block has no word and no line, so
+  the click count is not consulted.
+- Verified through the real mouse path on Xvfb: the same drag over
+  `aaa bbb ccc / ddd eee fff / ggg hhh iii` from col 4 to 6, rows 1–3, copies
+  `"eee fff\nggg hhh iii\njjj kkk"` without Alt and `"eee\nhhh\nkkk"` with it;
+  bottom-up with Alt gave `"d eee\ng hhh\nj kkk"`. A captured screen has the
+  background inverted inside the column and untouched beside it.
+- A `sel` verb on the debug socket returns the text and whether the shape is a
+  block — the only way to see a selection without a clipboard.
+- Limitation recorded: across a resize the rectangle is carried by its two
+  corners, and with the child asking for the mouse the drag is reported to it.
+
 ## 2026-11-09 — the layout is taken before the farewell (`B51`)
 
 With `restore_state = content` the content came back and every tab came back in

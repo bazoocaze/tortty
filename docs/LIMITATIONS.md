@@ -72,6 +72,14 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   cells become runs of their own; and **bidi reordering is not done** — a cluster
   that comes out of order falls back to cell by cell. A font that merges N cells
   is only used when the advance fits, ±10%.
+- **A block selection is a rectangle of the screen, not of the text**: a resize
+  carries it by its two corners through the reflow, so a block dragged across
+  rows that rewrap comes back near — not equal — to what it was. Re-deriving it
+  would mean re-finding each row's text, which is the cost the shape does not
+  pay for.
+- **With the child asking for the mouse, a drag is the child's** — Alt+drag
+  included. X11 terminals that bypass the report while a modifier is held are a
+  separate feature (nothing in `BACKLOG.md` yet).
 - **No `IRM`** (insert mode) and no `CSI ? 3` (80/132): rare to the point of not
   paying for the test. `IRM` costs more than it looks — inserting a cell means a
   branch in `put_ascii_run`, which is the parser's hot path.
