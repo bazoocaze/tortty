@@ -74,6 +74,8 @@ per category, in order).
   inherit it (`version.workspace = true`) and `--version` shows it
   (`env!("CARGO_PKG_VERSION")`, compiled at build).
 - Comment and message explain **why**; no comment narrates the obvious.
+- When a decision has no precedent in the code, think of what the user of a
+  terminal expects.
 - Use Conventional Commits (`<type>(<scope>): <description>`; types: feat, fix, chore, docs, style,
   refactor, perf, test, build, ci, revert.
 - Commit message in English, concise, three lines maximum.
