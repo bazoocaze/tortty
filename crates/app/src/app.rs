@@ -3661,6 +3661,7 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        self.last_words();
         self.save_geometry();
         if prof::enabled() || self.opts.prof {
             let summary = prof::summary();
@@ -3673,6 +3674,62 @@ impl ApplicationHandler<UserEvent> for App {
             pty.kill();
         }
         self.debug = None;
+    }
+}
+
+/// How long the children get to say goodbye before the window is gone.
+const FAREWELL_MS: u64 = 250;
+
+impl App {
+    /// Closing the window is a hangup, and the last words of the child belong to
+    /// the picture (`B48`): `pi` leaves the alt screen and prints
+    /// `To resume this session: pi --session …`, `cargo` prints its last line.
+    ///
+    /// The snapshot used to be written **before** the child had been told
+    /// anything, so a farewell could never be in it — not "sometimes", always.
+    /// Now the hangup goes out first and the ptys are drained for a quarter of a
+    /// second (or until every child is gone), which is what puts those bytes in
+    /// the grid before `save_geometry` reads it.
+    fn last_words(&mut self) {
+        let writes_content =
+            self.opts.cfg.restore_state == RestoreState::Content && self.opts.cmd.is_none();
+        if !writes_content {
+            return; // nothing is written, nothing to wait for
+        }
+        for t in &mut self.tabs {
+            if let Some(p) = t.pty.as_mut() {
+                p.hangup();
+            }
+        }
+        for w in &mut self.parked {
+            for t in &mut w.tabs {
+                if let Some(p) = t.pty.as_mut() {
+                    p.hangup();
+                }
+            }
+        }
+        let deadline = std::time::Instant::now() + Duration::from_millis(FAREWELL_MS);
+        loop {
+            self.drain();
+            if std::time::Instant::now() >= deadline || self.children_gone() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// True when every pty of the session has no child left.
+    fn children_gone(&mut self) -> bool {
+        let front = self
+            .tabs
+            .iter_mut()
+            .all(|t| t.pty.as_mut().is_none_or(Pty::child_exited));
+        let parked = self.parked.iter_mut().all(|w| {
+            w.tabs
+                .iter_mut()
+                .all(|t| t.pty.as_mut().is_none_or(Pty::child_exited))
+        });
+        front && parked
     }
 }
 

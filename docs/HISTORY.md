@@ -2037,6 +2037,28 @@ a layout pointing at `/nao/existe` opens both workspaces without an error; the
 shell of a restored tab really starts in the saved `/tmp/mi-cwd` (the app saves
 that same path again on the way out).
 
+## 2026-11-09 — the child's last words are in the snapshot
+
+`restore_state = content` kept the screen but never the last line a program
+writes on the way out. The cause was the **order** in `exiting`: `save_geometry`
+(the snapshot) ran *before* the child had been told anything, so the bytes of a
+farewell could not be in it — not "sometimes": always.
+
+- `Pty::hangup` sends `SIGHUP` and returns without waiting (a bare `kill(2)`;
+  `portable-pty`'s `kill` would send it too, but it waits 200 ms **per child**
+  while the app has to be draining).
+- `App::last_words` runs first when the window closes: hangup every pty of the
+  session, feed the readers for up to 250 ms (or until every child is gone), and
+  only then write the snapshots. With `layout`/`none`, or a `--cmd` probe, it
+  does nothing and costs nothing.
+
+Verified with the installed 1.0.46 and the new build side by side: a child that
+`trap 'echo FAREWELL-HUP' HUP` is absent from the old snapshot and present in the
+new one, and a TUI that leaves the alt screen and prints its farewell there
+(`printf '\033[?1049l'; echo 'To resume this session: …'`) comes back with the
+line and **without** the alt screen. The real `pi` frame is still captured
+(3220 bytes): the window did not shrink, it grew by the farewell.
+
 ## 2026-11-09 — `B45`: `restore_state`, and what comes back
 
 `M-I` gave back the arrangement and nothing else: the same tabs in the same

@@ -195,6 +195,25 @@ impl Pty {
         matches!(self.child.try_wait(), Ok(Some(_)))
     }
 
+    /// Sends `SIGHUP` and returns without waiting: what closing a terminal
+    /// does, and the signal a program uses to say its last words (`B48`).
+    ///
+    /// `kill` would do it too — `portable-pty` sends `SIGHUP` and waits 200 ms
+    /// before the `SIGKILL` — but it waits **per child**, and the app has to be
+    /// draining the ptys while they die, not blocked in the first of them.
+    pub fn hangup(&mut self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.child.process_id() {
+            // a bare `kill(2)`: the only libc call in this file, and the return
+            // says nothing the caller could act on (a child that already left is
+            // the normal case here)
+            #[allow(unsafe_code)]
+            unsafe {
+                libc::kill(pid as i32, libc::SIGHUP);
+            }
+        }
+    }
+
     pub fn kill(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();

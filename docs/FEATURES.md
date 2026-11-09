@@ -152,7 +152,9 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - `restore_state`: `none` (one tab, nothing of the session written), `layout`
   (the default: what the bullet above describes) or `content` (the layout **and**
   the screen and the history of every tab, fed back before the shell exists,
-  closed by a marker line that separates the photograph from this run).
+  closed by a marker line that separates the photograph from this run; the
+  window closes with a hangup and the ptys are drained for a quarter of a second
+  before the snapshot, so the child's last words travel with it).
   **limit:** a photograph, not the process — a new shell starts in the same
   directory and the previous programs are gone; and only the window that opens
   the session saves it: a second instance restores the same structure and the
