@@ -2037,6 +2037,28 @@ a layout pointing at `/nao/existe` opens both workspaces without an error; the
 shell of a restored tab really starts in the saved `/tmp/mi-cwd` (the app saves
 that same path again on the way out).
 
+## 2026-11-09 — a file dropped on the window (`B50`)
+
+Dragging a file from the file manager onto the terminal did nothing. Now the
+**path** goes into the child, quoted for the shell and written like a paste (with
+bracketed paste when the child asked for it, `?2004`), which is what the owner
+means by dropping a file on a terminal — and the terminal does not guess further:
+no new tab, no `cd`, because it does not know what is running there.
+
+- `shell_quoted`: a path made of characters the shell does not touch goes out as
+  it is; anything else is wrapped in single quotes with the embedded `'` closed
+  and escaped (`'\''`) — the one form that survives `$`, spaces, quotes and
+  newlines. Its unit test is the whole table.
+- The XDND event is one arm (`WindowEvent::DroppedFile` → `drop_path`); `winit`
+  0.30.13 already speaks it on X11, Windows and macOS.
+- The socket grows a `drop` verb that calls the same `drop_path`, so the path is
+  verifiable without a drag source: `{"cmd":"drop","path":"/tmp/a file $HOME's.txt"}`
+  in a real shell wrote `'/tmp/a file $HOME'\''s.txt'` and `printf` printed the
+  file back byte for byte.
+
+Honest gap: the winit event arm itself has no automated test — it cannot be
+constructed from a test and Xvfb has no drag source; everything below it does.
+
 ## 2026-11-09 — the marker is decoration, not content (`B48`)
 
 `── content restored from the previous run ──` is fed into the grid so the owner

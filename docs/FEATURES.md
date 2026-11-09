@@ -170,8 +170,12 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   hot session untouched.
 - Lifecycle: the window closes when the shell ends; `SIGUSR1` dumps,
   `SIGTERM` dumps and exits cleanly, `--quit-after` for automation.
-- **Not implemented:** context menu (`M-V`), drag-and-drop of a file onto the
-  window, and an automatic dark/light theme — the palette comes from the config.
+- A file dropped on the window becomes its **path**, quoted for the shell and
+  written into the child like a paste (bracketed when the child asked for it).
+  **limit:** nothing else happens — no new tab, no `cd`: the terminal does not know
+  what is running, so a program that is not a shell still gets a path it can read.
+- **Not implemented:** context menu (`M-V`), and an automatic dark/light theme —
+  the palette comes from the config.
 
 ## Configuration
 

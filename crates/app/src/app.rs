@@ -1688,6 +1688,17 @@ impl App {
         }
     }
 
+    /// A file dropped on the window: the path goes into the child as a paste,
+    /// quoted for the shell. Nothing else happens — no new tab, no `cd`: the
+    /// terminal does not know what is running, and a program that is not a shell
+    /// still gets a path it can read.
+    fn drop_path(&mut self, path: &std::path::Path) {
+        let txt = shell_quoted(&path.to_string_lossy());
+        self.blink_reset();
+        self.tabs[self.active].view_off = 0;
+        self.write_paste(&txt);
+    }
+
     /// Writes the text to the child honoring bracketed paste (`?2004`).
     fn write_paste(&mut self, txt: &str) {
         let payload = self.tabs[self.active].term.paste_payload(txt);
@@ -2454,6 +2465,15 @@ impl App {
                     debugsock::ok(serde_json::json!({}))
                 },
                 None => debugsock::err("write needs data (string)"),
+            },
+            // what a file dropped on the window does, without needing a drag
+            // source: the same path the XDND event takes (`drop_path`)
+            "drop" => match req.get("path").and_then(|v| v.as_str()) {
+                Some(path) => {
+                    self.drop_path(std::path::Path::new(path));
+                    debugsock::ok(serde_json::json!({}))
+                },
+                None => debugsock::err("drop needs path (string)"),
             },
             "resize" => {
                 let cols = req
@@ -3556,6 +3576,12 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::MouseWheel { delta, .. } => {
                 self.on_wheel(delta);
             },
+            // a file dropped on the window becomes its path, written into the
+            // child like a paste: it is what the owner means when dragging a file
+            // onto a terminal, and the quoting is ours because the path is not
+            WindowEvent::DroppedFile(path) => {
+                self.drop_path(&path);
+            },
             WindowEvent::Focused(focused) if self.tabs[self.active].term.focus_report => {
                 let seq = if focused { "\x1b[I" } else { "\x1b[O" };
                 self.pty_write(seq.as_bytes());
@@ -3847,6 +3873,32 @@ fn prefer_cwd(
 /// lives in `tabs`/`active`; the others go to `parked`). The second value is the
 /// logical index the front keeps afterwards — being built last is a matter of
 /// where it is stored, and it must not renumber the session (`B44`).
+/// A path quoted for a POSIX shell, which is what a dropped file becomes.
+///
+/// Two rules: a path made only of characters the shell does not touch goes out as
+/// it is (the common case, readable), everything else is wrapped in single quotes
+/// with the embedded `'` closed and escaped (`'\''`) — the one form that survives
+/// `$`, spaces, quotes and newlines without a second interpretation.
+fn shell_quoted(path: &str) -> String {
+    fn safe(c: char) -> bool {
+        c.is_ascii_alphanumeric() || "/._-+=@,:".contains(c)
+    }
+    if !path.is_empty() && path.chars().all(safe) {
+        return path.to_string();
+    }
+    let mut out = String::with_capacity(path.len() + 2);
+    out.push('\'');
+    for c in path.chars() {
+        if c == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
+}
+
 fn restore_order(total: usize, ws: usize) -> (Vec<usize>, usize) {
     let front = ws.min(total.saturating_sub(1));
     let order = (0..total).filter(|j| *j != front).chain([front]).collect();
@@ -3869,6 +3921,24 @@ fn drop_legacy_default(name: &str, idx: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_dropped_file_becomes_a_quoted_path() {
+        // the common case stays readable: nothing to quote
+        assert_eq!(shell_quoted("/tmp/a.txt"), "/tmp/a.txt");
+        assert_eq!(
+            shell_quoted("/home/user/x-1_2.tar.gz"),
+            "/home/user/x-1_2.tar.gz"
+        );
+        // a space, a `$` and a quote are the shell's, not ours
+        assert_eq!(shell_quoted("/tmp/a b.txt"), "'/tmp/a b.txt'");
+        assert_eq!(shell_quoted("/tmp/$HOME"), "'/tmp/$HOME'");
+        assert_eq!(shell_quoted("/tmp/it's"), "'/tmp/it'\\''s'");
+        // a newline cannot break the line it lands in
+        assert_eq!(shell_quoted("/tmp/a\nb"), "'/tmp/a\nb'");
+        // nothing is not a path worth pasting
+        assert_eq!(shell_quoted(""), "''");
+    }
 
     #[test]
     fn a_legacy_workspace_name_is_dropped_on_restore() {
