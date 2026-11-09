@@ -2037,6 +2037,28 @@ a layout pointing at `/nao/existe` opens both workspaces without an error; the
 shell of a restored tab really starts in the saved `/tmp/mi-cwd` (the app saves
 that same path again on the way out).
 
+## 2026-11-09 — the layout is taken before the farewell (`B51`)
+
+With `restore_state = content` the content came back and every tab came back in
+the wrong directory. Reproduced, not guessed: `cd /tmp` + `quit` wrote
+`{"cwds":[null]}` with `content` and `{"cwds":["/tmp"]}` with `layout`.
+
+- **Cause**: the farewell of 1.0.47 hangs every pty up **before** `save_geometry`,
+  and a tab's directory is `/proc/<pid>/cwd` (with `OSC 7` only as the fallback,
+  and few prompts send it). By the time the layout was written the children were
+  gone, `prefer_cwd` got `None`, and `null` in the file is as legitimate as a real
+  path — nothing complained. Only `content` suffered, because `last_words` does
+  not run when nothing is written.
+- **Fix**: `exiting` reads the layout first and `save_geometry` now **requires** it
+  as an argument, so the order is the compiler's business instead of a comment's.
+  No caching: a cached cwd would be a second truth with its own staleness.
+- The trap is pinned by a test with a real pty (`/proc` answers while the child
+  lives, and stops answering after `hangup`), because an `App` cannot be built
+  without a window.
+- Verified on the debug build: two tabs in `/tmp` and `/usr` saved as
+  `["/tmp","/usr"]` with snapshots on disk, and the reopened session put the
+  front tab back in `/usr` above the restored content.
+
 ## 2026-11-09 — a file dropped on the window (`B50`)
 
 Dragging a file from the file manager onto the terminal did nothing. Now the

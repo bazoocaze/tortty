@@ -383,12 +383,7 @@ impl Tab {
     /// launched `vim`/`mc`, and their cwd is what the next tab should inherit
     /// (the last descendant of the shell is the one in front).
     fn cwd(&self) -> Option<std::path::PathBuf> {
-        let from_proc = self
-            .pty
-            .as_ref()
-            .and_then(Pty::child_pid)
-            .and_then(|pid| std::fs::read_link(format!("/proc/{}/cwd", descendant(pid))).ok());
-        prefer_cwd(from_proc, self.term.cwd.as_deref())
+        tab_cwd(self.pty.as_ref(), self.term.cwd.as_deref())
     }
 }
 
@@ -2809,7 +2804,14 @@ impl App {
     /// Saves position, normal size, maximized state (`J2`–`J6`) and the layout of
     /// the session (`M-I`). Failing here cannot get in the way of closing —
     /// `state::save` already swallows I/O errors.
-    fn save_geometry(&mut self) {
+    ///
+    /// The layout arrives as an argument, not from `session_layout()`, because it
+    /// is not the same thing read at two moments of the closing: the cwd of a tab
+    /// comes from `/proc/<pid>/cwd`, and `last_words` is what ends those children
+    /// — taken afterwards, every tab is saved without a directory (`B51`). Making
+    /// it a parameter is what leaves the order to the compiler: there is no way to
+    /// call this before the layout exists, and `exiting` reads it first.
+    fn save_geometry(&mut self, layout: crate::state::Layout) {
         if self.owner.is_none() {
             // not the owner: a measurement, a probe, `restore_state = none`, or a
             // second window (`B46`). Writing here is what used to erase the layout
@@ -2823,7 +2825,7 @@ impl App {
         };
         // the owner writes what it opened: `--cmd` and `none` never get here, and a
         // second window does not either, so this tab list is the session's own
-        let layout = Some(self.session_layout());
+        let layout = Some(layout);
         crate::state::save(&crate::state::State {
             geometry: crate::state::Geometry {
                 x,
@@ -3713,8 +3715,11 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        // the layout goes first: it is read out of `/proc/<pid>/cwd`, and
+        // `last_words` is what takes the children away (`B51`)
+        let layout = self.session_layout();
         self.last_words();
-        self.save_geometry();
+        self.save_geometry(layout);
         if prof::enabled() || self.opts.prof {
             let summary = prof::summary();
             eprintln!("prof: {summary}");
@@ -3857,6 +3862,20 @@ fn signals() -> (bool, bool) {
 /// word is the last resort (a container, a stricter mount, a process tree the
 /// walk missed). A path that is no longer a directory is not a cwd: spawning a
 /// tab there would fail after the decision.
+/// The directory the tab is in: the cwd of what runs in front of its pty, with
+/// the `OSC 7` the program announced as the fallback (`B39` will make that the
+/// first candidate).
+///
+/// The `/proc` half only answers **while the child lives**, which is why
+/// `App::exiting` reads the layout before the hangup (`B51`): a tab read after
+/// the farewell has no directory left to give.
+fn tab_cwd(pty: Option<&Pty>, from_osc: Option<&str>) -> Option<std::path::PathBuf> {
+    let from_proc = pty
+        .and_then(Pty::child_pid)
+        .and_then(|pid| std::fs::read_link(format!("/proc/{}/cwd", descendant(pid))).ok());
+    prefer_cwd(from_proc, from_osc)
+}
+
 fn prefer_cwd(
     from_proc: Option<std::path::PathBuf>,
     from_osc: Option<&str>,
@@ -3975,6 +3994,38 @@ mod tests {
             };
             assert_eq!((0..3).map(logical).collect::<Vec<_>>(), vec![0, 1, 2]);
         }
+    }
+
+    #[test]
+    fn the_directory_of_a_tab_dies_with_its_child() {
+        // `B51`: `save_geometry` used to read the layout **after** `last_words`,
+        // and a tab's directory is `/proc/<pid>/cwd`. This is the window that was
+        // being lost — every tab came back with `cwds: [null]`.
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let wake: std::sync::Arc<dyn Fn() + Send + Sync> = std::sync::Arc::new(|| {});
+        let dir = std::env::temp_dir();
+        let mut pty = Pty::spawn(
+            Some("exec sleep 30"),
+            None,
+            Some(dir.as_path()),
+            80,
+            24,
+            (8.0, 16.0),
+            tx,
+            wake,
+        )
+        .expect("a pty with a shell in it");
+        assert_eq!(tab_cwd(Some(&pty), None), Some(dir.clone()));
+        pty.hangup();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline && tab_cwd(Some(&pty), None).is_some() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            tab_cwd(Some(&pty), None),
+            None,
+            "a tab read after the hangup has no directory — the layout goes first"
+        );
     }
 
     #[test]
