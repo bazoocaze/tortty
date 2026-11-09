@@ -8,6 +8,14 @@ use crate::cell::Cell;
 pub struct Row {
     pub cells: Vec<Cell>,
     pub wrapped: bool,
+    /// Decoration, not content: a row the terminal itself wrote to say something
+    /// about the session (the line that separates a restored picture from the run
+    /// that follows it, `B48`). It is drawn like any other and **never travels in
+    /// the snapshot** — otherwise every restart would save the marker of the
+    /// previous one and a tab reopened five times would hold five markers and no
+    /// content. It survives the scrollback and the wrap, which a position would
+    /// not; a reflow carries it by paragraph.
+    pub chrome: bool,
 }
 
 impl Row {
@@ -15,6 +23,7 @@ impl Row {
         Row {
             cells: vec![Cell::BLANK; cols],
             wrapped: false,
+            chrome: false,
         }
     }
 

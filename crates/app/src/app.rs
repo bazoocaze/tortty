@@ -2939,7 +2939,10 @@ impl App {
         let rows = t.term.rows;
         // bottom left, one scroll for the marker to have a line of its own, and
         // the prompt of the new shell takes the line after it
-        t.term.feed(
+        // decoration, not content (`B48`): the marker is drawn on the screen and
+        // stays out of the next snapshot, or every restart would save the marker of
+        // the previous one instead of what the tab held
+        t.term.feed_chrome(
             format!(
                 "\x1b[0m\x1b[{rows};1H\r\n\x1b[2m── content restored from the previous run ──\x1b[0m\r\n"
             )

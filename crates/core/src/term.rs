@@ -182,6 +182,10 @@ pub struct Term {
     pub keypad_app: bool,
     /// `(shape 1..6, blink)` from DECSCUSR; None = from the config.
     pub app_cursor_style: Option<(u8, bool)>,
+    /// While true, every row this feed writes is decoration (`Row::chrome`, `B48`).
+    /// It only exists so that `feed_chrome` can leave the marker out of the
+    /// snapshot without the app having to know where the row landed.
+    chrome_feed: bool,
     /// `?1000`=1 press, `?1002`=2 with drag, `?1003`=3 everything (0 = no).
     pub mouse_mode: u8,
     /// `?1006`: decimal coordinates with an explicit button on release.
@@ -309,6 +313,7 @@ impl Term {
             app_cursor: false,
             keypad_app: false,
             app_cursor_style: None,
+            chrome_feed: false,
             mouse_mode: 0,
             mouse_sgr: false,
             mouse_utf8: false,
@@ -682,6 +687,11 @@ impl Term {
             let dec = self.dec_active();
             let cx = self.cx;
             let cy = self.cy;
+            // the fast path writes the row without passing through `put_char`, so
+            // the decoration mark is set here — once per run, not per char
+            if self.chrome_feed {
+                self.grid[cy].chrome = true;
+            }
             let row = &mut self.grid[cy];
             if dec {
                 for k in 0..n {
@@ -757,6 +767,9 @@ impl Term {
                 link: self.link,
             };
             self.grid[self.cy].cells[self.cx] = cell;
+            if self.chrome_feed {
+                self.grid[self.cy].chrome = true;
+            }
             self.dirty[self.cy] = true;
             self.last_char = ch;
             if self.cx == self.cols - 1 {
@@ -810,6 +823,9 @@ impl Term {
         };
         let cx = self.cx;
         let cy = self.cy;
+        if self.chrome_feed {
+            self.grid[cy].chrome = true;
+        }
         self.grid[cy].cells[cx] = first;
         if cx + 1 < self.cols {
             self.grid[cy].cells[cx + 1] = cont;
@@ -2381,6 +2397,16 @@ impl Term {
         self.alt.as_deref().unwrap_or(&self.grid)
     }
 
+    /// Feeds a **decoration**: the rows it writes are marked (`Row::chrome`) and
+    /// never travel in the snapshot (`B48`). It is for the line that separates a
+    /// restored picture from the run that follows it — content the terminal
+    /// wrote, not content the child wrote.
+    pub fn feed_chrome(&mut self, bytes: &[u8]) {
+        self.chrome_feed = true;
+        self.feed(bytes);
+        self.chrome_feed = false;
+    }
+
     /// The whole content (history + primary screen) as ANSI: see
     /// [`crate::snapshot`]. Feeding it into a fresh `Term` rebuilds the picture.
     pub fn snapshot(&self) -> Vec<u8> {
@@ -2637,6 +2663,8 @@ fn reflow(
     let cols = cols.max(1);
     // -- 1. paragraphs, in reading order
     let mut paragraphs: Vec<Vec<Cell>> = Vec::new();
+    // decoration by paragraph (`Row::chrome`): a paragraph can hold several rows
+    let mut decoration: Vec<bool> = Vec::new();
     let mut cur_to = 0usize;
     let mut cur_off = 0usize;
     // `(paragraph, cell offset)` of each point, in the order asked
@@ -2663,6 +2691,7 @@ fn reflow(
         }
         to.append(&mut row.cells);
         if !soft {
+            decoration.push(row.chrome);
             paragraphs.push(std::mem::take(&mut to));
         }
     }
@@ -2698,6 +2727,7 @@ fn reflow(
             rows.push(Row {
                 cells: chunk,
                 wrapped: !last,
+                chrome: decoration[pi],
             });
         }
         for (k, (para, off)) in pts_at.iter().enumerate() {

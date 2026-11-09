@@ -121,7 +121,14 @@ pub fn snapshot(t: &Term) -> Vec<u8> {
     let mut first = true;
     // the history and then the screen: the app's own reading order, and the
     // same one `visible_rows` uses
-    for row in t.scrollback.iter().chain(t.primary().iter()) {
+    // decoration is not content (`B48`): the marker the terminal writes to
+    // separate a restored picture from the new run stays out of the picture
+    for row in t
+        .scrollback
+        .iter()
+        .chain(t.primary().iter())
+        .filter(|r| !r.chrome)
+    {
         if !first && !prev_wrapped {
             out.push_str("\r\n");
         }
@@ -259,6 +266,31 @@ mod checks_snapshot {
         let text = String::from_utf8_lossy(&snapshot(&t)).to_string();
         assert!(text.contains("shell prompt"));
         assert!(!text.contains("vim owns this"));
+    }
+
+    #[test]
+    fn the_terminal_marker_is_not_content() {
+        // the marker is fed as decoration (`B48`): it is on the screen and out of
+        // the photograph
+        let mut t = Term::new(30, 4);
+        t.feed(b"before\r\n");
+        t.feed_chrome(b"\x1b[4;1H\r\n-- restored --\r\n");
+        t.feed(b"after\r\n");
+        let file = String::from_utf8_lossy(&snapshot(&t)).to_string();
+        assert!(file.contains("before"), "{file:?}");
+        assert!(file.contains("after"), "{file:?}");
+        assert!(!file.contains("restored"), "the marker left: {file:?}");
+        // and it survives the scrollback and the wrap: the mark is on the row, not
+        // on a position
+        for i in 0..20 {
+            t.feed(format!("line {i}\r\n").as_bytes());
+        }
+        let file = String::from_utf8_lossy(&snapshot(&t)).to_string();
+        assert!(!file.contains("restored"), "after scrolling: {file:?}");
+        // a resize reflows and the mark goes with the paragraph
+        t.resize_keep(24, 4, None);
+        let file = String::from_utf8_lossy(&snapshot(&t)).to_string();
+        assert!(!file.contains("restored"), "after reflow: {file:?}");
     }
 
     #[test]

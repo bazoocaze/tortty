@@ -153,7 +153,9 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   the geometry, since only the owner writes and `none` never owns), `layout`
   (the default: what the bullet above describes) or `content` (the layout **and**
   the screen and the history of every tab, fed back before the shell exists,
-  closed by a marker line that separates the photograph from this run; the
+  closed by a marker line that separates the photograph from this run — a
+  decoration, drawn on the screen and **never** saved, so a tab reopened five
+  times does not come back with five markers (`B48`); the
   window closes with a hangup and the ptys are drained for a quarter of a second
   before the snapshot, so the child's last words travel with it).
   **limit:** a photograph, not the process — a new shell starts in the same

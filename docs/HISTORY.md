@@ -2037,6 +2037,31 @@ a layout pointing at `/nao/existe` opens both workspaces without an error; the
 shell of a restored tab really starts in the saved `/tmp/mi-cwd` (the app saves
 that same path again on the way out).
 
+## 2026-11-09 — the marker is decoration, not content (`B48`)
+
+`── content restored from the previous run ──` is fed into the grid so the owner
+can see where the past ends — and it was then carried by the snapshot: every
+restart saved the marker of the previous one, so a tab reopened five times came
+back with five markers and no content (measured in the owner's own state: six tabs
+of 963–1012 bytes holding nothing but prompts and stacked markers).
+
+- `Row` gains `chrome`: a row the terminal itself wrote to say something about the
+  session. It is drawn like any other row and `snapshot` skips it, so the
+  photograph leaves with zero markers and the screen keeps exactly one.
+- `Term::feed_chrome` sets the mark while a feed runs. The first attempt missed
+  because the ASCII fast path (`put_ascii_run`) writes the row without passing
+  through `put_char`; the mark is set there too — once per run, not per char, so
+  the parser's hot path pays one branch.
+- A mark is a property of the **row**, not a position: it survives the scrollback
+  and the reflow, which a row index or a hash of the text would not (a resize
+  rewraps the marker and the text stops matching). It is carried by paragraph in
+  `reflow`.
+
+Verified in a real run under Xvfb with `restore_state = content`: three restarts,
+`content restored` count in `session-0-0.ans` = **0** every time, the content
+(`echo HELLO-B48`) still there and one row longer per run, and the marker visible
+on the screen through the debug socket.
+
 ## 2026-11-09 — one owner of the state (`B46`)
 
 Two windows open at once read the same `window.json`: the second one restored the

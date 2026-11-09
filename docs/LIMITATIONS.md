@@ -20,6 +20,11 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   taken opens one tab in the directory it was called from, at the 980×640
   default, and never writes — so what the *second* window saw is not remembered,
   and closing one window never edits another's session.
+- **Decoration is not content.** The line that separates a restored picture from
+  the new run is marked when it is written and skipped when the snapshot is taken
+  (`B48`): it shows on the screen and leaves no trace in the file, which is the
+  point — but it also means the picture never records *where* a past run ended, so
+  two runs look continuous in the restored content.
 - **One image, drawn as it arrived.** The kitty protocol is accepted for what
   `icat` needs (direct, file, temp and SHM transmission); animating frames and
   speaking sixel/iTerm2 are not limits: they are the
