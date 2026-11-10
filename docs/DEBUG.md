@@ -69,6 +69,25 @@ tab 1 sync closed +4865.4ms after 0.0 ms — feeds 1, 0 B, view 0→0, hist 0 �
   to compare when a repaint looks like it moved the reader.
 - `view A→B` — our view offset before and after the read.
 
+### The view line: who moved the reader
+
+A window line says what the frame did, not what moved the reader *between*
+frames — and a program that scrolls outside the `?2026` windows leaves no trace
+there (that is how `B53` hid). So every read that **changes** the reading
+position writes one extra line:
+
+```
+tab 1 view 103→104 — scrolled 1204→1205 (sync 1180→1180), gen 0→0, hist 1205→1206, open false
+```
+
+- `scrolled` and `sync` are the two counters of `view_after_output`: the
+  difference is what it counted as **output**, and `sync` alone is what it
+  counted as **repaint** (`B41`).
+- `gen` changing means the history was erased under the reader (`CSI 3J`/`RIS`):
+  the view is clamped to what was visible, never carried to the top.
+- `open true` means the line was written while a `?2026` window was still open —
+  rows of a frame being counted as output would be the bug.
+
 The core counts and the app times: `SyncTrace` (`crates/core/src/term.rs`) has no
 clock, and the app stamps the window when it first sees it open. A window that
 never closes is logged once as `sync open` and then only at `state` (`"sync":

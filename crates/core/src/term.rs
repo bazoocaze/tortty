@@ -148,6 +148,32 @@ pub struct FeedMark {
     hist_gen: u64,
 }
 
+impl FeedMark {
+    /// Rows that had already left through the top.
+    #[must_use]
+    pub fn scrolled(&self) -> u64 {
+        self.scrolled
+    }
+
+    /// Of those, the ones a `?2026` window scrolled — the repaint half.
+    #[must_use]
+    pub fn redraw(&self) -> u64 {
+        self.redraw
+    }
+
+    /// Lines the reader could look at when the mark was taken.
+    #[must_use]
+    pub fn history(&self) -> usize {
+        self.history
+    }
+
+    /// The history generation: a new one means the history was erased.
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.hist_gen
+    }
+}
+
 #[allow(clippy::struct_excessive_bools)] // VT state is boolean by nature
 pub struct Term {
     pub cols: usize,

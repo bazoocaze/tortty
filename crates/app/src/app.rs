@@ -1950,7 +1950,27 @@ impl App {
                 // only real output moves the reader: a `?2026` repaint is one
                 // frame of what is already on screen, and a `3J` takes the anchor
                 // with it instead of throwing the view at the top (B41)
-                self.tabs[i].view_off = self.tabs[i].term.view_after_output(off, mark);
+                let after = self.tabs[i].term.view_after_output(off, mark);
+                if after != off {
+                    // `B53`: who moved the reader. The window lines cannot say —
+                    // a program that scrolls *between* frames leaves no trace
+                    // there, and that is exactly the case under investigation.
+                    let t = &self.tabs[i].term;
+                    logln(&format!(
+                        "{who} view {off}→{after} — scrolled {}→{} (sync {}→{}), gen {}→{}, \
+                         hist {}→{}, open {}",
+                        mark.scrolled(),
+                        t.scrolled,
+                        mark.redraw(),
+                        t.scrolled_sync,
+                        mark.generation(),
+                        t.hist_gen,
+                        mark.history(),
+                        t.scrollback.len(),
+                        t.sync_open().is_some(),
+                    ));
+                }
+                self.tabs[i].view_off = after;
             }
         }
         let out = self.tabs[i].term.take_child_out();
