@@ -438,6 +438,30 @@ impl Workspace {
 /// `parked` holds the workspaces that are **not** in front, in logical order,
 /// so the slot of the front is exactly `at`. Inserting anywhere else renumbers
 /// every workspace after it (`B54`).
+/// Where the workspace in front ends up when the one at `from` is moved to
+/// `to` (`B49`): it is only a place in the list, so it follows the removal and
+/// the insertion like any other — unless it is the one being moved.
+fn moved_front(front: usize, from: usize, to: usize) -> usize {
+    if from == front {
+        to
+    } else if from < front && to >= front {
+        front - 1
+    } else if from > front && to <= front {
+        front + 1
+    } else {
+        front
+    }
+}
+
+/// Removes the workspace at `from` and inserts it at `to`, carrying the one in
+/// front with it (`B49`). The pure half of the move: it is the whole of it that
+/// can be checked without a window.
+fn reorder(all: &mut Vec<Workspace>, front: &mut usize, from: usize, to: usize) {
+    *front = moved_front(*front, from, to);
+    let moved = all.remove(from);
+    all.insert(to, moved);
+}
+
 fn park_front(parked: &mut Vec<Workspace>, front: Workspace, at: usize) -> usize {
     parked.insert(at.min(parked.len()), front);
     parked.len()
@@ -465,6 +489,11 @@ pub struct App {
     /// Tab pressed on the bar, to drag and reorder (I10): index and the x of
     /// the press, so the drag only starts after actually moving.
     bar_press: Option<(usize, f64)>,
+    /// Card being dragged on the sidebar: the logical index it sits at now and
+    /// the pixel of the press (`B49`). The press point travels with it, like
+    /// `bar_press` does, so the 3 px threshold is not spent again by every
+    /// motion event.
+    card_press: Option<(usize, (f64, f64))>,
     /// Dragging the scrollbar (`M-M`): the press started on the strip, so the
     /// motion belongs to the view and not to the selection.
     scroll_drag: bool,
@@ -599,6 +628,7 @@ impl App {
             parked: Vec::new(),
             ws_idx: 0,
             bar_press: None,
+            card_press: None,
             scroll_drag: false,
             consumed: None,
             rename: None,
@@ -1241,7 +1271,12 @@ impl App {
             self.scroll_to_y(y);
             return;
         }
-        // a drag on the bar reorders tabs (I10); on the grid it is selection
+        // a drag on the sidebar reorders the workspaces (`B49`), on the bar the
+        // tabs (I10), and on the grid it is selection
+        if self.card_press.is_some() {
+            self.card_drag(x, y);
+            return;
+        }
         if self.bar_press.is_some() {
             self.bar_drag();
             return;
@@ -1299,6 +1334,9 @@ impl App {
                 self.report_mouse(btn, true, false);
             },
             ElementState::Released => {
+                // the sidebar drag ends here as well: this path is the one taken
+                // when the child is holding the mouse
+                self.card_press = None;
                 let b = self.held.take().unwrap_or(btn);
                 self.report_mouse(b, false, false);
             },
@@ -1458,6 +1496,9 @@ impl App {
     /// because the child asked for the mouse (`?1000/1002/1003`).
     fn press_card(&mut self, i: usize) {
         self.bar_press = None;
+        // the drag starts from here (`B49`); it only moves after 3 px, so the
+        // double click that renames is never a drag by accident
+        self.card_press = Some((i, self.cursor_px));
         let double = self
             .card_click
             .is_some_and(|(j, when)| j == i && when.elapsed().as_millis() < 400);
@@ -1473,6 +1514,7 @@ impl App {
     /// A press on the tab bar: switches tab (it does not select text) and keeps
     /// the press for the reorder drag (`I10`). Same rule as `press_card`.
     fn press_tab(&mut self, i: usize) {
+        self.card_press = None;
         self.bar_press = Some((i, self.cursor_px.0));
         self.select_tab(i);
         self.tabs[self.active].dragging = false;
@@ -1545,8 +1587,10 @@ impl App {
                 self.redraw();
             },
             (ElementState::Released, Left) => {
-                // releasing on the bar ends the reorder drag (I10)
+                // releasing on the bar ends the reorder drag (I10), and on the
+                // sidebar the workspace one (`B49`)
                 self.bar_press = None;
+                self.card_press = None;
                 self.scroll_drag = false;
                 self.tabs[self.active].dragging = false;
                 self.tabs[self.active].press = None;
@@ -1633,6 +1677,77 @@ impl App {
         self.bar_press = Some((dest, x0 + consumed));
         // motion path: a frame is asked for, not drawn (B4, the wheel's trap)
         self.ask_frame();
+    }
+
+    /// Reorder drag on the sidebar (`B49`): while the button is held on a card,
+    /// the card under the pointer is the place the dragged one takes — the list
+    /// moves as the hand passes, which is the one feedback that says where it
+    /// will land.
+    ///
+    /// Nothing is auto-scrolled: the column only shows what it shows, and a
+    /// drag that leaves it stops, because a place has to be named by a card.
+    fn card_drag(&mut self, x: f64, y: f64) {
+        let Some((i, (px, py))) = self.card_press else {
+            return;
+        };
+        if (x - px).abs() <= 3.0 && (y - py).abs() <= 3.0 {
+            return;
+        }
+        // off the column (or past the last card) the drag does not move: the
+        // pointer has to be over a card to mean a place
+        let Some(dest) = self.card_at(x, y) else {
+            return;
+        };
+        if dest == i {
+            return;
+        }
+        self.move_workspace(i, dest);
+        self.card_press = Some((dest, (px, py)));
+        self.ask_frame();
+    }
+
+    /// Reorders the workspaces (`B49`): removes the one at `from` and inserts it
+    /// at `to`; the number renumbers itself, because it is positional.
+    ///
+    /// The front is a storage detail (`tabs`/`active`), not a place in the
+    /// order. So the whole list is gathered in logical order, moved as one
+    /// vector by `reorder` and scattered back with the front in whatever slot
+    /// the move gave it. Nothing is spawned and nothing is killed: a move is a
+    /// move.
+    fn move_workspace(&mut self, from: usize, to: usize) {
+        let total = self.ws_count();
+        if total == 0 || from >= total {
+            return;
+        }
+        let to = to.min(total - 1);
+        if from == to {
+            return;
+        }
+        let cur = Workspace::take(self);
+        let mut parked = std::mem::take(&mut self.parked).into_iter();
+        let mut all: Vec<Option<Workspace>> = (0..total)
+            .map(|j| {
+                if j == self.ws_idx {
+                    None
+                } else {
+                    parked.next()
+                }
+            })
+            .collect();
+        all[self.ws_idx] = Some(cur);
+        let mut all: Vec<Workspace> = all
+            .into_iter()
+            .map(|w| w.expect("one workspace per logical index"))
+            .collect();
+        let mut front = self.ws_idx;
+        reorder(&mut all, &mut front, from, to);
+        let front_ws = all.remove(front);
+        self.parked = all;
+        self.ws_idx = front;
+        front_ws.into_current(self);
+        self.reveal_card(self.ws_idx);
+        self.sync_title();
+        self.redraw();
     }
 
     /// Reorders (I10): removes from `i` and inserts at `d`; the active one
@@ -4058,6 +4173,44 @@ mod tests {
             active: 0,
             name: name.to_string(),
         }
+    }
+
+    #[test]
+    fn a_moved_workspace_carries_the_order_around_it() {
+        // `B49`: the front is a place in the list, so a move on either side of
+        // it shifts it by one — and nothing else does
+        assert_eq!(
+            moved_front(1, 1, 3),
+            3,
+            "the moved one is the front: it lands where it was dropped"
+        );
+        assert_eq!(moved_front(2, 0, 3), 1, "a move from the left past it");
+        assert_eq!(
+            moved_front(1, 3, 0),
+            2,
+            "a move from the right to before it"
+        );
+        assert_eq!(moved_front(1, 3, 4), 1, "a move entirely on its right");
+        assert_eq!(moved_front(3, 0, 1), 3, "a move entirely on its left");
+    }
+
+    #[test]
+    fn a_dragged_workspace_lands_where_it_was_dropped() {
+        // `B49`: three in the list, the middle one in front
+        let mut all = vec![workspace("0"), workspace("1"), workspace("2")];
+        let mut front = 1;
+        reorder(&mut all, &mut front, 0, 2);
+        let order: Vec<&str> = all.iter().map(|w| w.name.as_str()).collect();
+        assert_eq!(order, vec!["1", "2", "0"], "the dragged one comes out");
+        assert_eq!(front, 0, "the front keeps the text it was showing");
+
+        // — and when the front is the one dragged, it lands where it was dropped
+        let mut all = vec![workspace("0"), workspace("1"), workspace("2")];
+        let mut front = 1;
+        reorder(&mut all, &mut front, 1, 2);
+        let order: Vec<&str> = all.iter().map(|w| w.name.as_str()).collect();
+        assert_eq!(order, vec!["0", "2", "1"]);
+        assert_eq!(front, 2, "the front followed itself");
     }
 
     #[test]

@@ -127,6 +127,12 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   — because a 1 Hz keepalive repeater (what the form is for) would pin any
   toast or badge forever. If progress UI ever pays, it is its own item, not a
   notification.
+- **A workspace card is chosen on the press, so a drag carries the workspace you
+  are looking at.** Pressing a card brings it to the front before the pointer has
+  moved, which is what the tab bar already does; the drag then takes that
+  workspace to the place it is dropped and it stays in front there. A press that
+  travels less than 3 px is the click that selects, so the double click that
+  renames is not turned into a drag.
 - **No context menu.** It is `M-V` in [`BACKLOG.md`](BACKLOG.md). A file dragged
   onto the window is not a menu either: the path is written into the child, and
   what happens next belongs to the program there.

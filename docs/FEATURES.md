@@ -131,7 +131,11 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   shows that title on the first row with the second one empty — clearing the name
   in the field goes back to it; the card list scrolls — the wheel over the column
   walks it one card per detent (the touchpad's travel accumulates) and entering a
-  workspace by keyboard brings its card into sight.
+  workspace by keyboard brings its card into sight; a card is dragged to another
+  place in the list (`B49`), and the cards move under the pointer as it passes,
+  so the drop is seen before the button is released. **limit:** the drag moves
+  the cards, not the tabs inside them, and it reorders only while the pointer is
+  over a card — the column does not scroll to follow a drag that leaves it.
 - Title: OSC 0/2, else `basename(cwd)`, else `tortty`; the window title mirrors
   the active tab. **limit:** an app that sets a title without pushing it (`CSI
   22/23 t`) keeps the tab on it after leaving ([`EXTERNALS.md`](EXTERNALS.md)).

@@ -2037,6 +2037,27 @@ a layout pointing at `/nao/existe` opens both workspaces without an error; the
 shell of a restored tab really starts in the saved `/tmp/mi-cwd` (the app saves
 that same path again on the way out).
 
+## 2026-11-09 — a workspace card is dragged to its place (`B49`)
+
+The order of the workspaces was the order of creation: clicking a card changed
+*which* one was in front, never *where* it sat, so a workspace opened by accident
+stayed in its place forever — and the layout is saved as a list (`B44`), so the
+wrong order came back on the next open.
+
+- The gesture is the tab bar's (`I10`): press, 3 px of travel before anything
+  moves — those 3 px are what keeps the rename's double click from being a drag —
+  and the card under the pointer is the place the dragged one takes, so the list
+  moves as the hand passes and the drop is seen before the button is released.
+- The front is a storage detail (`tabs`/`active`), not a place in the order: the
+  list is gathered in logical order, moved as one vector by `reorder` and
+  scattered back, so `parked.len() + 1 == ws_count` holds through the move and
+  the number renumbers itself, because it is positional.
+- Measured on Xvfb with three workspaces restored from a `window.json` of
+  `/tmp/wsa,/tmp/wsb,/tmp/wsc`: a plain click left the saved order untouched; a
+  drag of the first card onto the last saved `wsa, wsc, wsb`; a drag of the last
+  card onto the first saved `wsc, wsa, wsb` — in both, the dragged one in front,
+  because the press selects the card (what the tab bar does).
+
 ## 2026-11-09 — a new workspace leaves the others in place (`B54`)
 
 `Super+N` (and `Ctrl+Shift+N`) sometimes looked like it shuffled the workspaces.

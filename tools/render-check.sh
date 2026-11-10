@@ -437,11 +437,17 @@ fi
 # 8. the shell ending the session (`exit`, Ctrl+D) is a close path of its own: it
 # has to exit cleanly **and save the window state**. Drawing with no tab indexed
 # `tabs[active]` and panicked on the way out, so the state file was never written
-# and the remembered geometry (maximized included) was lost — B38. No `--cols/--rows`
-# here: a grid on the command line turns the remembering off.
+# and the remembered geometry (maximized included) was lost — B38. The program
+# that ends by itself is the `shell` of a private config, not `--cmd`: since
+# `B46` a `--cmd` window is a scratch, never takes the lock and writes nothing,
+# and the write is exactly what this check watches for.
+mkdir -p "$TMP/home8/.config/tortty"
+printf '#!/bin/sh\nexit 0\n' >"$TMP/shell8"
+chmod +x "$TMP/shell8"
+printf 'shell %s\n' "$TMP/shell8" >"$TMP/home8/.config/tortty/tortty.conf"
 STATE8="$TMP/state"
-DISPLAY=$DISPLAY_XVFB HOME=$TMP/home XDG_STATE_HOME="$STATE8" "$APP" \
-    --cmd 'sleep 0.5' >"$TMP/app3.log" 2>&1 &
+DISPLAY=$DISPLAY_XVFB HOME=$TMP/home8 XDG_STATE_HOME="$STATE8" "$APP" \
+    >"$TMP/app3.log" 2>&1 &
 APP3_PID=$!
 wait "$APP3_PID" 2>/dev/null
 RC3=$?
