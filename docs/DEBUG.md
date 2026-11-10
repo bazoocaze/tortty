@@ -63,10 +63,12 @@ tab 1 sync closed +4865.4ms after 0.0 ms — feeds 1, 0 B, view 0→0, hist 0 �
   the window carried: `ed2` erases the screen, `ed3` erases the scrollback too,
   `el` is the per-line erase a repaint uses, `home` is `CSI H` to `1;1`, `stbm`
   is a scroll region, `alt` an alt-screen switch, `ris`/`decstr` the two resets.
-- `hist+N` — lines the window pushed into the scrollback. They do **not** move a
-  scrolled-up view: a `?2026` window is one frame of what is already on screen,
-  so `view_after_output` ignores what a window scrolls (`B41`). This is the number
-  to compare when a repaint looks like it moved the reader.
+- `hist+N` — lines the window pushed into the scrollback. Whether they move a
+  scrolled-up view depends on what the window is: a window that erased the screen
+  or sent the cursor home is **drawing again** what is already there, and its rows
+  are ignored (`B41`); a window that only writes is appending new output, and its
+  rows count like any other (`B53`). `ed2`/`ed3`/`home`/`ris` are the marks that
+  tell the two apart — `el` is not, because a line-by-line append clears lines too.
 - `view A→B` — our view offset before and after the read.
 
 ### The view line: who moved the reader

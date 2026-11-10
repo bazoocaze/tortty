@@ -70,6 +70,21 @@ pub struct SyncTrace {
     pub hist: u64,
 }
 
+impl SyncTrace {
+    /// Whether the window so far is a **repaint**: it erased the screen or put
+    /// the cursor back on the first cell before drawing it again, so the rows it
+    /// scrolls are the same text being redrawn and must not move the reader
+    /// (`B41`). A window that only writes — the case of a program that appends
+    /// inside `?2026` — is not a repaint, and its rows are real output (`B53`).
+    ///
+    /// `EL` does not count: a line-by-line append clears lines too, and that is
+    /// exactly the shape the creep came in.
+    #[must_use]
+    pub fn repaints(&self) -> bool {
+        self.ed[2] > 0 || self.ed[3] > 0 || self.home > 0 || self.ris > 0
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum State {
     Ground,
@@ -939,8 +954,13 @@ impl Term {
                 *d = true; // new row: there is no ready version to shift
             }
             self.scrolled += 1;
-            if self.sync_trace.is_some() {
-                // a repaint scrolls too, and a repaint must not move the reader
+            // A window is not proof of a repaint (`B53`): `pi` appends new lines
+            // inside `?2026`, and counting those as redrawing froze the reader's
+            // offset while 104 lines went into the history under it. What tells
+            // the two apart is already in the trace — a repaint clears the screen
+            // or sends the cursor home before drawing it again; an append only
+            // writes and pushes rows out.
+            if self.sync_trace.as_ref().is_some_and(SyncTrace::repaints) {
                 self.scrolled_sync += 1;
             }
         }
@@ -3538,14 +3558,45 @@ mod tests {
     }
 
     #[test]
-    fn a_synchronized_repaint_does_not_move_the_reader() {
+    fn a_window_that_only_appends_moves_the_reader() {
+        // the `pi` shape (`B53`): the lines are wrapped in `?2026` and they are
+        // new output, not a redrawn screen — so the offset has to grow with them,
+        // or the reader slides under a frozen number
         let mut t = Term::new(20, 4);
         for i in 0..10 {
             t.feed(format!("l{i}\r\n").as_bytes());
         }
         let (mark, off) = (t.mark(), 3usize);
-        // a `?2026` window that scrolls the screen: repaint, not output
+        let before = t.scrolled;
         t.feed(b"\x1b[?2026h");
+        for i in 0..6 {
+            t.feed(format!("r{i}\r\n").as_bytes());
+        }
+        t.feed(b"\x1b[?2026l");
+        let pushed = usize::try_from(t.scrolled - before).expect("rows fit in usize");
+        assert!(pushed > 0, "the window scrolled rows");
+        assert_eq!(t.scrolled_sync, 0, "an append is not a repaint");
+        assert_eq!(
+            t.view_after_output(off, mark),
+            (off + pushed).min(t.scrollback.len()),
+            "the reader stayed on the text it was reading"
+        );
+        // output outside the window still moves it (D10)
+        t.feed(b"\x1b[?2026h\x1b[?2026l");
+        let mark = t.mark();
+        t.feed(b"out1\r\nout2\r\n");
+        assert_eq!(t.view_after_output(off, mark), off + 2);
+    }
+
+    #[test]
+    fn a_window_that_repaints_does_not_move_the_reader() {
+        let mut t = Term::new(20, 4);
+        for i in 0..10 {
+            t.feed(format!("l{i}\r\n").as_bytes());
+        }
+        let (mark, off) = (t.mark(), 3usize);
+        // `2J` + home before the rows: the screen is being drawn again
+        t.feed(b"\x1b[?2026h\x1b[2J\x1b[H");
         for i in 0..6 {
             t.feed(format!("r{i}\r\n").as_bytes());
         }
@@ -3556,11 +3607,6 @@ mod tests {
             off,
             "a repaint moved the reader"
         );
-        // output outside the window still moves it (D10)
-        t.feed(b"\x1b[?2026h\x1b[?2026l");
-        let mark = t.mark();
-        t.feed(b"out1\r\nout2\r\n");
-        assert_eq!(t.view_after_output(off, mark), off + 2);
     }
 
     #[test]

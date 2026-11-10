@@ -2037,6 +2037,26 @@ a layout pointing at `/nao/existe` opens both workspaces without an error; the
 shell of a restored tab really starts in the saved `/tmp/mi-cwd` (the app saves
 that same path again on the way out).
 
+## 2026-11-09 — the reader stays on its text inside a `?2026` window (`B53`)
+
+With `pi` writing in the tab, scrolling back made the text slide: every line the
+program wrote moved it one row, though the offset on screen did not change.
+
+- Measured from the owner's `--debug-log`: 574 of 691 windows closed with the
+  reader scrolled back (up to 78 rows), **none** moved the view, and 104 lines
+  went into the history under it. All 53 windows that pushed lines carried `el`
+  and no `ed2`/`ed3`/`home` — they were appends, not repaints.
+- The cause was the rule of `B41`: any scroll inside a `?2026` window was counted
+  as redrawing (`scrolled_sync`), so `view_after_output` computed no output and
+  left the offset frozen while the buffer grew. For `vim` the window is a frame
+  of what is on screen; for `pi` it wraps new lines.
+- The discriminator is now the window's content, `SyncTrace::repaints`: `ED 2`,
+  `ED 3`, cursor home or `RIS` mean the screen is being drawn again, and only
+  those scrolls are ignored. `el` is not a mark — a line-by-line append clears
+  lines too, and that is the shape the creep came in.
+- Measured with a child appending inside the windows: before, 25 rows pushed and
+  the view moved 0; after, the same 25 rows and the view moved 25.
+
 ## 2026-11-09 — a workspace card is dragged to its place (`B49`)
 
 The order of the workspaces was the order of creation: clicking a card changed
