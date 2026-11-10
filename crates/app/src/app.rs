@@ -431,6 +431,18 @@ impl Workspace {
     }
 }
 
+/// Parks the workspace being left at the logical position it occupied and
+/// answers the logical index of the new front (the last one, since the new
+/// workspace is appended to the order).
+///
+/// `parked` holds the workspaces that are **not** in front, in logical order,
+/// so the slot of the front is exactly `at`. Inserting anywhere else renumbers
+/// every workspace after it (`B54`).
+fn park_front(parked: &mut Vec<Workspace>, front: Workspace, at: usize) -> usize {
+    parked.insert(at.min(parked.len()), front);
+    parked.len()
+}
+
 #[allow(clippy::struct_excessive_bools)] // app state is boolean by nature
 pub struct App {
     opts: Options,
@@ -3029,8 +3041,10 @@ impl App {
         );
         let cwd = self.tabs[self.active].cwd();
         let cur = Workspace::take(self);
-        self.parked.push(cur);
-        self.ws_idx = self.parked.len(); // total = parked + 1, so it is the last one
+        // the one being left keeps its **place**: appended at the end of the
+        // list, it would drag every workspace after it one position to the left
+        // — which is what made the order of a `Super+N` look random (`B54`)
+        self.ws_idx = park_front(&mut self.parked, cur, self.ws_idx);
         let mut tab = Tab::new(cols, rows);
         tab.term.scrollback_limit = self.opts.scrollback;
         self.tabs = vec![tab];
@@ -4034,6 +4048,31 @@ mod tests {
             };
             assert_eq!((0..3).map(logical).collect::<Vec<_>>(), vec![0, 1, 2]);
         }
+    }
+
+    /// A workspace with one empty tab — no pty, no window: enough for the
+    /// bookkeeping of the order.
+    fn workspace(name: &str) -> Workspace {
+        Workspace {
+            tabs: vec![Tab::new(10, 4)],
+            active: 0,
+            name: name.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_new_workspace_leaves_the_others_where_they_were() {
+        // `B54`: three workspaces, the middle one in front, so `parked` holds
+        // the other two in logical order
+        let mut parked = vec![workspace("0"), workspace("2")];
+        let new_front = park_front(&mut parked, workspace("1"), 1);
+        let order: Vec<&str> = parked.iter().map(|w| w.name.as_str()).collect();
+        assert_eq!(
+            order,
+            vec!["0", "1", "2"],
+            "the one left behind keeps its place in the order"
+        );
+        assert_eq!(new_front, 3, "and the new workspace is the last one");
     }
 
     #[test]

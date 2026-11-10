@@ -2037,6 +2037,23 @@ a layout pointing at `/nao/existe` opens both workspaces without an error; the
 shell of a restored tab really starts in the saved `/tmp/mi-cwd` (the app saves
 that same path again on the way out).
 
+## 2026-11-09 — a new workspace leaves the others in place (`B54`)
+
+`Super+N` (and `Ctrl+Shift+N`) sometimes looked like it shuffled the workspaces.
+It did: the workspace being left was pushed to the **end** of the parked list
+instead of the place it occupied, so every workspace after it walked one step to
+the left and the new one was appended after them.
+
+- Measured on the installed `1.0.53`: `/tmp`, `/var`, `/usr` created in that
+  order, the middle one brought to the front, then a new workspace — the saved
+  order came out `/tmp, /usr, /var, /var`. After the fix the same steps give
+  `/tmp, /var, /usr, /var`, which is the only order that keeps what was there.
+- The fix is `park_front`: the front goes back into `parked` at `ws_idx` (its
+  logical slot), and the answer it returns is the new front's index, which stays
+  the last one because the new workspace is appended.
+- The helper is a free function with a unit test over names (`0,1,2` with `1` in
+  front), because the trap is the index arithmetic, not the spawn.
+
 ## 2026-11-09 — the block selection (`B5`)
 
 `ls -l` and a log table have their columns in the middle of the line, and a drag
