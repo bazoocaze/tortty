@@ -1,0 +1,10 @@
+[package]
+name = "egui-chrome"
+version = "0.1.0"
+edition = "2021"
+
+# a mock of the tortty chrome, kept out of the tortty workspace on purpose
+[workspace]
+
+[dependencies]
+eframe = "0.32"

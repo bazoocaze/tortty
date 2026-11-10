@@ -1,0 +1,3 @@
+# the lock only pins egui's own dependency tree; 4000 lines of it are not a fact
+# this repo needs to keep for a mock that the real build never compiles
+/Cargo.lock
