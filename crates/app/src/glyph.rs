@@ -55,9 +55,17 @@ const PREFER: [&str; 6] = [
 pub const FACE_PRIMARY: usize = 0;
 pub const FACE_STYLED: usize = 1;
 pub const FACE_ITALIC: usize = 2;
-/// From here on the indices are `FACE_FALLBACK + i` in the fallback chain.
-pub const FACE_FALLBACK: usize = 3;
-pub const FACE_BOLD_ITALIC: usize = 4;
+pub const FACE_BOLD_ITALIC: usize = 3;
+/// From here on the indices are `FACE_FALLBACK + i` in the fallback chain, so
+/// this one has to stay **above** every style index: it already sat under
+/// `FACE_BOLD_ITALIC` once, and the second font of the chain — DejaVu Sans, the
+/// one that owns braille — was unreachable, so the `pi` spinner came out blank.
+pub const FACE_FALLBACK: usize = 4;
+
+/// The invariant the collision above broke: no style index may sit inside the
+/// chain, or that font becomes unreachable. Checked at compile time, so the
+/// numbering cannot regress silently.
+const _: () = assert!(FACE_FALLBACK > FACE_BOLD_ITALIC);
 
 impl Fonts {
     pub fn new(family: &str, px: f32) -> Result<Fonts, String> {
@@ -136,6 +144,8 @@ impl Fonts {
                 .as_ref()
                 .or(self.italic.as_ref())
                 .unwrap_or(&self.primary),
+            // FACE_STYLED and FACE_ITALIC above, the chain from FACE_FALLBACK
+            // up: no style index may sit inside that range.
             _ if idx >= FACE_FALLBACK => self
                 .fallbacks
                 .get(idx - FACE_FALLBACK)
@@ -225,10 +235,10 @@ impl Fonts {
         })
     }
 
-    /// Is the face from the fallback chain? `FACE_BOLD_ITALIC` sits in the
-    /// middle of the indices but is not a fallback.
+    /// Is the face from the fallback chain? With the styles numbered below
+    /// `FACE_FALLBACK` the question is only the comparison.
     fn is_from_fallback(idx: usize) -> bool {
-        idx >= FACE_FALLBACK && idx != FACE_BOLD_ITALIC
+        idx >= FACE_FALLBACK
     }
 
     /// Bitmap of an **already resolved** glyph (face + gid from shaping): color
@@ -472,6 +482,52 @@ mod tests {
         .is_none());
         // the generic one still works
         assert!(query(&db, "monospace", 400, fontdb::Style::Normal).is_some());
+    }
+
+    /// Every index of the table has to reach **its own** font. The chain used
+    /// to start at 3 while the bold-italic face was 4, so index 4 answered with
+    /// the italic and the second font of the chain — DejaVu Sans, which owns
+    /// braille — could never be asked for anything (found 2026-11-10: the `pi`
+    /// spinner `⠋` came out as a blank cell).
+    #[test]
+    fn each_face_index_reaches_its_own_font() {
+        let f = fonts();
+        for (i, fb) in f.fallbacks.iter().enumerate() {
+            assert_eq!(
+                f.face(FACE_FALLBACK + i).index,
+                fb.index,
+                "fallback {i} answered with another font"
+            );
+        }
+        for (idx, face) in [
+            (FACE_PRIMARY, &f.primary),
+            (FACE_STYLED, f.styled.as_ref().unwrap_or(&f.primary)),
+            (FACE_ITALIC, f.italic.as_ref().unwrap_or(&f.primary)),
+            (
+                FACE_BOLD_ITALIC,
+                f.bold_italic.as_ref().unwrap_or(&f.primary),
+            ),
+        ] {
+            assert_eq!(f.face(idx).index, face.index, "face {idx} answered wrong");
+        }
+    }
+
+    /// Braille lives only in the chain, and it has to be drawn: this is the
+    /// `pi` spinner (`⠋⠙⠹…`), which came out blank.
+    #[test]
+    fn braille_comes_from_the_chain() {
+        let f = fonts();
+        let mut ctx = ScaleContext::new();
+        for ch in ['\u{280b}', '\u{2819}', '\u{28ff}'] {
+            let (face, gid) = f.origin(ch);
+            assert_ne!(gid, 0, "{ch} found no glyph");
+            assert!(face >= FACE_FALLBACK, "{ch} came from face {face}");
+            let (b, colored, _, _) = f
+                .glyph_bitmap(&mut ctx, ch, false, false)
+                .unwrap_or_else(|| panic!("{ch} has no bitmap"));
+            assert!(!colored, "{ch} came out colored");
+            assert!(b.w > 0 && b.h > 0, "{ch} drew nothing: {}x{}", b.w, b.h);
+        }
     }
 
     /// CJK and emoji are not in the primary: the fallback chain has to find

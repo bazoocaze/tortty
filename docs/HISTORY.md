@@ -2277,6 +2277,28 @@ below it, `layout` opens the same tabs empty, `none` opens one tab and writes no
 layout, and a `--cmd` probe leaves `window.json` and the snapshots byte for byte
 intact.
 
+## 2026-11-10 — the fallback chain was one font short
+
+`pi` draws its spinner with braille (`U+280B`, `⠋`). Inside tortty the cell came
+out blank — no tofu box, nothing — while the same `pi` showed it in another
+terminal. Not pi's: the cell existed, had width 1 and held the character.
+
+The face table numbered `FACE_FALLBACK = 3` with `FACE_BOLD_ITALIC = 4`, so index
+4 was two things at once: `face(4)` answered with the bold-italic, and the second
+entry of the chain — DejaVu Sans, the only font here with braille — was never
+asked. `glyph_bitmap` then discarded the `gid == 0` and drew nothing at all.
+
+- the styles end at 3 and the chain starts at 4; `is_from_fallback` is a plain
+  comparison again, without the exception that hid the collision.
+- `each_face_index_reaches_its_own_font` (every index answers with its own font)
+  and `braille_comes_from_the_chain` (braille has a bitmap, and from the chain):
+  with the old numbering the second one fails on face 0 and `gid == 0`. The
+  numbering itself is now a compile-time `assert!`, so it cannot come back
+  silently.
+
+Verified with the real binary under Xvfb: a child printing `⠋⠙⠹` leaves the
+characters in the grid and 76 lit pixels in those three cells.
+
 ## 2026-11-08 — `B43`: the card says what is in it
 
 Every card said `workspace {n}` over `{title} ({k} tabs)`: the first row repeated
