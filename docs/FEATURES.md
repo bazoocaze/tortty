@@ -74,8 +74,8 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   columns on every row, dragged from any corner, copied one line each — the
   column of a table, not the ends of its lines. **limit:** a block is carried
   across a resize by its two corners (the reflow does not re-derive the
-  rectangle), and with the child asking for the mouse the drag is reported to it
-  instead.
+  rectangle), and with the child asking for the mouse a plain drag is reported
+  to it instead — Alt+drag still selects a block.
 - Clipboard: PRIMARY on release, CLIPBOARD with `copy_on_select`,
   Ctrl+Shift+C/V, button 2 pastes PRIMARY, bracketed paste. **limit:** PRIMARY
   dies with the app — it owns the selection; CLIPBOARD survives.

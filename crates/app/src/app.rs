@@ -1374,7 +1374,11 @@ impl App {
             self.bar_drag();
             return;
         }
-        if self.tabs[self.active].term.mouse_mode == 0 {
+        // Alt+drag is a local selection (a block) even when the child asked
+        // for the mouse: the press decided the gesture (`select_input` set
+        // `press` and `dragging`, which only it does), the motion only
+        // extends it.
+        if self.tabs[self.active].term.mouse_mode == 0 || self.tabs[self.active].dragging {
             self.drag_select(x, y);
             return;
         }
@@ -1405,6 +1409,17 @@ impl App {
             if self.toast_clicked(self.cursor_px.0, self.cursor_px.1) {
                 return;
             }
+        }
+        // Alt+Left drags a local block selection instead of reporting to the
+        // child (`B5` already gives Alt that meaning without the mouse). The
+        // press decides the gesture: it starts one only when the child holds
+        // no button, and its release ends it even with Alt already up.
+        if btn == crate::mouse::LEFT
+            && ((state == ElementState::Pressed && self.mods.alt_key() && self.held.is_none())
+                || (state == ElementState::Released && self.tabs[self.active].dragging))
+        {
+            self.select_input(state, button);
+            return;
         }
         if self.tabs[self.active].term.mouse_mode == 0 {
             self.select_input(state, button);

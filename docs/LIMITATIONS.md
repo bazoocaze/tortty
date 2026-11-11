@@ -58,9 +58,11 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   rows that rewrap comes back near — not equal — to what it was. Re-deriving it
   would mean re-finding each row's text, which is the cost the shape does not
   pay for.
-- **With the child asking for the mouse, a drag is the child's** — Alt+drag
-  included. X11 terminals that bypass the report while a modifier is held are a
-  separate feature (nothing in `BACKLOG.md` yet).
+- **With the child asking for the mouse, a plain drag is the child's** —
+  Alt+Left drags a local block selection instead (the meaning Alt already has
+  without the mouse, `B5`). The press decides the gesture: it starts one only
+  when the child holds no button, and its release ends it locally even with
+  Alt already up.
 - **No `IRM`** (insert mode) and no `CSI ? 3` (80/132): rare to the point of not
   paying for the test. `IRM` costs more than it looks — inserting a cell means a
   branch in `put_ascii_run`, which is the parser's hot path.

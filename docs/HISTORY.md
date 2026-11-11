@@ -2442,3 +2442,14 @@ Our half already works: the `f=100` path draws and `a=q` is answered.
   keys — the same stance as `Super+N/Q`, which the WM may also swallow.
 - Verified: `a_workspace_walk_clamps_at_both_ends`; the carry rides on
   `move_workspace`, covered by the `reorder`/`moved_front` tests.
+
+## 2026-11-11 — Alt+drag selects even with the mouse reported
+
+- With `?1000/1002/1003` every drag went to the child, Alt included. Now
+  Alt+Left starts a local block selection (`select_input`, the `B5` Alt) and
+  its release ends it — the press decides the gesture, so Alt can go up
+  mid-drag, and a press the child already holds is never stolen (`held`).
+- The motion only extends a selection `select_input` started (`dragging`).
+- Verified with an Xvfb probe: a plain drag delivers
+  `ESC[<0;3;1M ESC[<32;10;2M ESC[<0;10;2m` with `sel` null; Alt+drag leaves the
+  screen untouched and sets `sel` block `pha beta`/`lta epsi`.
