@@ -1,19 +1,19 @@
 # Limits
 
 Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
-(`B<n>`); here the id is `L<n>`. Overcome limitations leave this file and go to
-`HISTORY.md` (probably through a `BACKLOG` activity).
+(`B<n>`). Overcome limitations leave this file and go to `HISTORY.md`
+(probably through a `BACKLOG` activity).
 
 ## Scope
 
 - **One user, one machine.** No session multiplexing, no server, no
   reconnection, no daemon. Closing the window ends everything.
-- **One terminal, not a window environment.** No splits at this stage
-  (`BACKLOG.md` M-J), no layout manager; tabs and workspaces are reopened by the
-  next run, but the running processes are not — a new shell starts in the
-  directory the old one was in. The content of the screen comes back only with
-  `restore_state = content`, and it is a picture: text, SGR and `OSC 8` links,
-  never the process that wrote them, and it stops at the `scrollback` cap.
+- **One terminal, not a window environment.** No layout manager; tabs and
+  workspaces are reopened by the next run, but the running processes are not — a
+  new shell starts in the directory the old one was in. The content of the
+  screen comes back only with `restore_state = content`, and it is a picture:
+  text, SGR and `OSC 8` links, never the process that wrote them, and it stops
+  at the `scrollback` cap.
 - **The state has one owner, and the second window is a scratch.** The window
   that opens the session holds a `flock` on `state.lock` (`B46`): it restores,
   applies the geometry and writes on the way out. A window that finds the lock
@@ -26,22 +26,16 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   point — but it also means the picture never records *where* a past run ended, so
   two runs look continuous in the restored content.
 - **One image, drawn as it arrived.** The kitty protocol is accepted for what
-  `icat` needs (direct, file, temp and SHM transmission); animating frames and
-  speaking sixel/iTerm2 are not limits: they are the
-  [`BACKLOG.md`](BACKLOG.md) queue.
+  `icat` needs (direct, file, temp and SHM transmission): one image per id, with
+  no notion of frame and no second protocol.
 - **`TERM=xterm-256color`.** We do not invent our own terminfo entry: the goal
   is that `vim`, `mc`, `less` and `dmesg` work with what already exists.
 
 ## Platform
 
-- **Linux X11 is the tested target.** Wayland is not exercised here (`M-AB` in
-  BACKLOG); Windows and macOS are untested and are in the queue as `M-X`/`M-Y`
-  of [`BACKLOG`](BACKLOG.md), with what each one
-  requires in [`PORTABILITY.md`](PORTABILITY.md). Until they go through CI, "it
-  works there" is an expectation, not a fact.
 - **Window position on Wayland**: the client does not choose where the window
-  goes. When geometry is persisted (J2/J3), on Wayland only size and maximized
-  are stored. It is not missing code, it is the protocol.
+  goes. Geometry is persisted (`B45`), and on Wayland only size and maximized are
+  stored. It is not missing code, it is the protocol.
 - **No rasterizer of our own.** Drawing is `wgpu` and nothing else: there is no
   cell-by-cell CPU painter to fall back on, and writing one is an entire
   renderer, not a switch. What `wgpu` offers **is** used — `render.rs` prefers a
@@ -53,18 +47,11 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   received no frame — Vulkan blew the present timeout and GL returned success
   without painting a pixel. Whoever runs confined uses `sandbox @gpu`, which presents
   for real ([`DEBUG.md`](DEBUG.md)).
-- **No signing/notarization for now.** macOS 15+ requires "Open Anyway" for a
-  binary downloaded from the network. It is in `M-Z` of
-  [`BACKLOG`](BACKLOG.md) (the cost is the developer account, US$ 99/year), behind
-  `M-X`/`M-Y`: without a compiled target there is nothing to sign.
 
 ## Emulation
 
 - **Wide char works, and it is why the cell model has a continuation mark**
   (`WIDE_CONT`). Every new grid operation has to respect the pair.
-- **Grapheme combination**: each cell carries a `char`; a combining mark that did
-  not come together in the same commit as the text becomes its own cell. Composing
-  the two is queued (`BACKLOG.md` M-U).
 - **Shaping works; three consequences are accepted** (`G8` closed on 2026-11-02
   with `rustybuzz`, see [`HISTORY.md`](HISTORY.md)): a **single-cell** run is not
   shaped (no context, no ligature — this is the doom-fire case, 2400 runs of 1);
@@ -106,9 +93,6 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
 
 ## Interface
 
-- **Fixed shortcuts up to F3.** There is no remapping; the config file (which
-  comes in F3) covers font, colors, padding, bell, scrollback. Remapping is
-  `M-H` in [`BACKLOG.md`](BACKLOG.md).
 - **No automatic dark/light theme**: the palette comes from the config, not from
   the desktop portal.
 - **The scrollbar is drawn over the last column**, not beside it: the window
@@ -125,17 +109,15 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   (`9;text`, shown) and the mintty/ConEmu progress form (`9;4;state[;progress]`,
   swallowed). The progress state goes nowhere — no taskbar bar, no percentage
   — because a 1 Hz keepalive repeater (what the form is for) would pin any
-  toast or badge forever. If progress UI ever pays, it is its own item, not a
-  notification.
+  toast or badge forever.
 - **A workspace card is chosen on the press, so a drag carries the workspace you
   are looking at.** Pressing a card brings it to the front before the pointer has
   moved, which is what the tab bar already does; the drag then takes that
   workspace to the place it is dropped and it stays in front there. A press that
   travels less than 3 px is the click that selects, so the double click that
   renames is not turned into a drag.
-- **No context menu.** It is `M-V` in [`BACKLOG.md`](BACKLOG.md). A file dragged
-  onto the window is not a menu either: the path is written into the child, and
-  what happens next belongs to the program there.
+- **A file dragged onto the window is not a menu**: the path is written into
+  the child, and what happens next belongs to the program there.
 - **An `OSC 8` link opens through `xdg-open`, and only for five schemes**
   (`http`, `https`, `file`, `ftp`, `mailto`). No portal, no D-Bus, no browser
   integration: the URI comes from the child, and anything else becomes a toast

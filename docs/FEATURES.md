@@ -46,8 +46,6 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - Wide cells carry a continuation mark. **limit:** a combining mark arriving in a
   later commit becomes its own cell (`M-U`).
 - `TERM=xterm-256color` with no terminfo of our own.
-- **Not implemented:** `IRM`, `CSI ? 3` (80/132), DECDL/DECDHL and
-  double-height.
 
 ## Input
 
@@ -116,8 +114,8 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   `f=24/32/100` (PNG decoded in the app), `o=z`, `s=`/`v=`, `c=`/`r=`,
   `X=`/`Y=`, `C=1`, `q=`; the image follows the scroll and is pruned with the
   history; `ED 3` clears images.
-- **limit:** no animation (`B2`), and no z-index, placement id, Unicode
-  placeholder or source crop (`M-L`).
+- **limit:** no animation (`B2`), no sixel/iTerm2 (`B3`), and no z-index,
+  placement id, Unicode placeholder or source crop (`M-L`).
 
 ## Window
 
@@ -190,8 +188,6 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   written into the child like a paste (bracketed when the child asked for it).
   **limit:** nothing else happens — no new tab, no `cd`: the terminal does not know
   what is running, so a program that is not a shell still gets a path it can read.
-- **Not implemented:** context menu (`M-V`), and an automatic dark/light theme —
-  the palette comes from the config.
 
 ## Configuration
 

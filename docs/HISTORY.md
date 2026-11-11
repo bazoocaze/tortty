@@ -2353,6 +2353,18 @@ asked. `glyph_bitmap` then discarded the `gid == 0` and drew nothing at all.
 Verified with the real binary under Xvfb: a child printing `⠋⠙⠹` leaves the
 characters in the grid and 76 lit pixels in those three cells.
 
+## 2026-11-10 — one fact in one place
+
+The same absence was told twice: `LIMITATIONS.md` carried the queued activities
+beside the accepted limits, and `FEATURES.md` had a "Not implemented" line
+naming them again.
+
+- `LIMITATIONS.md` keeps what is accepted, `BACKLOG.md` the queue, `FEATURES.md`
+  what exists — the id stays where it is the border of a real feature.
+- `B8` had six cells and `B55` no trigger; `M-N` was the named pipe piece of
+  `M-X`, and `M-Q`'s trigger pointed at itself through `M-V`.
+- `LIMITATIONS.md`'s header lost the `L<n>` id that nothing carries.
+
 ## 2026-11-08 — `B43`: the card says what is in it
 
 Every card said `workspace {n}` over `{title} ({k} tabs)`: the first row repeated
