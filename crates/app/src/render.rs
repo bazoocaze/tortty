@@ -120,6 +120,12 @@ pub struct Renderer {
     /// grid right: `origin` becomes `pad + side`.
     side: f32,
     pub cursor_shape: CursorShape,
+    /// Where the toast was drawn in the last frame, in **window** pixels
+    /// (`(x, y, w, h)`), or `None` when there was none. The app reads it to
+    /// answer a click: the box floats over the grid and swallows the press, so
+    /// the geometry cannot live only here (the duplication that `M-Q` exists to
+    /// kill).
+    pub toast_rect: Option<[f32; 4]>,
     /// Where text ends and images come in (images sit above text and below the
     /// cursor/chrome, as in kitty).
     img_split: usize,
@@ -486,6 +492,7 @@ impl Renderer {
             bar: 0.0,
             side: 0.0,
             cursor_shape: cfg.cursor_shape,
+            toast_rect: None,
             img_split: 0,
             img_pipeline,
             img_buf,
@@ -814,10 +821,12 @@ impl Renderer {
         self.chrome_text(&text, x0 + self.pad, y, fg, 0.0);
     }
 
-    /// Toast (I12/K13): a box floating in the bottom-right corner.
+    /// Toast (I12/K13): a box floating over the bottom of the grid, in the
+    /// middle, with a title, an optional detail that wraps and an accent bar
+    /// telling the three shades apart (receipt, warning, error).
     ///
     /// It sits at the bottom because the top holds the tab bar (the header is
-    /// its own); the warning belongs to the terminal, not to the program. It
+    /// its own); the notice belongs to the terminal, not to the program. It
     /// used to be a strip across the last row with the colours inverted — that
     /// erased the line and did not read as an aviso. The box erases only what
     /// it occupies.
@@ -826,35 +835,62 @@ impl Renderer {
     /// so it works in a light theme too (it darkens instead of lightening) and
     /// needs no key. Two rects, not one: the opaque background goes first, or
     /// the text underneath would show through the veil.
-    fn toast(&mut self, text: &str, cols: usize, rows: usize) {
+    ///
+    /// No rounded corner and no shadow for now: the pipeline paints everything
+    /// through one texture, so a corner would need a mask of its own baked into
+    /// the atlas (nine patch) — an idea kept for later, not a limit.
+    fn toast(&mut self, t: &ToastText, cols: usize, rows: usize) {
         // gutter on both sides of the text, in cells, so the box lines up with
         // the grid; the vertical respiro is in px, independent of the line
         // height of the theme
         const PAD_X: f32 = 1.5;
         const PAD_Y: f32 = 8.0;
         const MARGIN_X: f32 = 1.0;
-        const MARGIN_Y: f32 = 8.0;
-        // geometric marker, not a glyph: the atlas is alpha-only (B8)
-        const MARK: f32 = 6.0;
+        const MARGIN_Y: f32 = 28.0;
+        // the accent bar on the left: wide enough to read as a strip and not as
+        // a crack in the border
+        const BAR: f32 = 4.0;
         const VEIL: f32 = 0.14;
+        // Detail lines beyond this are cut: a notification carrying a whole page
+        // must not cover the grid it is telling you about.
+        const DETAIL_LINES: usize = 4;
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
-        let n = (cols as f32 - MARGIN_X - 2.0 * PAD_X).floor().max(1.0) as usize;
-        let short: String = text.chars().take(n).collect();
-        let w = short.chars().count();
-        if w == 0 {
+        // title and detail wrap at the same column, so the box has straight
+        // sides (the old one cut every notice at the grid width)
+        let n = (cols as f32 - 2.0 * MARGIN_X - 2.0 * PAD_X)
+            .floor()
+            .max(1.0) as usize;
+        let title: String = t.title.chars().take(n).collect();
+        let room = (rows.saturating_sub(2)).max(1);
+        let detail = wrap(&t.detail, n, DETAIL_LINES.min(room));
+        let widest = detail
+            .iter()
+            .map(|l| l.chars().count())
+            .chain(std::iter::once(title.chars().count()))
+            .max()
+            .unwrap_or(0);
+        if widest == 0 {
             return;
         }
-        let bw = (w as f32 + 2.0 * PAD_X) * cw;
-        let bh = chh + 2.0 * PAD_Y;
-        // the right edge is pinned: a long text grows to the left, it never
-        // pushes the margin out of the window
-        let x1 = (cols as f32 - MARGIN_X) * cw - bw;
-        let y1 = rows as f32 * chh - MARGIN_Y - bh;
+        let lines = 1 + detail.len();
+        let bw = widest as f32 * cw + 2.0 * PAD_X * cw + BAR;
+        let bh = lines as f32 * chh + 2.0 * PAD_Y;
+        // centred: a notice is read where the eye lands, not in a corner. The
+        // text was cut at `n` above, so the box always fits the grid.
+        let x1 = ((cols as f32 * cw - bw) / 2.0).max(0.0);
+        let y1 = (rows as f32 * chh - MARGIN_Y - bh).max(0.0);
         let base = self.color(Color::Default, self.bg);
         let ink = self.color(Color::Default, self.fg);
-        let alert = self.color(Color::Idx(3), self.fg);
-        let edge = [alert[0], alert[1], alert[2], 1.0];
+        let accent = self.color(t.severity.color(), self.fg);
+        // the detail is the same ink pulled 22% towards the surface: it recedes
+        // in a dark theme and in a light one alike
+        let dim = [
+            ink[0] * 0.78 + base[0] * 0.22,
+            ink[1] * 0.78 + base[1] * 0.22,
+            ink[2] * 0.78 + base[2] * 0.22,
+        ];
+        let edge = [accent[0], accent[1], accent[2], 1.0];
         self.push_rect(x1, y1, bw, bh, [base[0], base[1], base[2], 1.0]);
         self.push_rect(x1, y1, bw, bh, [ink[0], ink[1], ink[2], VEIL]);
         // the quad has no stroke: the border is four 1 px rects
@@ -862,9 +898,17 @@ impl Renderer {
         self.push_rect(x1, y1 + bh - 1.0, bw, 1.0, edge);
         self.push_rect(x1, y1, 1.0, bh, edge);
         self.push_rect(x1 + bw - 1.0, y1, 1.0, bh, edge);
-        let mx = x1 + (PAD_X * cw - MARK) / 2.0;
-        self.push_rect(mx, y1 + bh / 2.0 - MARK / 2.0, MARK, MARK, edge);
-        self.chrome_text(&short, x1 + PAD_X * cw, y1 + PAD_Y, ink, 0.0);
+        self.push_rect(x1 + 1.0, y1 + 1.0, BAR, bh - 2.0, edge);
+        let tx = x1 + BAR + PAD_X * cw;
+        self.chrome_text(&title, tx, y1 + PAD_Y, ink, 0.0);
+        for (i, line) in detail.iter().enumerate() {
+            #[allow(clippy::cast_precision_loss)] // one line index, far below 2^23
+            let y = y1 + PAD_Y + (i + 1) as f32 * chh;
+            self.chrome_text(line, tx, y, dim, 0.0);
+        }
+        // window pixels, so the app answers a click without repeating the
+        // arithmetic that built the box
+        self.toast_rect = Some([x1 + self.pad + self.side, y1 + self.pad + self.bar, bw, bh]);
     }
 
     fn badge(&mut self, text: &str, cols: usize) {
@@ -1332,8 +1376,11 @@ impl Renderer {
             self.badge(&txt, cols);
         }
 
-        // 5) toast (I12/K13): warning from the terminal itself, on top of
-        // everything. It goes away on its own; the app controls the timing.
+        // 5) toast (I12/K13): notice from the terminal itself, on top of
+        // everything. It goes away on its own, or with a click; the app controls
+        // the timing, and the rect of the last frame dies with the box — a click
+        // must not land on a notice that is gone.
+        self.toast_rect = None;
         if let Some(t) = toast {
             self.toast(t, cols, rows.len());
         }
@@ -1843,6 +1890,78 @@ pub struct TabInfo {
     pub alert: bool,
 }
 
+/// What a notice is telling the owner: the accent (bar and border) and, on the
+/// app's side, how long it stays. Three shades, not a spectrum.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Severity {
+    /// A receipt: something worked.
+    Ok,
+    /// Not the owner's fault, but it costs attention.
+    Warn,
+    /// Something did not work and the owner may have to act.
+    Err,
+}
+
+impl Severity {
+    /// Palette slot the accent comes from, so a theme with its own palette moves
+    /// the toast with it and no key is added for that.
+    fn color(self) -> Color {
+        match self {
+            Severity::Ok => Color::Idx(2),
+            Severity::Warn => Color::Idx(3),
+            Severity::Err => Color::Idx(1),
+        }
+    }
+}
+
+/// The notice as the renderer needs it: own text, like `TabInfo`/`WsCard`, so the
+/// app can build it and drop it while the renderer is `&mut`.
+pub struct ToastText {
+    pub title: String,
+    /// Second level, wrapped: what happened, where, which key. Empty is fine.
+    pub detail: String,
+    pub severity: Severity,
+}
+
+/// Breaks `text` into lines of at most `n` characters, preferring the space
+/// (a word is not cut while it fits) and cutting a word longer than the whole
+/// line, which has nowhere to break — a path or a URL must still fit the box.
+/// At most `max` lines: the rest is dropped, never drawn under the margin.
+fn wrap(text: &str, n: usize, max: usize) -> Vec<String> {
+    let n = n.max(1);
+    let mut words: Vec<&str> = Vec::new();
+    for word in text.split_whitespace() {
+        let mut rest = word;
+        while rest.chars().count() > n {
+            let cut = rest.char_indices().nth(n).map_or(rest.len(), |(i, _)| i);
+            words.push(&rest[..cut]);
+            rest = &rest[cut..];
+        }
+        if !rest.is_empty() {
+            words.push(rest);
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for word in words {
+        let sep = usize::from(!line.is_empty());
+        if !line.is_empty() && line.chars().count() + sep + word.chars().count() > n {
+            out.push(std::mem::take(&mut line));
+            if out.len() == max {
+                return out;
+            }
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if !line.is_empty() && out.len() < max {
+        out.push(line);
+    }
+    out
+}
+
 /// Everything a frame needs, in one package: the signature of `build`/`render`
 /// grew one parameter per slice (tabs, sidebar, toast...).
 pub struct Frame<'a> {
@@ -1852,7 +1971,7 @@ pub struct Frame<'a> {
     pub view_off: usize,
     pub sel: Option<Span>,
     pub blink: Blink,
-    pub toast: Option<&'a str>,
+    pub toast: Option<&'a ToastText>,
     pub tabs: Option<&'a [TabInfo]>,
     pub sidebar: Option<&'a [WsCard]>,
     /// First card of the sidebar list to draw (`B42`).
@@ -1926,9 +2045,36 @@ fn card_lines(n: usize, name: &str, title: &str) -> (String, String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{card_lines, is_swap};
+    use super::{card_lines, is_swap, wrap};
     use tortty_core::cell::Cell;
     use tortty_core::select::Rect;
+
+    /// The detail of a notice fills the box up to the margin, breaks at the space
+    /// and never leaves a line wider than the box.
+    #[test]
+    fn a_notice_detail_wraps_at_the_space() {
+        assert_eq!(
+            wrap("alpha beta gamma delta", 11, 4),
+            vec!["alpha beta", "gamma delta"]
+        );
+    }
+
+    /// A word with no space in it — a path, a URL — is cut where it reaches the
+    /// margin instead of overflowing the box.
+    #[test]
+    fn a_word_longer_than_the_line_is_cut() {
+        assert_eq!(
+            wrap("/usr/local/share/very/long/path", 10, 4),
+            vec!["/usr/local", "/share/ver", "y/long/pat", "h"]
+        );
+    }
+
+    /// The cap is lines: a notice that would be taller than the grid keeps the
+    /// first lines and drops the rest instead of covering the whole screen.
+    #[test]
+    fn the_detail_stops_at_the_line_cap() {
+        assert_eq!(wrap("a b c d e f g", 1, 2), vec!["a", "b"]);
+    }
 
     /// `B5`: the rectangle inverts the same columns on every one of its rows,
     /// while a flow selection only cuts the first and the last.

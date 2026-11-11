@@ -141,14 +141,19 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - Title: OSC 0/2, else `basename(cwd)`, else `tortty`; the window title mirrors
   the active tab. **limit:** an app that sets a title without pushing it (`CSI
   22/23 t`) keeps the tab on it after leaving ([`EXTERNALS.md`](EXTERNALS.md)).
-- Chrome: toast as a floating box in the bottom-right corner — theme background
-  veiled 14% towards the foreground, 1 px border in the alert colour, 6 px
-  geometric marker, 1.5-cell gutter, right edge pinned — with a queue and a
-  timeout, visual bell, audible bell. **limit:** truncation counts characters,
-  not cell width, so a wide glyph (emoji, CJK) can overflow the box.
+- Chrome: toast as a floating box over the bottom of the grid, centred — two
+  levels (title in the foreground colour, detail pulled towards the surface and
+  wrapped in up to four lines), an accent bar and border in the shade of the
+  notice, theme background veiled 14% towards the foreground, 1.5-cell gutter.
+  Three shades: a receipt lives 3 s, a warning and an error 10 s, a notification
+  8 s; no key takes it out, a click does; a different notice waits in a queue and
+  the same words only raise the count (`×3`) without restarting the clock.
+  Visual bell, audible bell. **limit:** truncation counts characters, not cell
+  width, so a wide glyph (emoji, CJK) can overflow the box, and the detail is cut
+  at four lines.
 - Notifications (`OSC 9`/`777`): the foreground tab toasts the text, a
   background tab wears a badge on its label, a parked workspace on its card,
-  and the window always asks for urgency. The toast lives 8 s and no key takes
+  and the window always asks for urgency. The toast lives 8 s and a click takes
   it out; the badges ignore keys for 8 s (whoever types must not lose them), and
   after that the first key or the visit acknowledges. **limit:** inside the window + urgency only — no desktop
   notification daemon, and the progress form `9;4;...` is swallowed, not shown.
@@ -196,7 +201,12 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   `cursor_blink`, `scrollback`, `window_padding_width`, `bell`, `copy_on_select`,
   `debug_log`, `foreground`, `background`, `cursor_color`, `color0..15`.
 - Hot reload with a debounce; **any** error on reload keeps the configuration
-  already in effect, and the error shows as a toast.
+  already in effect, and the toast says both things: `Configuration error` over
+  `kept the previous one — line N: …` (with the count of the others). A clean
+  reload answers on screen with `Configuration applied` and the family and size
+  that are in force — proof that this file is the one being read, not only when
+  the previous save was refused. At startup there is nothing to keep, so the
+  detail is the error alone.
 - CLI: `-c/--config`, `--cmd`, `--cols`/`--rows`, `--font-family`, `--font-size`,
   `--scrollback`, `--dpi`, `--no-vsync`, `--debug-socket`, `--debug-log`, `--prof`,
   `--quit-after`, `--dump-to`, `--selftest`, `--version`.

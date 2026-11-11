@@ -158,7 +158,7 @@ or `ok: false` with `err`. The protocol is stable on purpose:
 
 | verb | input | response |
 |---|---|---|
-| `state` | — | `ok` + `cols`, `rows`, `cursor` `[row,col]`, `title`, `view_off`, `scrolled`, `scrollback`, `alt`, `sync`, `cell` `[w,h]`, `font`, `font_px`, `tabs`, `workspaces`, `errors`, `draws`, **`drawn`**, **`skips`**, **`last_frame`**, `last_damage`, `frames_all`, `rows_max`, `all_reason`, `xid` |
+| `state` | — | `ok` + `cols`, `rows`, `cursor` `[row,col]`, `title`, `view_off`, `scrolled`, `scrollback`, `alt`, `sync`, `cell` `[w,h]`, `font`, `font_px`, `tabs`, `workspaces`, `errors`, `toast` (the notice on screen: `title`, `detail`, `severity`, `times`, or `null`) and `toast_queue` (how many wait behind it), `draws`, **`drawn`**, **`skips`**, **`last_frame`**, `last_damage`, `frames_all`, `rows_max`, `all_reason`, `xid` |
 | `text` | `where` (`view`\|`history`\|`screen`), `start`, `count` | `lines` (strings) |
 | `write` | `data` (string) | `ok` (writes to the pty) |
 | `drop` | `path` (string) | `ok` — the same as dropping that file on the window, quoted and written into the child (the XDND event is a one-line arm over this) |

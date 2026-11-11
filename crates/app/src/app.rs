@@ -21,7 +21,15 @@ use crate::glyph::Fonts;
 use crate::keys;
 use crate::prof;
 use crate::pty::Pty;
-use crate::render::Renderer;
+use crate::render::{Renderer, Severity, ToastText};
+
+/// Is the pointer inside the box the renderer drew? Half-open on the right and
+/// on the bottom, like a cell: the press that lands exactly on the border
+/// belongs to the neighbour, and to the grid.
+fn inside_box(rect: [f32; 4], px: f64, py: f64) -> bool {
+    let [x, y, w, h] = rect.map(f64::from);
+    px >= x && px < x + w && py >= y && py < y + h
+}
 
 /// Shell argument: `'…'` with `'` becoming `'\''` — enough for the common case.
 fn shell_quote(s: &str) -> String {
@@ -105,29 +113,70 @@ struct PumpOut {
 }
 
 struct Toast {
-    text: String,
+    title: String,
+    /// Second level: the line and the key, the path, the text the program sent.
+    detail: String,
+    severity: Severity,
+    /// How long it stays. Comes from the severity — a receipt is read faster
+    /// than an error — except for a notification, which keeps the time the badge
+    /// floor assumes.
+    life: Duration,
     since: std::time::Instant,
     /// How many equal messages arrived in a row (the toast adds up, it does not
     /// stack).
     times: u32,
 }
 
-/// How long the toast stays on screen. Every toast gets the same time and no
-/// key takes it out: a notice that vanishes before it can be read is a notice
-/// that was never delivered.
-const TOAST_DUR: Duration = Duration::from_secs(8);
+impl Toast {
+    fn new(title: &str, detail: &str, severity: Severity) -> Toast {
+        Toast {
+            title: title.to_string(),
+            detail: detail.to_string(),
+            severity,
+            life: match severity {
+                Severity::Ok => TOAST_OK,
+                Severity::Warn | Severity::Err => TOAST_LONG,
+            },
+            since: std::time::Instant::now(),
+            times: 1,
+        }
+    }
 
-/// Text of the configuration notice (K13). Deliberately fits in ~60 columns:
-/// the toast is cut at the width of the grid, and "line and key" is what one
-/// needs to see, not the count spelled out.
-fn notice_config(errs: &[tortty_core::config::Error]) -> String {
+    /// Same words twice in a row: it is the same notice, and the count is what
+    /// grew. The clock is **not** restarted — a program repeating itself must not
+    /// pin the box to the screen (`B8`).
+    fn same(&self, title: &str, detail: &str) -> bool {
+        self.title == title && self.detail == detail
+    }
+
+    fn expired(&self) -> bool {
+        self.since.elapsed() > self.life
+    }
+}
+
+/// A receipt is read in a glance: 3 s. A warning or an error carries something to
+/// read and act on: 10 s. No key takes the toast out — a notice that vanishes
+/// before it can be read is a notice that was never delivered — but a click does,
+/// because that is the owner saying they have read it.
+const TOAST_OK: Duration = Duration::from_secs(3);
+const TOAST_LONG: Duration = Duration::from_secs(10);
+
+/// Text of the configuration notice (K13): what went wrong, and — on a reload —
+/// the fact the owner asks first: the running configuration did **not** change.
+/// `kept` is false at startup, where there is no previous configuration to keep
+/// (the good lines apply, the bad ones fall back to the default).
+fn notice_config(errs: &[tortty_core::config::Error], kept: bool) -> String {
     let Some(first) = errs.first() else {
         return String::new();
     };
-    if errs.len() > 1 {
-        format!("config kept — {first} (+{})", errs.len() - 1)
+    let rest = match errs.len() {
+        1 => String::new(),
+        n => format!(" (+{} more)", n - 1),
+    };
+    if kept {
+        format!("kept the previous one — {first}{rest}")
     } else {
-        format!("config kept — {first}")
+        format!("{first}{rest}")
     }
 }
 
@@ -137,10 +186,10 @@ const BLINK_MS: u64 = 500;
 /// How long the tab label stays highlighted after a BEL (I13).
 const FLASH_DUR: Duration = Duration::from_millis(800);
 /// A notification stays immune to keys this long (`M-K`): whoever is typing
-/// must not lose it. It is the toast's own time, because the toast outlives the
-/// key that would dismiss it — what the floor now guards is the badge, which has
-/// no other expiry.
-const NOTIF_FLOOR: Duration = TOAST_DUR;
+/// must not lose it. It is the notification toast's own time, because the toast
+/// outlives the key that would dismiss it — what the floor now guards is the
+/// badge, which has no other expiry.
+const NOTIF_FLOOR: Duration = Duration::from_secs(8);
 
 /// Bytes in hex (the socket's `keys` verb returns this to check the encoder).
 fn hex(bytes: &[u8]) -> String {
@@ -558,8 +607,13 @@ pub struct App {
     blink_text: bool,
     /// Draw gate (G16/B28/G15): ~16 ms pacing and `?2026` held back.
     gate: crate::frame::Gate,
-    /// Notice on screen (config error etc.). One at a time, it goes away alone.
+    /// Notice on screen (config error, notification). One at a time: it goes away
+    /// alone, with a click, or gives its turn to the next one.
     toast: Option<Toast>,
+    /// Notices that arrived while another one was on screen (the python's
+    /// revealer had the same queue: an aviso does not overwrite the one being
+    /// read).
+    toast_queue: Vec<Toast>,
     /// File errors at startup, which can only become a toast once the window
     /// exists (in the terminal `stderr` is gone; in a graphical session, same).
     startup_errs: Vec<tortty_core::config::Error>,
@@ -653,6 +707,7 @@ impl App {
             blink_text: false,
             gate: crate::frame::Gate::default(),
             toast: None,
+            toast_queue: Vec::new(),
             startup_errs: Vec::new(),
             cfg_errors: Vec::new(),
             debug: None,
@@ -1029,7 +1084,7 @@ impl App {
         // for anything else
         const OK: [&str; 5] = ["http://", "https://", "file://", "ftp://", "mailto:"];
         if !OK.iter().any(|p| uri.starts_with(p)) {
-            self.toast(format!("link refused: {uri}"));
+            self.toast("Link refused", uri, Severity::Err);
             return;
         }
         match std::process::Command::new("xdg-open")
@@ -1038,8 +1093,8 @@ impl App {
             .stderr(std::process::Stdio::null())
             .spawn()
         {
-            Ok(_) => self.toast(format!("opening {uri}")),
-            Err(e) => self.toast(format!("xdg-open failed: {e}")),
+            Ok(_) => self.toast("Opening", uri, Severity::Ok),
+            Err(e) => self.toast("Link failed", &e.to_string(), Severity::Err),
         }
     }
 
@@ -1306,6 +1361,12 @@ impl App {
         };
         if state == ElementState::Pressed {
             self.blink_reset();
+            // the toast is drawn last, so it is above the chrome and the grid: a
+            // press on it dismisses it and goes no further, with or without the
+            // child asking for the mouse
+            if self.toast_clicked(self.cursor_px.0, self.cursor_px.1) {
+                return;
+            }
         }
         if self.tabs[self.active].term.mouse_mode == 0 {
             self.select_input(state, button);
@@ -2062,7 +2123,10 @@ impl App {
                 self.urgency();
             }
             if let Some(text) = pumped.toast {
-                self.toast(text);
+                // a notification is not a warning: it is the program saying
+                // something happened, and it keeps the 8 s the badge floor
+                // assumes (`M-K`)
+                self.toast_for("Notification", &text, Severity::Ok, Some(NOTIF_FLOOR));
             }
             self.tabs[i].term.serve_images(Self::read_image_file);
             if i == self.active {
@@ -2166,35 +2230,101 @@ impl App {
         self.blink_text
     }
 
-    /// Shows a notice on screen. An equal message in a row becomes a count
-    /// ("×3"), not a queue — whoever saves the file ten times does not want ten
-    /// notices.
-    fn toast(&mut self, text: String) {
-        let times = match self.toast.take() {
-            Some(t) if t.text == text => t.times + 1,
-            _ => 1,
-        };
-        logln(&format!("toast: {text}"));
-        self.toast = Some(Toast {
-            text,
-            since: std::time::Instant::now(),
-            times,
-        });
-        if let Some(w) = self.window.as_ref() {
-            w.request_redraw();
-        }
+    /// Shows a notice on screen: a title, an optional detail and a shade. An
+    /// equal message in a row becomes a count ("×3"), not a second box — whoever
+    /// saves the file ten times does not want ten notices.
+    ///
+    /// A **different** notice does not overwrite the one being read: it waits in
+    /// the queue and takes the screen when its turn comes.
+    fn toast(&mut self, title: &str, detail: &str, severity: Severity) {
+        self.toast_for(title, detail, severity, None);
     }
 
-    /// Toast text for the renderer (with the count when there was a repeat).
-    fn toast_text(&self) -> Option<String> {
+    /// Same, with the time on screen chosen by the caller. A notification keeps
+    /// the 8 s the badge floor assumes, which is neither the receipt's 3 s nor
+    /// the error's 10 s.
+    fn toast_for(&mut self, title: &str, detail: &str, severity: Severity, life: Option<Duration>) {
+        let mut t = Toast::new(title, detail, severity);
+        if let Some(life) = life {
+            t.life = life;
+        }
+        logln(&format!(
+            "toast: {severity:?} {title}{} {detail}",
+            if detail.is_empty() { "" } else { " —" }
+        ));
+        // The same words again — on screen or already waiting — only raise the
+        // count; anything else waits behind whatever is being read. A repeat must
+        // not restart the clock, or a program that repeats itself pins the box to
+        // the screen (`B8`).
+        let seen = self
+            .toast
+            .iter_mut()
+            .chain(self.toast_queue.iter_mut())
+            .find(|t| t.same(title, detail));
+        if let Some(seen) = seen {
+            seen.times += 1;
+            self.ask_frame();
+            return;
+        }
+        self.toast_queue.push(t);
+        self.next_toast();
+    }
+
+    /// Gives the screen to the next notice when it is free. Called on arrival and
+    /// when the visible one leaves.
+    fn next_toast(&mut self) {
+        if self.toast.is_some() {
+            return;
+        }
+        if let Some(t) = (!self.toast_queue.is_empty()).then(|| self.toast_queue.remove(0)) {
+            self.toast = Some(t);
+        }
+        self.ask_frame();
+    }
+
+    /// Takes the notice out of the screen (the clock ran out or the owner
+    /// clicked) and gives the turn to whatever was waiting.
+    fn drop_toast(&mut self) {
+        if self.toast.take().is_none() {
+            return;
+        }
+        self.next_toast();
+    }
+
+    /// A click inside the box dismisses it. The box floats over the grid and is
+    /// drawn last, so it is above everything: the press does not start a
+    /// selection and does not reach the child.
+    fn toast_clicked(&mut self, px: f64, py: f64) -> bool {
+        let Some(rect) = self.renderer.as_ref().and_then(|r| r.toast_rect) else {
+            return false;
+        };
+        if !inside_box(rect, px, py) {
+            return false;
+        }
+        self.drop_toast();
+        true
+    }
+
+    /// Toast for the renderer, with the count when there was a repeat.
+    fn toast_text(&self) -> Option<ToastText> {
         let t = self.toast.as_ref()?;
-        if t.since.elapsed() > TOAST_DUR {
+        if t.expired() {
             return None;
         }
-        Some(if t.times > 1 {
-            format!("{} (×{})", t.text, t.times)
+        let detail = if t.detail.is_empty() {
+            String::new()
         } else {
-            t.text.clone()
+            t.detail.clone()
+        };
+        let title = if t.times > 1 {
+            format!("{} (×{})", t.title, t.times)
+        } else {
+            t.title.clone()
+        };
+        Some(ToastText {
+            title,
+            detail,
+            severity: t.severity,
         })
     }
 
@@ -2263,21 +2393,22 @@ impl App {
                 errs[0]
             ));
             // K13: the file is edited in an editor, which does not show our log
-            // — the notice has to appear on screen, with the first line and the
-            // count.
-            self.toast(notice_config(&errs));
+            // — the notice has to appear on screen with the first line, the
+            // count, and the fact that what is running did not change.
+            self.toast(
+                "Configuration error",
+                &notice_config(&errs, true),
+                Severity::Err,
+            );
             return;
         }
         logln(&format!("config: {} reloaded", path.display()));
-        // only warn on screen if there was an error showing: the reload worked
-        // and whoever saved needs to know it is in force again
-        if self
-            .toast
-            .as_ref()
-            .is_some_and(|t| t.text.starts_with("config"))
-        {
-            self.toast("config reloaded".to_string());
-        }
+        // The file is saved while the terminal runs, and the owner needs to know
+        // it took effect — not only when the previous save was refused. The
+        // family and the size are the proof that this is the file in force (the
+        // python says "Configuration applied" with the same two facts).
+        let applied = format!("{} {} pt", new.font_family, new.font_size_pt);
+        self.toast("Configuration applied", &applied, Severity::Ok);
         self.apply_options(new, &text);
     }
 
@@ -2385,7 +2516,7 @@ impl App {
             view_off: self.tabs[self.active].view_off,
             sel: self.tabs[self.active].sel,
             blink,
-            toast: toast.as_deref(),
+            toast: toast.as_ref(),
             tabs: tabs.as_deref(),
             sidebar: sidebar.as_deref(),
             cards_off: self.card_off,
@@ -2552,6 +2683,17 @@ impl App {
                     } else {
                         String::new()
                     },
+                    // the notice on screen and how many are waiting behind it:
+                    // a probe checking the box does not have to read pixels
+                    "toast": self.toast.as_ref().filter(|t| !t.expired()).map(|t| {
+                        serde_json::json!({
+                            "title": t.title,
+                            "detail": t.detail,
+                            "severity": format!("{:?}", t.severity),
+                            "times": t.times,
+                        })
+                    }),
+                    "toast_queue": self.toast_queue.len(),
                     "placements": self.tabs[self.active]
                         .term
                         .graphics
@@ -3365,7 +3507,7 @@ impl App {
     /// only creates the file on save.
     fn open_config(&mut self) {
         let Some(path) = self.opts.cfg_path.clone() else {
-            self.toast("config: no path (no HOME)".to_string());
+            self.toast("Configuration", "no path (no HOME)", Severity::Err);
             return;
         };
         if let Some(dir) = path.parent() {
@@ -3622,13 +3764,21 @@ impl ApplicationHandler<UserEvent> for App {
             match DebugServer::start(&path, self.proxy.clone()) {
                 Ok(s) => {
                     logln(&format!("debug socket: {}", s.path()));
+                    // whoever opened the surface has to know it is standing, and
+                    // standing is a warning: anything on the machine can drive
+                    // this window through it
+                    self.toast(
+                        "Security warning",
+                        &format!("debug socket enabled: {}", s.path()),
+                        Severity::Warn,
+                    );
                     self.debug = Some(s);
                 },
                 Err(e) => {
                     // whoever opened the debug surface has to know it is not up,
                     // on stderr and in the toast
                     eprintln!("tortty: debug socket: {e}");
-                    self.toast(format!("debug socket: {e}"));
+                    self.toast("Debug socket", &e, Severity::Err);
                 },
             }
         }
@@ -3769,7 +3919,11 @@ impl ApplicationHandler<UserEvent> for App {
         self.check_config();
         if !self.startup_errs.is_empty() {
             let errs = std::mem::take(&mut self.startup_errs);
-            self.toast(notice_config(&errs));
+            self.toast(
+                "Configuration error",
+                &notice_config(&errs, false),
+                Severity::Err,
+            );
         }
 
         let now = std::time::Instant::now();
@@ -3805,16 +3959,10 @@ impl ApplicationHandler<UserEvent> for App {
             return;
         }
 
-        // an expired toast leaves the screen (nobody else would take it out)
-        if self
-            .toast
-            .as_ref()
-            .is_some_and(|t| t.since.elapsed() > TOAST_DUR)
-        {
-            self.toast = None;
-            if let Some(w) = self.window.as_ref() {
-                w.request_redraw();
-            }
+        // an expired toast leaves the screen (nobody else would take it out),
+        // and the turn goes to whatever was waiting in the queue
+        if self.toast.as_ref().is_some_and(Toast::expired) {
+            self.drop_toast();
         }
 
         // blink: wake up on the next phase flip; redraw only when it really
@@ -4109,6 +4257,41 @@ fn drop_legacy_default(name: &str, idx: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A receipt, a warning and an error do not share the time on screen: the
+    /// first is read in a glance, the others carry something to act on.
+    #[test]
+    fn an_error_stays_longer_than_a_receipt() {
+        let ok = Toast::new("Opening", "https://x", Severity::Ok);
+        let err = Toast::new("Link failed", "xdg-open: no method", Severity::Err);
+        let warn = Toast::new("Security warning", "debug socket enabled", Severity::Warn);
+        assert_eq!(ok.life, TOAST_OK);
+        assert_eq!(err.life, TOAST_LONG);
+        assert_eq!(warn.life, TOAST_LONG);
+        assert!(ok.life < warn.life);
+    }
+
+    /// Two notices are the same only when both lines are: the title alone would
+    /// merge "link refused" of two different links into one count.
+    #[test]
+    fn the_same_notice_needs_both_lines() {
+        let t = Toast::new("Link refused", "http://a", Severity::Err);
+        assert!(t.same("Link refused", "http://a"));
+        assert!(!t.same("Link refused", "http://b"), "another link");
+        assert!(!t.same("Link failed", "http://a"), "another title");
+    }
+
+    /// The click lands inside the box the renderer reported and nowhere else: the
+    /// right and bottom edges belong to the grid, so a press there still selects.
+    #[test]
+    fn a_click_lands_only_inside_the_box() {
+        let toast = [100.0, 40.0, 200.0, 30.0];
+        assert!(inside_box(toast, 100.0, 40.0), "the top-left corner");
+        assert!(inside_box(toast, 150.0, 55.0), "the middle");
+        assert!(!inside_box(toast, 99.0, 55.0), "one pixel to the left");
+        assert!(!inside_box(toast, 300.0, 55.0), "the right edge");
+        assert!(!inside_box(toast, 150.0, 70.0), "the bottom edge");
+    }
 
     #[test]
     fn a_dropped_file_becomes_a_quoted_path() {

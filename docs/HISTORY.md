@@ -2277,6 +2277,60 @@ below it, `layout` opens the same tabs empty, `none` opens one tab and writes no
 layout, and a `--cmd` probe leaves `window.json` and the snapshots byte for byte
 intact.
 
+## 2026-11-10 — the toast says what it is about
+
+The notice was one line cut at the grid width, pinned to the bottom-right corner
+with a single (yellow) border and no way out before the clock. Everything the
+owner reads in one glance — what happened, on which line, which key — was
+flattened into the same run of text, and two different notices in a row
+overwrote each other.
+
+- Two levels: a **title** in the foreground colour and a **detail** pulled 22%
+  towards the surface, wrapped at the box margin (a word is not cut while it
+  fits; a path with no space is cut where it reaches the margin), four lines at
+  most.
+- Three shades by the palette, so a custom theme moves the toast with it and no
+  key was added: `Idx(2)` receipt, `Idx(3)` warning, `Idx(1)` error. The 6 px
+  geometric marker became a 4 px accent bar on the left, and the box is
+  **centred** at the bottom, 28 px up from the edge.
+- The time on screen follows the shade: 3 s for a receipt, 10 s for a warning or
+  an error, 8 s for a notification (`OSC 9`/`777`, the same time the badge floor
+  assumes). No key takes it out; a **click** does, and the press goes no further
+  — the box is drawn last and is above the grid, so the click neither starts a
+  selection nor reaches the child. The renderer reports the rect in window
+  pixels, otherwise the hit test would repeat the geometry that drew the box.
+- A different notice **waits in the queue** instead of overwriting the one being
+  read; equal words only raise the count (`×3`) and no longer restart the clock,
+  which used to pin the box to the screen (that was `B8`, item (d)).
+- The middle shade gained a source: `--debug-socket` announces the surface it
+  opened, as the python did.
+- A clean reload answers on screen (`Configuration applied`, with the family and
+  the size in force) instead of only when the previous save had been refused: the
+  python always says it, and the owner editing the file is the one who needs to
+  hear it.
+- A refused reload says what it did to the running configuration —
+  `kept the previous one — line N: …` — which is the first thing the owner wants
+  to know after saving a broken file; the python shows the error alone. At
+  startup the detail is the error alone, because there is no previous
+  configuration to keep.
+
+No rounded corner and no shadow yet: the pipeline paints everything through one
+texture sample, so a corner needs a mask baked into the atlas (nine patch). The
+idea stays for later — the shape did not justify a second pipeline today.
+
+Verified under Xvfb with the real binary, 80x20, fixed palette: the notification
+box is centred (239..531 in 771 px), the accent is green; a second notice arriving
+while the first is on screen changes **0 pixels** (it queued); after the first
+expired the second took the screen (9438 pixels inside the box); a click at the
+box centre left **0** accent pixels; a config error drew 1028 red pixels and the
+debug socket 1028 yellow. A save of the file with the window open drew
+`Configuration applied / Monospace 12 pt` in green (778 accent pixels), and a
+save carrying two unknown keys drew `Configuration error / kept the previous one
+— line 6: 'no_such_key': unknown key (+1 more)` in red. Tests: `a_notice_detail_wraps_at_the_space`,
+`a_word_longer_than_the_line_is_cut`, `the_detail_stops_at_the_line_cap`,
+`an_error_stays_longer_than_a_receipt`, `the_same_notice_needs_both_lines`,
+`a_click_lands_only_inside_the_box`.
+
 ## 2026-11-10 — the fallback chain was one font short
 
 `pi` draws its spinner with braille (`U+280B`, `⠋`). Inside tortty the cell came
