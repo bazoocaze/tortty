@@ -2420,3 +2420,15 @@ use reads back `0, 1, 2` for every position of the front), and an Xvfb
 round trip — three workspaces, the middle one named `MID`, the front in the middle,
 quit and reopened: `ws: 1` and `['', 'MID', '']` both times. With the code before
 this, the same file reopened as `ws: 2` and `['', '', 'MID']`.
+
+## 2026-11-11 — `pi` image detection is upstream (`B52`)
+
+`pi` drew no image inside tortty because `pi-tui` picks the image protocol only
+by terminal name (`TERM_PROGRAM`, `KITTY_WINDOW_ID`, …) and `tortty` is not in
+the list — `detectCapabilities()` answers `images: null, hyperlinks: false`.
+Our half already works: the `f=100` path draws and `a=q` is answered.
+
+- Verified end to end with `PI_IMAGE_PROTOCOL=kitty` (`PI_HYPERLINKS=1`): the
+  owner read `brazil_flag.png` in `pi` and the picture drew on screen.
+- Closed as an `EXTERNALS.md` row (proof + workaround) plus one line in
+  `FEATURES.md` — no code of ours. If upstream lists the name, the row leaves.

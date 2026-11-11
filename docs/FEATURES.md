@@ -114,7 +114,9 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   `X=`/`Y=`, `C=1`, `q=`; the image follows the scroll and is pruned with the
   history; `ED 3` clears images.
 - **limit:** no animation (`B2`), no sixel/iTerm2 (`B3`), and no z-index,
-  placement id, Unicode placeholder or source crop (`M-L`).
+  placement id, Unicode placeholder or source crop (`M-L`); `pi` does not list
+  the name `tortty`, so it falls back to text unless `PI_IMAGE_PROTOCOL=kitty`
+  ([`EXTERNALS.md`](EXTERNALS.md)).
 
 ## Window
 
