@@ -2432,3 +2432,13 @@ Our half already works: the `f=100` path draws and `a=q` is answered.
   owner read `brazil_flag.png` in `pi` and the picture drew on screen.
 - Closed as an `EXTERNALS.md` row (proof + workaround) plus one line in
   `FEATURES.md` — no code of ours. If upstream lists the name, the row leaves.
+
+## 2026-11-11 — the keyboard walks and moves workspaces (`B49`)
+
+- `Super+Up/Down` selects the previous/next workspace, `Super+Shift+Up/Down`
+  moves the front one a place up/down the sidebar: the same `reorder` the card
+  drag uses, so the front follows itself. Walk and carry both clamp at the ends.
+- Both live in `shortcut_ws`, before the encoder, so the child never sees the
+  keys — the same stance as `Super+N/Q`, which the WM may also swallow.
+- Verified: `a_workspace_walk_clamps_at_both_ends`; the carry rides on
+  `move_workspace`, covered by the `reorder`/`moved_front` tests.

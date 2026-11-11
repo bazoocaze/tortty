@@ -158,7 +158,9 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   window + urgency only — no desktop notification daemon, and the progress form
   `9;4;...` is swallowed, not shown.
 - Shortcuts: Ctrl+Shift+T/W/N/Q/F2 (`F2` is the config in the editor, under
-  *Configuration*), Ctrl+Shift+1…9, Alt+1…9, Super+N/Q/1…9, with the digit taken
+  *Configuration*), Ctrl+Shift+1…9, Alt+1…9, Super+N/Q/1…9, Super+Up/Down
+  (previous/next workspace) and Super+Shift+Up/Down (move the front
+  workspace), with the digit taken
   from the physical key so ABNT2 layouts still work.
   **limit:** they are fixed, no remapping yet (`M-H`).
 - Geometry: 980×640 without state, size restored, maximized tracked separately

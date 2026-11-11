@@ -502,6 +502,20 @@ fn moved_front(front: usize, from: usize, to: usize) -> usize {
     }
 }
 
+/// The neighbour above, clamped at the first workspace. The pure half of
+/// `Super+Up` and of `Super+Shift+Up` (`B49`): the App half is
+/// `select_workspace`/`move_workspace`, which already ignore a move to
+/// themselves, so the walk and the carry both stop at the first one.
+fn ws_above(i: usize) -> usize {
+    i.saturating_sub(1)
+}
+
+/// The neighbour below, clamped at the last one. The pure half of `Super+Down`
+/// and of `Super+Shift+Down` (`B49`).
+fn ws_below(i: usize, total: usize) -> usize {
+    (i + 1).min(total.saturating_sub(1))
+}
+
 /// Removes the workspace at `from` and inserts it at `to`, carrying the one in
 /// front with it (`B49`). The pure half of the move: it is the whole of it that
 /// can be checked without a window.
@@ -1192,6 +1206,30 @@ impl App {
                 Some('q') => {
                     let i = self.ws_idx;
                     self.close_workspace(i);
+                    return true;
+                },
+                _ => {},
+            }
+            // Super+Up/Down walks the workspaces; with Shift it carries the
+            // front one along (B49). The sidebar is vertical, so the pair
+            // lives on Up/Down, before the encoder: the child never sees it.
+            match named {
+                Some(NamedKey::ArrowUp) if !shift => {
+                    self.select_workspace(ws_above(self.ws_idx));
+                    return true;
+                },
+                Some(NamedKey::ArrowDown) if !shift => {
+                    self.select_workspace(ws_below(self.ws_idx, self.ws_count()));
+                    return true;
+                },
+                Some(NamedKey::ArrowUp) => {
+                    let i = self.ws_idx;
+                    self.move_workspace(i, ws_above(i));
+                    return true;
+                },
+                Some(NamedKey::ArrowDown) => {
+                    let i = self.ws_idx;
+                    self.move_workspace(i, ws_below(i, self.ws_count()));
                     return true;
                 },
                 _ => {},
@@ -4375,6 +4413,18 @@ mod tests {
         );
         assert_eq!(moved_front(1, 3, 4), 1, "a move entirely on its right");
         assert_eq!(moved_front(3, 0, 1), 3, "a move entirely on its left");
+    }
+
+    /// A walk stops at both ends of the sidebar (`B49`): above the first one
+    /// is the first one, below the last one is the last one — and the carry
+    /// uses the same clamp, so moving the front past either end is a no-op.
+    #[test]
+    fn a_workspace_walk_clamps_at_both_ends() {
+        assert_eq!(ws_above(0), 0, "already first");
+        assert_eq!(ws_above(2), 1);
+        assert_eq!(ws_below(0, 3), 1);
+        assert_eq!(ws_below(2, 3), 2, "already last");
+        assert_eq!(ws_below(0, 1), 0, "a single workspace");
     }
 
     #[test]
