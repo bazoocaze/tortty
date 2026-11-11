@@ -22,8 +22,8 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - SGR: bold, italic, underline (styles `4:2`…`4:5`), reverse, 16 colours, 256,
   truecolor `38;2`/`48;2`, and `:` subparameters.
 - OSC: 0/2 window title, 1 icon title, 4 palette query, 7 shell cwd, 8 hyperlink,
-  10/11 default colour query. **limit:** everything else is discarded — OSC 52
-  (remote clipboard) and OSC 133 (prompt marks) among them (`M-R`).
+  10/11 default colour query, 52 remote clipboard. **limit:** everything else
+  is discarded — OSC 133 (prompt marks) among them (`M-R`).
 - Hyperlinks (`OSC 8`): the cell carries the URI (an index into `Term::links`,
   repeated URIs share it), Ctrl underlines every link on screen and Ctrl+click
   hands it to `xdg-open`. **limit:** only `http`, `https`, `file`, `ftp` and
@@ -77,8 +77,11 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   rectangle), and with the child asking for the mouse a plain drag is reported
   to it instead — Alt+drag still selects a block.
 - Clipboard: PRIMARY on release, CLIPBOARD with `copy_on_select`,
-  Ctrl+Shift+C/V, button 2 pastes PRIMARY, bracketed paste. **limit:** PRIMARY
-  dies with the app — it owns the selection; CLIPBOARD survives.
+  Ctrl+Shift+C/V, button 2 pastes PRIMARY, bracketed paste, `OSC 52` from the
+  child (`c` sets CLIPBOARD, `p` PRIMARY — the `ssh` copy). **limit:** PRIMARY
+  dies with the app — it owns the selection; CLIPBOARD survives. A remote can
+  write but never read: the `?` query is refused, and so are non-text payloads
+  and bodies cut at the OSC cap.
 
 ## Drawing
 

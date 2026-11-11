@@ -483,7 +483,7 @@ pub fn png_size(data: &[u8]) -> (u32, u32) {
 }
 
 /// base64 with optional padding (the app may send it unpadded): `None` = skewed.
-fn base64_decode(text: &str) -> Option<Vec<u8>> {
+pub(crate) fn base64_decode(text: &str) -> Option<Vec<u8>> {
     use base64::Engine as _;
     let clean: String = text.chars().filter(|c| !c.is_whitespace()).collect();
     base64::engine::general_purpose::STANDARD_NO_PAD

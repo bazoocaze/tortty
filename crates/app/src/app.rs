@@ -1937,6 +1937,20 @@ impl App {
         }
     }
 
+    /// A remote clipboard write (`OSC 52`, `M-R`): the core decoded and
+    /// validated, here it lands on the system clipboard. `c` is CLIPBOARD,
+    /// `p` is PRIMARY — the same targets `Ctrl+Shift+C` and the release copy
+    /// use, so a remote `ssh` copy behaves like a local one. Never the
+    /// reverse: the query form is refused in the parser, so a remote can
+    /// write but never read.
+    fn set_clipboard(&mut self, op: tortty_core::term::ClipboardOp) {
+        use tortty_core::term::ClipboardOp::{Clipboard, Primary};
+        match op {
+            Clipboard(text) => self.clip.set(&text),
+            Primary(text) => self.clip.set_primary(&text),
+        }
+    }
+
     /// A file dropped on the window: the path goes into the child as a paste,
     /// quoted for the shell. Nothing else happens — no new tab, no `cd`: the
     /// terminal does not know what is running, and a program that is not a shell
@@ -2086,6 +2100,10 @@ impl App {
                     self.urgency();
                 }
                 // no toast: a parked tab must not write over the foreground
+                // `OSC 52` still lands: a remote copy in a parked tab copies
+                if let Some(op) = self.parked[s].tabs[j].term.take_clipboard() {
+                    self.set_clipboard(op);
+                }
                 self.parked[s].tabs[j]
                     .term
                     .serve_images(Self::read_image_file);
@@ -2180,6 +2198,11 @@ impl App {
                 // something happened, and it keeps the 8 s the badge floor
                 // assumes (`M-K`)
                 self.toast_for("Notification", &text, Severity::Ok, Some(NOTIF_FLOOR));
+            }
+            // `OSC 52`: the child set the clipboard (a remote `ssh` copies),
+            // parked or front — the drain is per tab
+            if let Some(op) = self.tabs[i].term.take_clipboard() {
+                self.set_clipboard(op);
             }
             self.tabs[i].term.serve_images(Self::read_image_file);
             if i == self.active {

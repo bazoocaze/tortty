@@ -2453,3 +2453,15 @@ Our half already works: the `f=100` path draws and `a=q` is answered.
 - Verified with an Xvfb probe: a plain drag delivers
   `ESC[<0;3;1M ESC[<32;10;2M ESC[<0;10;2m` with `sel` null; Alt+drag leaves the
   screen untouched and sets `sel` block `pha beta`/`lta epsi`.
+
+## 2026-11-11 — `OSC 52` sets the clipboard (`M-R`, half)
+
+- The parser takes `52;c;text` (CLIPBOARD) and `52;p;text` (PRIMARY);
+  the app drains each tab after the feed, front and parked. Empty clears,
+  as in xterm.
+- Never the reverse: the `?` query is refused with no reply, and so are
+  non-UTF-8, control characters and bodies cut at `MAX_OSC` (cut base64
+  still decodes). Payloads ride the 4096-byte OSC cap (~3 KB decoded).
+- Verified: seven `osc52_*` core tests plus an Xvfb probe — the child's
+  escapes landed on the real selections (`CLIPBOARD: 'hello remote'`,
+  `PRIMARY: 'prim'`, read back with python-xlib).

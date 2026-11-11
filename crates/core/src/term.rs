@@ -141,6 +141,15 @@ pub struct OscSeen {
     pub title: String,
 }
 
+/// A remote clipboard write (`OSC 52`, `M-R`): the target and the decoded
+/// text. Only setting exists — the query form is refused in the parser, so
+/// the child's bytes can never read the clipboard back out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ClipboardOp {
+    Clipboard(String),
+    Primary(String),
+}
+
 /// Where the extended color goes: text, background or underline.
 #[derive(Copy, Clone)]
 enum Slot {
@@ -273,6 +282,12 @@ pub struct Term {
     title_stack: Vec<String>,
     /// The last OSC that arrived, oldest to newest.
     pub osc_seen: VecDeque<OscSeen>,
+    /// A remote clipboard write waiting for the app (`OSC 52`, `M-R`). The
+    /// core decodes and validates; `clip.set`/`set_primary` is the app's.
+    pub clipboard: Option<ClipboardOp>,
+    /// The in-flight OSC went past `MAX_OSC` and lost bytes: a cut base64
+    /// still decodes, and a mangled clipboard is worse than none.
+    osc_over: bool,
     /// Theme colors: the renderer uses them and `OSC 4/10/11/12` queries/changes them.
     pub theme: Theme,
     /// Someone touched the colors via OSC: the app has to resend them to the renderer.
@@ -380,6 +395,8 @@ impl Term {
             link: 0,
             title_stack: Vec::new(),
             osc_seen: VecDeque::with_capacity(OSC_SEEN),
+            clipboard: None,
+            osc_over: false,
             theme: Theme::default(),
             theme_dirty: false,
             cell_size: (10, 19),
@@ -1744,6 +1761,7 @@ impl Term {
             12 => self.osc_color(12, arg),
             7 => self.osc_cwd(arg),
             8 => self.osc_link(arg),
+            52 => self.osc_clipboard(arg),
             // `9;4;state[;progress]` is not a message — it is the mintty/ConEmu
             // progress form (which some TUIs send as a keepalive while busy).
             // Swallowed, not toasted: a 1 Hz repeater would pin the toast and
@@ -1796,7 +1814,67 @@ impl Term {
         self.osc_dispatch(&data);
         self.osc = data;
         self.osc.clear();
+        self.osc_over = false;
         self.state = State::Ground;
+    }
+
+    /// `OSC 52 ; Pc ; Pd`: the child sets the clipboard (`M-R`, the `ssh`
+    /// case). `c` is CLIPBOARD, `p` is PRIMARY; anything else is ignored. The
+    /// query form (`Pd == ?`, which would hand our clipboard to the child)
+    /// is refused, and so is a body cut at `MAX_OSC` — cut base64 still
+    /// decodes. An empty payload clears, as in xterm. The app drains the
+    /// text with `take_clipboard`.
+    fn osc_clipboard(&mut self, arg: &[u8]) {
+        if self.osc_over {
+            return;
+        }
+        let mut it = arg.splitn(2, |&b| b == b';');
+        let (Some(pc), Some(pd)) = (it.next(), it.next()) else {
+            return;
+        };
+        if pd == b"?" {
+            // the query: answering would leak our clipboard to the child
+            return;
+        }
+        let text = if pd.is_empty() {
+            String::new()
+        } else {
+            let Ok(b64) = std::str::from_utf8(pd) else {
+                return;
+            };
+            let Some(raw) = crate::graphics::base64_decode(b64) else {
+                return;
+            };
+            let Some(text) = Self::clipboard_text(&raw) else {
+                return;
+            };
+            text
+        };
+        let op = match pc {
+            b"c" => ClipboardOp::Clipboard(text),
+            b"p" => ClipboardOp::Primary(text),
+            _ => return,
+        };
+        self.clipboard = Some(op);
+    }
+
+    /// A remote clipboard write (`OSC 52`), if one arrived since the last
+    /// drain. The app sets CLIPBOARD/PRIMARY from it.
+    pub fn take_clipboard(&mut self) -> Option<ClipboardOp> {
+        self.clipboard.take()
+    }
+
+    /// Clipboard text: UTF-8 without C0 controls (tab/LF/CR are text, the
+    /// rest is not). Binary or control junk from a remote never lands on the
+    /// system clipboard silently — it is refused, not scrubbed.
+    fn clipboard_text(data: &[u8]) -> Option<String> {
+        let s = std::str::from_utf8(data).ok()?;
+        if s.chars()
+            .any(|c| c.is_control() && !matches!(c, '\t' | '\n' | '\r'))
+        {
+            return None;
+        }
+        Some(s.to_string())
     }
 
     /// `OSC 4;index;color` (defines) or `OSC 4;index;?` (queries).
@@ -2084,6 +2162,8 @@ impl Term {
                         _ => {
                             if self.osc.len() < MAX_OSC {
                                 self.osc.push(b);
+                            } else {
+                                self.osc_over = true;
                             }
                         },
                     }
@@ -2235,6 +2315,7 @@ impl Term {
             b']' => {
                 self.state = State::Osc;
                 self.osc.clear();
+                self.osc_over = false;
             },
             b'_' => {
                 // APC: only this kind is content (kitty image); DCS/PM/SOS stay
@@ -3935,6 +4016,103 @@ mod tests {
         t.feed(b"\x1b]777;foo;bar\x07");
         t.feed(b"\x1b]777\x07");
         assert_eq!((t.notifs, t.notif_text.as_str()), (0, ""));
+    }
+
+    #[test]
+    fn osc52_sets_the_clipboard_from_base64() {
+        use base64::Engine as _;
+        // the `ssh` case from `M-R`: a remote program copies, the system
+        // clipboard gets the text
+        let mut t = term();
+        let b64 = base64::engine::general_purpose::STANDARD.encode("hi from ssh");
+        let seq = format!("\x1b]52;c;{b64}\x07");
+        t.feed(seq.as_bytes());
+        assert_eq!(
+            t.take_clipboard(),
+            Some(ClipboardOp::Clipboard("hi from ssh".to_string()))
+        );
+        // the drain is once: a second take finds nothing
+        assert_eq!(t.take_clipboard(), None);
+    }
+
+    #[test]
+    fn osc52_primary_goes_to_primary_and_empty_clears() {
+        use base64::Engine as _;
+        let mut t = term();
+        let b64 = base64::engine::general_purpose::STANDARD.encode("sel");
+        let seq = format!("\x1b]52;p;{b64}\x07");
+        t.feed(seq.as_bytes());
+        assert_eq!(
+            t.take_clipboard(),
+            Some(ClipboardOp::Primary("sel".to_string()))
+        );
+        // an empty payload clears, as in xterm
+        t.feed(b"\x1b]52;c;\x07");
+        assert_eq!(
+            t.take_clipboard(),
+            Some(ClipboardOp::Clipboard(String::new()))
+        );
+    }
+
+    #[test]
+    fn osc52_query_never_answers() {
+        let mut t = term();
+        // `?` would hand our clipboard to the child: refused, with no reply
+        t.feed(b"\x1b]52;c;?\x07");
+        assert_eq!(t.take_clipboard(), None);
+        assert!(t.take_child_out().is_empty(), "no answer leaks outward");
+    }
+
+    #[test]
+    fn osc52_ignores_anything_but_clipboard_and_primary() {
+        use base64::Engine as _;
+        let mut t = term();
+        let b64 = base64::engine::general_purpose::STANDARD.encode("hi");
+        for pc in ["s", "x", ""] {
+            let seq = format!("\x1b]52;{pc};{b64}\x07");
+            t.feed(seq.as_bytes());
+            assert_eq!(t.take_clipboard(), None, "Pc={pc:?} sets nothing");
+        }
+        // no payload at all is not a clear
+        t.feed(b"\x1b]52;c\x07");
+        assert_eq!(t.take_clipboard(), None);
+        // skewed base64 is not a clipboard
+        t.feed(b"\x1b]52;c;!!!\x07");
+        assert_eq!(t.take_clipboard(), None);
+    }
+
+    #[test]
+    fn osc52_refuses_binary_and_control_characters() {
+        use base64::Engine as _;
+        let e = base64::engine::general_purpose::STANDARD;
+        let mut t = term();
+        // not UTF-8: refused, not scrubbed
+        let seq = format!("\x1b]52;c;{}\x07", e.encode([0xff, 0xfe]));
+        t.feed(seq.as_bytes());
+        assert_eq!(t.take_clipboard(), None);
+        // NUL inside text: refused too
+        let seq = format!("\x1b]52;c;{}\x07", e.encode(b"a\x00b"));
+        t.feed(seq.as_bytes());
+        assert_eq!(t.take_clipboard(), None);
+        // tab and newlines are text, not junk
+        let seq = format!("\x1b]52;c;{}\x07", e.encode("a\tb\nc"));
+        t.feed(seq.as_bytes());
+        assert_eq!(
+            t.take_clipboard(),
+            Some(ClipboardOp::Clipboard("a\tb\nc".to_string()))
+        );
+    }
+
+    #[test]
+    fn osc52_cut_at_the_osc_cap_is_refused() {
+        // a body past `MAX_OSC` still decodes (cut base64 is valid base64),
+        // so a truncated write must not land a mangled clipboard
+        let mut t = term();
+        let mut seq = b"\x1b]52;c;".to_vec();
+        seq.extend(std::iter::repeat_n(b'A', 5000));
+        seq.extend_from_slice(b"\x07");
+        t.feed(&seq);
+        assert_eq!(t.take_clipboard(), None);
     }
 
     #[test]
