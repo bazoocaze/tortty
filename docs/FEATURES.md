@@ -23,9 +23,7 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   truecolor `38;2`/`48;2`, and `:` subparameters.
 - OSC: 0/2 window title, 1 icon title, 4 palette query, 7 shell cwd, 8 hyperlink,
   10/11 default colour query. **limit:** everything else is discarded — OSC 52
-  (remote clipboard) and OSC 133 (prompt marks) are examples (`M-R`). Shell
-  integration (`B39`) is the layer that would feed those escapes; it is an
-  addition on top, not a gap in what exists here.
+  (remote clipboard) and OSC 133 (prompt marks) among them (`M-R`).
 - Hyperlinks (`OSC 8`): the cell carries the URI (an index into `Term::links`,
   repeated URIs share it), Ctrl underlines every link on screen and Ctrl+click
   hands it to `xdg-open`. **limit:** only `http`, `https`, `file`, `ftp` and
@@ -40,7 +38,7 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   scrollbar on the grid's right edge: it appears only when there is history, the
   thumb is the share of the buffer the view shows, a click jumps and a drag walks
   it. Output moves the view so the line being read stays put — inside a `?2026`
-  window too, when all the window does is write (`B53`); a window that redraws the
+  window too, when all the window does is write; a window that redraws the
   screen (`ED 2`/`ED 3`/cursor home) and a `clear` (`ED 3`) do not drag the
   reader. **limit:** no search (`M-D`).
 - Wide cells carry a continuation mark. **limit:** a combining mark arriving in a
@@ -77,7 +75,7 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   column of a table, not the ends of its lines. **limit:** a block is carried
   across a resize by its two corners (the reflow does not re-derive the
   rectangle), and with the child asking for the mouse the drag is reported to it
-  instead (`B5` closed 2026-11-09).
+  instead.
 - Clipboard: PRIMARY on release, CLIPBOARD with `copy_on_select`,
   Ctrl+Shift+C/V, button 2 pastes PRIMARY, bracketed paste. **limit:** PRIMARY
   dies with the app — it owns the selection; CLIPBOARD survives.
@@ -102,9 +100,10 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   background painted to the border.
 - Damage per line: only dirty lines are rebuilt, and a full-screen scroll shifts
   the lines that are ready. **limit:** per-region drawing is not done (`M-AC`).
-  Box drawing and block elements are drawn half a pixel wider than their ink, so
+- Box drawing and block elements are drawn half a pixel wider than their ink, so
   that two neighbours meet at a fractional cell width.
-- Frame coalescing and `?2026` held output, so one frame is drawn per frame.
+- At most one frame every 16 ms, and no drawing while `?2026` is open — the
+  window is held until it closes, with a 200 ms cap for an app that forgets.
 
 ## Images (kitty protocol)
 
@@ -127,12 +126,12 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   child's wheel).
 - Workspaces: a set of tabs, sidebar cards (hidden when there is only one),
   inline rename, stable numbering; the card is the number plus the name the owner
-  typed (`B43`) over the title of the selected tab, and a workspace never renamed
+  typed over the title of the selected tab, and a workspace never renamed
   shows that title on the first row with the second one empty — clearing the name
   in the field goes back to it; the card list scrolls — the wheel over the column
   walks it one card per detent (the touchpad's travel accumulates) and entering a
   workspace by keyboard brings its card into sight; a card is dragged to another
-  place in the list (`B49`), and the cards move under the pointer as it passes,
+  place in the list, and the cards move under the pointer as it passes,
   so the drop is seen before the button is released. **limit:** the drag moves
   the cards, not the tabs inside them, and it reorders only while the pointer is
   over a card — the column does not scroll to follow a drag that leaves it.
@@ -150,13 +149,15 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   width, so a wide glyph (emoji, CJK) can overflow the box, and the detail is cut
   at four lines.
 - Notifications (`OSC 9`/`777`): the foreground tab toasts the text, a
-  background tab wears a badge on its label, a parked workspace on its card,
-  and the window always asks for urgency. The toast lives 8 s and a click takes
-  it out; the badges ignore keys for 8 s (whoever types must not lose them), and
-  after that the first key or the visit acknowledges. **limit:** inside the window + urgency only — no desktop
-  notification daemon, and the progress form `9;4;...` is swallowed, not shown.
-- Shortcuts: Ctrl+Shift+T/W/N/Q/F2, Ctrl+Shift+1…9, Alt+1…9, Super+N/Q/1…9, with
-  the digit taken from the physical key so ABNT2 layouts still work.
+  background tab wears a badge on its label, a parked workspace on its card, and
+  the window always asks for urgency. The toast is the one above, with its 8 s
+  floor; the badges ignore keys for 8 s (whoever types must not lose them), and
+  after that the first key or the visit acknowledges. **limit:** inside the
+  window + urgency only — no desktop notification daemon, and the progress form
+  `9;4;...` is swallowed, not shown.
+- Shortcuts: Ctrl+Shift+T/W/N/Q/F2 (`F2` is the config in the editor, under
+  *Configuration*), Ctrl+Shift+1…9, Alt+1…9, Super+N/Q/1…9, with the digit taken
+  from the physical key so ABNT2 layouts still work.
   **limit:** they are fixed, no remapping yet (`M-H`).
 - Geometry: 980×640 without state, size restored, maximized tracked separately
   from the normal size, invalid geometry rejected; the workspaces and tabs of the
@@ -169,7 +170,7 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   the screen and the history of every tab, fed back before the shell exists,
   closed by a marker line that separates the photograph from this run — a
   decoration, drawn on the screen and **never** saved, so a tab reopened five
-  times does not come back with five markers (`B48`); the
+  times does not come back with five markers; the
   window closes with a hangup and the ptys are drained for a quarter of a second
   before the snapshot, so the child's last words travel with it).
   **limit:** a photograph, not the process — a new shell starts in the same
@@ -193,9 +194,9 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 
 - A kitty-format file on top of the built-in defaults, one option per line, last
   key wins, an error is reported per line and does not take the file down.
-- Keys: `shell`, `font_family`, `font_size`, `ligatures`, `cursor_shape`,
-  `cursor_blink`, `scrollback`, `window_padding_width`, `bell`, `copy_on_select`,
-  `debug_log`, `foreground`, `background`, `cursor_color`, `color0..15`.
+- The keys are the ones in [`CONFIG.md`](CONFIG.md) — the shell, the font, the
+  cursor, scrollback, padding, bell, clipboard, `restore_state`, the diagnostic
+  log and the colours.
 - Hot reload with a debounce; **any** error on reload keeps the configuration
   already in effect, and the toast says both things: `Configuration error` over
   `kept the previous one — line N: …` (with the count of the others). A clean
@@ -203,6 +204,10 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   that are in force — proof that this file is the one being read, not only when
   the previous save was refused. At startup there is nothing to keep, so the
   detail is the error alone.
+- Ctrl+Shift+F2 opens that file in the editor, in a new tab: `VISUAL`, then
+  `EDITOR`, then `vim`. The directory is created first, because the editor only
+  writes the file on save; a session with no path (no `HOME`) answers with a
+  toast instead of a tab.
 - CLI: `-c/--config`, `--cmd`, `--cols`/`--rows`, `--font-family`, `--font-size`,
   `--scrollback`, `--dpi`, `--no-vsync`, `--debug-socket`, `--debug-log`, `--prof`,
   `--quit-after`, `--dump-to`, `--selftest`, `--version`.
@@ -210,7 +215,8 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 ## Debug socket and instrumentation
 
 - Unix socket, JSON per line, several requests per connection: `state`, `text`,
-  `write`, `keys`, `resize`, `prof`, `log`, `quit`.
+  `write`, `drop`, `sel`, `resize`, `tab`, `keys`, `prof`, `osc`, `log`, `quit`
+  ([`DEBUG.md`](DEBUG.md) has the shape of each).
 - `--debug-socket auto` opens `$XDG_RUNTIME_DIR/tortty-<pid>.sock`; the socket is
   `0600` and checks `SO_PEERCRED`, and it never deletes a file that is not its
   own.

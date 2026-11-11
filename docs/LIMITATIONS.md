@@ -14,12 +14,9 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   screen comes back only with `restore_state = content`, and it is a picture:
   text, SGR and `OSC 8` links, never the process that wrote them, and it stops
   at the `scrollback` cap.
-- **The state has one owner, and the second window is a scratch.** The window
-  that opens the session holds a `flock` on `state.lock` (`B46`): it restores,
-  applies the geometry and writes on the way out. A window that finds the lock
-  taken opens one tab in the directory it was called from, at the 980×640
-  default, and never writes — so what the *second* window saw is not remembered,
-  and closing one window never edits another's session.
+- **The second window is a scratch.** One tab, the default size, and nothing
+  of it is remembered on the way out — so what the second window saw is not in
+  the state, and closing one window never edits another's session.
 - **Decoration is not content.** The line that separates a restored picture from
   the new run is marked when it is written and skipped when the snapshot is taken
   (`B48`): it shows on the screen and leaves no trace in the file, which is the
@@ -33,9 +30,6 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
 
 ## Platform
 
-- **Window position on Wayland**: the client does not choose where the window
-  goes. Geometry is persisted (`B45`), and on Wayland only size and maximized are
-  stored. It is not missing code, it is the protocol.
 - **No rasterizer of our own.** Drawing is `wgpu` and nothing else: there is no
   cell-by-cell CPU painter to fall back on, and writing one is an entire
   renderer, not a switch. What `wgpu` offers **is** used — `render.rs` prefers a
