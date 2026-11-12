@@ -2513,3 +2513,21 @@ Our half already works: the `f=100` path draws and `a=q` is answered.
 - Two tests: the absolute moves with the offset, the relative ones without
   it, both with the conditional margin rule. `tortty-java` `B39` keeps the
   conditional clamp to be ported, and it homes nothing on the flip.
+
+## 2026-11-12 — `a=q` over a file loads it and answers
+
+- The spec's query action "will try to load the image and respond with
+  either OK or an error". `graphics.rs` resolved `t=f`/`t=t`/`t=s` only for
+  `a=t`/`a=T`, so a query carrying a name fell through to the capability
+  probe: `OK` for a file that was never opened, and the name neither read
+  nor removed. `kitten icat` probes `t=t`/`t=s` exactly that way before it
+  dares a real transmission, so the `OK` was a promise nobody kept.
+- Now `q` goes through the file branch too — `FileRequest::query` — and
+  `provide` answers the verdict instead of storing: `OK`, `ENOENT`, or
+  `EINVAL:unsupported transmission` when the bytes are not the size `s=`/
+  `v=`/`f=` claim. A query with no payload at all is still the probe.
+- Verified end-to-end, child writing the APC itself: the marked temp file
+  is read and deleted, the unmarked one is read and kept, a missing one
+  answers `ENOENT`. The same probe against `1.0.63` left **both** files —
+  the leak was real (this `icat` build happens to unlink its own probes,
+  so it answers by the spec, not by that accident).

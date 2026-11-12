@@ -67,14 +67,25 @@ pub struct Placement {
 /// context (who asked, where to show) and the app answers with
 /// `Graphics::provide` — or the image stays missing and the child gets
 /// `ENOENT`. Shell expansion (`~`) belongs to the app: the path here is raw.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileUse {
+    /// `a=t`: transmit only.
+    Transmit,
+    /// `a=T`: transmit and place the image once it is loaded.
+    Display,
+    /// `a=q`: the child asks whether the file could be sent, so the bytes are
+    /// read and answered — not stored (the spec's query "will try to load the
+    /// image and respond with either OK or an error").
+    Query,
+}
+
 #[derive(Clone, Debug)]
 pub struct FileRequest {
     pub path: String,
     /// `t=t`: the file is temporary — the app deletes it after reading.
     /// `t=s` reads shared memory and never deletes.
     pub delete: bool,
-    /// `a=T` also places the image once loaded; `a=t` only transmits.
-    pub display: bool,
+    pub usage: FileUse,
     pub ident: u32,
     pub quiet: bool,
     pub kv: HashMap<String, String>,
@@ -255,10 +266,14 @@ impl Graphics {
         let medium = param("t").unwrap_or("d");
         let quiet = param("q").is_some_and(|q| q != "0");
         let ident = param("i").and_then(|i| i.parse::<u32>().ok()).unwrap_or(0);
-        if (action == "t" || action == "T") && matches!(medium, "f" | "t" | "s") {
+        if (action == "t" || action == "T" || action == "q")
+            && matches!(medium, "f" | "t" | "s")
+            && !(action == "q" && data.is_empty())
+        {
             // the payload names a file — the app reads it and answers with
             // `provide`. No response yet: `OK`/`ENOENT` comes with the bytes
-            // (or without them).
+            // (or without them). A query with no payload at all carries no
+            // name: it is the capability probe and stays one.
             let path = if medium == "s" {
                 // `t=s` is a shared-memory NAME, not a path (`kitten icat`
                 // sends `icat-XXX` and waits): it lives in `/dev/shm`.
@@ -278,7 +293,11 @@ impl Graphics {
                 file: Some(FileRequest {
                     path,
                     delete: medium == "t",
-                    display: action == "T",
+                    usage: match action {
+                        "T" => FileUse::Display,
+                        "q" => FileUse::Query,
+                        _ => FileUse::Transmit,
+                    },
                     ident,
                     quiet,
                     kv,
@@ -322,15 +341,9 @@ impl Graphics {
                 // sends three (direct, file, memory) and only proceeds if it gets
                 // OK on the direct transmission. Answering ENOENT because the id
                 // does not exist makes icat give up with "terminal does not
-                // support the graphics protocol".
-                let middle = param("t").unwrap_or("d");
-                let fmt = param("f").and_then(|f| f.parse::<u32>().ok()).unwrap_or(32);
-                let ok = matches!(middle, "d" | "f" | "t" | "s") && [24, 32, 100].contains(&fmt);
-                let name = if ok {
-                    "OK"
-                } else {
-                    "EINVAL:unsupported transmission"
-                };
+                // support the graphics protocol". The two that name a file are
+                // read before they get here (`B59`), and answer by the same rule.
+                let name = Self::query_verdict(kv, None);
                 Output {
                     responses: if ident == 0 {
                         Vec::new()
@@ -400,30 +413,9 @@ impl Graphics {
         cursor: (u16, u16),
         cell: (u32, u32),
     ) -> Output {
-        let param = |k: &str| kv.get(k).map(String::as_str);
-        let mut fmt = param("f").and_then(|f| f.parse::<u32>().ok()).unwrap_or(32);
-        if data.starts_with(b"\x89PNG\r\n\x1a\n") {
-            fmt = 100; // the PNG already says what it is, regardless of `f=`
-        }
-        let (width, height) = if fmt == 100 {
-            let (pw, ph) = png_size(data);
-            (
-                param("s").and_then(|s| s.parse().ok()).unwrap_or(pw),
-                param("v").and_then(|v| v.parse().ok()).unwrap_or(ph),
-            )
-        } else {
-            let w: u32 = param("s").and_then(|s| s.parse().ok()).unwrap_or(0);
-            let h: u32 = param("v").and_then(|v| v.parse().ok()).unwrap_or(0);
-            let bpp = if fmt == 32 { 4 } else { 3 };
-            let needed = u64::from(w) * u64::from(h) * bpp;
-            if w == 0 || h == 0 || (data.len() as u64) < needed {
-                return Self::error(kv, "EINVAL:size");
-            }
-            (w, h)
-        };
-        if width == 0 || height == 0 {
+        let Some((width, height, fmt)) = Self::image_size(kv, data) else {
             return Self::error(kv, "EINVAL:size");
-        }
+        };
         let id = if ident == 0 {
             let i = self.next_id.max(1);
             self.next_id = i + 1;
@@ -454,11 +446,61 @@ impl Graphics {
             },
             ..Output::default()
         };
-        if param("a") == Some("T") {
+        if kv.get("a").is_some_and(|a| a == "T") {
             out.lines = self.place(&img, kv, cursor, cell);
-            out.move_cursor = param("C") != Some("1");
+            out.move_cursor = kv.get("C").is_none_or(|c| c != "1");
         }
         out
+    }
+
+    /// The size `s=`/`v=`/`f=` and the bytes agree on — `None` when they do not
+    /// (`EINVAL:size` for a transmission, the query's error word for a probe).
+    fn image_size(kv: &HashMap<String, String>, data: &[u8]) -> Option<(u32, u32, u32)> {
+        let param = |k: &str| kv.get(k).map(String::as_str);
+        let mut fmt = param("f").and_then(|f| f.parse::<u32>().ok()).unwrap_or(32);
+        if data.starts_with(b"\x89PNG\r\n\x1a\n") {
+            fmt = 100; // the PNG already says what it is, regardless of `f=`
+        }
+        let (width, height) = if fmt == 100 {
+            let (pw, ph) = png_size(data);
+            (
+                param("s").and_then(|s| s.parse().ok()).unwrap_or(pw),
+                param("v").and_then(|v| v.parse().ok()).unwrap_or(ph),
+            )
+        } else {
+            let w: u32 = param("s").and_then(|s| s.parse().ok()).unwrap_or(0);
+            let h: u32 = param("v").and_then(|v| v.parse().ok()).unwrap_or(0);
+            let bpp = if fmt == 32 { 4 } else { 3 };
+            let needed = u64::from(w) * u64::from(h) * bpp;
+            if w == 0 || h == 0 || (data.len() as u64) < needed {
+                return None;
+            }
+            (w, h)
+        };
+        if width == 0 || height == 0 {
+            return None;
+        }
+        Some((width, height, fmt))
+    }
+
+    /// `a=q` answers one of two words, and both who ask get the same rule: the
+    /// medium and the format have to be ones we take, and — with `data` — the
+    /// bytes have to be the size they claim.
+    fn query_verdict(kv: &HashMap<String, String>, data: Option<&[u8]>) -> &'static str {
+        let param = |k: &str| kv.get(k).map(String::as_str);
+        let medium = param("t").unwrap_or("d");
+        let fmt = param("f").and_then(|f| f.parse::<u32>().ok()).unwrap_or(32);
+        let ok = matches!(medium, "d" | "f" | "t" | "s")
+            && [24, 32, 100].contains(&fmt)
+            && match data {
+                None => true,
+                Some(d) => Self::image_size(kv, d).is_some(),
+            };
+        if ok {
+            "OK"
+        } else {
+            "EINVAL:unsupported transmission"
+        }
     }
 
     /// Completes a file transmission (`B1`): the app loaded `req.path` and
@@ -467,6 +509,23 @@ impl Graphics {
     pub fn provide(&mut self, req: &FileRequest, data: &[u8]) -> Output {
         if data.len() > MAX_APC {
             return Self::error(&req.kv, "EINVAL:too big");
+        }
+        if req.usage == FileUse::Query {
+            // `B59`: the bytes prove the file could be sent and nothing is
+            // stored — an id with no image behind it would leak a broken frame
+            return Output {
+                responses: if req.ident == 0 {
+                    Vec::new()
+                } else {
+                    vec![format!(
+                        "Gi={};{}",
+                        req.ident,
+                        Self::query_verdict(&req.kv, Some(data))
+                    )
+                    .into_bytes()]
+                },
+                ..Output::default()
+            };
         }
         self.transmit(&req.kv, data, req.ident, req.quiet, req.cursor, req.cell)
     }
@@ -520,7 +579,7 @@ fn inflate(data: &[u8]) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod checks_graphics {
-    use super::{png_size, Format, Graphics};
+    use super::{png_size, FileUse, Format, Graphics};
     use base64::Engine as _;
 
     fn b64(data: &[u8]) -> String {
@@ -609,6 +668,13 @@ mod checks_graphics {
         format!("Ga={action},f=100,t={t},i=7;{path}").into_bytes()
     }
 
+    /// An `a=q` that names a file: what `kitten icat`'s detection sends before
+    /// it trusts the terminal with a real transmission (`B59`).
+    fn query_body(t: &str, f: u32, s: u32, v: u32) -> Vec<u8> {
+        let path = b64(b"/tmp/x.rgba");
+        format!("Ga=q,f={f},s={s},v={v},t={t},i=21;{path}").into_bytes()
+    }
+
     /// `t=s` carries a shared-memory name, not a path.
     fn shm_body(name: &str, action: &str) -> Vec<u8> {
         let name = b64(name.as_bytes());
@@ -624,7 +690,7 @@ mod checks_graphics {
         let req = out.file.expect("the path waits for the app");
         assert_eq!(req.path, "/tmp/x.png");
         assert!(!req.delete, "t=f never deletes");
-        assert!(req.display, "a=T also places");
+        assert_eq!(req.usage, FileUse::Display, "a=T also places");
         assert_eq!((req.ident, req.cursor, req.quiet), (7, (1, 2), false));
     }
 
@@ -634,7 +700,7 @@ mod checks_graphics {
         let out = g.handle(&file_body("t", "t"), (0, 0), cell());
         let req = out.file.expect("t=t also waits");
         assert!(req.delete, "t=t deletes after reading");
-        assert!(!req.display, "a=t only transmits");
+        assert_eq!(req.usage, FileUse::Transmit, "a=t only transmits");
         let mut g = Graphics::new();
         let out = g.handle(&shm_body("icat-ABC", "T"), (0, 0), cell());
         assert!(!out.file.expect("t=s waits").delete, "shm never deletes");
@@ -651,7 +717,7 @@ mod checks_graphics {
         let req = out.file.expect("the shm waits for the app");
         assert_eq!(req.path, "/dev/shm/icat-ABC");
         assert!(!req.delete, "shm never deletes");
-        assert!(req.display, "a=T also places");
+        assert_eq!(req.usage, FileUse::Display, "a=T also places");
         assert_eq!((req.ident, req.cursor), (7, (1, 2)));
     }
 
@@ -680,6 +746,71 @@ mod checks_graphics {
         let img = g.images().get(&7).expect("image stored");
         assert_eq!((img.width, img.height), (2, 2));
         assert_eq!(g.placements().len(), 1, "a=T placed it");
+    }
+
+    /// `a=q` over a file medium reads the file and answers, and stores nothing:
+    /// the app is the one that opens it, so the verdict only comes back through
+    /// `provide`. Before `B59` the query fell through to the capability probe
+    /// and answered `OK` for a file that was never opened.
+    #[test]
+    fn a_query_over_a_file_loads_it_and_stores_nothing() {
+        let mut g = Graphics::new();
+        let out = g.handle(&query_body("f", 24, 1, 1), (0, 0), cell());
+        assert!(out.responses.is_empty(), "the verdict waits for the bytes");
+        let req = out.file.expect("the query names a file too");
+        assert_eq!(
+            req.usage,
+            FileUse::Query,
+            "the bytes answer instead of filling an image"
+        );
+        assert!(!req.delete, "a query does not delete");
+        let out = g.provide(&req, &[1, 2, 3]);
+        assert_eq!(out.responses, [b"Gi=21;OK".to_vec()]);
+        assert!(g.images().is_empty(), "a query stores no image");
+        assert!(g.placements().is_empty(), "and places nothing");
+    }
+
+    #[test]
+    fn a_query_over_a_missing_file_answers_enoent() {
+        let mut g = Graphics::new();
+        let req = g
+            .handle(&query_body("f", 24, 1, 1), (0, 0), cell())
+            .file
+            .expect("request");
+        let out = Graphics::missing(&req);
+        assert_eq!(out.responses, [b"Gi=21;ENOENT".to_vec()]);
+        assert!(g.images().is_empty());
+    }
+
+    /// A query whose bytes are not the size they claim is refused: the client
+    /// must not go on to send a real transmission the terminal would refuse.
+    #[test]
+    fn a_query_over_data_of_another_size_is_refused() {
+        let mut g = Graphics::new();
+        let req = g
+            .handle(&query_body("f", 24, 1, 1), (0, 0), cell())
+            .file
+            .expect("request");
+        let out = g.provide(&req, &[1, 2]);
+        assert_eq!(
+            out.responses,
+            [b"Gi=21;EINVAL:unsupported transmission".to_vec()]
+        );
+    }
+
+    /// The temp medium is the `t=t` probe `icat` sends for real: the request
+    /// carries the delete, so the app removes the file it was told to read.
+    #[test]
+    fn a_query_marked_temp_asks_for_the_delete() {
+        let mut g = Graphics::new();
+        let req = g
+            .handle(&query_body("t", 24, 1, 1), (0, 0), cell())
+            .file
+            .expect("request");
+        assert!(req.delete, "t=t is ours to remove, query or not");
+        assert_eq!(req.usage, FileUse::Query);
+        let out = g.provide(&req, &[1, 2, 3]);
+        assert_eq!(out.responses, [b"Gi=21;OK".to_vec()]);
     }
 
     #[test]

@@ -112,8 +112,11 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 
 ## Images (kitty protocol)
 
-- Transmit, display, place by id, delete by id or everything, capability query,
-  chunking, `t=d/f/t/s` (direct, file, temp file deleted after reading *under
+- Transmit, display, place by id, delete by id or everything, capability query
+  (`a=q`; with a file medium and a name it reads the file and answers `OK` or
+  `ENOENT`, storing nothing — the spec's "will try to load the image and
+  respond with either OK or an error"), chunking, `t=d/f/t/s` (direct, file,
+  temp file deleted after reading *under
   the protocol's rule*: temp dir plus `tty-graphics-protocol` in the path,
   otherwise read but kept — the path comes from the child; POSIX shared
   memory under `/dev/shm` — the app loads it, the core never touches
