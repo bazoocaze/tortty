@@ -191,6 +191,11 @@ const FLASH_DUR: Duration = Duration::from_millis(800);
 /// badge, which has no other expiry.
 const NOTIF_FLOOR: Duration = Duration::from_secs(8);
 
+/// One card per this long while a drag holds the pointer in the band below the
+/// last card (`B55`). Long enough to read the list walking, short enough not to
+/// feel stuck; a per-frame step would cross eight workspaces in 130 ms.
+const CARD_WALK: Duration = Duration::from_millis(500);
+
 /// Bytes in hex (the socket's `keys` verb returns this to check the encoder).
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
@@ -583,6 +588,10 @@ pub struct App {
     /// Travel still owed to the card list, in detents (a touchpad fraction), for
     /// the same reason as `bar_frac`.
     card_frac: f32,
+    /// When the drag last walked the card list by itself (`B55`): `Some` while
+    /// the pointer rests in the band below the last card, and the instant is the
+    /// last automatic step — so `CARD_WALK` later it steps again.
+    card_walk: Option<std::time::Instant>,
     /// Workspaces and tabs to reopen, read from the state file before the first
     /// tab is born (`M-I`). `None` = open one tab, as always.
     restore: Option<crate::state::Layout>,
@@ -705,6 +714,7 @@ impl App {
             bar_frac: 0.0,
             card_off: 0,
             card_frac: 0.0,
+            card_walk: None,
             restore: None,
             owner: None,
             wheel_pair: None,
@@ -1077,6 +1087,40 @@ impl App {
             self.card_off = at;
             self.redraw();
         }
+    }
+
+    /// Steps the list once when the drag has rested in the band long enough
+    /// (`B55`), and answers when the next step is due — `None` when no drag is
+    /// walking, so the loop has nothing to wake up for.
+    fn card_walk_tick(&mut self, now: std::time::Instant) -> Option<std::time::Instant> {
+        let at = self.card_walk?;
+        if now.duration_since(at) >= CARD_WALK {
+            self.card_walk = Some(now);
+            self.scroll_cards(1);
+            self.ask_frame();
+        }
+        self.card_walk.map(|at| at + CARD_WALK)
+    }
+
+    /// The strip at the bottom of the column where a drag walks the list
+    /// (`B55`).
+    ///
+    /// It is the last text row of the grid, not "below the last card": the
+    /// cards are drawn from the top of the column and the one at the end is cut
+    /// by the bottom edge — there is never empty space under it to aim at. A
+    /// drop on the card above the strip still works, and going back **up**
+    /// during a drag is the wheel's job, which works with the button held.
+    fn in_card_band(&self, x: f64, y: f64) -> bool {
+        if !self.in_sidebar(x, y) || self.card_press.is_none() {
+            return false;
+        }
+        if self.card_off + self.cards_visible() >= self.ws_count() {
+            return false; // nothing below the last card: nowhere to walk to
+        }
+        let (_cw, ch, pad) = self.cell_metrics();
+        let rows = self.tabs[self.active].term.rows;
+        let bottom = f64::from(pad) + f64::from(self.bar_h(ch) + rows as f32 * ch);
+        y >= bottom - f64::from(ch)
     }
 
     /// Keeps the offset inside the list: closing a workspace or growing the
@@ -1470,6 +1514,7 @@ impl App {
                 // the sidebar drag ends here as well: this path is the one taken
                 // when the child is holding the mouse
                 self.card_press = None;
+                self.card_walk = None;
                 let b = self.held.take().unwrap_or(btn);
                 self.report_mouse(b, false, false);
             },
@@ -1632,6 +1677,7 @@ impl App {
         // the drag starts from here (`B49`); it only moves after 3 px, so the
         // double click that renames is never a drag by accident
         self.card_press = Some((i, self.cursor_px));
+        self.card_walk = None;
         let double = self
             .card_click
             .is_some_and(|(j, when)| j == i && when.elapsed().as_millis() < 400);
@@ -1648,6 +1694,7 @@ impl App {
     /// the press for the reorder drag (`I10`). Same rule as `press_card`.
     fn press_tab(&mut self, i: usize) {
         self.card_press = None;
+        self.card_walk = None;
         self.bar_press = Some((i, self.cursor_px.0));
         self.select_tab(i);
         self.tabs[self.active].dragging = false;
@@ -1724,6 +1771,7 @@ impl App {
                 // sidebar the workspace one (`B49`)
                 self.bar_press = None;
                 self.card_press = None;
+                self.card_walk = None;
                 self.scroll_drag = false;
                 self.tabs[self.active].dragging = false;
                 self.tabs[self.active].press = None;
@@ -1826,6 +1874,17 @@ impl App {
         if (x - px).abs() <= 3.0 && (y - py).abs() <= 3.0 {
             return;
         }
+        // `B55`: in the bottom strip the list walks by itself, one card per
+        // `CARD_WALK`, so a workspace can be moved to a place that is off the
+        // column. The order does not change while it walks: a place is a card
+        // under the pointer, and the card drawn under it here is the one the
+        // strip covers — the drop happens on the way back, over the card that
+        // came into sight.
+        if self.in_card_band(x, y) {
+            self.card_walk.get_or_insert_with(std::time::Instant::now);
+            return;
+        }
+        self.card_walk = None;
         // off the column (or past the last card) the drag does not move: the
         // pointer has to be over a card to mean a place
         let Some(dest) = self.card_at(x, y) else {
@@ -4073,6 +4132,11 @@ impl ApplicationHandler<UserEvent> for App {
                     w.request_redraw();
                 }
             }
+        }
+
+        // `B55`: a drag resting in the band below the cards walks the list
+        if let Some(t) = self.card_walk_tick(now) {
+            when = when.min(t);
         }
 
         event_loop.set_control_flow(ControlFlow::WaitUntil(when));

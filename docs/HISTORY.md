@@ -665,3 +665,17 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 - The spec's query action "will try to load the image and respond with either OK or an error", and `graphics.rs` resolved `t=f`/`t=t`/`t=s` only for `a=t`/`a=T`, so a query carrying a name fell through to the capability probe: `OK` for a file never opened, the name neither read nor removed — and `kitten icat` probes exactly that way before a real transmission.
 - Now `q` goes through the file branch too (`FileRequest::usage`), and `provide` answers the verdict instead of storing: `OK`, `ENOENT`, or `EINVAL:unsupported transmission` when the bytes are not the size `s=`/`v=`/`f=` claim; a query with no payload at all is still the probe.
 - Verified end to end, with the child writing the APC itself: the marked temp file is read and deleted, the unmarked one is read and kept, a missing one answers `ENOENT`; the same probe against `1.0.63` left **both** files, so the leak was real (this `icat` build happens to unlink its own probes, which makes it answer by the spec rather than by that accident).
+
+## 2026-11-12 — a drag walks the workspace column (`B55`)
+
+- A place off the column could not be reached: `card_drag` took the pointer as a
+  place only over a card, and the cards fill the column from the top, so the card
+  at the end is cut by the bottom edge — there was no empty band to aim at.
+- The band is the **last text row of the column**, and a drag resting there walks
+  the list by itself: one card per `CARD_WALK` (500 ms), the order untouched,
+  because a place is still a card under the pointer. Back up mid-drag is the
+  wheel, which already works with the button held.
+- Measured on Xvfb with eight workspaces in a six-row window: resting in the
+  band, `1.0.65` moved the card **one** slot (`ws` 0→2) and stopped there
+  (`cards_off` 1, forever); now `cards_off` walks 0→2→4→6 with `ws` on 0, and
+  the drop on the card that came into sight lands the workspace at the end.
