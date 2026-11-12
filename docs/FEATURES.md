@@ -13,7 +13,9 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - VT parser: C0/C1, CSI, OSC, and DCS/APC/PM/SOS routing, incremental UTF-8 with a
   buffered partial and invalid input as U+FFFD.
 - Cursor: CUU/CUD/CUF/CUB/CNL/CPL/CHA/VPA/CUP/HVP, DECSC/DECRC and `CSI s`/`u`,
-  DECSTBM scroll region, RI at the margin.
+  DECSTBM scroll region, RI at the margin. With `?6` (DECOM) on, the absolute
+  moves count from the region top and relative walks stop at its margins; the
+  mode homes the cursor as it flips, and only the region bounds an absolute one.
 - Editing: IL/DL/ICH/DCH/ECH, EL 0/1/2, ED 0/1/2/3 — `ED 3` clears the scrollback
   and kills the selection anchors.
 - Modes: `?1` DECCKM, `?25`, `?47`/`?1047`/`?1049` alt screen, `?1048`,

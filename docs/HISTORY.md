@@ -2495,3 +2495,21 @@ Our half already works: the `f=100` path draws and `a=q` is answered.
   exists.
 - Verified: four app tests (deletes with marker, keeps without it, keeps
   outside temp, keeps through `..`).
+
+## 2026-11-12 — `?6` (DECOM) offsets the absolute moves only
+
+- `cursor_to` adds the region top for whoever asks, which is right for
+  `CUP`/`HVP`/`VPA` and the `DECSTBM` home. The relative and column moves
+  were passing `self.cy`, already absolute: with `?6h` and a region,
+  `CUU 1` walked two rows **down**, `CHA 5` changed the row, and the
+  cursor parked near the region bottom, painting the frame where the app
+  did not believe it was.
+- Split by kind, measured against `xterm/cursor.c`: `CursorUp`/
+  `CursorDown` stop at the margin but only from inside — a cursor above
+  the region reaches the screen top, one below reaches the last row — and
+  the column moves pass the row through `CursorRow`, which undoes the
+  offset before `CursorSet` puts it back. `?6` also homes the cursor as it
+  flips, as xterm does.
+- Two tests: the absolute moves with the offset, the relative ones without
+  it, both with the conditional margin rule. `tortty-java` `B39` keeps the
+  conditional clamp to be ported, and it homes nothing on the flip.

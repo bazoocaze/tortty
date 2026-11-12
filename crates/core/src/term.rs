@@ -1037,6 +1037,10 @@ impl Term {
         }
     }
 
+    /// Absolute addressing: with `?6h` (DECOM) the row counts from the region
+    /// top and stops at its bottom. Only `CUP`/`HVP`, `VPA` and the `DECSTBM`
+    /// home come here — a caller that passes `self.cy` would add the offset a
+    /// second time, so the rest uses the row as the child counts it.
     fn cursor_to(&mut self, r: isize, c: isize) {
         let (rlo, rhi) = if self.origin {
             (self.top as isize, self.bottom as isize)
@@ -1050,6 +1054,40 @@ impl Term {
         };
         self.cy = r.clamp(rlo, rhi) as usize;
         self.cx = c.clamp(0, self.cols as isize - 1) as usize;
+        self.wrap_pending = false;
+    }
+
+    /// The row as the child counts it — what `CUP` and `VPA` expect back, so a
+    /// column move keeps its row under `?6h` (xterm's `CursorRow`).
+    fn cursor_row(&self) -> isize {
+        let cy = self.cy as isize;
+        if self.origin {
+            cy - self.top as isize
+        } else {
+            cy
+        }
+    }
+
+    /// `CUU`: the margin stops the walk, but a cursor already above it goes to
+    /// the screen top — the same with origin on or off (xterm's `CursorUp`).
+    fn cursor_up(&mut self, n: isize) {
+        let min = if self.cy < self.top {
+            0
+        } else {
+            self.top as isize
+        };
+        self.cy = (self.cy as isize - n).max(min) as usize;
+        self.wrap_pending = false;
+    }
+
+    /// `CUD`, the mirror: a cursor below the region goes down to the last row.
+    fn cursor_down(&mut self, n: isize) {
+        let max = if self.cy > self.bottom {
+            self.rows as isize - 1
+        } else {
+            self.bottom as isize
+        };
+        self.cy = (self.cy as isize + n).min(max) as usize;
         self.wrap_pending = false;
     }
 
@@ -1398,7 +1436,12 @@ impl Term {
         if private {
             match p {
                 1 => self.app_cursor = on,
-                6 => self.origin = on,
+                6 => {
+                    // DECOM moves the cursor home as it flips: to the region top
+                    // when it goes on, to the screen top when it goes off
+                    self.origin = on;
+                    self.cursor_to(0, 0);
+                },
                 7 => self.autowrap = on,
                 25 => self.cursor_visible = on,
                 47 | 1047 | 1049 => {
@@ -1530,40 +1573,29 @@ impl Term {
 
         match final_ {
             b'm' => self.sgr(&body),
-            b'A' => {
-                let k = (p(0, 1).max(1)) as isize;
-                let (cy, cx) = (self.cy as isize, self.cx as isize);
-                self.cursor_to(cy - k, cx);
-            },
-            b'B' => {
-                let k = (p(0, 1).max(1)) as isize;
-                let (cy, cx) = (self.cy as isize, self.cx as isize);
-                self.cursor_to(cy + k, cx);
-            },
+            b'A' => self.cursor_up((p(0, 1).max(1)) as isize),
+            b'B' => self.cursor_down((p(0, 1).max(1)) as isize),
             b'C' => {
                 let k = (p(0, 1).max(1)) as isize;
-                let (cy, cx) = (self.cy as isize, self.cx as isize);
-                self.cursor_to(cy, cx + k);
+                let cx = self.cx as isize;
+                self.cursor_to(self.cursor_row(), cx + k);
             },
             b'D' => {
                 let k = (p(0, 1).max(1)) as isize;
-                let (cy, cx) = (self.cy as isize, self.cx as isize);
-                self.cursor_to(cy, cx - k);
+                let cx = self.cx as isize;
+                self.cursor_to(self.cursor_row(), cx - k);
             },
             b'E' => {
-                let k = (p(0, 1).max(1)) as isize;
-                let cy = self.cy as isize;
-                self.cursor_to(cy + k, 0);
+                self.cursor_down((p(0, 1).max(1)) as isize);
+                self.cx = 0;
             },
             b'F' => {
-                let k = (p(0, 1).max(1)) as isize;
-                let cy = self.cy as isize;
-                self.cursor_to(cy - k, 0);
+                self.cursor_up((p(0, 1).max(1)) as isize);
+                self.cx = 0;
             },
             b'G' | b'`' => {
-                let k = p(0, 1).max(1);
-                let cy = self.cy as isize;
-                self.cursor_to(cy, k as isize - 1);
+                let k = p(0, 1).max(1) as isize;
+                self.cursor_to(self.cursor_row(), k - 1);
             },
             b'H' | b'f' => {
                 let r = p(0, 1).max(1);
@@ -4276,6 +4308,76 @@ mod tests {
         t.feed(b"\x1b=");
         t.feed(b"\x1bc"); // RIS
         assert!(!t.keypad_app);
+    }
+
+    /// `?6h` addresses the absolute moves from the region top; a relative move
+    /// starts from the row the cursor is on, so it must not take the offset a
+    /// second time (B58: `CUU` walked two rows down, `CHA` changed the row).
+    #[test]
+    fn origin_mode_offsets_the_absolute_moves_only() {
+        let mut t = Term::new(20, 10);
+        t.feed(b"\x1b[4;9r"); // DECSTBM: rows 3..8, 0-based
+        t.feed(b"\x1b[?6h");
+        assert_eq!(t.cy, 3, "DECSTBM homes to the region top with origin on");
+        t.feed(b"\x1b[3;1H"); // CUP 3 is the third row of the region
+        assert_eq!(t.cy, 5);
+        t.feed(b"\x1b[A");
+        assert_eq!(t.cy, 4, "CUU 1 walks up one row");
+        t.feed(b"\x1b[B");
+        assert_eq!(t.cy, 5, "CUD 1 walks down one row");
+        t.feed(b"\x1b[99A");
+        assert_eq!(t.cy, 3, "CUU stops at the region top");
+        t.feed(b"\x1b[99B");
+        assert_eq!(t.cy, 8, "CUD stops at the region bottom");
+        t.feed(b"\x1b[2E"); // CNL
+        assert_eq!(
+            (t.cy, t.cx),
+            (8, 0),
+            "CNL keeps to the margin, first column"
+        );
+        t.feed(b"\x1b[2F"); // CPL
+        assert_eq!(
+            (t.cy, t.cx),
+            (6, 0),
+            "CPL keeps to the margin, first column"
+        );
+        t.feed(b"\x1b[5G"); // CHA
+        assert_eq!((t.cy, t.cx), (6, 4), "CHA moves the column, not the row");
+        t.feed(b"\x1b[H");
+        assert_eq!(
+            (t.cy, t.cx),
+            (3, 0),
+            "home is the region top with origin on"
+        );
+        t.feed(b"\x1b[2d");
+        assert_eq!(t.cy, 4, "VPA counts from the region top");
+        t.feed(b"\x1b[99d");
+        assert_eq!(t.cy, 8, "VPA stops at the region bottom");
+    }
+
+    /// The margins stop a relative walk from inside the region — with origin on
+    /// or off — but they are not a fence around it: a cursor above the region
+    /// reaches the screen top and one below reaches the last row (xterm's
+    /// `CursorUp`/`CursorDown`).
+    #[test]
+    fn relative_moves_see_the_margins_only_from_inside() {
+        let mut t = Term::new(20, 10);
+        t.feed(b"\x1b[4;9r"); // rows 3..8
+        assert_eq!(t.cy, 0, "without origin the DECSTBM home is the screen top");
+        t.feed(b"\x1b[5;1H"); // row 4, inside
+        t.feed(b"\x1b[99A");
+        assert_eq!(t.cy, 3, "a walk from inside stops at the top margin");
+        t.feed(b"\x1b[99B");
+        assert_eq!(t.cy, 8, "a walk from inside stops at the bottom margin");
+        t.feed(b"\x1b[2;1H"); // row 1, above the region
+        t.feed(b"\x1b[5A");
+        assert_eq!(t.cy, 0, "above the margin the screen top is the limit");
+        t.feed(b"\x1b[10;1H"); // row 9, below the region
+        t.feed(b"\x1b[5B");
+        assert_eq!(t.cy, 9, "below the margin the last row is the limit");
+        t.feed(b"\x1b[5;1H");
+        t.feed(b"\x1b[5C\x1b[99D");
+        assert_eq!((t.cy, t.cx), (4, 0), "CUF/CUB keep the row they found");
     }
 
     #[test]
