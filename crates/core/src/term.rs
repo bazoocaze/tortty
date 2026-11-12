@@ -22,6 +22,10 @@ const REPLACEMENT: char = '\u{FFFD}';
 /// Ceiling for the payload of an in-flight OSC: a sequence that never closes
 /// must not grow without bound.
 const MAX_OSC: usize = 4096;
+/// The one OSC form that carries megabytes: iTerm2's inline image
+/// (`1337;File=` + base64). Everything else keeps the 4 KiB cap.
+const MAX_OSC_IMAGE: usize = 16 * 1024 * 1024;
+const ITERM_PREFIX: &[u8] = b"1337;File=";
 /// How many distinct `OSC 8` URIs are kept (a span reuses its index).
 pub const LINK_MAX: usize = 4096;
 /// How many chars of an `OSC 9`/`777` notification are kept: it is shown in one
@@ -312,6 +316,12 @@ pub struct Term {
     /// Progress reported by the program (`OSC 9;4`): the tab label draws it.
     /// `None` = nothing to show; state `0` clears it.
     pub progress: Option<Progress>,
+    /// Something the child asked for that we refused, with the reason, for the
+    /// app to show once (`B3`).
+    refused: Option<&'static str>,
+    /// Cap of the in-flight OSC: `MAX_OSC`, raised to `MAX_OSC_IMAGE` once the
+    /// body is known to be an iTerm2 image (checked at the tenth byte).
+    osc_cap: usize,
     pub respond_size: bool,
     tabstops: Vec<bool>,
     pub dirty: Vec<bool>,
@@ -418,6 +428,8 @@ impl Term {
             notifs: 0,
             notif_text: String::new(),
             progress: None,
+            refused: None,
+            osc_cap: MAX_OSC,
             respond_size: false,
             tabstops: (0..cols).map(|i| i % 8 == 0).collect(),
             dirty: vec![true; rows],
@@ -1825,6 +1837,8 @@ impl Term {
                 None => self.osc_notify(arg),
             },
             777 => self.osc_notify777(arg),
+            // iTerm2 inline image (`1337;File=…:base64`) — `B3`'s cheap half
+            1337 => self.osc_iterm(arg),
             104 => self.osc_reset_palette(arg),
             110 => self.reset_color(10),
             111 => self.reset_color(11),
@@ -1850,6 +1864,31 @@ impl Term {
         }
     }
 
+    /// iTerm2's inline image: the bytes go through the same direct transmission
+    /// the kitty path uses, and a refusal lands in `refused` for the app to show
+    /// — the protocol has no error channel of its own (`B3`).
+    fn osc_iterm(&mut self, arg: &[u8]) {
+        let cursor = (
+            u16::try_from(self.cx).unwrap_or(0),
+            u16::try_from(self.cy).unwrap_or(0),
+        );
+        let grid = (
+            u16::try_from(self.cols).unwrap_or(0),
+            u16::try_from(self.rows).unwrap_or(0),
+        );
+        let mut out = self.graphics.iterm(arg, cursor, self.cell_size, grid);
+        if let Some(msg) = out.refused.take() {
+            self.refused = Some(msg);
+        }
+        self.apc_output(out);
+    }
+
+    /// What the child asked for and we refused, once (`B3`): the app turns it
+    /// into a toast — silence would look like a broken image.
+    pub fn take_refused(&mut self) -> Option<&'static str> {
+        self.refused.take()
+    }
+
     /// Stores the payload in the probe (a ring of `OSC_SEEN`), with the resulting title.
     fn osc_record(&mut self, data: &[u8]) {
         let truncated = data.len() > OSC_SEEN_MAX;
@@ -1871,6 +1910,7 @@ impl Term {
         self.osc = data;
         self.osc.clear();
         self.osc_over = false;
+        self.osc_cap = MAX_OSC;
         self.state = State::Ground;
     }
 
@@ -2225,8 +2265,13 @@ impl Term {
                             self.osc_end();
                         },
                         _ => {
-                            if self.osc.len() < MAX_OSC {
+                            if self.osc.len() < self.osc_cap {
                                 self.osc.push(b);
+                                // the only OSC that may grow past 4 KiB, decided
+                                // once: at the tenth byte the form is known
+                                if self.osc_cap == MAX_OSC && self.osc == ITERM_PREFIX {
+                                    self.osc_cap = MAX_OSC_IMAGE;
+                                }
                             } else {
                                 self.osc_over = true;
                             }

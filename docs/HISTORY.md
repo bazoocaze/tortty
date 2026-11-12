@@ -715,3 +715,24 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   `cdcd00`, `0` back to the plain label; on the sidebar, the parked card shows
   green up to its 37% and the front one the dim cyan band. Three core tests and
   one for `progress_ink`.
+
+## 2026-11-12 — iTerm2's inline image (`B3`, the cheap half)
+
+- `imgcat` and everything else that speaks `OSC 1337;File=` drew nothing: the
+  escape fell into the catch-all. Now the payload is base64 → the **same**
+  `transmit`/`place` the kitty path uses, with `a=T`, `C=1` (the program's own
+  newline decides where the text goes on) and the cursor cell as the anchor — so
+  the image scrolls and is pruned with the history like any other.
+- `width`/`height` are read in the protocol's four forms: bare (cells), `px`,
+  `%` of the grid, `auto` (the image's own size in cells). This is where the
+  parser had to change: one OSC form carries megabytes, so the 4 KiB cap is
+  raised to 16 MiB **only** when the body is known to be `1337;File=` — decided
+  at the tenth byte, once per OSC, not per byte.
+- `inline=0` — the protocol's *default* — asks the terminal to write the child's
+  bytes into the cwd. That it does not do: `Output.refused` carries the reason to
+  the app, which toasts `Image refused / inline=0 asks for a file on disk`, the
+  only channel there is (the protocol has no error reply).
+- Measured on Xvfb with a 40x38 red PNG: `images` 0 → 1, the red at the cursor
+  cell (4x2 cells, `ff0000` inside, black beside it), 11704 pixels changed; with
+  `inline=0` the count stays 1 and the toast shows the refusal. Four tests: the
+  placement, the four unit forms, both refusals.

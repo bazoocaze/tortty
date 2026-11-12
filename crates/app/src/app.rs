@@ -2203,6 +2203,9 @@ impl App {
                 }
                 // no toast: a parked tab must not write over the foreground
                 // `OSC 52` still lands: a remote copy in a parked tab copies
+                if let Some(msg) = self.parked[s].tabs[j].term.take_refused() {
+                    self.toast("Image refused", msg, Severity::Err);
+                }
                 if let Some(op) = self.parked[s].tabs[j].term.take_clipboard() {
                     self.set_clipboard(op);
                 }
@@ -2297,6 +2300,11 @@ impl App {
             }
             if pumped.card_alert {
                 self.card_alert = true;
+            }
+            if let Some(msg) = self.tabs[i].term.take_refused() {
+                // `B3`: the protocol that asks has no error channel, so the
+                // owner is told instead of a silence that reads as a broken image
+                self.toast("Image refused", msg, Severity::Err);
             }
             if let Some(text) = pumped.toast {
                 // a notification is not a warning: it is the program saying

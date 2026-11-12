@@ -106,6 +106,10 @@ pub struct Output {
     /// core never touches the filesystem — the app loads it and answers with
     /// `provide`, and only then does the child get `OK`/`ENOENT`.
     pub file: Option<FileRequest>,
+    /// Something the child asked for that is not going to happen, with the
+    /// reason — the app shows it once (`B3`). No reply goes back: the protocol
+    /// that asks this way has no error channel.
+    pub refused: Option<&'static str>,
 }
 
 #[derive(Default)]
@@ -389,7 +393,7 @@ impl Graphics {
                         },
                         lines,
                         move_cursor: param("C") != Some("1"),
-                        file: None,
+                        ..Output::default()
                     }
                 },
             },
@@ -536,6 +540,95 @@ impl Graphics {
     /// why the app never sends bytes back, only this verdict.
     pub fn missing(req: &FileRequest) -> Output {
         Self::error(&req.kv, "ENOENT")
+    }
+
+    /// iTerm2's inline image (`OSC 1337;File=…:base64`) — the half of `B3` that
+    /// reuses the direct transmission, since the bytes are the same PNG.
+    ///
+    /// `inline=0` is the protocol's **default**, and it asks the terminal to
+    /// *write the file into the cwd*: the bytes come from the child, so the
+    /// terminal does not write them anywhere — it refuses and says so.
+    pub fn iterm(
+        &mut self,
+        arg: &[u8],
+        cursor: (u16, u16),
+        cell: (u32, u32),
+        grid: (u16, u16),
+    ) -> Output {
+        let Some(rest) = arg.strip_prefix(b"File=") else {
+            return Output::default();
+        };
+        // the payload follows the **last** colon: a `name=` value may carry a
+        // colon of its own, the base64 alphabet never does
+        let Some(colon) = rest.iter().rposition(|&b| b == b':') else {
+            return Output::default();
+        };
+        let mut kv: HashMap<String, String> = HashMap::new();
+        for item in String::from_utf8_lossy(&rest[..colon]).split(';') {
+            if let Some((k, v)) = item.split_once('=') {
+                kv.insert(k.trim().to_string(), v.trim().to_string());
+            }
+        }
+        if kv.get("inline").is_none_or(|v| v != "1") {
+            return Output {
+                refused: Some("inline=0 asks for a file on disk — refused"),
+                ..Output::default()
+            };
+        }
+        let Some(data) = base64_decode(&String::from_utf8_lossy(&rest[colon + 1..])) else {
+            return Output {
+                refused: Some("the payload is not base64"),
+                ..Output::default()
+            };
+        };
+        if data.len() > MAX_APC {
+            return Output {
+                refused: Some("the image is above the 64 MiB cap"),
+                ..Output::default()
+            };
+        }
+        // the full-size cells are what the placement counts in, so a bare
+        // `width`/`height` means the terminal's cells
+        let cw = cell.0.max(1);
+        let ch = cell.1.max(1);
+        let cells = |v: Option<&str>, total: u16, px: u32, image_px: u32| -> Option<u16> {
+            let v = v?.trim();
+            if v.is_empty() || v == "auto" {
+                return None; // the image's own size, as `place` computes it
+            }
+            let split = v
+                .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+                .unwrap_or(v.len());
+            let n: f64 = v[..split].parse().ok()?;
+            let unit = &v[split..];
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let out = match unit {
+                "" => n.max(1.0) as u32, // cells
+                "px" => n.max(1.0).div_euclid(f64::from(px)).max(1.0) as u32,
+                "%" => (n * f64::from(total) / 100.0).ceil().max(1.0) as u32,
+                _ => image_px.div_ceil(px).max(1), // not ours
+            };
+            u16::try_from(out).ok()
+        };
+        let (iw, ih) = Self::image_size(&kv, &data).map_or((0, 0), |(w, h, _)| (w, h));
+        // a display transmission, without the kitty reply and without moving the
+        // cursor: iTerm2 draws over the cells and the program's own newline
+        // decides where the text goes on
+        kv.insert("a".to_string(), "T".to_string());
+        kv.insert("C".to_string(), "1".to_string());
+        if let Some(c) = cells(kv.get("width").map(String::as_str), grid.0, cw, iw) {
+            kv.insert("c".to_string(), c.to_string());
+        }
+        if let Some(r) = cells(kv.get("height").map(String::as_str), grid.1, ch, ih) {
+            kv.insert("r".to_string(), r.to_string());
+        }
+        if Self::image_size(&kv, &data).is_none() && !data.starts_with(b"\x89PNG") {
+            return Output {
+                refused: Some("the image is not the size it claims"),
+                ..Output::default()
+            };
+        }
+        self.transmit(&kv, &data, 0, true, cursor, cell)
     }
 
     fn error(kv: &HashMap<String, String>, msg: &str) -> Output {
@@ -902,6 +995,68 @@ mod checks_graphics {
         assert_eq!(out.responses, [b"Gi=8;OK".to_vec()]);
         let img = &g.images()[&8];
         assert_eq!((img.width, img.height, img.format), (7, 5, Format::Png));
+    }
+
+    /// A PNG header with the given size — enough for the size the payload
+    /// claims; the pixels are the app's business.
+    fn png(w: u32, h: u32) -> Vec<u8> {
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&w.to_be_bytes());
+        png.extend_from_slice(&h.to_be_bytes());
+        png
+    }
+
+    #[test]
+    fn iterm_inline_places_the_image_at_the_cursor() {
+        // `B3`: the iTerm2 payload is a PNG in base64, `inline=1`, and it lands
+        // on the cell the cursor was on — the same placements list as kitty
+        let mut g = Graphics::new();
+        let body = format!(
+            "File=name={};inline=1;width=2;height=1:{}",
+            b64(b"x.png"),
+            b64(&png(20, 19))
+        );
+        let out = g.iterm(body.as_bytes(), (3, 4), cell(), (80, 24));
+        assert!(out.responses.is_empty(), "iTerm2 has no reply channel");
+        assert_eq!(out.refused, None);
+        assert!(!out.move_cursor, "the program's own newline decides");
+        let p = g.placements();
+        assert_eq!(p.len(), 1);
+        assert_eq!((p[0].col, p[0].line, p[0].cols, p[0].rows), (3, 4, 2, 1));
+    }
+
+    #[test]
+    fn iterm_width_in_px_and_percent_resolves_against_the_cell_and_the_grid() {
+        let mut g = Graphics::new();
+        // 20 px in a 10 px cell = 2 cells; 50% of 80 columns = 40
+        let body = format!("File=inline=1;width=20px;height=50%:{}", b64(&png(20, 19)));
+        let out = g.iterm(body.as_bytes(), (0, 0), cell(), (80, 24));
+        assert_eq!(out.refused, None);
+        let p = g.placements();
+        assert_eq!((p[0].cols, p[0].rows), (2, 12));
+        // `auto` is the image's own size in cells: 20x19 px in 10x19
+        let body = format!("File=inline=1;width=auto;height=auto:{}", b64(&png(20, 19)));
+        let _ = g.iterm(body.as_bytes(), (0, 0), cell(), (80, 24));
+        let p = g.placements();
+        assert_eq!((p[1].cols, p[1].rows), (2, 1));
+    }
+
+    #[test]
+    fn iterm_without_inline_is_refused_and_stores_nothing() {
+        // `inline=0` (the protocol's default) asks the terminal to write the file
+        // into the cwd: the bytes come from the child, so it does not happen
+        let mut g = Graphics::new();
+        let body = format!("File=name={};inline=0:{}", b64(b"a.png"), b64(&png(4, 4)));
+        let out = g.iterm(body.as_bytes(), (0, 0), cell(), (80, 24));
+        assert!(out.refused.is_some());
+        assert!(g.images().is_empty());
+        assert_eq!(g.placements(), []);
+        // and a payload that is not base64 is refused too, not stored
+        let out = g.iterm(b"File=inline=1:@@@", (0, 0), cell(), (80, 24));
+        assert!(out.refused.is_some());
+        assert!(g.images().is_empty());
     }
 
     #[test]

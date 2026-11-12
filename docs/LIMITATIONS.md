@@ -23,8 +23,10 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   point — but it also means the picture never records *where* a past run ended, so
   two runs look continuous in the restored content.
 - **One image, drawn as it arrived.** The kitty protocol is accepted for what
-  `icat` needs (direct, file, temp and SHM transmission): one image per id, with
-  no notion of frame and no second protocol.
+  `icat` needs (direct, file, temp and SHM transmission), and iTerm2's inline
+  one (`OSC 1337;File=`, display only — `inline=0` would have the terminal write
+  the child's bytes to disk, and that it does not do): one image per id, with no
+  notion of frame.
 - **`TERM=xterm-256color`.** We do not invent our own terminfo entry: the goal
   is that `vim`, `mc`, `less` and `dmesg` work with what already exists.
 
