@@ -162,12 +162,16 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   Visual bell, audible bell. **limit:** truncation counts characters, not cell
   width, so a wide glyph (emoji, CJK) can overflow the box, and the detail is cut
   at four lines.
-- Notifications (`OSC 9`/`777`): the foreground tab toasts the text, a
-  background tab wears a badge on its label, a parked workspace on its card, and
-  the window always asks for urgency. The toast is the one above, with its 8 s
-  floor; the badges ignore keys for 8 s (whoever types must not lose them), and
-  after that the first key or the visit acknowledges. **limit:** inside the
-  window + urgency only — no desktop notification daemon, and the progress form
+- Notifications (`OSC 9`/`777`): a tab in front toasts the text when it arrives,
+  a tab out of sight wears a badge on its label **and** raises the card of its
+  workspace — the card is the workspace's signal and the label the tab's, so
+  entering the workspace clears only the card and each tab keeps its own badge
+  until it is visited. The content follows the visit: a notification that
+  arrived while nobody was looking toasts when its tab comes to the front. The
+  toast is the one above, with its 8 s floor; the badges ignore keys for 8 s
+  (whoever types must not lose them), and after that the first key or the visit
+  acknowledges. The window always asks for urgency. **limit:** inside the window
+  + urgency only — no desktop notification daemon, and the progress form
   `9;4;...` is swallowed, not shown.
 - Shortcuts: Ctrl+Shift+T/W/N/Q/F2 (`F2` is the config in the editor, under
   *Configuration*), Ctrl+Shift+1…9, Alt+1…9, Super+N/Q/1…9, Super+Up/Down

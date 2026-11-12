@@ -679,3 +679,19 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   band, `1.0.65` moved the card **one** slot (`ws` 0→2) and stopped there
   (`cards_off` 1, forever); now `cards_off` walks 0→2→4→6 with `ws` on 0, and
   the drop on the card that came into sight lands the workspace at the end.
+
+## 2026-11-12 — a notification out of sight keeps its content (`B8` a+b)
+
+- The common case — a command in tab 2 while you read tab 1 — ended with a badge
+  and no way to learn what it said: `pump` toasted only the tab in front, and
+  entering a workspace acknowledged **every** tab of it, against the rule.
+- The toast now follows visibility, not arrival: `visit_active` shows the text of
+  whatever is pending when the tab comes to the front, and acknowledges it then.
+- The card and the label became two signals: a notification out of sight raises
+  the **card** of its workspace (`Workspace::card_alert`, `PumpOut::card_alert`)
+  and entering clears only that, leaving each tab's badge for its own visit.
+- Measured with the new `state` fields `tabs_alert`/`cards_alert`: arriving out of
+  sight leaves `[false, true]` with `cards_alert=[true, …]` and no toast;
+  leaving and re-entering the workspace gives `cards_alert=[false, false]` with
+  the label badge still on; visiting it toasts `chegou` and clears. `1.0.66` on
+  the same scene: the toast after the visit is **null** — the content was lost.

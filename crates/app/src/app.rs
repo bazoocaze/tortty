@@ -108,6 +108,10 @@ pub enum UserEvent {
 #[derive(Default)]
 struct PumpOut {
     toast: Option<String>,
+    /// A notification arrived with this tab out of sight (`B8`): the card of its
+    /// workspace keeps the signal until someone enters it, and the toast comes
+    /// when the tab becomes visible.
+    card_alert: bool,
     urgency: bool,
     beeps: u32,
 }
@@ -412,6 +416,10 @@ impl Tab {
             out.urgency = true;
             if foreground {
                 out.toast = Some(self.term.notif_text.clone());
+            } else {
+                // out of sight: the card is the signal, and the content waits
+                // for the visit (`B8`)
+                out.card_alert = true;
             }
         }
     }
@@ -465,6 +473,9 @@ struct Workspace {
     tabs: Vec<Tab>,
     active: usize,
     name: String,
+    /// A tab here notified while the workspace was parked (`B8`): the card says
+    /// so until the workspace is entered.
+    card_alert: bool,
 }
 
 impl Workspace {
@@ -474,6 +485,7 @@ impl Workspace {
             tabs: std::mem::take(&mut app.tabs),
             active: app.active,
             name: std::mem::take(&mut app.ws_name),
+            card_alert: std::mem::take(&mut app.card_alert),
         }
     }
 
@@ -482,6 +494,7 @@ impl Workspace {
         app.tabs = self.tabs;
         app.active = self.active.min(app.tabs.len().saturating_sub(1));
         app.ws_name = self.name;
+        app.card_alert = self.card_alert;
     }
 }
 
@@ -552,6 +565,10 @@ pub struct App {
     /// ws_count()`, with the logical indices in order (the one in front falls
     /// in the middle).
     parked: Vec<Workspace>,
+    /// A tab of the workspace in front notified while it was out of sight
+    /// (`B8`): the card stays alert until the workspace is entered, even after
+    /// the tab that notified was visited — the card is the workspace's signal.
+    card_alert: bool,
     /// Logical index of the workspace in front, in `0..ws_count()`.
     ws_idx: usize,
     /// Tab pressed on the bar, to drag and reorder (I10): index and the x of
@@ -715,6 +732,7 @@ impl App {
             card_off: 0,
             card_frac: 0.0,
             card_walk: None,
+            card_alert: false,
             restore: None,
             owner: None,
             wheel_pair: None,
@@ -911,7 +929,7 @@ impl App {
                     name: editing.unwrap_or_else(|| self.ws_name.clone()),
                     title: self.tabs[self.active].title(),
                     ativa: true,
-                    alert: self.tabs.iter().any(Tab::notif_pending),
+                    alert: self.card_alert,
                 });
             } else {
                 let slot = if i < self.ws_idx { i } else { i - 1 };
@@ -920,7 +938,7 @@ impl App {
                     name: editing.unwrap_or_else(|| w.name.clone()),
                     title: w.tabs[w.active].title(),
                     ativa: false,
-                    alert: w.tabs.iter().any(Tab::notif_pending),
+                    alert: w.card_alert,
                 });
             }
         }
@@ -2177,6 +2195,9 @@ impl App {
                 if pumped.urgency {
                     self.urgency();
                 }
+                if pumped.card_alert {
+                    self.parked[s].card_alert = true;
+                }
                 // no toast: a parked tab must not write over the foreground
                 // `OSC 52` still lands: a remote copy in a parked tab copies
                 if let Some(op) = self.parked[s].tabs[j].term.take_clipboard() {
@@ -2270,6 +2291,9 @@ impl App {
             }
             if pumped.urgency {
                 self.urgency();
+            }
+            if pumped.card_alert {
+                self.card_alert = true;
             }
             if let Some(text) = pumped.toast {
                 // a notification is not a warning: it is the program saying
@@ -2874,6 +2898,10 @@ impl App {
                     // the list without looking at the screen
                     "cards_off": self.card_off,
                     "cards_visible": self.cards_visible(),
+                    // badges and card alerts (`B8`): the tab keeps its own and
+                    // the card is the workspace's, so a probe can tell them apart
+                    "tabs_alert": self.tabs.iter().map(Tab::notif_pending).collect::<Vec<_>>(),
+                    "cards_alert": self.wscards().iter().map(|c| c.alert).collect::<Vec<_>>(),
                     "errors": self.cfg_errors,
                     "xid": self.xid(),
                     "config": self.opts.cfg_path.as_ref().map_or_else(String::new, |p| p.display().to_string()),
@@ -3588,10 +3616,12 @@ impl App {
             .map(|(_, w)| w.expect("only the target slot stays empty"))
             .collect();
         new.into_current(self);
-        // entering acknowledges every badge of the workspace (`M-K`)
-        for t in &mut self.tabs {
-            t.ack_tab();
-        }
+        // entering clears the CARD and nothing else (`B8`): the tab that is now
+        // in front was visited and acknowledges its own badge, and every other
+        // tab keeps its own until somebody visits it — the card cannot speak for
+        // them
+        self.card_alert = false;
+        self.visit_active();
         self.after_ws_change();
     }
 
@@ -3675,13 +3705,26 @@ impl App {
     }
 
     /// Switches tab (Alt+N). Out of range, does nothing.
+    /// The tab in front was visited: show what it has to say and acknowledge
+    /// the badge (`M-K`). The content comes **now**, not when it arrived (`B8`):
+    /// a notification that waited in a parked tab must still be readable when
+    /// someone gets there.
+    fn visit_active(&mut self) {
+        if self.tabs[self.active].notif_pending() {
+            let text = self.tabs[self.active].term.notif_text.clone();
+            if !text.is_empty() {
+                self.toast_for("Notification", &text, Severity::Ok, Some(NOTIF_FLOOR));
+            }
+        }
+        self.tabs[self.active].ack_tab();
+    }
+
     fn select_tab(&mut self, i: usize) {
         if i >= self.tabs.len() || i == self.active {
             return;
         }
         self.active = i;
-        // visiting acknowledges the badge (`M-K`): it did its job
-        self.tabs[i].ack_tab();
+        self.visit_active();
         self.sync_title();
         if let Some(w) = self.window.as_ref() {
             w.request_redraw();
@@ -4514,7 +4557,29 @@ mod tests {
             tabs: vec![Tab::new(10, 4)],
             active: 0,
             name: name.to_string(),
+            card_alert: false,
         }
+    }
+
+    #[test]
+    fn a_notification_out_of_sight_raises_the_card_not_the_toast() {
+        // `B8`: with the tab in front the content goes out at arrival; out of
+        // sight the card keeps the signal and the content waits for the visit
+        let mut front = Tab::new(20, 5);
+        front.term.feed(b"\x1b]9;done\x07");
+        let mut out = PumpOut::default();
+        front.pump(Bell::None, true, &mut out);
+        assert_eq!(out.toast.as_deref(), Some("done"));
+        assert!(!out.card_alert);
+
+        let mut back = Tab::new(20, 5);
+        back.term.feed(b"\x1b]9;done\x07");
+        let mut out = PumpOut::default();
+        back.pump(Bell::None, false, &mut out);
+        assert!(out.toast.is_none(), "a parked tab must not toast");
+        assert!(out.card_alert, "the card is the signal while it waits");
+        // and the badge survives: it was delivered, not acknowledged
+        assert!(back.notif_pending());
     }
 
     #[test]
