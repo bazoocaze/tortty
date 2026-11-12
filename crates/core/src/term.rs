@@ -150,6 +150,17 @@ pub enum ClipboardOp {
     Primary(String),
 }
 
+/// The progress a program reports about itself (`OSC 9;4`, mintty/ConEmu): the
+/// state and, when the state has one, the fraction. State `0` means "no
+/// progress" and clears it, so this type never carries a `0`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Progress {
+    /// 1 normal, 2 error, 3 indeterminate, 4 warning/paused.
+    pub state: u8,
+    /// `0..=100`, or `None` for a state that has no measure.
+    pub pct: Option<u8>,
+}
+
 /// Where the extended color goes: text, background or underline.
 #[derive(Copy, Clone)]
 enum Slot {
@@ -298,6 +309,9 @@ pub struct Term {
     /// the app's cursor (as `bells`/`bells_seen`), the text is the last one.
     pub notifs: u32,
     pub notif_text: String,
+    /// Progress reported by the program (`OSC 9;4`): the tab label draws it.
+    /// `None` = nothing to show; state `0` clears it.
+    pub progress: Option<Progress>,
     pub respond_size: bool,
     tabstops: Vec<bool>,
     pub dirty: Vec<bool>,
@@ -403,6 +417,7 @@ impl Term {
             bells: 0,
             notifs: 0,
             notif_text: String::new(),
+            progress: None,
             respond_size: false,
             tabstops: (0..cols).map(|i| i % 8 == 0).collect(),
             dirty: vec![true; rows],
@@ -1798,8 +1813,17 @@ impl Term {
             // progress form (which some TUIs send as a keepalive while busy).
             // Swallowed, not toasted: a 1 Hz repeater would pin the toast and
             // the badge forever, and `4;3` is a state, not a sentence.
-            9 if Self::osc_progress(arg) => {},
-            9 => self.osc_notify(arg),
+            // 0 clears, 1 normal, 2 error, 3 indeterminate, 4 warning/paused; a
+            // digit state we do not know is still this form — swallowed, never a
+            // toast (a 1 Hz repeater would pin it forever)
+            9 => match Self::osc_progress(arg) {
+                Some((0, _)) => self.progress = None,
+                Some((state, pct)) if state < 5 => {
+                    self.progress = Some(Progress { state, pct });
+                },
+                Some(_) => {},
+                None => self.osc_notify(arg),
+            },
             777 => self.osc_notify777(arg),
             104 => self.osc_reset_palette(arg),
             110 => self.reset_color(10),
@@ -1969,16 +1993,25 @@ impl Term {
     /// The mintty/ConEmu progress form hiding inside `OSC 9`: `4;state` with
     /// an optional `;progress`, all digits. An iTerm2 message has no such
     /// shape.
-    fn osc_progress(arg: &[u8]) -> bool {
+    fn osc_progress(arg: &[u8]) -> Option<(u8, Option<u8>)> {
         let mut parts = arg.split(|&b| b == b';');
         if parts.next() != Some(b"4".as_slice()) {
-            return false;
+            return None;
         }
         let rest: Vec<&[u8]> = parts.collect();
-        (1..=2).contains(&rest.len())
-            && rest
+        if !(1..=2).contains(&rest.len())
+            || !rest
                 .iter()
                 .all(|p| !p.is_empty() && p.iter().all(u8::is_ascii_digit))
+        {
+            return None;
+        }
+        let num = |p: &[u8]| -> u8 {
+            p.iter()
+                .fold(0u32, |acc, d| acc * 10 + u32::from(d - b'0'))
+                .min(255) as u8
+        };
+        Some((num(rest[0]), rest.get(1).map(|p| num(p).min(100))))
     }
 
     /// A notification the child wants seen (`M-K`): the text lands in
@@ -3097,6 +3130,59 @@ mod tests {
         assert_eq!(t.graphics.placements().len(), 1);
         assert_eq!(t.take_child_out(), b"\x1b_Gi=3;OK\x1b\\".to_vec());
         assert!(t.image_files.is_empty());
+    }
+
+    #[test]
+    fn osc9_progress_state_and_fraction_reach_the_tab() {
+        let mut t = Term::new(20, 4);
+        t.feed(b"\x1b]9;4;1;37\x07");
+        assert_eq!(
+            t.progress,
+            Some(Progress {
+                state: 1,
+                pct: Some(37)
+            })
+        );
+        // a state with no measure arrives without the fraction
+        t.feed(b"\x1b]9;4;3\x07");
+        assert_eq!(
+            t.progress,
+            Some(Progress {
+                state: 3,
+                pct: None
+            })
+        );
+        // 0 removes it, and asks for nothing
+        t.feed(b"\x1b]9;4;0\x07");
+        assert_eq!(t.progress, None);
+        assert_eq!(t.notifs, 0);
+    }
+
+    #[test]
+    fn osc9_progress_is_clamped_and_an_unknown_state_is_still_not_a_message() {
+        let mut t = Term::new(20, 4);
+        t.feed(b"\x1b]9;4;1;250\x07");
+        assert_eq!(
+            t.progress,
+            Some(Progress {
+                state: 1,
+                pct: Some(100)
+            })
+        );
+        // a digit state we give no meaning to is the same form: swallowed,
+        // never a toast (a 1 Hz repeater would pin one forever)
+        t.feed(b"\x1b]9;4;9;50\x07");
+        assert_eq!(
+            t.progress,
+            Some(Progress {
+                state: 1,
+                pct: Some(100)
+            })
+        );
+        assert_eq!(t.notifs, 0);
+        // `RIS` clears it: the state belongs to the emulation
+        t.feed(b"\x1bc");
+        assert_eq!(t.progress, None);
     }
 
     #[test]

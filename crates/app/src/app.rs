@@ -930,6 +930,7 @@ impl App {
                     title: self.tabs[self.active].title(),
                     ativa: true,
                     alert: self.card_alert,
+                    progress: self.tabs[self.active].term.progress,
                 });
             } else {
                 let slot = if i < self.ws_idx { i } else { i - 1 };
@@ -939,6 +940,7 @@ impl App {
                     title: w.tabs[w.active].title(),
                     ativa: false,
                     alert: w.card_alert,
+                    progress: w.tabs[w.active].term.progress,
                 });
             }
         }
@@ -963,6 +965,7 @@ impl App {
             .map(|(i, t)| crate::render::TabInfo {
                 title: t.title(),
                 ativa: i == self.active,
+                progress: t.term.progress,
                 alert: t
                     .bell_at
                     .is_some_and(|when| now.duration_since(when) < FLASH_DUR)
@@ -2902,6 +2905,9 @@ impl App {
                     // the card is the workspace's, so a probe can tell them apart
                     "tabs_alert": self.tabs.iter().map(Tab::notif_pending).collect::<Vec<_>>(),
                     "cards_alert": self.wscards().iter().map(|c| c.alert).collect::<Vec<_>>(),
+                    "tabs_progress": self.tabs.iter()
+                        .map(|t| t.term.progress.map(|p| serde_json::json!([p.state, p.pct])))
+                        .collect::<Vec<_>>(),
                     "errors": self.cfg_errors,
                     "xid": self.xid(),
                     "config": self.opts.cfg_path.as_ref().map_or_else(String::new, |p| p.display().to_string()),

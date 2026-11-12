@@ -695,3 +695,23 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   leaving and re-entering the workspace gives `cards_alert=[false, false]` with
   the label badge still on; visiting it toasts `chegou` and clears. `1.0.66` on
   the same scene: the toast after the visit is **null** — the content was lost.
+
+## 2026-11-12 — `OSC 9;4` progress on the tab and the card
+
+- The progress form was **swallowed** on purpose (`osc_progress`) because a 1 Hz
+  keepalive would pin a toast; the cost of that was a whole class of programs
+  reporting nothing. Now `Term.progress` is `(state, pct)` — `0` clears it, `RIS`
+  clears it, a digit state we do not know stays swallowed — and the parser gained
+  no branch: the shape was already recognised.
+- The app draws it as a **2 px bar on the bottom edge** of the tab label and of
+  the workspace card, in the toast's three shades (`state` 2 → `Idx(1)`, 4 →
+  `Idx(3)`, 1 → `Idx(2)`), the indeterminate one a still band in `Idx(6)` at 35%;
+  on an alert tab the bar takes the label's text colour, or the yellow of the
+  badge would swallow it. The fill is in pixels, not cells.
+- The toast path is untouched, and that is why the limit could go: the bar is a
+  state, not an event — a repeater just redraws the same 2 px.
+- Measured on Xvfb, 60x9 with two tabs: 37% green up to `x=131` of a 96 px label,
+  100% full, error `cd0000`, indeterminate `8bd3d3` over the light label, warning
+  `cdcd00`, `0` back to the plain label; on the sidebar, the parked card shows
+  green up to its 37% and the front one the dim cyan band. Three core tests and
+  one for `progress_ink`.

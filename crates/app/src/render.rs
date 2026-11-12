@@ -14,7 +14,7 @@ use swash::scale::ScaleContext;
 use tortty_core::cell::{Cell, INV};
 use tortty_core::config::{Config, CursorShape, Theme};
 use tortty_core::select::Rect;
-use tortty_core::term::sanitize_title;
+use tortty_core::term::{sanitize_title, Progress};
 use tortty_core::{Color, Span, Term};
 use winit::window::Window;
 
@@ -746,6 +746,23 @@ impl Renderer {
             // a single piece, and the text is drawn on top of it
             self.push_rect(x, y0, width, chh, [bg[0], bg[1], bg[2], 1.0]);
             self.chrome_text(&label, x, y0, fg, width);
+            if let Some(p) = t.progress {
+                let (c, alpha, frac) = progress_ink(p);
+                // on an alert tab the shade would vanish into the yellow of the
+                // label, so the bar takes the colour the label's text has
+                let rgb = if t.alert {
+                    over
+                } else {
+                    self.color(c, self.fg)
+                };
+                self.push_rect(
+                    x,
+                    y0 + chh - PROGRESS_H,
+                    width * frac,
+                    PROGRESS_H,
+                    [rgb[0], rgb[1], rgb[2], alpha],
+                );
+            }
             x += width;
         }
     }
@@ -802,6 +819,16 @@ impl Renderer {
             // an empty row is not drawn, the card keeps its 2.4-row height
             if !second.is_empty() && fits(y0 + chh + 3.0) {
                 self.text_line(x0, y0 + chh + 3.0, &second, fg, width);
+            }
+            if let Some(p) = c.progress {
+                let (color, alpha, frac) = progress_ink(p);
+                let rgb = if c.alert {
+                    over
+                } else {
+                    self.color(color, self.fg)
+                };
+                let h = PROGRESS_H.min(y1 - y0);
+                self.push_rect(x0, y1 - h, width * frac, h, [rgb[0], rgb[1], rgb[2], alpha]);
             }
         }
     }
@@ -1888,6 +1915,28 @@ pub struct TabInfo {
     pub ativa: bool,
     /// Recent BELL: the label gets a highlight for ~800 ms (I13).
     pub alert: bool,
+    /// Progress the program reports about itself (`OSC 9;4`): a bar on the
+    /// bottom edge of the tab.
+    pub progress: Option<Progress>,
+}
+
+/// Height of that bar. Two pixels on the bottom edge: thin enough not to eat the
+/// label, and the width is in pixels (37% of a 20-cell tab is 7.4 cells of ink).
+const PROGRESS_H: f32 = 2.0;
+
+/// Colour and fill of a progress report: the shade follows the state, in the
+/// same three tones the toast uses, and a state with no measure fills the tab
+/// (there is a band, the program just cannot say how wide). Indeterminate is the
+/// only translucent one, and it does not move — moving it would need a clock and
+/// a frame per step, for a fact the state already tells.
+fn progress_ink(p: Progress) -> (Color, f32, f32) {
+    let frac = p.pct.map_or(1.0, |pct| f32::from(pct) / 100.0);
+    match p.state {
+        2 => (Color::Idx(1), 1.0, frac),
+        4 => (Color::Idx(3), 1.0, frac),
+        3 => (Color::Idx(6), 0.35, 1.0),
+        _ => (Color::Idx(2), 1.0, frac),
+    }
 }
 
 /// What a notice is telling the owner: the accent (bar and border) and, on the
@@ -1989,6 +2038,9 @@ pub struct WsCard {
     pub ativa: bool,
     /// A tab of this workspace has an unacknowledged notification (`M-K`).
     pub alert: bool,
+    /// Progress of the selected tab (`OSC 9;4`), on the bottom edge of the card:
+    /// the same report the tab label shows, so a parked workspace is not blind.
+    pub progress: Option<Progress>,
 }
 
 pub enum FrameOutcome {
@@ -2045,9 +2097,11 @@ fn card_lines(n: usize, name: &str, title: &str) -> (String, String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{card_lines, is_swap, wrap};
+    use super::{card_lines, is_swap, progress_ink, wrap};
     use tortty_core::cell::Cell;
     use tortty_core::select::Rect;
+    use tortty_core::term::Progress;
+    use tortty_core::Color;
 
     /// The detail of a notice fills the box up to the margin, breaks at the space
     /// and never leaves a line wider than the box.
@@ -2115,8 +2169,51 @@ mod tests {
         );
     }
 
-    /// `B43`: the card is the number plus one explicit name, the title of the
-    /// selected tab underneath — and the number alone is never the whole card.
+    /// `OSC 9;4`: the shade follows the state and the fill follows the fraction.
+    #[test]
+    fn progress_ink_follows_the_state() {
+        // the three shades of the toast, opaque, filled by the fraction
+        assert_eq!(
+            progress_ink(Progress {
+                state: 1,
+                pct: Some(37)
+            }),
+            (Color::Idx(2), 1.0, 37.0 / 100.0)
+        );
+        assert_eq!(
+            progress_ink(Progress {
+                state: 2,
+                pct: Some(50)
+            })
+            .0,
+            Color::Idx(1)
+        );
+        assert_eq!(
+            progress_ink(Progress {
+                state: 4,
+                pct: None
+            }),
+            (Color::Idx(3), 1.0, 1.0)
+        );
+        // indeterminate is the only translucent one, and it fills the tab: it
+        // does not move, because moving costs a clock and a frame per step
+        assert_eq!(
+            progress_ink(Progress {
+                state: 3,
+                pct: None
+            }),
+            (Color::Idx(6), 0.35, 1.0)
+        );
+        // a state with no fraction still gets a band
+        assert_eq!(
+            progress_ink(Progress {
+                state: 1,
+                pct: None
+            }),
+            (Color::Idx(2), 1.0, 1.0)
+        );
+    }
+
     #[test]
     fn the_card_never_stands_on_the_number_alone() {
         // renamed: the name takes the first row and the title the second

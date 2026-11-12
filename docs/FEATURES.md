@@ -171,8 +171,13 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   toast is the one above, with its 8 s floor; the badges ignore keys for 8 s
   (whoever types must not lose them), and after that the first key or the visit
   acknowledges. The window always asks for urgency. **limit:** inside the window
-  + urgency only — no desktop notification daemon, and the progress form
-  `9;4;...` is swallowed, not shown.
+  + urgency only — no desktop notification daemon.
+- Progress (`OSC 9;4;state[;pct]`, the mintty/ConEmu form): a 2 px bar on the
+  bottom edge of the tab label and of the workspace card, in the shade of the
+  state — green normal, red error, yellow warning/paused, and the indeterminate
+  one as a still translucent band of the full width. The fill is in pixels, so
+  37% of a 20-cell tab is 7.4 cells of ink; `0` removes it. **limit:** the window
+  only (no taskbar), and nothing moves.
 - Shortcuts: Ctrl+Shift+T/W/N/Q/F2 (`F2` is the config in the editor, under
   *Configuration*), Ctrl+Shift+1…9, Alt+1…9, Super+N/Q/1…9, Super+Up/Down
   (previous/next workspace) and Super+Shift+Up/Down (move the front
