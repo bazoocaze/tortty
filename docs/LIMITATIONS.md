@@ -91,11 +91,6 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
 
 - **No automatic dark/light theme**: the palette comes from the config, not from
   the desktop portal.
-- **The scrollbar is drawn over the last column**, not beside it: the window
-  does not reserve a strip for it, and reserving one would narrow every terminal
-  for a control that appears only when there is history. It is 8 px wide (a
-  target that can be hit) and translucent, so what is under it stays readable —
-  but on the last column the text is behind the thumb.
 - **Notifications stay inside the window.** `OSC 9`/`777` toast, badge and
   ask the window manager for urgency, but there is no D-Bus, no portal and no
   `org.freedesktop.Notifications`: a desktop notice carries a sender identity,
@@ -106,8 +101,6 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   swallowed). The progress state goes nowhere — no taskbar bar, no percentage
   — because a 1 Hz keepalive repeater (what the form is for) would pin any
   toast or badge forever.
-- **A file dragged onto the window is not a menu**: the path is written into
-  the child, and what happens next belongs to the program there.
 - **An `OSC 8` link opens through `xdg-open`, and only for five schemes**
   (`http`, `https`, `file`, `ftp`, `mailto`). No portal, no D-Bus, no browser
   integration: the URI comes from the child, and anything else becomes a toast
@@ -117,8 +110,3 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   of the title is gone, and the protocol's answer is the app pushing and popping
   it (`B37`). An app that sets one and does not restore it leaves the tab frozen
   ([`EXTERNALS.md`](EXTERNALS.md)).
-
-## Development
-
-- **`--no-vsync` is not a mode of use**: it is an instrument. In normal use
-  drawing is limited by vsync, and that is how it should be.
