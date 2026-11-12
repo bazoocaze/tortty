@@ -820,6 +820,10 @@ impl App {
     /// to the home directory — the only expansion, done here so the core
     /// never resolves paths. Reads at most one byte over the cap: anything
     /// bigger answers `EINVAL:too big` from the core instead of growing here.
+    /// The `t=t` delete follows the protocol: only a path inside a known
+    /// temporary directory carrying `tty-graphics-protocol` — anything else
+    /// is read but kept, since the path comes from the child (over `ssh`,
+    /// from a remote).
     fn read_image_file(path: &str, delete: bool) -> Option<Vec<u8>> {
         let path = match path.strip_prefix('~') {
             Some(rest) if rest.is_empty() || rest.starts_with('/') => {
@@ -836,10 +840,25 @@ impl App {
         std::io::Read::take(file, u64::from(tortty_core::graphics::MAX_APC as u32) + 1)
             .read_to_end(&mut data)
             .ok()?;
-        if delete {
+        if delete && Self::temp_delete_allowed(&path) {
             let _ = std::fs::remove_file(&path);
         }
         Some(data)
+    }
+
+    /// What `t=t` may delete: the protocol lets the child name the file, so
+    /// only a path inside a known temporary directory carrying
+    /// `tty-graphics-protocol` qualifies. Canonicalized first, so `..` and
+    /// symlinks cannot walk the check out of the temp dir. Decided after
+    /// the read, on a path that exists — a dangling name never deletes.
+    fn temp_delete_allowed(path: &std::path::Path) -> bool {
+        let canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        if !canon.to_string_lossy().contains("tty-graphics-protocol") {
+            return false;
+        }
+        canon.starts_with(std::env::temp_dir())
+            || canon.starts_with("/tmp")
+            || canon.starts_with("/dev/shm")
     }
 
     fn pty_write(&mut self, bytes: &[u8]) {
@@ -4545,5 +4564,68 @@ mod tests {
         // and a path that no longer exists does not become a cwd
         assert_eq!(prefer_cwd(None, Some("/nope/nope/nope")), None);
         assert_eq!(prefer_cwd(None, None), None);
+    }
+
+    /// `t=t` deletes what the protocol allows: a temp dir plus the marker.
+    /// Anything else is read but kept — the path comes from the child.
+    /// Each test owns its dir: they run in parallel threads.
+    fn image_tmp(tag: &str, name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("tortty-img-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join(name);
+        std::fs::write(&p, b"pixels").unwrap();
+        (dir, p)
+    }
+
+    #[test]
+    fn temp_file_with_marker_is_deleted() {
+        let (dir, p) = image_tmp("del", "kitty-tty-graphics-protocol-1");
+        let ps = p.to_str().expect("temp dir is UTF-8");
+        assert_eq!(App::read_image_file(ps, true).unwrap(), b"pixels");
+        assert!(!p.exists(), "the temp file is gone");
+        std::fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn temp_file_without_marker_is_kept() {
+        let (dir, p) = image_tmp("keep", "plain-pixels");
+        let ps = p.to_str().expect("temp dir is UTF-8");
+        assert_eq!(App::read_image_file(ps, true).unwrap(), b"pixels");
+        assert!(p.exists(), "no marker, no delete");
+        std::fs::remove_file(&p).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn marker_outside_temp_is_kept() {
+        // `/var/tmp` is real but not a known temp dir for the protocol
+        let name = format!("tortty-keep-{}-tty-graphics-protocol", std::process::id());
+        let p = std::path::PathBuf::from("/var/tmp").join(&name);
+        std::fs::write(&p, b"pixels").unwrap();
+        assert_eq!(
+            App::read_image_file(p.to_str().unwrap(), true).unwrap(),
+            b"pixels"
+        );
+        assert!(p.exists(), "outside temp, no delete");
+        std::fs::remove_file(&p).unwrap();
+    }
+
+    #[test]
+    fn dotdot_escape_is_kept() {
+        // the bytes sit outside temp; the `..` path must not launder that
+        let pid = std::process::id();
+        let name = format!("tortty-esc-{pid}-tty-graphics-protocol");
+        let real = std::path::PathBuf::from("/var/tmp").join(&name);
+        std::fs::write(&real, b"pixels").unwrap();
+        let dir = std::env::temp_dir().join(format!("tortty-esc-{pid}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let via = dir.join(format!("../../var/tmp/{name}"));
+        assert_eq!(
+            App::read_image_file(via.to_str().unwrap(), true).unwrap(),
+            b"pixels"
+        );
+        assert!(real.exists(), "canonicalized out of temp, no delete");
+        std::fs::remove_file(&real).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
     }
 }

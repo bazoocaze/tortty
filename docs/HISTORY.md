@@ -2482,3 +2482,16 @@ Our half already works: the `f=100` path draws and `a=q` is answered.
 - Verified: three new graphics tests plus an Xvfb probe — `icat
   brazil_flag.png` draws the flag (294381 px changed, 85% of the window)
   and the grid shows no reply.
+
+## 2026-11-12 — `t=t` deletes only under the protocol's rule
+
+- The payload path comes from the child (over `ssh`, from a remote), and
+  `t=t` meant delete-after-read with no questions. Per the spec, deletion
+  now needs both: a known temp dir (`temp_dir`/`TMPDIR`, `/tmp`,
+  `/dev/shm`) and `tty-graphics-protocol` in the path — anything else is
+  read but kept.
+- Canonicalized before deciding, so `..` and symlinks cannot walk the
+  check out of the temp dir; decided after the read, on a path that
+  exists.
+- Verified: four app tests (deletes with marker, keeps without it, keeps
+  outside temp, keeps through `..`).
