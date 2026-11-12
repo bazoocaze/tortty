@@ -61,8 +61,10 @@ pub struct Placement {
 
 /// A transmission by file/temp/shared-memory (`B1`): what the app must load.
 ///
-/// The payload of `t=f`/`t=t`/`t=s` is a path, not pixels. The core keeps the
-/// request's context (who asked, where to show) and the app answers with
+/// The payload of `t=f`/`t=t` is a path, not pixels; the payload of `t=s`
+/// is a POSIX shared-memory NAME, resolved here to `/dev/shm/<name>` — the
+/// app only ever opens `FileRequest::path`. The core keeps the request's
+/// context (who asked, where to show) and the app answers with
 /// `Graphics::provide` — or the image stays missing and the child gets
 /// `ENOENT`. Shell expansion (`~`) belongs to the app: the path here is raw.
 #[derive(Clone, Debug)]
@@ -257,9 +259,24 @@ impl Graphics {
             // the payload names a file — the app reads it and answers with
             // `provide`. No response yet: `OK`/`ENOENT` comes with the bytes
             // (or without them).
+            let path = if medium == "s" {
+                // `t=s` is a shared-memory NAME, not a path (`kitten icat`
+                // sends `icat-XXX` and waits): it lives in `/dev/shm`.
+                // Opened as-is it resolved against the app cwd and every
+                // shm transmission answered `ENOENT`. A slash in it is not
+                // a name — refuse instead of loading an escaped path.
+                let name = String::from_utf8_lossy(&data);
+                let name = name.strip_prefix('/').unwrap_or(&name);
+                if name.contains('/') {
+                    return Self::error(&kv, "EINVAL:shm name");
+                }
+                format!("/dev/shm/{name}")
+            } else {
+                String::from_utf8_lossy(&data).into_owned()
+            };
             return Output {
                 file: Some(FileRequest {
-                    path: String::from_utf8_lossy(&data).into_owned(),
+                    path,
                     delete: medium == "t",
                     display: action == "T",
                     ident,
@@ -592,6 +609,12 @@ mod checks_graphics {
         format!("Ga={action},f=100,t={t},i=7;{path}").into_bytes()
     }
 
+    /// `t=s` carries a shared-memory name, not a path.
+    fn shm_body(name: &str, action: &str) -> Vec<u8> {
+        let name = b64(name.as_bytes());
+        format!("Ga={action},f=100,t=s,i=7;{name}").into_bytes()
+    }
+
     #[test]
     fn file_transmission_waits_for_the_app_instead_of_answering() {
         let mut g = Graphics::new();
@@ -613,8 +636,33 @@ mod checks_graphics {
         assert!(req.delete, "t=t deletes after reading");
         assert!(!req.display, "a=t only transmits");
         let mut g = Graphics::new();
-        let out = g.handle(&file_body("s", "T"), (0, 0), cell());
+        let out = g.handle(&shm_body("icat-ABC", "T"), (0, 0), cell());
         assert!(!out.file.expect("t=s waits").delete, "shm never deletes");
+    }
+
+    #[test]
+    fn shm_name_resolves_under_dev_shm() {
+        let mut g = Graphics::new();
+        // what `kitten icat` sends: a bare name, not a path. Opened as-is
+        // it resolved against the app cwd and every shm transmission
+        // answered `ENOENT` with the file sitting in `/dev/shm`.
+        let out = g.handle(&shm_body("icat-ABC", "T"), (1, 2), cell());
+        assert!(out.responses.is_empty(), "no verdict before the bytes");
+        let req = out.file.expect("the shm waits for the app");
+        assert_eq!(req.path, "/dev/shm/icat-ABC");
+        assert!(!req.delete, "shm never deletes");
+        assert!(req.display, "a=T also places");
+        assert_eq!((req.ident, req.cursor), (7, (1, 2)));
+    }
+
+    #[test]
+    fn shm_name_with_a_slash_is_not_a_path() {
+        let mut g = Graphics::new();
+        // `../../x` under `/dev/shm` escapes it: refuse instead of loading.
+        let out = g.handle(&shm_body("../../x", "T"), (0, 0), cell());
+        assert!(out.file.is_none(), "no load of an escaped name");
+        assert_eq!(out.responses, [b"Gi=7;EINVAL:shm name".to_vec()]);
+        assert!(g.images().is_empty());
     }
 
     #[test]

@@ -112,10 +112,10 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 
 - Transmit, display, place by id, delete by id or everything, capability query,
   chunking, `t=d/f/t/s` (direct, file, temp file deleted after reading, POSIX
-  shared memory — the app loads it, the core never touches the filesystem),
-  `f=24/32/100` (PNG decoded in the app), `o=z`, `s=`/`v=`, `c=`/`r=`,
-  `X=`/`Y=`, `C=1`, `q=`; the image follows the scroll and is pruned with the
-  history; `ED 3` clears images.
+  shared memory under `/dev/shm` — the app loads it, the core never touches
+  the filesystem), `f=24/32/100` (PNG decoded in the app), `o=z`, `s=`/`v=`,
+  `c=`/`r=`, `X=`/`Y=`, `C=1`, `q=`; the image follows the scroll and is pruned
+  with the history; `ED 3` clears images.
 - **limit:** no animation (`B2`), no sixel/iTerm2 (`B3`), and no z-index,
   placement id, Unicode placeholder or source crop (`M-L`); `pi` does not list
   the name `tortty`, so it falls back to text unless `PI_IMAGE_PROTOCOL=kitty`

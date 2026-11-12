@@ -2465,3 +2465,20 @@ Our half already works: the `f=100` path draws and `a=q` is answered.
 - Verified: seven `osc52_*` core tests plus an Xvfb probe — the child's
   escapes landed on the real selections (`CLIPBOARD: 'hello remote'`,
   `PRIMARY: 'prim'`, read back with python-xlib).
+
+## 2026-11-12 — kitty `t=s` resolves under `/dev/shm` (image ENOENT)
+
+- `kitten icat` probes `d`/`t`/`s`, we answer `OK` to all three, and it
+  picks shared memory: the payload is a NAME (`icat-XXX`), not a path.
+  Opened as-is it resolved against the app cwd, so every shm transmission
+  answered `Gi=0;ENOENT` with the bytes sitting in `/dev/shm`.
+- The core now resolves `t=s` to `/dev/shm/<name>`; a slash in the name is
+  not a name and is refused (`EINVAL:shm name`), so no escaped path loads.
+  `t=f`/`t=t` are untouched (still relative to the app cwd).
+- The visible garbage (`^[_Gi=0;ENOENT^[[` on screen, `brazil_flag.pngGi=0;ENOENT`
+  on the prompt line) is zsh eating the protocol reply as input (`ESC _`
+  yanks the last arg, the rest self-inserts): without kitty shell
+  integration no shell consumes these replies — kitty itself does the same.
+- Verified: three new graphics tests plus an Xvfb probe — `icat
+  brazil_flag.png` draws the flag (294381 px changed, 85% of the window)
+  and the grid shows no reply.
