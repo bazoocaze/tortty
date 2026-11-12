@@ -106,12 +106,6 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   swallowed). The progress state goes nowhere — no taskbar bar, no percentage
   — because a 1 Hz keepalive repeater (what the form is for) would pin any
   toast or badge forever.
-- **A workspace card is chosen on the press, so a drag carries the workspace you
-  are looking at.** Pressing a card brings it to the front before the pointer has
-  moved, which is what the tab bar already does; the drag then takes that
-  workspace to the place it is dropped and it stays in front there. A press that
-  travels less than 3 px is the click that selects, so the double click that
-  renames is not turned into a drag.
 - **A file dragged onto the window is not a menu**: the path is written into
   the child, and what happens next belongs to the program there.
 - **An `OSC 8` link opens through `xdg-open`, and only for five schemes**
