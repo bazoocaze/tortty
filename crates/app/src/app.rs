@@ -1063,12 +1063,15 @@ impl App {
         // the cards are drawn from `card_off` (`B42`): the pointer is on the
         // card `off` above it
         let card_h = f64::from(ch) * 2.4;
-        let i = ((py - f64::from(pad)) / card_h) as usize + self.card_off;
-        if i < self.ws_count() {
-            Some(i)
-        } else {
-            None
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        // the ratio is positive and bounded by the column height
+        let slot = ((py - f64::from(pad)) / card_h) as usize;
+        // the free row at the bottom is not a card: it is the way to walk (`B55`)
+        if slot >= self.cards_visible() {
+            return None;
         }
+        let i = slot + self.card_off;
+        (i < self.ws_count()).then_some(i)
     }
 
     /// The pointer is on the sidebar column (`B42`).
@@ -1083,11 +1086,15 @@ impl App {
         side > 0.0 && px >= f64::from(pad) && px < f64::from(pad) + side && py >= f64::from(pad)
     }
 
-    /// How many cards fit in the sidebar column, at least one.
+    /// How many **whole** cards fit in the sidebar column, at least one, leaving
+    /// the last text row free.
     ///
     /// The column runs from the bar's line to the bottom of the grid: it is
     /// taller than the grid by one bar, and the bottom padding is not part of it
-    /// (a card there would hang past the last row of text).
+    /// (a card there would hang past the last row of text). The free row is what
+    /// a drag aims at to walk the list (`B55`): a card cut by the bottom edge
+    /// would be a place and a scroll trigger at the same time, and pushing past
+    /// it turned the walk on with the hand still over a card.
     fn cards_visible(&self) -> usize {
         let (_cw, ch, _pad) = self.cell_metrics();
         let card_h = f64::from(ch) * 2.4;
@@ -1095,7 +1102,7 @@ impl App {
             return 1;
         }
         let rows = self.tabs[self.active].term.rows;
-        let band = f64::from(self.bar_h(ch) + rows as f32 * ch);
+        let band = f64::from(self.bar_h(ch) + rows as f32 * ch) - f64::from(ch);
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         // the band is positive and bounded by the window height
         let n = (band / card_h) as usize;
@@ -1127,24 +1134,29 @@ impl App {
         self.card_walk.map(|at| at + CARD_WALK)
     }
 
-    /// The row at each end of the column where a drag walks the list (`B55`):
-    /// the last text row walks down, the first one walks up.
+    /// The strip at each end of the column where a drag walks the list (`B55`):
+    /// the free row below the cards walks down, the bar's row and the first card
+    /// row walk up.
     ///
-    /// They are the first and the last text row of the grid, not "above the
-    /// first card / below the last one": the cards are drawn from the top of the
-    /// column and the ones at the ends are cut by the edges, so there is never
-    /// empty space there to aim at. The cost is that the row on the card at each
-    /// end no longer drops on that card — the walk takes it — and a place is
-    /// named from the row that follows.
+    /// The bottom one is a place of its own — no card is drawn there — so pushing
+    /// the pointer past the last card scrolls, and being **on** a card still
+    /// means "drop it here". Above the first card there is no such room (the
+    /// cards start at the top of the column), so the walk up takes the first
+    /// card's top row too, and everything above it, up to the window's edge:
+    /// a hand that drags to the top of the window finds it.
     fn card_band(&self, x: f64, y: f64) -> Option<i64> {
-        if !self.in_sidebar(x, y) || self.card_press.is_none() {
+        let (cw, ch, pad) = self.cell_metrics();
+        let side = f64::from(self.side_w(cw));
+        if side <= 0.0
+            || self.card_press.is_none()
+            || x < f64::from(pad)
+            || x >= f64::from(pad) + side
+        {
             return None;
         }
-        let (_cw, ch, pad) = self.cell_metrics();
         let top = f64::from(pad) + f64::from(self.bar_h(ch));
-        let rows = self.tabs[self.active].term.rows;
-        let bottom = top + f64::from(rows as f32 * ch);
-        if y >= bottom - f64::from(ch) {
+        let cards_end = top + self.cards_visible() as f64 * f64::from(ch) * 2.4;
+        if y >= cards_end {
             return (self.card_off + self.cards_visible() < self.ws_count()).then_some(1);
         }
         if y < top + f64::from(ch) {
@@ -2720,6 +2732,7 @@ impl App {
             tabs: tabs.as_deref(),
             sidebar: sidebar.as_deref(),
             cards_off: self.card_off,
+            cards_visible: self.cards_visible(),
             links: self.mods.control_key(),
         };
         let drew = {

@@ -747,3 +747,22 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 - Measured on Xvfb, 8 workspaces in 6 rows: down `0→6` in 3.0 s, up `6→0` in
   2.5 s, gaps 0.46–0.51 s, order untouched (`ws` 0); the drop after the walk
   lands the workspace at 7, and the row over card 1 still lands at 1.
+
+## 2026-11-12 — `B55`, the strip below the cards is not a card
+
+- The walk was tied to the last text row of the column, which is **on** the last
+  card (the cards are drawn from the top and the last one is cut by the edge):
+  pushing a drag one millimetre past that card turned the walk on with the hand
+  still over a card, so instead of dropping there the list rode to the end at
+  500 ms a card — five cards in 2.5 s, measured.
+- Now the column draws **whole cards only** and leaves its last row free: the
+  strip is a place of its own, `card_at` never names a card there, and only the
+  strip walks. The row that used to be the 14th card's is the strip (13 cards in
+  a 34-row window), which is the price: one card less in sight.
+- The walk up no longer requires the exact first row of the column: the strip
+  is everything above the first card, the bar's row included, so a hand that
+  drags to the top of the window finds it.
+- Measured on Xvfb, 19 workspaces and 34 rows: drag to the 13th card reorders and
+  `off` stays 0; into the strip, `off` 0→6 one card per 500 ms and stops at the
+  end; the drag back to the top walks 6→0 in 2.5 s; the drop lands the workspace
+  where the pointer is.

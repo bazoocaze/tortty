@@ -774,7 +774,7 @@ impl Renderer {
     /// It is drawn from card `off` (`B42`): the list scrolls, so the first card
     /// can start above the column and the last one is cut at the bottom of the
     /// grid — the strip ends there, not at the window's edge.
-    fn sidebar(&mut self, cards: &[WsCard], off: usize) {
+    fn sidebar(&mut self, cards: &[WsCard], off: usize, visible: usize) {
         if self.side <= 0.0 {
             return;
         }
@@ -788,7 +788,7 @@ impl Renderer {
         // the bottom of the grid, in this coordinate space (y = 0 is the first
         // grid row): the cards are cut here
         let bottom = self.config.height as f32 - self.pad - self.bar;
-        for (i, c) in cards.iter().enumerate().skip(off) {
+        for (i, c) in cards.iter().enumerate().skip(off).take(visible.max(1)) {
             let y0 = top + (i - off) as f32 * card_h;
             if y0 >= bottom {
                 break;
@@ -1296,6 +1296,7 @@ impl Renderer {
             tabs,
             sidebar,
             cards_off,
+            cards_visible,
             links,
         } = *f;
         let cols = term.cols;
@@ -1387,7 +1388,7 @@ impl Renderer {
         }
         // 2c) workspace sidebar: column on the left, in the reserved strip
         if let Some(cards) = sidebar {
-            self.sidebar(cards, cards_off);
+            self.sidebar(cards, cards_off, cards_visible);
         }
 
         // 2d) scrollbar: over the grid's right edge, under the cursor/toast
@@ -2025,6 +2026,9 @@ pub struct Frame<'a> {
     pub sidebar: Option<&'a [WsCard]>,
     /// First card of the sidebar list to draw (`B42`).
     pub cards_off: usize,
+    /// How many whole cards fit: the rest of the column is the strip a drag
+    /// walks in (`B55`), so a card is never drawn there.
+    pub cards_visible: usize,
     /// Ctrl is held: the `OSC 8` links underline themselves.
     pub links: bool,
 }
