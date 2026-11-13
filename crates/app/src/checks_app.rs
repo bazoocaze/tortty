@@ -46,6 +46,10 @@ pub fn all() -> Vec<Check> {
             run: window_state,
         },
         Check {
+            name: "geometry_is_not_the_lock",
+            run: geometry_is_not_the_lock,
+        },
+        Check {
             name: "debug_socket",
             run: debug_socket,
         },
@@ -256,6 +260,37 @@ fn mouse_modes_and_sgr() -> Result<(), String> {
     let saturated = mouse::encode(far, legacy);
     if saturated != b"\x1b[M\x20\xff\xff" {
         return Err(format!("legacy should saturate at 222: {saturated:?}"));
+    }
+    Ok(())
+}
+
+/// `B61`: the window's geometry is read by every window, the session layout only
+/// by the one that owns it.
+///
+/// The bug was one line tying both to the `flock`: a second window, which cannot
+/// take the lock, opened at the first-run default instead of where the last one
+/// was.
+fn geometry_is_not_the_lock() -> Result<(), String> {
+    use tortty_core::config::RestoreState;
+    let cases = [
+        // (grid, restore_state, owner) -> (geometry, layout)
+        ((false, RestoreState::Layout, true), (true, true)),
+        // the second window: no lock, and it still opens at the remembered size
+        ((false, RestoreState::Layout, false), (true, false)),
+        // `--cols/--rows` is a measurement: neither the size nor the layout
+        ((true, RestoreState::Layout, false), (false, false)),
+        // the same terminal for a probe (`--cmd` owns nothing)
+        ((false, RestoreState::Content, false), (true, false)),
+        // "this terminal has no state" (`B45`), documented as no geometry either
+        ((false, RestoreState::None, false), (false, false)),
+    ];
+    for ((grid, restore, owner), want) in cases {
+        let got = crate::app::state_use(grid, restore, owner);
+        if got != want {
+            return Err(format!(
+                "grid={grid} restore={restore:?} owner={owner}: got {got:?}, want {want:?}"
+            ));
+        }
     }
     Ok(())
 }

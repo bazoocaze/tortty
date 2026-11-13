@@ -198,6 +198,29 @@ const NOTIF_FLOOR: Duration = Duration::from_secs(8);
 /// One card per this long while a drag holds the pointer in the band below the
 /// last card (`B55`). Long enough to read the list walking, short enough not to
 /// feel stuck; a per-frame step would cross eight workspaces in 130 ms.
+/// What a run reads from the state file (`B61`): the window's geometry, and the
+/// session layout.
+///
+/// The two are different questions. The layout belongs to the session, and only
+/// the window that owns it (`B46`) may restore and rewrite it — two windows
+/// reopening and saving one tab list would erase each other's work. The size and
+/// the place belong to the window: a second window is the same terminal, and
+/// opening it at the first-run default was the bug.
+///
+/// Two opt-outs stay, and both are the command line saying what it wants: a grid
+/// (`--cols`/`--rows`, a measurement) and `restore_state = none` ("this terminal
+/// has no state", documented as no geometry either).
+#[must_use]
+pub(crate) fn state_use(
+    grid_explicito: bool,
+    restore: tortty_core::config::RestoreState,
+    owner: bool,
+) -> (bool, bool) {
+    use tortty_core::config::RestoreState;
+    let geometry = !grid_explicito && restore != RestoreState::None;
+    (geometry, geometry && owner)
+}
+
 const CARD_WALK: Duration = Duration::from_millis(500);
 
 /// Bytes in hex (the socket's `keys` verb returns this to check the encoder).
@@ -3265,10 +3288,10 @@ impl App {
         );
         self.geom_normal = default;
         // `B46`: only the window that opened the session owns the state, and only
-        // the owner reads and writes it. The kernel says who that is (a `flock`
-        // held for the life of the process), so a second window is a scratch
-        // window instead of a second owner — this is what stops two runs from
-        // overwriting each other's `window.json`.
+        // the owner restores the session and writes the file. The kernel says who
+        // that is (a `flock` held for the life of the process), so a second
+        // window is a scratch window instead of a second owner — this is what
+        // stops two runs from overwriting each other's `window.json`.
         //
         // Three runs never even try the lock, because they are not the session:
         // a grid on the command line (`--cols`/`--rows`, a measurement), a
@@ -3278,10 +3301,18 @@ impl App {
             && self.opts.cmd.is_none()
             && self.opts.cfg.restore_state != RestoreState::None;
         self.owner = asks_for_state.then(crate::state::lock).flatten();
-        self.remember_geom = self.owner.is_some();
-        if !self.remember_geom {
-            // a measurement wants the grid it asked for; a probe, `none` and a
-            // scratch window open at the same default a first-ever run uses
+        // `B61`: the lock is one decision (who restores and writes the session),
+        // the window's size and place are another — a second window opens where
+        // the last one was, not at the first-run default.
+        let (read_geometry, read_layout) = state_use(
+            self.opts.grid_explicito,
+            self.opts.cfg.restore_state,
+            self.owner.is_some(),
+        );
+        self.remember_geom = read_geometry;
+        if !read_geometry {
+            // a measurement wants the grid it asked for; `restore_state = none`
+            // wants the first-run default
             let size = if self.opts.grid_explicito {
                 default
             } else {
@@ -3300,19 +3331,12 @@ impl App {
             .collect();
         let remembered = crate::state::load();
         let maximized = remembered.as_ref().is_some_and(|s| s.geometry.maximized);
-        // the layout of the last session (`M-I`): it is only worth reopening when
-        // the command line did not ask for a grid (a measurement) nor for a
-        // command of its own (a probe, `mc` in a fresh terminal)
-        // `restore_state = none` says the layout is not written, so there is
-        // nothing worth reopening either (`B45`); `--cmd` is a probe and opens a
-        // single tab of its own
-        self.restore = remembered.as_ref().and_then(|s| {
-            if self.opts.cmd.is_none() && self.opts.cfg.restore_state != RestoreState::None {
-                s.layout.clone()
-            } else {
-                None
-            }
-        });
+        // the layout of the last session (`M-I`): only the owner has one, and a
+        // probe (`--cmd`) opens a single tab of its own
+        self.restore = remembered
+            .as_ref()
+            .filter(|_| read_layout)
+            .and_then(|s| s.layout.clone());
         // J2/J4: with no state (or invalid state: monitor unplugged, garbage in
         // the file) it opens at the 980x640 default, not at the grid size —
         // whoever wants an exact grid asks for `--cols/--rows`, which turns the

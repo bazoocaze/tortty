@@ -14,9 +14,10 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   screen comes back only with `restore_state = content`, and it is a picture:
   text, SGR and `OSC 8` links, never the process that wrote them, and it stops
   at the `scrollback` cap.
-- **The second window is a scratch.** One tab, the default size, and nothing
-  of it is remembered on the way out — so what the second window saw is not in
-  the state, and closing one window never edits another's session.
+- **The second window is a scratch.** One tab, nothing of it remembered on the
+  way out — so what the second window saw is not in the state, and closing one
+  window never edits another's session. It does open at the remembered size and
+  place: the geometry is the window's, the session is the owner's.
 - **Decoration is not content.** The line that separates a restored picture from
   the new run is marked when it is written and skipped when the snapshot is taken
   (`B48`): it shows on the screen and leaves no trace in the file, which is the

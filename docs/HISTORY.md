@@ -766,3 +766,22 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   `off` stays 0; into the strip, `off` 0→6 one card per 500 ms and stops at the
   end; the drag back to the top walks 6→0 in 2.5 s; the drop lands the workspace
   where the pointer is.
+
+## 2026-11-12 — `B61`, the geometry is the window's, not the lock's
+
+- One line tied two questions together: `remember_geom = self.owner.is_some()`
+  (`B46`). Who may **restore and write the session** is one decision — two
+  windows saving one tab list would erase each other's work — and **the size and
+  place a window opens at** is another, which every window has. So a second
+  instance, which cannot take the `flock`, came up at the 980x640 default.
+- Now the geometry is read whenever the command line did not ask for a grid, and
+  the session layout is restored only by the owner. The write side does not move:
+  `save_geometry` still returns early for a window that owns nothing, so the
+  second window reads and never writes.
+- `restore_state = none` keeps meaning "this terminal has no state" (no geometry
+  either, as documented), and `--cols/--rows` keeps meaning "this exact grid".
+  `--cmd` gets the remembered geometry but no layout.
+- Measured on Xvfb with `window.json` at 700x500: first window 700x500, second
+  window **700x500** (1.0.68: 980x640), the saved workspace name and cwd intact
+  after both closed, and the second window's own tab absent from the file. New
+  `--selftest` case `geometry_is_not_the_lock` (five combinations).
