@@ -912,3 +912,25 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 - Verified with five `prompt` tests, four `Term` tests (the four letters, the
   status, an unknown letter ignored, `RIS` forgetting them) and an Xvfb probe:
   four prompts at lines 6/11/16/21, `pin` 0 → 6 → 11 up and 11 → 6 → 0 down.
+
+## 2026-11-13 — `OSC 7501`, the program says what it is doing (`B47`)
+
+- The catch-all `_ => {}` threw the whole class away, and with it the one thing a
+  terminal cannot infer: `terraform` is *blocked on a permission*, not "something
+  happened". `crates/core/src/status.rs` implements v0.4 (2026-10-10) with the
+  spec's own hard caps, and every one of them discards the report **before** a
+  record is touched.
+- Records live on the `Term` (state of the emulation, not of the app): one per
+  `id` path, replaced whole by each report, `app` inherited from the nearest
+  ancestor, `clear` taking the subtree, 256 of them with the least recently
+  updated evicted. `7501;?` answers with the states and kinds accepted, from
+  `child_out` like `DA`/`CPR`.
+- The presentation reuses what exists: the root record drives the tab's progress
+  bar (`working` 1, `blocked` 4, `error` 2), `OSC 9;4` feeds the root until a real
+  report arrives, and `done`/`blocked`/`error` raise the badge/card/toast of `B8`;
+  `OSC 133;A` and process exit drop `working`/`blocked`, never `done`/`error`.
+- Verified with twelve `status` tests (the spec's examples, root inheritance, the
+  subtree clear, one per limit, a newline in `msg`, the cap eviction) and an Xvfb
+  probe: `working` → record + bar state 1; `blocked kind=auth` → state 4 and the
+  tab's badge; `done` → record with the bar cleared; a prompt after `working` →
+  the record gone.

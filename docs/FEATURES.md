@@ -197,6 +197,25 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   one as a still translucent band of the full width. The fill is in pixels, so
   37% of a 20-cell tab is 7.4 cells of ink; `0` removes it. **limit:** the window
   only (no taskbar), and nothing moves.
+- Program status (`OSC 7501`, the Program Status Protocol v0.4): the program says
+  what it is doing — `idle`/`working`/`done`/`blocked`/`error`, with `kind`,
+  `progress`, `app`, `title` and a base64 `msg` — and the terminal keeps a set of
+  records per tab, one per `id` path, replaced whole by each report. A record
+  without `app` inherits it from its nearest ancestor; `clear` removes the record
+  and everything beneath it. The root record drives the tab's progress bar
+  (`working` green, `blocked` yellow, `error` red) and the states that want the
+  user (`done`, `blocked`, `error`) raise the same badge, card and toast as `OSC
+  9`. `7501;?` is answered with the states and kinds this terminal accepts, and
+  `OSC 9;4` feeds the root record until a real report arrives. A new prompt
+  (`OSC 133;A`) or the process leaving drops `working`/`blocked`, never
+  `done`/`error`. **limit:** every hard cap of the spec is enforced by discarding
+  the whole report (4096 bytes, `msg` 2732/2048, `title` 256/192, `app` 32, `id`
+  128 in 8 levels of 32, 256 records, control characters in the decoded text);
+  nothing shows the records yet beyond the root record's bar and the
+  notification, the feature-detection reply lands on the grid when the program is
+  a shell that is not waiting for it, and `working` records are dropped with the
+  prompt rather than per process — the terminal cannot tell one program from
+  another.
 - Prompt marks (`OSC 133`): the shell says where the prompt starts, where the
   command starts, where the output starts and how the command ended (with the
   status); the marks live on absolute lines, so scrolling and output do not move

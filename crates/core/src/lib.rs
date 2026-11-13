@@ -16,6 +16,7 @@ pub mod grid;
 pub mod prompt;
 pub mod select;
 pub mod snapshot;
+pub mod status;
 pub mod term;
 
 pub use cell::Cell;

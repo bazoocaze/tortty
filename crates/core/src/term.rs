@@ -316,6 +316,9 @@ pub struct Term {
     /// Progress reported by the program (`OSC 9;4`): the tab label draws it.
     /// `None` = nothing to show; state `0` clears it.
     pub progress: Option<Progress>,
+    /// `OSC 7501` program status records (`B47`): what each program in this tab
+    /// says it is doing. One record per id, replaced whole by each report.
+    pub status: crate::status::Status,
     /// `OSC 133` prompt marks (`M-R`): where a prompt, a command and its output
     /// start, and how the command ended. Absolute lines, so scrolling and output
     /// do not move them.
@@ -432,6 +435,7 @@ impl Term {
             notifs: 0,
             notif_text: String::new(),
             progress: None,
+            status: crate::status::Status::default(),
             marks: crate::prompt::Marks::default(),
             refused: None,
             osc_cap: MAX_OSC,
@@ -1836,6 +1840,10 @@ impl Term {
             9 => match Self::osc_progress(arg) {
                 Some((0, _)) => self.progress = None,
                 Some((state, pct)) if state < 5 => {
+                    // the spec's mapping: the progress form feeds the root record
+                    // until a real `7501` report arrives, and it is why the form
+                    // is swallowed instead of toasted
+                    self.status.from_progress(state, pct);
                     self.progress = Some(Progress { state, pct });
                 },
                 Some(_) => {},
@@ -1844,6 +1852,9 @@ impl Term {
             777 => self.osc_notify777(arg),
             // `OSC 133` prompt marks (`M-R`): the substrate of shell integration
             133 => self.osc_prompt(arg),
+            // `OSC 7501` Program Status Protocol (`B47`): what the program says
+            // it is doing, instead of the terminal guessing from the screen
+            7501 => self.osc_status(arg),
             // iTerm2 inline image (`1337;File=…:base64`) — `B3`'s cheap half
             1337 => self.osc_iterm(arg),
             104 => self.osc_reset_palette(arg),
@@ -1853,6 +1864,59 @@ impl Term {
             _ => {},
         }
         self.osc_record(data);
+    }
+
+    /// `OSC 7501` (`B47`): a program reporting what it is doing.
+    ///
+    /// The root record drives the tab's progress bar (`OSC 9;4` presentation,
+    /// already drawn), and the states that want the user become the notification
+    /// `B8` already shows: badge on the tab, card on the workspace, toast with the
+    /// decoded text.
+    fn osc_status(&mut self, arg: &[u8]) {
+        if arg == b"?" {
+            // feature detection: the reply carries nothing from any report
+            self.child_out
+                .extend_from_slice(crate::status::Status::detection_reply());
+            return;
+        }
+        let Some(applied) = self.status.report(arg) else {
+            self.root_progress();
+            return;
+        };
+        if applied.state.wants_you() {
+            let text = match (applied.app.as_deref(), applied.text.as_str()) {
+                (Some(app), text) if app != text => format!("{app}: {text}"),
+                (_, text) => text.to_string(),
+            };
+            self.osc_notify_text(&text);
+        }
+        self.root_progress();
+    }
+
+    /// The root record as the tab's progress bar (`B47` → `OSC 9;4`'s colours).
+    fn root_progress(&mut self) {
+        use crate::status::State;
+        let bar = match self.status.root() {
+            None => None,
+            Some(r) => match r.state {
+                State::Working => Some(Progress {
+                    state: 1,
+                    pct: r.progress,
+                }),
+                // waiting on the user: the warning shade, filling when the
+                // program said how far it got
+                State::Blocked => Some(Progress {
+                    state: 4,
+                    pct: r.progress,
+                }),
+                State::Error => Some(Progress {
+                    state: 2,
+                    pct: Some(100),
+                }),
+                State::Done | State::Idle => None,
+            },
+        };
+        self.progress = bar;
     }
 
     /// `OSC 133` (`M-R`): the shell says where the prompt, the command and the
@@ -1880,6 +1944,13 @@ impl Term {
         } else {
             None
         };
+        if kind == MarkKind::PromptStart {
+            // a new prompt: the command that was running is gone, so `working`
+            // and `blocked` records go with it — `done`/`error` stay for the
+            // user to find (the spec's lifetime rules, `B47`)
+            self.status.forget_transient();
+            self.root_progress();
+        }
         let line = self.scrolled as i64 + self.cy as i64;
         let first = self.abs_first();
         self.marks.push(Mark { line, kind, status }, first);

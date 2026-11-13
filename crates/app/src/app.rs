@@ -3001,6 +3001,18 @@ impl App {
                     "tabs_progress": self.tabs.iter()
                         .map(|t| t.term.progress.map(|p| serde_json::json!([p.state, p.pct])))
                         .collect::<Vec<_>>(),
+                    "status": self.tabs[self.active]
+                        .term
+                        .status
+                        .records()
+                        .map(|(id, r)| serde_json::json!([
+                            id,
+                            r.state.name(),
+                            r.progress,
+                            r.app,
+                            r.msg,
+                        ]))
+                        .collect::<Vec<_>>(),
                     "marks": self.tabs[self.active]
                         .term
                         .marks
