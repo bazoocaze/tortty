@@ -198,6 +198,24 @@ const NOTIF_FLOOR: Duration = Duration::from_secs(8);
 /// One card per this long while a drag holds the pointer in the band below the
 /// last card (`B55`). Long enough to read the list walking, short enough not to
 /// feel stuck; a per-frame step would cross eight workspaces in 130 ms.
+const CARD_WALK: Duration = Duration::from_millis(500);
+
+/// Slot, in `parked`, of the workspace that takes the place of the one in front
+/// when it closes (`B62`).
+///
+/// The logical order is `parked[0..ws_idx]`, the front, `parked[ws_idx..]`, so
+/// the successor is `parked[ws_idx]` — and the predecessor, `parked[ws_idx - 1]`,
+/// when the front was the last. `None` = nothing left: the app closes.
+pub(crate) fn successor_slot(ws_idx: usize, parked: usize) -> Option<usize> {
+    if parked == 0 {
+        return None;
+    }
+    if ws_idx < parked {
+        return Some(ws_idx);
+    }
+    Some(ws_idx.saturating_sub(1))
+}
+
 /// What a run reads from the state file (`B61`): the window's geometry, and the
 /// session layout.
 ///
@@ -220,8 +238,6 @@ pub(crate) fn state_use(
     let geometry = !grid_explicito && restore != RestoreState::None;
     (geometry, geometry && owner)
 }
-
-const CARD_WALK: Duration = Duration::from_millis(500);
 
 /// Bytes in hex (the socket's `keys` verb returns this to check the encoder).
 fn hex(bytes: &[u8]) -> String {
@@ -3715,8 +3731,9 @@ impl App {
         self.after_ws_change();
     }
 
-    /// The workspace in front lost its tabs: promotes the first parked one (or
-    /// closes the app, if none is left) — I20.
+    /// The workspace in front lost its tabs: the one that takes the place is the
+    /// **next** in the logical order, or the previous when it was the last (or
+    /// closes the app, if none is left) — I20, `B62`.
     fn drop_empty_workspace(&mut self) {
         if self.parked.is_empty() {
             // last workspace: the app closes on the next tick (`about_to_wait`
@@ -3728,9 +3745,16 @@ impl App {
             self.exiting = true;
             return;
         }
-        let new = self.parked.remove(0);
+        // `B62`: the list closes around the hole instead of collapsing to the
+        // top — the workspace that was at `ws_idx + 1` takes the slot and keeps
+        // the number, which is the rule the tabs already follow
+        let Some(slot) = successor_slot(self.ws_idx, self.parked.len()) else {
+            self.exiting = true;
+            return;
+        };
+        let new = self.parked.remove(slot);
         new.into_current(self);
-        self.ws_idx = 0;
+        self.ws_idx = slot;
         self.after_ws_change();
     }
 

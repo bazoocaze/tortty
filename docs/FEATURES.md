@@ -143,7 +143,9 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   cycles one tab per detent (the touchpad's travel accumulates, as in the
   child's wheel).
 - Workspaces: a set of tabs, sidebar cards (hidden when there is only one),
-  inline rename, stable numbering; the card is the number plus the name the owner
+  inline rename, stable numbering; closing the one in front (Super+Q) leaves
+  selected the workspace that took its place — the next, or the previous when it
+  was the last; the card is the number plus the name the owner
   typed over the title of the selected tab, and a workspace never renamed
   shows that title on the first row with the second one empty — clearing the name
   in the field goes back to it; the card list scrolls — the wheel over the column

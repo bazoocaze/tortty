@@ -46,6 +46,10 @@ pub fn all() -> Vec<Check> {
             run: window_state,
         },
         Check {
+            name: "workspace_close_keeps_the_place",
+            run: workspace_close_keeps_the_place,
+        },
+        Check {
             name: "geometry_is_not_the_lock",
             run: geometry_is_not_the_lock,
         },
@@ -260,6 +264,34 @@ fn mouse_modes_and_sgr() -> Result<(), String> {
     let saturated = mouse::encode(far, legacy);
     if saturated != b"\x1b[M\x20\xff\xff" {
         return Err(format!("legacy should saturate at 222: {saturated:?}"));
+    }
+    Ok(())
+}
+
+/// `B62`: closing the workspace in front promotes the one that takes its slot.
+///
+/// The list closes around the hole — the next workspace when there is one, the
+/// previous when the closed one was the last — instead of collapsing to the
+/// first, which is what the tabs already do.
+fn workspace_close_keeps_the_place() -> Result<(), String> {
+    // (in front at, how many parked) -> slot promoted, from the logical order
+    //   parked[0..ws_idx], front, parked[ws_idx..]
+    let cases = [
+        ((0, 18), Some(0)),   // first of 19: the old 2 becomes the new 1
+        ((8, 18), Some(8)),   // 9th of 19: the old 10 becomes the new 9
+        ((18, 18), Some(17)), // last of 19: the old 18 stays selected
+        ((0, 0), None),       // the only one: the app closes
+        ((1, 1), Some(0)),    // 2nd of 2, the last: the 1st is promoted
+    ];
+    for ((ws_idx, parked), want) in cases {
+        let got = crate::app::successor_slot(ws_idx, parked);
+        if got != want {
+            return Err(format!(
+                "front {ws_idx} of {} ({} parked): got {got:?}, want {want:?}",
+                parked + 1,
+                parked
+            ));
+        }
     }
     Ok(())
 }

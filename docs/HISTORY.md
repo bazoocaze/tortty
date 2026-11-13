@@ -785,3 +785,18 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   window **700x500** (1.0.68: 980x640), the saved workspace name and cwd intact
   after both closed, and the second window's own tab absent from the file. New
   `--selftest` case `geometry_is_not_the_lock` (five combinations).
+
+## 2026-11-12 — `B62`, the workspace list closes around the hole
+
+- `Super+Q` on the workspace in front promoted `parked.remove(0)` and set
+  `ws_idx = 0`, so closing the 9th of 19 put you on the **1st**. The tabs never
+  did that (`close_tab_at`: `active.min(len - 1)`), and neither should the list.
+- The rule is now one named function, `successor_slot(ws_idx, parked)`: the
+  logical order is `parked[0..ws_idx]`, the front, `parked[ws_idx..]`, so the
+  successor is `parked[ws_idx]` and the predecessor `parked[ws_idx - 1]` when the
+  front was the last. `None` still means "the app closes".
+- Measured on Xvfb with each workspace carrying its own `OSC 0` title, 19
+  workspaces: select `ws9`, `Super+Q` → **`ws10` selected as the new 9** (before:
+  `ws=0`); walk to the end (`ws19`), `Super+Q` → **`ws18` selected** (before:
+  `ws=0` again). New `--selftest` case `workspace_close_keeps_the_place`, five
+  positions including the only-one case.
