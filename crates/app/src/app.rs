@@ -3627,6 +3627,11 @@ impl App {
                 }
                 return true;
             },
+            // The space bar arrives as a named key, never as text, so the
+            // catch-all below would swallow it and nobody could search for
+            // `error: ` or `foo bar`. Inside the bar it is a character.
+            Some(NamedKey::Space)
+                if !(k.mods.control_key() || k.mods.alt_key() || k.mods.super_key()) => {},
             Some(_) => {
                 // Tab, arrows and the like stay with the child? No: the bar is
                 // modal, an arrow would move the cursor in the program behind it.
@@ -3640,7 +3645,13 @@ impl App {
         if k.mods.control_key() || k.mods.alt_key() || k.mods.super_key() {
             return false;
         }
-        let Some(text) = k.text.or(k.character) else {
+        // a named key that got this far is the space bar, which carries no text
+        let space = if k.named == Some(NamedKey::Space) {
+            Some(" ")
+        } else {
+            None
+        };
+        let Some(text) = k.text.or(k.character).or(space) else {
             return true;
         };
         let clean: String = text.chars().filter(|c| !c.is_control()).collect();

@@ -153,9 +153,15 @@ fn cells(row: &Row) -> Vec<(char, usize)> {
 }
 
 fn scan_row(row: &Row, want: &[char], line: i64, out: &mut Vec<Hit>) {
-    // trailing blanks are not text: a query ending a line must not match the
-    // empty rest of it
-    let text = cells(row);
+    // trailing blanks are padding, not text: a query that ends in a space must
+    // not match the empty rest of the line, and no match may start in padding
+    let mut text = cells(row);
+    while let Some(&(_, col)) = text.last() {
+        if !row.cells[col].is_blank() {
+            break;
+        }
+        text.pop();
+    }
     let n = text.len();
     let m = want.len();
     if m == 0 || n < m {
@@ -217,6 +223,20 @@ mod tests {
         assert_eq!(hits[2].line, t.scrolled as i64 + row as i64);
         assert_eq!(hits[0].col, 0);
         assert_eq!(hits[0].len, 5);
+    }
+
+    /// The query is matched byte for byte, spaces included: `error: ` has to
+    /// find `error: ` and nothing else, and a bare space has to find the gaps.
+    #[test]
+    fn a_query_keeps_its_spaces() {
+        let mut t = Term::new(20, 4);
+        t.feed(b"error: one\r\n\r\nwarning: two\r\nfoo bar\r\n");
+        assert_eq!(find(&t, "error: ").len(), 1);
+        assert_eq!(find(&t, "foo bar").len(), 1);
+        // a space is a character like any other, so it matches the blank line too
+        assert_eq!(find(&t, " ").len(), 3);
+        // and the length of the match is the length of the query
+        assert_eq!(find(&t, "foo bar")[0].len, 7);
     }
 
     #[test]

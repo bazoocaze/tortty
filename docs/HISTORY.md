@@ -1001,3 +1001,14 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   opaque with a 1 px edge: nothing behind it shows through. `[ no match ]` comes
   in red; the chip is not drawn while the query is empty, and the cursor is the
   amber of the current match. A query longer than the room keeps its tail.
+
+## 2026-11-13 — the search query takes spaces (`M-D`)
+
+- The space bar arrives as a named key, never as text, so the bar's catch-all
+  swallowed it: `error: ` and `foo bar` could not be typed at all. In the bar a
+  space is now a character like any other; a chord that starts with Ctrl/Alt/Super
+  still goes to the child.
+- `find` now stops at the last non-blank cell of a line. The comment already said
+  trailing blanks are not text, but nothing implemented it, so a bare space
+  matched the padding to the right of every line — 94 hits where 4 lines had it.
+  A space now finds the gaps inside a line, and no match starts in padding.
