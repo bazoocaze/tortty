@@ -61,6 +61,18 @@ bold_as_bright off
 # diagnostic log; `off` turns it off (--debug-log changes the path)
 debug_log off
 
+# shortcuts: `map CHORD ACTION [N]` and `unmap CHORD`. CHORD is modifiers joined
+# with `+` (ctrl, alt, shift, super) plus one key: `ctrl+shift+t`, `alt+1`,
+# `shift+pgup`, `f2`. `N`, for select_tab/select_workspace, is 1..10 (10 = key 0).
+# Actions: copy paste new_tab close_tab new_workspace close_workspace prev_prompt
+# next_prompt open_config scroll_page_up scroll_page_down scroll_top scroll_bottom
+# select_tab select_workspace ws_prev ws_next ws_move_up ws_move_down.
+# The defaults are this table (see Bindings::base): Ctrl+Shift+C/V/T/W/N/Q,
+# Ctrl+Shift+Up/Down, Ctrl+Shift+F2, Shift+PgUp/PgDn/Home/End, Alt+1..0 (tab),
+# Ctrl+Shift+1..0 and Super+1..0 (workspace), Super+Up/Down and Super+Shift+Up/Down.
+# map ctrl+shift+y new_tab
+# unmap ctrl+shift+w
+
 # colours: foreground/background/cursor and the 16-colour ANSI palette.
 # The defaults are the classic xterm palette: mc,
 # htop and ls --color were calibrated on it, and swapping it for a \"pretty
@@ -220,6 +232,8 @@ pub struct Config {
     pub copy_on_select: bool,
     pub bold_as_bright: bool,
     pub debug_log: Option<String>,
+    /// The shortcut table (`M-H`): chords the app eats before the encoder.
+    pub bindings: crate::keymap::Bindings,
     pub fg: Color,
     pub bg: Color,
     pub cursor: Color,
@@ -248,6 +262,8 @@ const KNOWN: &[&str] = &[
     "copy_on_select",
     "bold_as_bright",
     "debug_log",
+    "map",
+    "unmap",
     "foreground",
     "background",
     "cursor_color",
@@ -300,6 +316,7 @@ impl Config {
             copy_on_select: false,
             bold_as_bright: false,
             debug_log: None,
+            bindings: crate::keymap::Bindings::base(),
             fg: Color::Rgb(0xd6, 0xd6, 0xd6),
             bg: Color::Rgb(0, 0, 0),
             cursor: Color::Rgb(0xd6, 0xd6, 0xd6),
@@ -442,6 +459,16 @@ impl Config {
                 "bold_as_bright" => match parse_bool(value) {
                     Some(b) => cfg.bold_as_bright = b,
                     None => errors.push(bad(format!("\"{value}\" is not on/off"))),
+                },
+                "map" => {
+                    if let Err(msg) = cfg.bindings.map_text(value) {
+                        errors.push(bad(msg));
+                    }
+                },
+                "unmap" => {
+                    if let Err(msg) = cfg.bindings.unmap_text(value) {
+                        errors.push(bad(msg));
+                    }
                 },
                 "debug_log" => {
                     cfg.debug_log = if value.is_empty() || value == "off" {

@@ -225,6 +225,14 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   else consumes them yet — the command's output as a range, the command in the
   tab label and the redraw are `B39`, and no shell ships a script that emits them
   (the snippet is the reader's).
+- Shortcuts are a **table** (`map`/`unmap` in the config, `M-H`): `map
+  ctrl+shift+y new_tab` re-binds, `unmap ctrl+shift+w` frees the chord so the
+  program sees the key again. Nineteen actions (copy, paste, tab and workspace
+  open/close, prompt walk, config, the four scroll moves, `select_tab`/
+  `select_workspace` with a number, the workspace walk and carry); the defaults
+  are the chords that existed. **limit:** chord + action only — no sequences, no
+  per-program tables — and a digit under `Ctrl`/`Alt`/`Super` is read from the
+  physical key, so a non-QWERTY layout reaches the same number.
 - Shortcuts: Ctrl+Shift+T/W/N/Q/F2 (`F2` is the config in the editor, under
   *Configuration*), Ctrl+Shift+Up/Down (previous/next prompt mark),
   Ctrl+Shift+1…9, Alt+1…9, Super+N/Q/1…9, Super+Up/Down

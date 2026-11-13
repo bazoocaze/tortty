@@ -35,10 +35,42 @@ file.
 | `copy_on_select` | `off` | the selection goes to CLIPBOARD as well (PRIMARY is always) |
 | `bold_as_bright` | `off` | SGR 1 on the eight low colours (`0`–`7`) draws the bright half (`8`–`15`) — xterm's `boldColors`; off by default, because the palette is the owner's and a theme may give the low half its own meaning |
 | `debug_log` | `off` | diagnostic log; `off` turns it off, a path turns it on |
+| `map` | the table below | `map CHORD ACTION [N]`: binds a chord to an app action (and re-binds one) |
+| `unmap` | — | `unmap CHORD`: frees the chord, so the program sees the key again |
 | `foreground` | `#d6d6d6` | text colour (`#rrggbb` or `#rgb`) |
 | `background` | `#000000` | background colour |
 | `cursor_color` | `#d6d6d6` | cursor colour |
 | `color0` … `color15` | see file | ANSI palette; the rest of the 256 palette (cube and greys) is computed |
+
+### Shortcuts (`M-H`)
+
+A shortcut is a **chord** — modifiers joined with `+` (`ctrl`, `alt`, `shift`,
+`super`) plus one key — and an **action**. The key is a single character or one
+of `enter esc tab backspace space insert delete home end pgup pgdn up down left
+right f1`…`f24`.
+
+| action | what it does |
+|---|---|
+| `copy` / `paste` | CLIPBOARD |
+| `new_tab` / `close_tab` | tab |
+| `new_workspace` / `close_workspace` | workspace |
+| `prev_prompt` / `next_prompt` | walk the `OSC 133` marks (`M-R`) |
+| `open_config` | the config file in `$EDITOR`, in a new tab |
+| `scroll_page_up` / `scroll_page_down` / `scroll_top` / `scroll_bottom` | the history |
+| `select_tab N` / `select_workspace N` | `N` is 1..10, where 10 is key `0` |
+| `ws_prev` / `ws_next` / `ws_move_up` / `ws_move_down` | walk and carry the workspace |
+
+The defaults are the table the app has always had: `Ctrl+Shift+C/V/T/W/N/Q`,
+`Ctrl+Shift+Up/Down`, `Ctrl+Shift+F2`, `Shift+PgUp/PgDn/Home/End`, `Alt+1`…`0`
+(tab), `Ctrl+Shift+1`…`0` and `Super+1`…`0` (workspace), `Super+Up/Down` and
+`Super+Shift+Up/Down`. A digit under `Ctrl`/`Alt`/`Super` is read from the
+**physical** key, so `Ctrl+Shift+2` still means 2 on a layout where it produces
+`@`. An unbound key goes to the program, which is the point of `unmap`.
+
+```conf
+map ctrl+shift+y new_tab
+unmap ctrl+shift+w
+```
 
 The colour default is the **classic xterm palette** (black background, blue
 `#0000ee`). It is not laziness: `mc`, `htop`, `ls

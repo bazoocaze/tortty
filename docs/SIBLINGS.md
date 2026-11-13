@@ -11,8 +11,9 @@ the three drift, which is why it carries the date.
 
 ## Config Parity
 
-34 key names in the union: **32 in all three**, **1 only in Python**
-(`letter_spacing`); `bold_as_bright` joined Rust on 2026-11-12. A cell holds that version's default; `—`
+36 key names in the union: **32 in all three**, **2 only in Rust** (`map`,
+`unmap`: the shortcut table, `M-H`, 2026-11-13) and **2 only in Python**
+(`letter_spacing`, `bold_as_bright`); `bold_as_bright` joined Rust on 2026-11-12. A cell holds that version's default; `—`
 means the parser refuses the key as unknown.
 
 | key | Rust (main version) | Python | Java |
@@ -31,6 +32,8 @@ means the parser refuses the key as unknown.
 | `debug_log` | `off` | **`/tmp/tortty-python.debug.log`** | off (empty) |
 | `bold_as_bright` | `off` | `off` | — |
 | `letter_spacing` | — | `0` (0..20 px) | — |
+| `map` | `CHORD ACTION [N]` binds | — | — |
+| `unmap` | frees the chord | — | — |
 | `foreground` | `#d6d6d6` | `#d6d6d6` | `#d6d6d6` |
 | `background` | `#000000` | `#000000` | `#000000` |
 | `cursor_color` | `#d6d6d6` | `#d6d6d6` | `#d6d6d6` |

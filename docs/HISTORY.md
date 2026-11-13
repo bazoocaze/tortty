@@ -934,3 +934,20 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   probe: `working` → record + bar state 1; `blocked kind=auth` → state 4 and the
   tab's badge; `done` → record with the bar cleared; a prompt after `working` →
   the record gone.
+
+## 2026-11-13 — shortcuts are a table, remappable from the config (`M-H`)
+
+- `crates/core/src/keymap.rs`: `Chord` (key + modifiers), `Action` (nineteen,
+  two of them taking a number) and `Bindings`, with `map CHORD ACTION [N]` and
+  `unmap CHORD` in the config file's own syntax. The defaults live in
+  `Bindings::base()` and reproduce every chord the app had, which is what
+  `the_default_table_keeps_every_shortcut_the_app_had` proves.
+- `App::press_local_keys` lost the four blocks that matched keys by hand
+  (`shortcut_ws`, `alt_digit_only`, the `ctrl+shift+c/v` pair and the paging
+  `match`) and gained one lookup: a bound chord becomes `run_action`, an unbound
+  one reaches the encoder and the program. A digit under `Ctrl`/`Alt`/`Super` is
+  taken from the **physical** key, so `Ctrl+Shift+2` still means 2 on ABNT2.
+- Verified with an Xvfb probe: `ctrl+shift+t` opens a tab; `map ctrl+shift+y
+  new_tab` opens one on the new chord and `unmap ctrl+shift+t` stops the old one;
+  two bad `map` lines come out as two config errors with the rest of the file
+  holding.

@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tortty_core::config::{Bell, RestoreState};
+use tortty_core::keymap::Action;
 use tortty_core::{Anchor, Span, Term};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
@@ -39,16 +40,6 @@ fn shell_quote(s: &str) -> String {
         return s.to_string();
     }
     format!("'{}'", s.replace('\'', "'\\''"))
-}
-
-/// Super alone (neither Ctrl nor Alt): the workspace alias.
-fn super_only(mods: ModifiersState) -> bool {
-    mods.super_key() && !mods.control_key() && !mods.alt_key()
-}
-
-/// Alt alone (neither Ctrl nor Shift). `Alt+Shift+1` belongs to the shell, not the bar.
-fn alt_digit_only(mods: ModifiersState) -> bool {
-    mods.alt_key() && !mods.control_key() && !mods.shift_key() && !mods.super_key()
 }
 
 /// Digit of the **physical** key (0..=9), ignoring layout and Shift.
@@ -1301,107 +1292,6 @@ impl App {
     }
 
     /// Ctrl+Shift and Super shortcuts for workspace/editor: pulled out of
-    /// `on_key`, which only sends whatever is left to the encoder.
-    #[allow(clippy::too_many_lines)] // one arm per shortcut
-    fn shortcut_ws(&mut self, k: &KeyIn<'_>, named: Option<NamedKey>, ch: Option<char>) -> bool {
-        let ctrl = k.mods.control_key();
-        let shift = k.mods.shift_key();
-        if ctrl && shift {
-            match ch.map(|c| c.to_ascii_lowercase()) {
-                Some('t') => {
-                    self.new_tab();
-                    return true;
-                },
-                Some('w') => {
-                    self.close_tab();
-                    return true;
-                },
-                Some('n') => {
-                    self.new_workspace();
-                    return true;
-                },
-                Some('q') => {
-                    let i = self.ws_idx;
-                    self.close_workspace(i);
-                    return true;
-                },
-                _ => {},
-            }
-            // Ctrl+Shift+Up/Down walks the prompts the shell marked (`M-R`):
-            // with the marks, the scrollback has places to land on
-            match named {
-                Some(NamedKey::ArrowUp) => {
-                    self.prompt_jump(true);
-                    return true;
-                },
-                Some(NamedKey::ArrowDown) => {
-                    self.prompt_jump(false);
-                    return true;
-                },
-                _ => {},
-            }
-            // Ctrl+Shift+F2: the config file in the editor, in a new tab. It
-            // comes **before** encoding: vim never sees the key, otherwise it
-            // interprets it as a shortcut of its own.
-            if named == Some(NamedKey::F2) {
-                self.open_config();
-                return true;
-            }
-            // Ctrl+Shift+1..9 picks the workspace (0 = the tenth)
-            if let Some(n) = k.digit {
-                let i = if n == 0 { 9 } else { n - 1 };
-                self.select_workspace(i);
-                return true;
-            }
-        }
-        // Super+N/Q and Super+1..9: workspace alias (the WM may swallow them,
-        // but when they arrive they act)
-        if super_only(self.mods) {
-            match ch.map(|c| c.to_ascii_lowercase()) {
-                Some('n') => {
-                    self.new_workspace();
-                    return true;
-                },
-                Some('q') => {
-                    let i = self.ws_idx;
-                    self.close_workspace(i);
-                    return true;
-                },
-                _ => {},
-            }
-            // Super+Up/Down walks the workspaces; with Shift it carries the
-            // front one along (B49). The sidebar is vertical, so the pair
-            // lives on Up/Down, before the encoder: the child never sees it.
-            match named {
-                Some(NamedKey::ArrowUp) if !shift => {
-                    self.select_workspace(ws_above(self.ws_idx));
-                    return true;
-                },
-                Some(NamedKey::ArrowDown) if !shift => {
-                    self.select_workspace(ws_below(self.ws_idx, self.ws_count()));
-                    return true;
-                },
-                Some(NamedKey::ArrowUp) => {
-                    let i = self.ws_idx;
-                    self.move_workspace(i, ws_above(i));
-                    return true;
-                },
-                Some(NamedKey::ArrowDown) => {
-                    let i = self.ws_idx;
-                    self.move_workspace(i, ws_below(i, self.ws_count()));
-                    return true;
-                },
-                _ => {},
-            }
-            if let Some(n) = k.digit {
-                let i = if n == 0 { 9 } else { n - 1 };
-                self.select_workspace(i);
-                return true;
-            }
-        }
-        false
-    }
-
     /// Jumps the view to the previous/next prompt (`M-R`). The prompt lands on
     /// the first grid row; at the ends nothing moves (a key that does something
     /// invisible reads as a key that did nothing).
@@ -1471,71 +1361,68 @@ impl App {
         if self.rename_key(k) {
             return true;
         }
-        let ctrl = k.mods.control_key();
-        let shift = k.mods.shift_key();
-        let named = k.named;
-        let ch = k.character.and_then(|s| s.chars().next());
-
-        if self.shortcut_ws(k, named, ch) {
-            return true;
-        }
-        // Alt+1..9 picks the tab; Alt+0 is the tenth (I15). The digit does not
-        // leak to the child.
-        if alt_digit_only(k.mods) {
-            if let Some(n) = k.digit {
-                self.select_tab(if n == 0 { 9 } else { n - 1 });
+        // The shortcut table (`M-H`): one lookup, no `match` on the key here. A
+        // chord nobody bound reaches the encoder (and the child).
+        if let Some(chord) = k.chord() {
+            if let Some(action) = self.opts.cfg.bindings.get(chord) {
+                self.run_action(action);
                 return true;
-            }
-        }
-        // Ctrl+Shift+C/V belong to the terminal, not to the app: without this
-        // Ctrl+Shift+C becomes the same ^C as Ctrl+C and kills the process
-        if ctrl && shift {
-            match ch.map(|c| c.to_ascii_lowercase()) {
-                Some('c') => {
-                    self.copy();
-                    return true;
-                },
-                Some('v') => {
-                    self.paste();
-                    return true;
-                },
-                _ => {},
-            }
-        }
-        // Shift+PgUp/PgDn/Home/End look at the history without talking to the
-        // app
-        if shift && !ctrl {
-            match named {
-                Some(NamedKey::PageUp) => {
-                    self.scroll_view(self.tabs[self.active].term.rows as i64 - 1);
-                    return true;
-                },
-                Some(NamedKey::PageDown) => {
-                    self.scroll_view(-(self.tabs[self.active].term.rows as i64 - 1));
-                    return true;
-                },
-                Some(NamedKey::Home) if !self.tabs[self.active].term.scrollback.is_empty() => {
-                    self.scroll_view(self.tabs[self.active].term.scrollback.len() as i64);
-                    return true;
-                },
-                Some(NamedKey::End) => {
-                    self.scroll_view(-(self.tabs[self.active].term.scrollback.len() as i64));
-                    return true;
-                },
-                _ => {},
             }
         }
         // a real key returns to live; a bare modifier does not (otherwise the
         // Shift of Shift+PgUp already reset the view before scrolling)
         if self.tabs[self.active].view_off > 0
             && !matches!(
-                named,
+                k.named,
                 Some(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super)
             )
         {
             self.tabs[self.active].view_off = 0;
         }
         false
+    }
+
+    /// What a bound chord does. One arm per action of the table; the args carry
+    /// the number for the two families that take one.
+    fn run_action(&mut self, action: Action) {
+        let rows = self.tabs[self.active].term.rows as i64;
+        match action {
+            Action::Copy => self.copy(),
+            Action::Paste => self.paste(),
+            Action::NewTab => self.new_tab(),
+            Action::CloseTab => self.close_tab(),
+            Action::NewWorkspace => self.new_workspace(),
+            Action::CloseWorkspace => {
+                let i = self.ws_idx;
+                self.close_workspace(i);
+            },
+            Action::PrevPrompt => self.prompt_jump(true),
+            Action::NextPrompt => self.prompt_jump(false),
+            Action::OpenConfig => self.open_config(),
+            Action::ScrollPageUp => self.scroll_view(rows - 1),
+            Action::ScrollPageDown => self.scroll_view(-(rows - 1)),
+            // `Shift+Home` with nothing above does nothing: a key that moves
+            // nothing is not a key that jumps
+            Action::ScrollTop if self.tabs[self.active].term.scrollback.is_empty() => {},
+            Action::ScrollTop => {
+                self.scroll_view(self.tabs[self.active].term.scrollback.len() as i64);
+            },
+            Action::ScrollBottom => {
+                self.scroll_view(-(self.tabs[self.active].term.scrollback.len() as i64));
+            },
+            Action::SelectTab(n) => self.select_tab(n as usize - 1),
+            Action::SelectWorkspace(n) => self.select_workspace(n as usize - 1),
+            Action::WsPrev => self.select_workspace(ws_above(self.ws_idx)),
+            Action::WsNext => self.select_workspace(ws_below(self.ws_idx, self.ws_count())),
+            Action::WsMoveUp => {
+                let i = self.ws_idx;
+                self.move_workspace(i, ws_above(i));
+            },
+            Action::WsMoveDown => {
+                let i = self.ws_idx;
+                self.move_workspace(i, ws_below(i, self.ws_count()));
+            },
+        }
     }
 
     /// Motion: only matters to the app when it asked for `?1002`/`?1003`.
@@ -3892,6 +3779,95 @@ struct KeyIn<'a> {
     /// itself.
     digit: Option<usize>,
     mods: ModifiersState,
+}
+
+impl KeyIn<'_> {
+    /// The chord this event is, when the key is one the config can name: what
+    /// the shortcut table (`M-H`) is looked up with.
+    fn chord(&self) -> Option<tortty_core::keymap::Chord> {
+        use tortty_core::keymap::{Chord, Id, ALT, CTRL, SHIFT, SUPER};
+        // a digit under Ctrl/Alt/Super is read from the **physical** key: on
+        // ABNT2 `Ctrl+Shift+2` arrives as `@` and `Ctrl+Shift+6` as `¨`, and the
+        // shortcut that is meant is still 2 and 6 (I16)
+        let shortcut = self.mods.control_key() || self.mods.alt_key() || self.mods.super_key();
+        let id = match (self.digit.filter(|_| shortcut), self.named, self.character) {
+            (Some(d), _, _) => Id::Char(char::from(b'0' + d as u8)),
+            (None, Some(n), _) => Id::Named(named_name(n)?),
+            // a character key: `Character("T")` with shift becomes `t`, so a
+            // `shift+t` chord matches it
+            (None, None, Some(s)) => Id::Char(s.chars().next()?.to_ascii_lowercase()),
+            _ => return None,
+        };
+        let mut mods = tortty_core::keymap::NONE;
+        for (bit, on) in [
+            (CTRL, self.mods.control_key()),
+            (ALT, self.mods.alt_key()),
+            (SHIFT, self.mods.shift_key()),
+            (SUPER, self.mods.super_key()),
+        ] {
+            if on {
+                mods |= bit;
+            }
+        }
+        Some(Chord { id, mods })
+    }
+}
+
+/// The name of a named key in the config's vocabulary (`up`, `pgup`, `f5`).
+fn named_name(n: NamedKey) -> Option<&'static str> {
+    Some(match n {
+        NamedKey::Enter => "enter",
+        NamedKey::Escape => "esc",
+        NamedKey::Tab => "tab",
+        NamedKey::Backspace => "backspace",
+        NamedKey::Space => "space",
+        NamedKey::Insert => "insert",
+        NamedKey::Delete => "delete",
+        NamedKey::Home => "home",
+        NamedKey::End => "end",
+        NamedKey::PageUp => "pgup",
+        NamedKey::PageDown => "pgdn",
+        NamedKey::ArrowUp => "up",
+        NamedKey::ArrowDown => "down",
+        NamedKey::ArrowLeft => "left",
+        NamedKey::ArrowRight => "right",
+        other => return f_name(other),
+    })
+}
+
+/// F1..F24, the ones the config names.
+fn f_name(n: NamedKey) -> Option<&'static str> {
+    use NamedKey::{
+        F1, F10, F11, F12, F13, F14, F15, F16, F17, F18, F19, F2, F20, F21, F22, F23, F24, F3, F4,
+        F5, F6, F7, F8, F9,
+    };
+    Some(match n {
+        F1 => "f1",
+        F2 => "f2",
+        F3 => "f3",
+        F4 => "f4",
+        F5 => "f5",
+        F6 => "f6",
+        F7 => "f7",
+        F8 => "f8",
+        F9 => "f9",
+        F10 => "f10",
+        F11 => "f11",
+        F12 => "f12",
+        F13 => "f13",
+        F14 => "f14",
+        F15 => "f15",
+        F16 => "f16",
+        F17 => "f17",
+        F18 => "f18",
+        F19 => "f19",
+        F20 => "f20",
+        F21 => "f21",
+        F22 => "f22",
+        F23 => "f23",
+        F24 => "f24",
+        _ => return None,
+    })
 }
 
 impl<'a> KeyIn<'a> {
