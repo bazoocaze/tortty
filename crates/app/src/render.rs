@@ -132,6 +132,10 @@ pub struct Renderer {
     /// Where text ends and images come in (images sit above text and below the
     /// cursor/chrome, as in kitty).
     img_split: usize,
+    /// Where the **grid's** colour emoji end and the chrome's begin (`B8`): the
+    /// chrome is drawn after the grid, so its colour glyphs need their own span,
+    /// drawn last.
+    emoji_split: usize,
     img_pipeline: wgpu::RenderPipeline,
     img_buf: wgpu::Buffer,
     img_instances: Vec<Instance>,
@@ -498,6 +502,7 @@ impl Renderer {
             cursor_shape: cfg.cursor_shape,
             toast_rect: None,
             img_split: 0,
+            emoji_split: 0,
             img_pipeline,
             img_buf,
             img_instances: Vec::new(),
@@ -711,6 +716,40 @@ impl Renderer {
         }
     }
 
+    /// The bell of a tab with a notification (`B8`), in a two-cell box.
+    ///
+    /// It comes from the emoji atlas when the font has a colour one, and from the
+    /// mask atlas (tinted with `fg`) when it does not — the two targets are what
+    /// the frame splits, and nothing here needs to know which font answered.
+    fn chrome_bell(&mut self, x: f32, y: f32, fg: [f32; 3]) {
+        let cw = self.fonts.cw;
+        let ascent = self.fonts.ascent;
+        let Some(q) = self.glyph_quad('\u{1F514}', false, false) else {
+            return;
+        };
+        // centred in the two cells the label reserved
+        let slack = (2.0 * cw - q.w as f32) / 2.0;
+        let rect = [
+            x + slack.max(0.0) + q.left as f32,
+            y + ascent - q.top as f32,
+            q.w as f32,
+            q.h as f32,
+        ];
+        if q.color {
+            self.emoji_instances.push(Instance {
+                rect,
+                color: [1.0, 1.0, 1.0, 1.0],
+                uv: q.uv,
+            });
+        } else {
+            self.instances.push(Instance {
+                rect,
+                color: [fg[0], fg[1], fg[2], 1.0],
+                uv: q.uv,
+            });
+        }
+    }
+
     /// Tab bar: ` 1 zsh │ 2 vim  ` in the strip above the grid.
     ///
     /// The active tab is inverted (background = text colour). A tab with a recent
@@ -734,31 +773,30 @@ impl Renderer {
         let mut x = x0;
         for (i, t) in tabs.iter().enumerate() {
             let label = format!(" {} {} ", i + 1, t.title);
-            let n = label.chars().count();
+            // a tab with a notification keeps its colours and carries the bell
+            // (`B8`): painting the whole label was louder than the news
+            let bell = if t.alert { 2 } else { 0 };
+            let n = label.chars().count() + bell;
             let width = (n as f32 * cw).min(total_w - x);
             if width <= 0.0 {
                 break;
             }
             let (bg, fg) = if t.ativa {
                 (self.color(Color::Default, self.fg), over)
-            } else if t.alert {
-                (self.color(Color::Idx(3), self.fg), over)
             } else {
                 (bg, self.color(Color::Idx(8), self.fg))
             };
             // one rectangle per tab (not one per letter): the label background is
             // a single piece, and the text is drawn on top of it
             self.push_rect(x, y0, width, chh, [bg[0], bg[1], bg[2], 1.0]);
-            self.chrome_text(&label, x, y0, fg, width);
+            let text_x = x + bell as f32 * cw;
+            if t.alert {
+                self.chrome_bell(x, y0, fg);
+            }
+            self.chrome_text(&label, text_x, y0, fg, width - bell as f32 * cw);
             if let Some(p) = t.progress {
                 let (c, alpha, frac) = progress_ink(p);
-                // on an alert tab the shade would vanish into the yellow of the
-                // label, so the bar takes the colour the label's text has
-                let rgb = if t.alert {
-                    over
-                } else {
-                    self.color(c, self.fg)
-                };
+                let rgb = self.color(c, self.fg);
                 self.push_rect(
                     x,
                     y0 + chh - PROGRESS_H,
@@ -1389,6 +1427,9 @@ impl Renderer {
         }
 
         self.concat_lines();
+        // everything after this point belongs to the chrome, which is drawn on
+        // top: the colour glyphs of the chrome are the second half of the list
+        self.emoji_split = self.emoji_instances.len();
 
         // here the grid text ends: the images (H1–H13) come on top of it and
         // below the chrome/cursor, which is kitty's order
@@ -1724,6 +1765,71 @@ impl Renderer {
         FrameOutcome::Skipped
     }
 
+    /// Paints one frame, in blend order: grid → images → chrome and cursor → the
+    /// colour glyphs of the chrome (`B8`).
+    ///
+    /// The mask and the colour glyphs travel in two buffers with two pipelines,
+    /// and the cut in each list is what keeps the order (grid emoji under the
+    /// images, the chrome's bell over the chrome).
+    fn paint(&self, rp: &mut wgpu::RenderPass<'_>) {
+        rp.set_pipeline(&self.pipeline);
+        rp.set_bind_group(0, &self.globals_bind, &[]);
+        rp.set_bind_group(1, &self.atlas_bind, &[]);
+        rp.set_vertex_buffer(0, self.inst_buf.slice(..));
+        // grid text → images → chrome and cursor. Two spans of the same buffer
+        // because the image has its own pipeline (samples RGB).
+        let split = self.img_split.min(self.instances.len()) as u32;
+        if split > 0 {
+            rp.draw(0..6, 0..split);
+        }
+        // colour emoji: same image pipeline, the texture is the RGBA atlas.
+        // The grid's span comes here; the chrome's (the bell, `B8`) is drawn
+        // after the chrome, at the end — the list is one buffer, cut in two
+        let emoji_split = self.emoji_split.min(self.emoji_instances.len()) as u32;
+        if emoji_split > 0 {
+            rp.set_pipeline(&self.img_pipeline);
+            rp.set_bind_group(1, &self.emoji_bind, &[]);
+            rp.set_vertex_buffer(0, self.emoji_buf.slice(..));
+            rp.draw(0..6, 0..emoji_split);
+            rp.set_pipeline(&self.pipeline);
+            rp.set_bind_group(1, &self.atlas_bind, &[]);
+            rp.set_vertex_buffer(0, self.inst_buf.slice(..));
+        }
+        if !self.img_instances.is_empty() {
+            rp.set_pipeline(&self.img_pipeline);
+            rp.set_vertex_buffer(0, self.img_buf.slice(..));
+            // one draw call per image: each has its own texture
+            for (i, _) in self.img_instances.iter().enumerate() {
+                let Some(id) = self.img_ids.get(i).copied() else {
+                    break;
+                };
+                if let Some(t) = self.img_cache.get(&id) {
+                    rp.set_bind_group(1, &t.bind, &[]);
+                    rp.draw(0..6, i as u32..(i as u32 + 1));
+                }
+            }
+            rp.set_pipeline(&self.pipeline);
+            rp.set_bind_group(1, &self.atlas_bind, &[]);
+            rp.set_vertex_buffer(0, self.inst_buf.slice(..));
+        }
+        let total = self.instances.len() as u32;
+        if total > split {
+            rp.draw(0..6, split..total);
+        }
+        // the colour glyphs of the chrome (the tab's bell, `B8`): they belong
+        // above it, so they come last
+        let emoji_all = self.emoji_instances.len() as u32;
+        if emoji_all > emoji_split {
+            rp.set_pipeline(&self.img_pipeline);
+            rp.set_bind_group(1, &self.emoji_bind, &[]);
+            rp.set_vertex_buffer(0, self.emoji_buf.slice(..));
+            rp.draw(0..6, emoji_split..emoji_all);
+            rp.set_pipeline(&self.pipeline);
+            rp.set_bind_group(1, &self.atlas_bind, &[]);
+            rp.set_vertex_buffer(0, self.inst_buf.slice(..));
+        }
+    }
+
     pub fn render(&mut self, f: &Frame<'_>) -> FrameOutcome {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
@@ -1780,47 +1886,7 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            rp.set_pipeline(&self.pipeline);
-            rp.set_bind_group(0, &self.globals_bind, &[]);
-            rp.set_bind_group(1, &self.atlas_bind, &[]);
-            rp.set_vertex_buffer(0, self.inst_buf.slice(..));
-            // grid text → images → chrome and cursor. Two spans of the same buffer
-            // because the image has its own pipeline (samples RGB).
-            let split = self.img_split.min(self.instances.len()) as u32;
-            if split > 0 {
-                rp.draw(0..6, 0..split);
-            }
-            // colour emoji: same image pipeline, the texture is the RGBA atlas
-            if !self.emoji_instances.is_empty() {
-                rp.set_pipeline(&self.img_pipeline);
-                rp.set_bind_group(1, &self.emoji_bind, &[]);
-                rp.set_vertex_buffer(0, self.emoji_buf.slice(..));
-                rp.draw(0..6, 0..self.emoji_instances.len() as u32);
-                rp.set_pipeline(&self.pipeline);
-                rp.set_bind_group(1, &self.atlas_bind, &[]);
-                rp.set_vertex_buffer(0, self.inst_buf.slice(..));
-            }
-            if !self.img_instances.is_empty() {
-                rp.set_pipeline(&self.img_pipeline);
-                rp.set_vertex_buffer(0, self.img_buf.slice(..));
-                // one draw call per image: each has its own texture
-                for (i, _) in self.img_instances.iter().enumerate() {
-                    let Some(id) = self.img_ids.get(i).copied() else {
-                        break;
-                    };
-                    if let Some(t) = self.img_cache.get(&id) {
-                        rp.set_bind_group(1, &t.bind, &[]);
-                        rp.draw(0..6, i as u32..(i as u32 + 1));
-                    }
-                }
-                rp.set_pipeline(&self.pipeline);
-                rp.set_bind_group(1, &self.atlas_bind, &[]);
-                rp.set_vertex_buffer(0, self.inst_buf.slice(..));
-            }
-            let total = self.instances.len() as u32;
-            if total > split {
-                rp.draw(0..6, split..total);
-            }
+            self.paint(&mut rp);
         }
         self.queue.submit(Some(enc.finish()));
         self.queue.present(frame);

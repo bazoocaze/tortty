@@ -177,8 +177,10 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   width, so a wide glyph (emoji, CJK) can overflow the box, and the detail is cut
   at four lines.
 - Notifications (`OSC 9`/`777`): a tab in front toasts the text when it arrives,
-  a tab out of sight wears a badge on its label **and** raises the card of its
-  workspace — the card is the workspace's signal and the label the tab's, so
+  a tab out of sight wears the **bell** in front of its label (two cells, from the
+  emoji atlas when the font has a colour one, tinted with the label otherwise)
+  **and** raises the card of its workspace — the card is the workspace's signal
+  and the bell the tab's, so
   entering the workspace clears only the card and each tab keeps its own badge
   until it is visited. The content follows the visit: a notification that
   arrived while nobody was looking toasts when its tab comes to the front. The

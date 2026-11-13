@@ -1083,8 +1083,11 @@ impl App {
         // is split between the workspace card and the tab bar
         let mut x = f64::from(pad) + f64::from(self.side_w(cw));
         for (i, t) in info.iter().enumerate() {
+            // the same width the renderer uses: an alert tab carries the two-cell
+            // bell in front of the label (`B8`)
             let label = format!(" {} {} ", i + 1, t.title);
-            let width = label.chars().count() as f64 * f64::from(cw);
+            let bell = if t.alert { 2 } else { 0 };
+            let width = (label.chars().count() + bell) as f64 * f64::from(cw);
             if px >= x && px < x + width {
                 return Some(i);
             }

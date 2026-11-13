@@ -832,3 +832,19 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   `cd0000` in the histogram; `on` → `ff0000` for the bold half and `cd0000` still
   for the plain one. `CONFIG.md` gained the key and `SIBLINGS.md` moved it out of
   the Python-only column (32 keys in all three, 8 divergences).
+
+## 2026-11-12 — `B8(c)`, the bell instead of a painted label
+
+- The badge was the whole label painted yellow (`Idx(3)`), which shouted louder
+  than the news and cost the tab its colours. It is now the **bell** `U+1F514` in
+  front of the label, in two reserved cells; the label keeps its own background.
+- The bell comes from the RGBA atlas when the font has a colour emoji and from
+  the mask atlas (tinted with the label colour) when it does not — one code path,
+  because the sink decides: the frame carries the grid's colour glyphs in one
+  span and the chrome's in another, and the chrome's is drawn **after** the
+  chrome, which is where a bell over a label has to be.
+- `tab_at` grew the same two cells the renderer reserves, so a click on an alert
+  tab still lands on that tab.
+- Measured on Xvfb, two tabs, `OSC 9` from the one in the back: before (1.0.69)
+  the whole ` 2 two ` label in `cdcd00`; after, the label dark with a gold bell
+  in front of it. `render-check.sh` green.
