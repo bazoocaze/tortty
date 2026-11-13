@@ -973,3 +973,19 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   `needle` over 40 lines gives 6 hits, `view_off` 37, `Enter` → 32, `Shift+Enter`
   back, `Esc` closes; the capture holds both highlight colours (775 px of
   `#d7a500`, 477 px of `#4a3d00`).
+
+## 2026-11-13 — images: depth and placement id (`M-L`, part)
+
+- `Placement` gained `id` (`p=`) and `z` (`z=`). A placement id unique per image
+  **moves** that placement instead of adding another, and the delete set grew to
+  the spec's kinds: `d=i` (image), `d=p` (one placement), `d=P` (every placement
+  of the image), anything else everything.
+- The image pass is one buffer in two spans: the placements with `z < 0` are
+  sorted first and their span is drawn **before** the grid's first draw, so a
+  picture can sit behind the text. `img_draw` is the span's one draw call per
+  image (each has its own texture).
+- Verified: a `graphics` test (`p=3` twice moves, `p=4` is a second placement,
+  `d=p` and `d=P` keep the image) and an Xvfb probe placing a red 2-cell image
+  over the text "AB" — `z=1` red 361 px, glyph 0 (the image hides the text);
+  `z=-1` red 279 px, glyph 17 (the text is on top). The Unicode placeholder
+  (`U=1`) stays in the queue, and `M-L` with it.

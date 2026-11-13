@@ -124,8 +124,16 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   `c=`/`r=`, `X=`/`Y=`, `C=1`, `q=`, and the **source crop** `x=`/`y=`/`w=`/`h=`
   (the rectangle of the picture to show, which is the texture `uv`; the cells
   follow it when `c=`/`r=` are absent, and a rectangle that leaves the image
-  answers `EINVAL:crop outside the image` instead of being clamped); the image
-  follows the scroll and is pruned with the history; `ED 3` clears images.
+  answers `EINVAL:crop outside the image` instead of being clamped), the
+  **placement id** `p=` (the same `(image, p)` moves that placement instead of
+  adding another one, and `d=p`/`d=P` delete one placement or every placement of
+  an image without deleting the image) and the **depth** `z=` (negative draws
+  *behind* the text — the span goes out before the grid's first draw — positive
+  in front, ties in placement order); the image follows the scroll and is pruned
+  with the history; `ED 3` clears images. **limit:** the Unicode placeholder
+  (`U=1`, `U+10EEEE` in the cells) is not implemented — an image is placed by
+  cell and pixel offset only, so a program that positions its picture through
+  placeholder cells draws nothing.
 - iTerm2's inline image (`OSC 1337;File=…:base64`, what `imgcat` sends): the
   bytes are placed on the cursor cell through the same direct transmission, with
   `width`/`height` in cells, in `px`, in `%` of the grid or `auto`. **limit:**

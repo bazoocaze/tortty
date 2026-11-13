@@ -49,6 +49,13 @@ pub struct Image {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Placement {
     pub image_id: u32,
+    /// `p=`: the placement's own id inside the image. `0` = the image has one
+    /// placement (the common case); a program that puts the same image in two
+    /// places gives each one a number, and `d=p` addresses them one by one.
+    pub id: u32,
+    /// `z=`: negative draws **behind** the text, positive in front. Ties keep the
+    /// order they were placed in.
+    pub z: i32,
     pub col: u16,
     pub line: i32,
     pub cols: u16,
@@ -240,8 +247,18 @@ impl Graphics {
             || u16::try_from(h.div_ceil(ch)).unwrap_or(u16::MAX).max(1),
             |r| u16::try_from(r.max(1)).unwrap_or(u16::MAX),
         );
+        let pid = u32::try_from(num("p").unwrap_or(0)).unwrap_or(0);
+        let depth = i32::try_from(num("z").unwrap_or(0)).unwrap_or(0);
+        // a placement id is unique per image: reusing it moves that placement
+        // instead of adding another one
+        if pid != 0 {
+            self.placements
+                .retain(|p| !(p.image_id == img.id && p.id == pid));
+        }
         self.placements.push(Placement {
             image_id: img.id,
+            id: pid,
+            z: depth,
             col: cursor.0,
             line: i32::from(cursor.1),
             cols,
@@ -392,15 +409,26 @@ impl Graphics {
                 }
             },
             "d" => {
+                // the spec's delete kinds: `i` an image with its placements, `p`
+                // one placement, `P` every placement of the image, `a` everything.
+                // Anything else deletes everything, which is what the spec says a
+                // terminal that does not know the kind should do.
                 let como = param("d").unwrap_or("a");
-                if como == "i" {
-                    self.images.remove(&ident);
-                    self.placements.retain(|p| p.image_id != ident);
-                } else {
-                    self.placements.clear();
-                    if como == "a" {
+                let pid = param("p").and_then(|p| p.parse::<u32>().ok());
+                match como {
+                    "i" => {
+                        self.images.remove(&ident);
+                        self.placements.retain(|p| p.image_id != ident);
+                    },
+                    "p" => {
+                        self.placements
+                            .retain(|p| !(p.image_id == ident && Some(p.id) == pid));
+                    },
+                    "P" => self.placements.retain(|p| p.image_id != ident),
+                    _ => {
+                        self.placements.clear();
                         self.images.clear();
-                    }
+                    },
                 }
                 Output {
                     responses: if quiet {

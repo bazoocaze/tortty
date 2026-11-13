@@ -2878,6 +2878,8 @@ impl App {
                         .map(|p| {
                             serde_json::json!({
                                 "id": p.image_id,
+                                "pid": p.id,
+                                "z": p.z,
                                 "col": p.col,
                                 "row": p.line,
                                 "cols": p.cols,

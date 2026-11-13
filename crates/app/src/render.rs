@@ -163,6 +163,8 @@ pub struct Renderer {
     marks_cols: usize,
     /// Mark of the cell `draw_cell` is painting (the caller knows the row).
     cur_mark: u8,
+    /// How many of `img_instances` are drawn **below** the text (`z < 0`).
+    img_below: usize,
     /// Texture per image (id → bind group). The bind group keeps the texture alive.
     img_cache: HashMap<u32, ImgTex>,
     /// Grid instances, kept **per row**: only the dirty row is rebuilt
@@ -498,6 +500,7 @@ impl Renderer {
             marks: Vec::new(),
             marks_cols: 0,
             cur_mark: 0,
+            img_below: 0,
             inst_buf,
             inst_cap,
             atlas,
@@ -1300,8 +1303,14 @@ impl Renderer {
         let view = i32::try_from(f.view_off).unwrap_or(0);
         let lines = i32::try_from(term.rows).unwrap_or(0);
         let cols = term.cols;
+        // `M-L`: `z` orders the placements, and the negative ones belong **behind**
+        // the text — `img_below` counts them, and `paint` draws that span first
+        let mut placed: Vec<&tortty_core::graphics::Placement> =
+            term.graphics.placements().iter().collect();
+        placed.sort_by_key(|p| p.z);
+        self.img_below = placed.iter().take_while(|p| p.z < 0).count();
         let mut quads: Vec<(u32, Instance)> = Vec::new();
-        for pl in term.graphics.placements() {
+        for pl in placed {
             let y = pl.line + view;
             // off screen (above or below) does not become an instance
             if y >= lines || y + i32::from(pl.rows) <= 0 || usize::from(pl.col) >= cols {
@@ -1965,6 +1974,25 @@ impl Renderer {
     /// The mask and the colour glyphs travel in two buffers with two pipelines,
     /// and the cut in each list is what keeps the order (grid emoji under the
     /// images, the chrome's bell over the chrome).
+    /// One image span of `img_buf`: one draw call per image, since each has its
+    /// own texture.
+    fn img_draw(&self, rp: &mut wgpu::RenderPass<'_>, span: std::ops::Range<usize>) {
+        rp.set_pipeline(&self.img_pipeline);
+        rp.set_vertex_buffer(0, self.img_buf.slice(..));
+        for i in span {
+            let Some(id) = self.img_ids.get(i).copied() else {
+                break;
+            };
+            if let Some(t) = self.img_cache.get(&id) {
+                rp.set_bind_group(1, &t.bind, &[]);
+                rp.draw(0..6, i as u32..(i as u32 + 1));
+            }
+        }
+        rp.set_pipeline(&self.pipeline);
+        rp.set_bind_group(1, &self.atlas_bind, &[]);
+        rp.set_vertex_buffer(0, self.inst_buf.slice(..));
+    }
+
     fn paint(&self, rp: &mut wgpu::RenderPass<'_>) {
         rp.set_pipeline(&self.pipeline);
         rp.set_bind_group(0, &self.globals_bind, &[]);
@@ -1973,6 +2001,12 @@ impl Renderer {
         // grid text → images → chrome and cursor. Two spans of the same buffer
         // because the image has its own pipeline (samples RGB).
         let split = self.img_split.min(self.instances.len()) as u32;
+        // `M-L`: the placements with `z < 0` go **under** the text, so their span
+        // of the image buffer is drawn before the grid's first span
+        let below = self.img_below.min(self.img_instances.len());
+        if below > 0 {
+            self.img_draw(rp, 0..below);
+        }
         if split > 0 {
             rp.draw(0..6, 0..split);
         }
@@ -1989,22 +2023,8 @@ impl Renderer {
             rp.set_bind_group(1, &self.atlas_bind, &[]);
             rp.set_vertex_buffer(0, self.inst_buf.slice(..));
         }
-        if !self.img_instances.is_empty() {
-            rp.set_pipeline(&self.img_pipeline);
-            rp.set_vertex_buffer(0, self.img_buf.slice(..));
-            // one draw call per image: each has its own texture
-            for (i, _) in self.img_instances.iter().enumerate() {
-                let Some(id) = self.img_ids.get(i).copied() else {
-                    break;
-                };
-                if let Some(t) = self.img_cache.get(&id) {
-                    rp.set_bind_group(1, &t.bind, &[]);
-                    rp.draw(0..6, i as u32..(i as u32 + 1));
-                }
-            }
-            rp.set_pipeline(&self.pipeline);
-            rp.set_bind_group(1, &self.atlas_bind, &[]);
-            rp.set_vertex_buffer(0, self.inst_buf.slice(..));
+        if self.img_instances.len() > below {
+            self.img_draw(rp, below..self.img_instances.len());
         }
         let total = self.instances.len() as u32;
         if total > split {
