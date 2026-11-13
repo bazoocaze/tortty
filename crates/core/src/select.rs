@@ -127,14 +127,21 @@ impl Span {
             return None;
         }
         let block = self.is_block();
-        let (left, right) = self.columns();
-        let c1 = if block || r1 >= 0 { left } else { 0 };
-        let c2 = if block {
-            right
-        } else if r2 < rows {
-            self.b.col
+        // a flow selection starts at **its own** first column: dragging up and
+        // to the left puts the pointer's column below the anchor's, and the
+        // first row still has to begin where the anchor is (the copy already
+        // does it, `span_text` reads the two anchors)
+        let (c1, c2) = if block {
+            self.columns()
         } else {
-            t.cols.saturating_sub(1)
+            (
+                if r1 >= 0 { self.a.col } else { 0 },
+                if r2 < rows {
+                    self.b.col
+                } else {
+                    t.cols.saturating_sub(1)
+                },
+            )
         };
         Some(Rect {
             r1: r1.max(0) as usize,
@@ -506,6 +513,32 @@ mod tests {
         let b = t.anchor_at(0, 0, 0); // start of "hi"
         let txt = t.span_text(&Span::new(a, b)).unwrap();
         assert_eq!(txt, "hi\nworld");
+    }
+
+    #[test]
+    fn a_flow_selection_dragged_backwards_still_starts_at_the_anchor() {
+        // reported 2026-11-13: a drag from (line 20, col 30) to a lower line at
+        // col 5 copied the right text but painted line 20 from col 5, walking
+        // the highlight leftwards as the pointer moved
+        let mut t = Term::new(40, 6);
+        t.feed(b"0123456789abcdefghijABCDEFGHIJ0123456789\r\n0123456789abcdefghijABCDEFGHIJ0123456789\r\n0123456789abcdefghijABCDEFGHIJ0123456789");
+        let a = t.anchor_at(0, 0, 30);
+        let b = t.anchor_at(0, 2, 5);
+        let s = Span::new(a, b);
+        assert_eq!(
+            t.span_text(&s).unwrap(),
+            "0123456789\n0123456789abcdefghijABCDEFGHIJ0123456789\n012345",
+            "the copy starts at the anchor's column"
+        );
+        let rect = s.visible(&t, 0).expect("on screen");
+        assert_eq!(
+            (rect.r1, rect.c1, rect.r2, rect.c2),
+            (0, 30, 2, 5),
+            "and so does the paint"
+        );
+        // the same drag for a block: the columns are the two corners, low to high
+        let rect = Span::block(a, b).visible(&t, 0).expect("on screen");
+        assert_eq!((rect.c1, rect.c2), (5, 30));
     }
 
     #[test]

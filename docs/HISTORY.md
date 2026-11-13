@@ -864,3 +864,19 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   bounds: **1.0.69** `cdcd00` at all four corners; **now** `000000` at the three
   corners and `b3b300` six pixels in (the anti-aliased arc). `render-check.sh`
   green.
+
+## 2026-11-13 — the flow selection paints from its own first column
+
+- Reported by the owner: press at (line 20, column 30), drag to a lower line at
+  column 5 — the copy was right, but the highlight on line 20 walked from column
+  30 towards column 5 as the pointer moved.
+- `Span::visible` took the start column as `min(a.col, b.col)`, which is the rule
+  of a **block** (a rectangle is dragged from any corner) and not of a flow: the
+  first row starts where the anchor is. `span_text` reads the two anchors
+  directly, which is why only the paint was wrong.
+- Now the block keeps the low/high pair and the flow takes `a.col` on its first
+  row (`0` when that row is above the view) and `b.col` on its last one.
+- Verified with `a_flow_selection_dragged_backwards_still_starts_at_the_anchor`
+  (copy and rect, plus the block case of the same drag) and an Xvfb probe of the
+  exact report: 1.0.70 painted row 2 from column 5, now columns 5/10/29 stay
+  `000000` and 30.. the selection colour, rows 3 and 4 unchanged.
