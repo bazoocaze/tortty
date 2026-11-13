@@ -66,9 +66,10 @@ debug_log off
 # `shift+pgup`, `f2`. `N`, for select_tab/select_workspace, is 1..10 (10 = key 0).
 # Actions: copy paste new_tab close_tab new_workspace close_workspace prev_prompt
 # next_prompt open_config scroll_page_up scroll_page_down scroll_top scroll_bottom
+# search
 # select_tab select_workspace ws_prev ws_next ws_move_up ws_move_down.
 # The defaults are this table (see Bindings::base): Ctrl+Shift+C/V/T/W/N/Q,
-# Ctrl+Shift+Up/Down, Ctrl+Shift+F2, Shift+PgUp/PgDn/Home/End, Alt+1..0 (tab),
+# Ctrl+Shift+Up/Down/F/F2, Shift+PgUp/PgDn/Home/End, Alt+1..0 (tab),
 # Ctrl+Shift+1..0 and Super+1..0 (workspace), Super+Up/Down and Super+Shift+Up/Down.
 # map ctrl+shift+y new_tab
 # unmap ctrl+shift+w

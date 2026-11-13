@@ -158,6 +158,8 @@ pub enum Action {
     ScrollPageDown,
     ScrollTop,
     ScrollBottom,
+    /// Open the search bar over the scrollback (`M-D`).
+    Search,
     /// 1..=10, where 10 is the tenth (`alt+0`).
     SelectTab(u8),
     SelectWorkspace(u8),
@@ -183,6 +185,7 @@ impl Action {
         ("scroll_page_down", Action::ScrollPageDown),
         ("scroll_top", Action::ScrollTop),
         ("scroll_bottom", Action::ScrollBottom),
+        ("search", Action::Search),
         ("select_tab", Action::SelectTab(0)),
         ("select_workspace", Action::SelectWorkspace(0)),
         ("ws_prev", Action::WsPrev),
@@ -265,6 +268,7 @@ impl Bindings {
         bind("shift+pgdn", Action::ScrollPageDown);
         bind("shift+home", Action::ScrollTop);
         bind("shift+end", Action::ScrollBottom);
+        bind("ctrl+shift+f", Action::Search);
         // the workspace aliases the WM may swallow, and its own pair
         bind("super+n", Action::NewWorkspace);
         bind("super+q", Action::CloseWorkspace);

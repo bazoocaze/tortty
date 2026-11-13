@@ -619,6 +619,12 @@ pub struct App {
     /// Renaming a workspace on the card (I8). While it is `Some`, the keyboard
     /// belongs to the name — the child does not see the keys.
     rename: Option<Rename>,
+    /// The scrollback search (`M-D`). While it is `Some`, the keyboard belongs to
+    /// the query and the screen shows the matches; `Esc` closes it.
+    search: Option<tortty_core::search::Search>,
+    /// Bumped whenever the highlight can change: it is what makes the renderer
+    /// rebuild the rows even with an unmoved view (`M-D`).
+    search_gen: u64,
     /// Instant of the last card click, for the double click (I8).
     card_click: Option<(usize, std::time::Instant)>,
     /// Last wheel turn handled on the bar (instant and direction). X11 sends
@@ -744,6 +750,8 @@ impl App {
             .quit_after
             .map(|seg| std::time::Instant::now() + std::time::Duration::from_secs(seg));
         App {
+            search: None,
+            search_gen: 0,
             opts,
             over,
             proxy,
@@ -1361,6 +1369,10 @@ impl App {
         if self.rename_key(k) {
             return true;
         }
+        // the search bar owns the keyboard while it is open (`M-D`)
+        if self.search_key(k) {
+            return true;
+        }
         // The shortcut table (`M-H`): one lookup, no `match` on the key here. A
         // chord nobody bound reaches the encoder (and the child).
         if let Some(chord) = k.chord() {
@@ -1410,6 +1422,7 @@ impl App {
             Action::ScrollBottom => {
                 self.scroll_view(-(self.tabs[self.active].term.scrollback.len() as i64));
             },
+            Action::Search => self.open_search(),
             Action::SelectTab(n) => self.select_tab(n as usize - 1),
             Action::SelectWorkspace(n) => self.select_workspace(n as usize - 1),
             Action::WsPrev => self.select_workspace(ws_above(self.ws_idx)),
@@ -2671,6 +2684,7 @@ impl App {
         } else {
             None
         };
+        let search = self.search_view();
         let frame = crate::render::Frame {
             tab: self.tabs[self.active].id,
             term: &self.tabs[self.active].term,
@@ -2682,6 +2696,7 @@ impl App {
             sidebar: sidebar.as_deref(),
             cards_off: self.card_off,
             links: self.mods.control_key(),
+            search: search.as_ref(),
         };
         let drew = {
             let Some(renderer) = self.renderer.as_mut() else {
@@ -2888,6 +2903,9 @@ impl App {
                     "tabs_progress": self.tabs.iter()
                         .map(|t| t.term.progress.map(|p| serde_json::json!([p.state, p.pct])))
                         .collect::<Vec<_>>(),
+                    "search": self.search.as_ref().map(|s| {
+                        serde_json::json!([s.query, s.at, s.hits.len()])
+                    }),
                     "status": self.tabs[self.active]
                         .term
                         .status
@@ -3553,6 +3571,142 @@ impl App {
 
     /// Keyboard during the rename: typing edits, Enter confirms, Esc cancels.
     /// Returns `true` when the key was consumed (the child does not see it).
+    /// Opens the search bar over the scrollback (`M-D`). It starts from the
+    /// last query, which is what makes `Ctrl+Shift+F` useful the second time.
+    fn open_search(&mut self) {
+        let mut s = self.search.take().unwrap_or_default();
+        s.run(&self.tabs[self.active].term);
+        self.show_current(&s);
+        self.search = Some(s);
+        self.search_gen += 1;
+        self.redraw();
+    }
+
+    fn close_search(&mut self) {
+        self.search = None;
+        self.search_gen += 1;
+        self.redraw();
+    }
+
+    /// The keys of the search bar: text goes into the query, `Enter` walks the
+    /// matches, `Esc` closes. `true` = the child does not see the key.
+    fn search_key(&mut self, k: &KeyIn<'_>) -> bool {
+        if self.search.is_none() {
+            return false;
+        }
+        match k.named {
+            Some(NamedKey::Escape) => {
+                self.close_search();
+                return true;
+            },
+            Some(NamedKey::Enter) => {
+                let back = k.mods.shift_key();
+                if let Some(s) = self.search.as_mut() {
+                    if let Some(hit) = s.step(back) {
+                        let _ = hit;
+                    }
+                    let s = s.clone();
+                    self.show_current(&s);
+                }
+                self.search_gen += 1;
+                self.redraw();
+                return true;
+            },
+            Some(NamedKey::Backspace) => {
+                let term = &self.tabs[self.active].term;
+                let alive = match self.search.as_mut() {
+                    Some(s) => s.pop(term),
+                    None => false,
+                };
+                if alive {
+                    self.after_query();
+                } else {
+                    self.close_search();
+                }
+                return true;
+            },
+            Some(_) => {
+                // Tab, arrows and the like stay with the child? No: the bar is
+                // modal, an arrow would move the cursor in the program behind it.
+                let _ = k;
+                return true;
+            },
+            None => {},
+        }
+        // a printable character goes into the query; a chord does not (Ctrl+C
+        // must still interrupt the program)
+        if k.mods.control_key() || k.mods.alt_key() || k.mods.super_key() {
+            return false;
+        }
+        let Some(text) = k.text.or(k.character) else {
+            return true;
+        };
+        let clean: String = text.chars().filter(|c| !c.is_control()).collect();
+        if clean.is_empty() {
+            return true;
+        }
+        let term = &self.tabs[self.active].term;
+        if let Some(s) = self.search.as_mut() {
+            for c in clean.chars() {
+                s.push(c, term);
+            }
+        }
+        self.after_query();
+        true
+    }
+
+    /// After the query changed: the view goes to the first match, and the rows
+    /// are rebuilt.
+    fn after_query(&mut self) {
+        let s = self.search.clone();
+        if let Some(s) = s.as_ref() {
+            self.show_current(s);
+        }
+        self.search_gen += 1;
+        self.redraw();
+    }
+
+    /// Sends the view to the current match: the line lands on the first row, so
+    /// the match is never half-hidden at the top.
+    fn show_current(&mut self, s: &tortty_core::search::Search) {
+        let Some(hit) = s.current() else {
+            return;
+        };
+        let t = &self.tabs[self.active];
+        let off = (t.term.scrolled as i64 - hit.line).clamp(0, t.term.scrollback.len() as i64);
+        // clamped to `0..=len` above
+        #[allow(clippy::cast_sign_loss)]
+        let off = off as usize;
+        self.tabs[self.active].view_off = off;
+    }
+
+    /// What the renderer draws for the search (`M-D`): the matches that are in
+    /// sight, in **view rows**, and the bar's text.
+    fn search_view(&self) -> Option<crate::render::SearchView> {
+        let s = self.search.as_ref()?;
+        let t = &self.tabs[self.active];
+        let rows = t.term.rows;
+        let cols = t.term.cols;
+        let top = t.term.scrolled as i64 - t.view_off as i64;
+        let mut hits = Vec::new();
+        for (i, h) in s.hits.iter().enumerate() {
+            let row = h.line - top;
+            if row < 0 || row >= rows as i64 || h.col >= cols {
+                continue;
+            }
+            #[allow(clippy::cast_sign_loss)]
+            let row = row as usize;
+            hits.push((row, h.col, h.len, i == s.at));
+        }
+        let count = s.count();
+        let bar = if count.is_empty() {
+            "find: ".to_string()
+        } else {
+            format!("find: {}  {count}", s.query)
+        };
+        Some(crate::render::SearchView { hits, bar })
+    }
+
     fn rename_key(&mut self, k: &KeyIn<'_>) -> bool {
         if self.rename.is_none() {
             return false;

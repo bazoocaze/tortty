@@ -8,7 +8,6 @@ Completed activities do not stay here; they go to `HISTORY.md`.
 | id | activity | why | trigger | cost |
 |---|---|---|---|---|
 | M-V | **in progress** — Context menu (right button on the grid): copy, paste, open link, new tab | today the right button either becomes a mouse report to the app or does nothing | the first daily use where copying requires a drag or a shortcut | medium: depends on `M-Q` (the menu is the 4th chrome) + integration with `arboard` |
-| M-D | **in progress** — Scrollback search with highlight | today you only find it by scrolling; in a big log it is the function that is missing | the first build log that has to be mined | medium: per-line index or scan on demand |
 | M-F | IME and composition (CJK, compose) | whoever types CJK cannot use it | the first user who types CJK | medium: `winit::Ime` + pre-editing in the view |
 | M-J | Splits (more than one terminal in the same view) | a split is a view in the same `wgpu` surface, no toolkit involved | when two terminals side by side become routine | high |
 | M-L | **in progress** — Images: z-index, placement id, Unicode placeholder (source crop `x`/`y`/`w`/`h` landed 2026-11-12) | today the image is drawn on top and there is no fine control over it | after the basic image (F6) is working with `icat` | medium |

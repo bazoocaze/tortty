@@ -155,6 +155,14 @@ pub struct Renderer {
     emoji_cap: usize,
     /// Emoji quads of the row being built (relative y, like the mask).
     emoji_row: Vec<Instance>,
+    /// `M-D`: 0 = ordinary cell, 1 = a match, 2 = the current match. Rebuilt with
+    /// the frame, indexed `row * cols + col`.
+    marks: Vec<u8>,
+    /// The `cols` the mask was built with (not the signature's: the rows are
+    /// painted before the signature is stored).
+    marks_cols: usize,
+    /// Mark of the cell `draw_cell` is painting (the caller knows the row).
+    cur_mark: u8,
     /// Texture per image (id → bind group). The bind group keeps the texture alive.
     img_cache: HashMap<u32, ImgTex>,
     /// Grid instances, kept **per row**: only the dirty row is rebuilt
@@ -487,6 +495,9 @@ impl Renderer {
             emoji_buf,
             emoji_cap: 1 << 16,
             emoji_row: Vec::new(),
+            marks: Vec::new(),
+            marks_cols: 0,
+            cur_mark: 0,
             inst_buf,
             inst_cap,
             atlas,
@@ -1089,6 +1100,37 @@ impl Renderer {
         self.toast_rect = Some([x1 + self.pad + self.side, y1 + self.pad + self.bar, bw, bh]);
     }
 
+    /// The glyph colour of a cell. `M-D`: on the bright amber of the current match
+    /// the theme's text colour vanishes, so that glyph goes dark.
+    fn ink(&self, fg: Color, swap: bool) -> [f32; 3] {
+        if self.cur_mark == 2 {
+            return [0.1, 0.08, 0.0];
+        }
+        self.color(fg, if swap { self.bg } else { self.fg })
+    }
+
+    /// The mark of one cell: 0 none, 1 a match, 2 the current match (`M-D`).
+    fn mark_at(&self, row: usize, col: usize) -> u8 {
+        self.marks
+            .get(row * self.marks_cols + col)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// The search bar: one row at the bottom-left of the grid, `find: query   3/17`.
+    fn search_bar(&mut self, sv: &SearchView, cols: usize, rows: usize) {
+        let cw = self.fonts.cw;
+        let chh = self.fonts.ch;
+        let text: String = sv.bar.chars().take(cols).collect();
+        let n = text.chars().count().max(1);
+        #[allow(clippy::cast_precision_loss)]
+        let y = (rows.saturating_sub(1)) as f32 * chh;
+        let bg = self.color(Color::Default, self.bg);
+        let fg = self.color(Color::Default, self.fg);
+        self.push_rect(0.0, y, n as f32 * cw, chh, [bg[0], bg[1], bg[2], 0.92]);
+        self.chrome_text(&text, 0.0, y, fg, 0.0);
+    }
+
     fn badge(&mut self, text: &str, cols: usize) {
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
@@ -1108,10 +1150,9 @@ impl Renderer {
 
     /// Glyph + decoration of one cell. The order here is the blend order:
     /// everything of the text comes before the cursor.
-    /// `glyph` = glyph already resolved by shaping (`face`, `gid`, offset in
-    /// px). `None` means resolve the character through the chain — that is the
-    /// single-cell run path. A shaping glyph that does not draw (a face that maps
-    /// and has no bitmap) also falls back to the chain.
+    /// `glyph` = glyph already resolved by shaping (`face`, `gid`, offset in px).
+    /// `None` means resolve the character through the chain — the single-cell run
+    /// path; a shaping glyph that does not draw also falls back to the chain.
     fn draw_cell(
         &mut self,
         cell: &Cell,
@@ -1136,7 +1177,7 @@ impl Renderer {
             fg = tortty_core::color::bright(fg);
         }
         let fg = if swap { cell.bg } else { fg };
-        let mut c = self.color(fg, if swap { self.bg } else { self.fg });
+        let mut c = self.ink(fg, swap);
         // faint: the same tone with less opacity (Pango used alpha 0.55)
         let alpha = if cell.flags & FAINT != 0 { 0.55 } else { 1.0 };
 
@@ -1458,6 +1499,7 @@ impl Renderer {
             sidebar,
             cards_off,
             links,
+            search,
         } = *f;
         let cols = term.cols;
         // selection rectangle in the view (stuck to the screen); outside it
@@ -1535,6 +1577,9 @@ impl Renderer {
         }
 
         self.concat_lines();
+        // `M-D`: the matches are a background override on the grid cells, so the
+        // mask has to exist before the rows are painted (see `paint_line`)
+        self.build_marks(search, &rows, cols, ctx);
         // everything after this point belongs to the chrome, which is drawn on
         // top: the colour glyphs of the chrome are the second half of the list
         self.emoji_split = self.emoji_instances.len();
@@ -1553,6 +1598,11 @@ impl Renderer {
         // 3) cursor (on top; instance order is blend order)
         self.build_cursor(f);
 
+        // 3b) search bar (`M-D`): over the grid's bottom row, under the toast
+        if let Some(sv) = search {
+            self.search_bar(sv, cols, rows.len());
+        }
+
         // 4) history indicator (D8): "↑N" — without it, scrolling back is
         // indistinguishable from the app having stopped writing
         if view_off > 0 {
@@ -1567,6 +1617,26 @@ impl Renderer {
         self.toast_rect = None;
         if let Some(t) = toast {
             self.toast(t, cols, rows.len());
+        }
+    }
+
+    /// The search mask plus, when there is one, the rows rebuilt with it: the
+    /// per-row cache was painted without the highlight (`M-D`).
+    fn build_marks(
+        &mut self,
+        search: Option<&SearchView>,
+        rows: &[&tortty_core::grid::Row],
+        cols: usize,
+        ctx: RowCtx,
+    ) {
+        self.marks = marks(search, cols, rows.len());
+        self.marks_cols = cols;
+        if self.marks.iter().any(|m| *m != 0) {
+            self.per_line = vec![RowQuads::default(); rows.len()];
+            for (y, row) in rows.iter().enumerate() {
+                self.per_line[y] = self.line(row, y, ctx);
+            }
+            self.concat_lines();
         }
     }
 
@@ -1739,7 +1809,9 @@ impl Renderer {
                     Some((face, plan)) => plan.piece_at(i).map(|p| (*face, p.gid, p.x)),
                     None => None,
                 };
-                self.draw_cell(&c, cx, py, is_swap(&c, sel, y, cx), glyph, links);
+                self.cur_mark = self.mark_at(y, cx);
+                let swap = self.cur_mark == 0 && is_swap(&c, sel, y, cx);
+                self.draw_cell(&c, cx, py, swap, glyph, links);
             }
             x = end;
         }
@@ -1763,21 +1835,42 @@ impl Renderer {
                 Some(c) => *c,
                 None => break,
             };
-            let swap = is_swap(&cell, sel, y, x);
+            // `M-D`: a match overrides the cell's own background, and the current
+            // one overrides it with the bright shade
+            let mark = self.mark_at(y, x);
+            let swap = mark == 0 && is_swap(&cell, sel, y, x);
             let bg = if swap { cell.fg } else { cell.bg };
             let mut end = x + 1;
             while end < cols {
                 let Some(c2) = row.cells.get(end) else { break };
-                if is_swap(c2, sel, y, end) != swap {
+                if self.mark_at(y, end) != mark {
+                    break;
+                }
+                if mark == 0 && is_swap(c2, sel, y, end) != swap {
                     break;
                 }
                 let bg2 = if swap { c2.fg } else { c2.bg };
-                if bg2 != bg {
+                if mark == 0 && bg2 != bg {
                     break;
                 }
                 end += 1;
             }
-            if swap || bg != Color::Default {
+            let hit = match mark {
+                2 => Some(CUR_BG),
+                1 => Some(HIT_BG),
+                _ => None,
+            };
+            if let Some(h) = hit {
+                // 0..=255 to 0.0..=1.0: the same conversion `Renderer::color` does
+                let s = |v: u8| f32::from(v) / 255.0;
+                self.push_rect(
+                    x as f32 * cw,
+                    py,
+                    (end - x) as f32 * cw,
+                    chh,
+                    [s(h.0), s(h.1), s(h.2), 1.0],
+                );
+            } else if swap || bg != Color::Default {
                 let c = self.color(bg, if swap { self.fg } else { self.bg });
                 self.push_rect(
                     x as f32 * cw,
@@ -2114,6 +2207,29 @@ struct RowCtx {
     links: bool,
 }
 
+/// The search highlight (`M-D`): the match background and the current one's. The
+/// bright amber is the current hit, so `Enter` is visible without reading the bar.
+const HIT_BG: (u8, u8, u8) = (0x4a, 0x3d, 0x00);
+const CUR_BG: (u8, u8, u8) = (0xd7, 0xa5, 0x00);
+
+/// `row * cols + col` → 0 (none), 1 (a match) or 2 (the current match).
+fn marks(search: Option<&SearchView>, cols: usize, rows: usize) -> Vec<u8> {
+    let mut m = vec![0u8; cols * rows];
+    let Some(sv) = search else {
+        return m;
+    };
+    for &(row, col, len, current) in &sv.hits {
+        if row >= rows {
+            continue;
+        }
+        let kind = if current { 2 } else { 1 };
+        for c in col..(col + len).min(cols) {
+            m[row * cols + c] = kind;
+        }
+    }
+    m
+}
+
 /// The cursor breaks the ligature: its cell is shaped on its own, otherwise it
 /// paints in the middle of a glyph that covers more than one cell — it is kitty's
 /// `disable_ligatures=cursor`. Outside the view (scrolled) there is no cursor.
@@ -2247,6 +2363,17 @@ pub struct Frame<'a> {
     pub cards_off: usize,
     /// Ctrl is held: the `OSC 8` links underline themselves.
     pub links: bool,
+    /// The scrollback search (`M-D`): the matches in **view rows**, plus the bar.
+    pub search: Option<&'a SearchView>,
+}
+
+/// What the renderer needs from the search: the visible matches and the bar's
+/// text. `current` is the one `Enter` last landed on.
+pub struct SearchView {
+    /// `(row in the view, column, length, current)`.
+    pub hits: Vec<(usize, usize, usize, bool)>,
+    /// `find: query   3/17`, drawn at the bottom-left of the grid.
+    pub bar: String,
 }
 
 /// What the sidebar needs from each workspace (I6).

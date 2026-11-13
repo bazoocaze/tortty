@@ -951,3 +951,25 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   new_tab` opens one on the new chord and `unmap ctrl+shift+t` stops the old one;
   two bad `map` lines come out as two config errors with the rest of the file
   holding.
+
+## 2026-11-13 — search the scrollback (`M-D`)
+
+- `crates/core/src/search.rs`: `find(term, query)` walks the history and the grid
+  once, in absolute lines (the space the prompt marks already use), returning
+  `Hit { line, col, len }`; `Search` holds the query, the matches and the current
+  one, and `step` wraps at both ends. Folding is ASCII only, documented: a full
+  Unicode fold would change how many cells a match covers.
+- The app got a modal bar (`Ctrl+Shift+F`, the new `search` action of the `M-H`
+  table): the keyboard belongs to the query, `Backspace` on an empty query closes
+  it, `Enter`/`Shift+Enter` walk, `Esc` closes. The view is sent to the match's
+  line on the first grid row, so a hit is never half-hidden.
+- The renderer keeps a per-cell mark mask (0/1/2) built with the frame: the
+  background pass groups runs by mark, so a match overrides the cell's own colour
+  (dim amber `#4a3d00`, current `#d7a500`) and the glyph of the current one goes
+  dark. The rows are repainted when the mask has anything, because the per-row
+  cache was painted without it.
+- Verified: five `search` tests (history + grid, ASCII folding, touching matches,
+  wrap, keeping the current match across a keystroke) and an Xvfb probe — typing
+  `needle` over 40 lines gives 6 hits, `view_off` 37, `Enter` → 32, `Shift+Enter`
+  back, `Esc` closes; the capture holds both highlight colours (775 px of
+  `#d7a500`, 477 px of `#4a3d00`).

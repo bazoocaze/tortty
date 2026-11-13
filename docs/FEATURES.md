@@ -197,6 +197,14 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   one as a still translucent band of the full width. The fill is in pixels, so
   37% of a 20-cell tab is 7.4 cells of ink; `0` removes it. **limit:** the window
   only (no taskbar), and nothing moves.
+- Scrollback search (`M-D`, `Ctrl+Shift+F` or the `search` action): a bar at the
+  bottom-left of the grid takes the query, every match in the history and on the
+  screen is highlighted (dim amber) with the current one in bright amber, and
+  `Enter`/`Shift+Enter` walk them, wrapping at both ends. The view jumps so the
+  match lands on the first row. **limit:** plain text, ASCII case folding, and the
+  query is not kept after `Esc` closes the bar beyond that run's last one; no
+  regex, no whole-word mode; matches stop at 5000 (a one-letter query in a huge
+  history keeps the first 5000).
 - Program status (`OSC 7501`, the Program Status Protocol v0.4): the program says
   what it is doing — `idle`/`working`/`done`/`blocked`/`error`, with `kind`,
   `progress`, `app`, `title` and a base64 `msg` — and the terminal keeps a set of

@@ -15,6 +15,7 @@ pub mod graphics;
 pub mod grid;
 pub mod keymap;
 pub mod prompt;
+pub mod search;
 pub mod select;
 pub mod snapshot;
 pub mod status;
