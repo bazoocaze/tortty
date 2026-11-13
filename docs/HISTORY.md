@@ -880,3 +880,21 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   (copy and rect, plus the block case of the same drag) and an Xvfb probe of the
   exact report: 1.0.70 painted row 2 from column 5, now columns 5/10/29 stay
   `000000` and 30.. the selection colour, rows 3 and 4 unchanged.
+
+## 2026-11-13 — the chrome is one scene (`M-Q`)
+
+- The bar, the cards and the toast were each written twice — the drawing in
+  `render.rs` and the click test in `app.rs`, with the same coordinates in two
+  formulas — and three bugs in one session were that divergence.
+- `crates/app/src/chrome.rs` owns the geometry now: `Metrics` (cell, padding, bar,
+  sidebar, grid), `Layout::build` (one slot per tab, and the whole cards that
+  fit), and the hit test that converts window px to origin space once. The label
+  text and its width — the two cells of the bell included — come from there too.
+- `render.rs` draws the slots and `app.rs` asks the same layout; `tab_at`,
+  `card_at` and the tab drag became three-line readers, and `Frame` no longer
+  carries `cards_visible` (the layout knows).
+- Verified with five `chrome` tests (bell width, tab hit by x, whole cards only,
+  the walk strip naming no card, the scrolled column) and an Xvfb probe: a click
+  16 cells in lands on tab 2 with the bell in front of tab 1, card 2 selects
+  workspace 2, and the strip below the last card changes nothing. `render-check`
+  green.

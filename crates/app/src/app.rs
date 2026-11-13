@@ -1071,49 +1071,18 @@ impl App {
         (x as usize, y as usize)
     }
 
-    /// Index of the tab under the cursor, if it is in the bar strip.
+    /// Index of the tab under the cursor, if it is in the bar strip (`M-Q`: the
+    /// rects come from the same layout the bar is drawn from).
     fn tab_at(&self, px: f64, py: f64) -> Option<usize> {
-        let (cw, ch, pad) = self.cell_metrics();
-        let bar = f64::from(self.bar_h(ch));
-        if bar <= 0.0 || py < f64::from(pad) || py >= f64::from(pad) + bar {
-            return None;
-        }
-        let info = self.tabinfo();
-        // the bar starts where the grid starts (right of the sidebar): line 1
-        // is split between the workspace card and the tab bar
-        let mut x = f64::from(pad) + f64::from(self.side_w(cw));
-        for (i, t) in info.iter().enumerate() {
-            // the same width the renderer uses: an alert tab carries the two-cell
-            // bell in front of the label (`B8`)
-            let label = format!(" {} {} ", i + 1, t.title);
-            let bell = if t.alert { 2 } else { 0 };
-            let width = (label.chars().count() + bell) as f64 * f64::from(cw);
-            if px >= x && px < x + width {
-                return Some(i);
-            }
-            x += width;
-        }
-        None
+        self.chrome_layout().tab_at(px, py)
     }
 
-    /// Workspace under the cursor, if it is on the sidebar (I9).
+    /// Workspace under the cursor, if it is on the sidebar (`I9`).
+    ///
+    /// The walk strip below the last card names no card: it is the place a drag
+    /// scrolls from (`B55`), and the layout simply has no slot there.
     fn card_at(&self, px: f64, py: f64) -> Option<usize> {
-        let (_cw, ch, pad) = self.cell_metrics();
-        if !self.in_sidebar(px, py) {
-            return None;
-        }
-        // the cards are drawn from `card_off` (`B42`): the pointer is on the
-        // card `off` above it
-        let card_h = f64::from(ch) * 2.4;
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        // the ratio is positive and bounded by the column height
-        let slot = ((py - f64::from(pad)) / card_h) as usize;
-        // the free row at the bottom is not a card: it is the way to walk (`B55`)
-        if slot >= self.cards_visible() {
-            return None;
-        }
-        let i = slot + self.card_off;
-        (i < self.ws_count()).then_some(i)
+        self.chrome_layout().card_at(px, py)
     }
 
     /// The pointer is on the sidebar column (`B42`).
@@ -1138,17 +1107,47 @@ impl App {
     /// would be a place and a scroll trigger at the same time, and pushing past
     /// it turned the walk on with the hand still over a card.
     fn cards_visible(&self) -> usize {
-        let (_cw, ch, _pad) = self.cell_metrics();
-        let card_h = f64::from(ch) * 2.4;
-        if card_h <= 0.0 || self.tabs.is_empty() {
-            return 1;
+        self.chrome_metrics().cards_visible()
+    }
+
+    /// The metrics the chrome is laid out with (`M-Q`): the renderer builds the
+    /// same ones, and both ask `chrome::Layout` — one formula, two readers.
+    fn chrome_metrics(&self) -> crate::chrome::Metrics {
+        let (cw, ch, pad) = self.cell_metrics();
+        let (cols, rows) = self
+            .tabs
+            .get(self.active)
+            .map_or((self.opts.cols, self.opts.rows), |t| {
+                (t.term.cols, t.term.rows)
+            });
+        crate::chrome::Metrics {
+            cw,
+            ch,
+            pad,
+            bar: self.bar_h(ch),
+            side: self.side_w(cw),
+            cols,
+            rows,
         }
-        let rows = self.tabs[self.active].term.rows;
-        let band = f64::from(self.bar_h(ch) + rows as f32 * ch) - f64::from(ch);
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        // the band is positive and bounded by the window height
-        let n = (band / card_h) as usize;
-        n.max(1)
+    }
+
+    /// The chrome of the current state: what the renderer will draw next and what
+    /// a click is tested against (`M-Q`).
+    fn chrome_layout(&self) -> crate::chrome::Layout {
+        let info = self.tabinfo();
+        let specs: Vec<crate::chrome::Tab<'_>> = info
+            .iter()
+            .map(|t| crate::chrome::Tab {
+                title: &t.title,
+                alert: t.alert,
+            })
+            .collect();
+        crate::chrome::Layout::build(
+            self.chrome_metrics(),
+            &specs,
+            self.ws_count(),
+            self.card_off,
+        )
     }
 
     /// Walks the sidebar card list by `delta` cards, clamped to it (`B42`).
@@ -1906,28 +1905,13 @@ impl App {
         let Some((i, x0)) = self.bar_press else {
             return;
         };
-        let Some((cw, _, pad)) = self
-            .renderer
-            .as_ref()
-            .map(|r| (r.fonts.cw, r.fonts.ch, r.pad))
-        else {
-            return;
-        };
-        let info = self.tabinfo();
+        let (cw, ..) = self.cell_metrics();
         // where the press started and where we are: x pixel of tab i in the drag
-        let mut x = f64::from(pad);
-        let mut today = None;
-        for (k, t) in info.iter().enumerate() {
-            let width = format!(" {} {} ", k + 1, t.title).chars().count() as f64 * f64::from(cw);
-            if k == i {
-                today = Some((x, width));
-                break;
-            }
-            x += width;
-        }
-        let Some((_, width)) = today else {
+        // (`M-Q`: the width is the bar's, bell included)
+        let Some([_, width]) = self.chrome_layout().tab_slot(i) else {
             return;
         };
+        let width = f64::from(width);
         let dx = self.cursor_px.0 - x0;
         let step = width.max(f64::from(cw));
         // the destination and the press point that goes with it: with the press
@@ -2774,7 +2758,6 @@ impl App {
             tabs: tabs.as_deref(),
             sidebar: sidebar.as_deref(),
             cards_off: self.card_off,
-            cards_visible: self.cards_visible(),
             links: self.mods.control_key(),
         };
         let drew = {

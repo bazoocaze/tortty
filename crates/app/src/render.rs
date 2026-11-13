@@ -791,32 +791,79 @@ impl Renderer {
     /// The active tab is inverted (background = text colour). A tab with a recent
     /// BELL swaps the highlight colour — that is what makes "that terminal
     /// beeped" visible without looking at it.
-    fn tabbar(&mut self, tabs: &[TabInfo], cols: usize) {
+    /// Lays out and draws the chrome of this frame (`M-Q`): the bar and the cards
+    /// draw from the scene, and `app.rs` hit-tests the same rects — the drawing
+    /// formula and the click formula are one.
+    fn build_chrome(
+        &mut self,
+        tabs: Option<&[TabInfo]>,
+        sidebar: Option<&[WsCard]>,
+        cards_off: usize,
+        cols: usize,
+        rows: usize,
+    ) {
+        let specs: Vec<crate::chrome::Tab<'_>> = tabs
+            .map(|list| {
+                list.iter()
+                    .map(|t| crate::chrome::Tab {
+                        title: &t.title,
+                        alert: t.alert,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let ws = sidebar.map_or(0, <[WsCard]>::len);
+        let layout =
+            crate::chrome::Layout::build(self.chrome_metrics(cols, rows), &specs, ws, cards_off);
+        if let Some(tabs) = tabs {
+            self.tabbar(tabs, &layout);
+        }
+        if let Some(cards) = sidebar {
+            self.sidebar(cards, &layout);
+        }
+    }
+
+    /// The metrics the chrome is laid out with — the app builds the same ones
+    /// from its own state, and both sides ask `chrome::Layout` (`M-Q`).
+    fn chrome_metrics(&self, cols: usize, rows: usize) -> crate::chrome::Metrics {
+        crate::chrome::Metrics {
+            cw: self.fonts.cw,
+            ch: self.fonts.ch,
+            pad: self.pad,
+            bar: self.bar,
+            side: self.side,
+            cols,
+            rows,
+        }
+    }
+
+    /// The bar: one slot per tab, taken from the scene (`M-Q`) — the same rect
+    /// the app hit-tests, so a click and a label cannot disagree.
+    fn tabbar(&mut self, tabs: &[TabInfo], layout: &crate::chrome::Layout) {
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
-        // the bar starts to the right of the sidebar: the two share row 1, and
-        // the sidebar does not get a hole on top (the card is 2.4 rows high, so
-        // it passes under the bar anyway)
-        let x0 = 0.0;
-        let total_w = cols as f32 * cw;
+        #[allow(clippy::cast_precision_loss)] // columns, far below 2^23
+        let total_w = layout.m.cols as f32 * cw;
         let bg = self.color(Color::Idx(0), self.bg);
         // text over the active tab uses the grid background colour (inversion)
         let over = self.color(Color::Default, self.bg);
         // `origin.y` is `pad + bar`: so the bar lands in the reserved strip
         // (and not over the first grid row) it is drawn at y = -bar
         let y0 = -self.bar;
-        self.push_rect(x0, y0, total_w, chh, [bg[0], bg[1], bg[2], 1.0]);
-        let mut x = x0;
-        for (i, t) in tabs.iter().enumerate() {
-            let label = format!(" {} {} ", i + 1, t.title);
+        self.push_rect(0.0, y0, total_w, chh, [bg[0], bg[1], bg[2], 1.0]);
+        for slot in &layout.tabs {
+            let Some(t) = tabs.get(slot.i) else {
+                continue;
+            };
+            let [x, y, width, _] = slot.rect;
             // a tab with a notification keeps its colours and carries the bell
             // (`B8`): painting the whole label was louder than the news
-            let bell = if t.alert { 2 } else { 0 };
-            let n = label.chars().count() + bell;
-            let width = (n as f32 * cw).min(total_w - x);
-            if width <= 0.0 {
-                break;
-            }
+            let bell = if t.alert { 2.0 * cw } else { 0.0 };
+            let spec = crate::chrome::Tab {
+                title: &t.title,
+                alert: t.alert,
+            };
+            let label = crate::chrome::tab_label(slot.i, &spec);
             let (bg, fg) = if t.ativa {
                 (self.color(Color::Default, self.fg), over)
             } else {
@@ -824,24 +871,23 @@ impl Renderer {
             };
             // one rectangle per tab (not one per letter): the label background is
             // a single piece, and the text is drawn on top of it
-            self.push_rect(x, y0, width, chh, [bg[0], bg[1], bg[2], 1.0]);
-            let text_x = x + bell as f32 * cw;
+            self.push_rect(x, y, width, chh, [bg[0], bg[1], bg[2], 1.0]);
+            let text_x = x + bell;
             if t.alert {
-                self.chrome_bell(x, y0, fg);
+                self.chrome_bell(x, y, fg);
             }
-            self.chrome_text(&label, text_x, y0, fg, width - bell as f32 * cw);
+            self.chrome_text(&label, text_x, y, fg, width - bell);
             if let Some(p) = t.progress {
                 let (c, alpha, frac) = progress_ink(p);
                 let rgb = self.color(c, self.fg);
                 self.push_rect(
                     x,
-                    y0 + chh - PROGRESS_H,
+                    y + chh - PROGRESS_H,
                     width * frac,
                     PROGRESS_H,
                     [rgb[0], rgb[1], rgb[2], alpha],
                 );
             }
-            x += width;
         }
     }
 
@@ -852,26 +898,22 @@ impl Renderer {
     /// It is drawn from card `off` (`B42`): the list scrolls, so the first card
     /// can start above the column and the last one is cut at the bottom of the
     /// grid — the strip ends there, not at the window's edge.
-    fn sidebar(&mut self, cards: &[WsCard], off: usize, visible: usize) {
+    fn sidebar(&mut self, cards: &[WsCard], layout: &crate::chrome::Layout) {
         if self.side <= 0.0 {
             return;
         }
         let chh = self.fonts.ch;
-        let card_h = chh * 2.4;
-        let x0 = -self.side;
-        let width = self.side - self.pad;
         let bg = self.color(Color::Idx(0), self.bg);
         let over = self.color(Color::Default, self.bg);
-        let top = -self.bar;
-        // the bottom of the grid, in this coordinate space (y = 0 is the first
-        // grid row): the cards are cut here
-        let bottom = self.config.height as f32 - self.pad - self.bar;
-        for (i, c) in cards.iter().enumerate().skip(off).take(visible.max(1)) {
-            let y0 = top + (i - off) as f32 * card_h;
-            if y0 >= bottom {
-                break;
-            }
-            let y1 = (y0 + card_h).min(bottom);
+        // the column's bottom, in this coordinate space (y = 0 is the first grid
+        // row): the cards and their text are cut here
+        let bottom = layout.m.card_bottom();
+        for slot in &layout.cards {
+            let Some(c) = cards.get(slot.i) else {
+                continue;
+            };
+            let (i, [x0, y0, width, height]) = (slot.i, slot.rect);
+            let y1 = y0 + height;
             let active = c.ativa;
             let (bg, fg) = if active {
                 (self.color(Color::Default, self.fg), over)
@@ -1415,7 +1457,6 @@ impl Renderer {
             tabs,
             sidebar,
             cards_off,
-            cards_visible,
             links,
         } = *f;
         let cols = term.cols;
@@ -1503,15 +1544,8 @@ impl Renderer {
         self.img_split = self.instances.len();
         self.build_images(f);
 
-        // 2b) tab bar: it sits in the strip the `origin` reserved above the grid,
-        // so it needs no clipping math
-        if let Some(tabs) = tabs {
-            self.tabbar(tabs, cols);
-        }
-        // 2c) workspace sidebar: column on the left, in the reserved strip
-        if let Some(cards) = sidebar {
-            self.sidebar(cards, cards_off, cards_visible);
-        }
+        // 2b) the chrome of this frame, laid out once (`M-Q`)
+        self.build_chrome(tabs, sidebar, cards_off, cols, rows.len());
 
         // 2d) scrollbar: over the grid's right edge, under the cursor/toast
         self.scrollbar(f);
@@ -2211,9 +2245,6 @@ pub struct Frame<'a> {
     pub sidebar: Option<&'a [WsCard]>,
     /// First card of the sidebar list to draw (`B42`).
     pub cards_off: usize,
-    /// How many whole cards fit: the rest of the column is the strip a drag
-    /// walks in (`B55`), so a card is never drawn there.
-    pub cards_visible: usize,
     /// Ctrl is held: the `OSC 8` links underline themselves.
     pub links: bool,
 }

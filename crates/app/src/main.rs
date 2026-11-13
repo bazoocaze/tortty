@@ -5,6 +5,7 @@
 mod app;
 mod atlas;
 mod checks_app;
+mod chrome;
 mod cli;
 mod clip;
 mod damage;
