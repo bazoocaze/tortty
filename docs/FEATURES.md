@@ -205,8 +205,12 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   one as a still translucent band of the full width. The fill is in pixels, so
   37% of a 20-cell tab is 7.4 cells of ink; `0` removes it. **limit:** the window
   only (no taskbar), and nothing moves.
-- Scrollback search (`M-D`, `Ctrl+Shift+F` or the `search` action): a bar at the
-  bottom-left of the grid takes the query, every match in the history and on the
+- Scrollback search (`M-D`, `Ctrl+Shift+F` or the `search` action): two chips on
+  the grid's bottom row take the query — `[find: query_ ]`, with an amber `_`
+  where the next character goes, and `[ 1/3 ]` beside it (red `[ no match ]`
+  when the query finds nothing; the chip is absent while the query is empty).
+  The surface is opaque and a hair lighter than the grid, so the bar does not
+  blend into what is behind it. every match in the history and on the
   screen is highlighted (dim amber) with the current one in bright amber, and
   `Enter`/`Shift+Enter` walk them, wrapping at both ends. The view jumps so the
   match lands on the first row. **limit:** plain text, ASCII case folding, and the

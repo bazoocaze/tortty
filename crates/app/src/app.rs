@@ -3700,13 +3700,14 @@ impl App {
             let row = row as usize;
             hits.push((row, h.col, h.len, i == s.at));
         }
-        let count = s.count();
-        let bar = if count.is_empty() {
-            "find: ".to_string()
-        } else {
-            format!("find: {}  {count}", s.query)
-        };
-        Some(crate::render::SearchView { hits, bar })
+        // the count chip only exists once there is a query: `[ ]` next to an
+        // empty field would say nothing
+        let count = (!s.query.is_empty()).then(|| s.count());
+        Some(crate::render::SearchView {
+            hits,
+            query: s.query.clone(),
+            count,
+        })
     }
 
     fn rename_key(&mut self, k: &KeyIn<'_>) -> bool {

@@ -989,3 +989,15 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   over the text "AB" — `z=1` red 361 px, glyph 0 (the image hides the text);
   `z=-1` red 279 px, glyph 17 (the text is on top). The Unicode placeholder
   (`U=1`) stays in the queue, and `M-L` with it.
+
+## 2026-11-13 — the search bar became two chips (`M-D`, visual)
+
+- The first bar was one translucent strip with `find: query  1/3` inside it: it
+  read as part of the grid, and the count disappeared into the same run of text.
+  Now it is `[find: query_ ]` and `[ 1/3 ]` — the brackets are the text, as the
+  owner sketched them, so the shape holds at any cell width, and each chip is
+  exactly as wide as its text.
+- The surface is the grid's background mixed 14 % towards the text colour, drawn
+  opaque with a 1 px edge: nothing behind it shows through. `[ no match ]` comes
+  in red; the chip is not drawn while the query is empty, and the cursor is the
+  amber of the current match. A query longer than the room keeps its tail.

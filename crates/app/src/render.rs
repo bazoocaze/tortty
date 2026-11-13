@@ -1120,18 +1120,111 @@ impl Renderer {
             .unwrap_or(0)
     }
 
-    /// The search bar: one row at the bottom-left of the grid, `find: query   3/17`.
+    /// The search bar (`M-D`): two chips on the grid's bottom row, `[find:
+    /// query_ ]` and `[ 1/3 ]`. The brackets are text, so the shape reads the same
+    /// at any cell width; the surface is opaque and one step off the grid's, which
+    /// is what keeps it from blending into the background behind it.
     fn search_bar(&mut self, sv: &SearchView, cols: usize, rows: usize) {
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
-        let text: String = sv.bar.chars().take(cols).collect();
-        let n = text.chars().count().max(1);
+        let base = self.color(Color::Default, self.bg);
+        let ink = self.color(Color::Default, self.fg);
+        // the label recedes, the query is the ink, and the cursor is the amber of
+        // the current match: the two ends of the search read as one thing
+        let dim = [
+            ink[0] * 0.78 + base[0] * 0.22,
+            ink[1] * 0.78 + base[1] * 0.22,
+            ink[2] * 0.78 + base[2] * 0.22,
+        ];
+        let amber = self.color(Color::Rgb(0xd7, 0xa5, 0x00), self.fg);
+        let grey = self.color(Color::Idx(8), self.fg);
+        let red = self.color(Color::Idx(1), self.fg);
+        // `[find: ` + query + `_ ]` is `q + 10` cells; `[ 1/3 ]` is `n + 4`. The
+        // chip is exactly as wide as its text: the brackets are the shape, so any
+        // padding would double the edge
+        let count = sv.count.clone();
+        let count_cells = count.as_ref().map_or(0, |c| c.chars().count() + 4);
+        let room = cols.saturating_sub(count_cells);
+        // a long query keeps its tail, where the cursor is: the head is what a
+        // reader can spare
+        let mut query: String = sv.query.clone();
+        let fits = room.saturating_sub(10);
+        if query.chars().count() > fits {
+            query = query.chars().skip(query.chars().count() - fits).collect();
+        }
+        let q = query.chars().count();
+        let find_cells = (q + 10).min(room).max(1);
         #[allow(clippy::cast_precision_loss)]
-        let y = (rows.saturating_sub(1)) as f32 * chh;
-        let bg = self.color(Color::Default, self.bg);
-        let fg = self.color(Color::Default, self.fg);
-        self.push_rect(0.0, y, n as f32 * cw, chh, [bg[0], bg[1], bg[2], 0.92]);
-        self.chrome_text(&text, 0.0, y, fg, 0.0);
+        let y = rows.saturating_sub(1) as f32 * chh;
+        #[allow(clippy::cast_precision_loss)]
+        let (find_w, count_w) = (find_cells as f32 * cw, count_cells as f32 * cw);
+        self.chip((0.0, y), (find_w, chh), grey);
+        #[allow(clippy::cast_precision_loss)]
+        let x = find_cells as f32 * cw;
+        if count.is_some() {
+            // a search that found nothing says so in red, not in grey
+            let edge = if sv.count.as_deref() == Some("no match") {
+                red
+            } else {
+                grey
+            };
+            self.chip((x, y), (count_w, chh), edge);
+        }
+        #[allow(clippy::cast_precision_loss)]
+        let cell = |n: usize| n as f32 * cw;
+        self.chrome_text("[", cell(0), y, dim, 0.0);
+        self.chrome_text("find: ", cell(1), y, dim, 0.0);
+        self.chrome_text(&query, cell(7), y, ink, 0.0);
+        self.chrome_text("_", cell(7 + q), y, amber, 0.0);
+        self.chrome_text(" ]", cell(8 + q), y, dim, 0.0);
+        if let Some(c) = count.as_ref() {
+            let edge = if c == "no match" { red } else { ink };
+            self.chrome_text("[ ", x, y, grey, 0.0);
+            self.chrome_text(c, x + cell(2), y, edge, 0.0);
+            self.chrome_text(" ]", x + cell(2) + cell(c.chars().count()), y, grey, 0.0);
+        }
+    }
+
+    /// A chip: the search bar's surface — a hair of ink over the grid's
+    /// background, so it is opaque (nothing behind shows through) and still reads
+    /// as chrome, with a 1 px edge to keep the corner crisp.
+    fn chip(&mut self, at: (f32, f32), size: (f32, f32), edge: [f32; 3]) {
+        /// How much of the text colour is mixed into the grid's background.
+        const VEIL: f32 = 0.14;
+        let base = self.color(Color::Default, self.bg);
+        let ink = self.color(Color::Default, self.fg);
+        let surface = [
+            base[0] + (ink[0] - base[0]) * VEIL,
+            base[1] + (ink[1] - base[1]) * VEIL,
+            base[2] + (ink[2] - base[2]) * VEIL,
+        ];
+        let corner = CORNER as f32;
+        let (left, top) = at;
+        let (width, height) = size;
+        self.rounded_rect(
+            left - 1.0,
+            top + 2.0,
+            width + 2.0,
+            height + 1.0,
+            corner + 1.0,
+            [0.0, 0.0, 0.0, 0.12],
+        );
+        self.rounded_rect(
+            left,
+            top,
+            width,
+            height,
+            corner,
+            [edge[0], edge[1], edge[2], 1.0],
+        );
+        self.rounded_rect(
+            left + 1.0,
+            top + 1.0,
+            width - 2.0,
+            height - 2.0,
+            corner - 1.0,
+            [surface[0], surface[1], surface[2], 1.0],
+        );
     }
 
     fn badge(&mut self, text: &str, cols: usize) {
@@ -2387,13 +2480,16 @@ pub struct Frame<'a> {
     pub search: Option<&'a SearchView>,
 }
 
-/// What the renderer needs from the search: the visible matches and the bar's
-/// text. `current` is the one `Enter` last landed on.
+/// What the renderer needs from the search: the visible matches and the query.
+/// `current` is the one `Enter` last landed on.
 pub struct SearchView {
     /// `(row in the view, column, length, current)`.
     pub hits: Vec<(usize, usize, usize, bool)>,
-    /// `find: query   3/17`, drawn at the bottom-left of the grid.
-    pub bar: String,
+    /// What is typed, without the label or the cursor.
+    pub query: String,
+    /// `1/17` or `no match`; `None` while the query is empty, and then the count
+    /// chip is not drawn at all.
+    pub count: Option<String>,
 }
 
 /// What the sidebar needs from each workspace (I6).
