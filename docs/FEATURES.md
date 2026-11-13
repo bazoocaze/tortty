@@ -169,12 +169,15 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - Chrome: toast as a floating box over the bottom of the grid, centred — two
   levels (title in the foreground colour, detail pulled towards the surface and
   wrapped in up to four lines), an accent bar and border in the shade of the
-  notice, theme background veiled 14% towards the foreground, 1.5-cell gutter.
+  notice, **rounded corners** (one anti-aliased tile in the mask atlas, mirrored
+  into the four) with a **shadow** of two veils, theme background veiled 14%
+  towards the foreground, 1.5-cell gutter.
   Three shades: a receipt lives 3 s, a warning and an error 10 s, a notification
   8 s; no key takes it out, a click does; a different notice waits in a queue and
   the same words only raise the count (`×3`) without restarting the clock.
-  Visual bell, audible bell. **limit:** truncation counts characters, not cell
-  width, so a wide glyph (emoji, CJK) can overflow the box, and the detail is cut
+  Visual bell, audible bell. **limit:** the shadow is two flat veils, not a blur,
+  and truncation counts characters, not cell width, so a wide glyph (emoji, CJK)
+  can overflow the box, and the detail is cut
   at four lines.
 - Notifications (`OSC 9`/`777`): a tab in front toasts the text when it arrives,
   a tab out of sight wears the **bell** in front of its label (two cells, from the

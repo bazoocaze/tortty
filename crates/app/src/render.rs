@@ -105,6 +105,9 @@ pub struct Renderer {
     shaper: crate::shape::Shaper,
     /// Ligature mode coming from the configuration.
     ligatures: tortty_core::config::Ligatures,
+    /// `uv` of the corner tile in the mask atlas (`B57`); `None` = the atlas
+    /// refused it, and the boxes fall back to square corners.
+    toast_corner: Option<[f32; 4]>,
     /// `bold_as_bright`: bold text on the low half of the palette draws the
     /// bright half (`color::bright`).
     bold_as_bright: bool,
@@ -320,7 +323,10 @@ impl Renderer {
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
-        let atlas = Atlas::new(&device);
+        let mut atlas = Atlas::new(&device);
+        // the toast's rounded corner (`B57`): one anti-aliased quarter disc in the
+        // mask atlas, sampled mirrored by the four corners of every box drawn
+        let toast_corner = atlas.add(CORNER, CORNER, &corner_mask(CORNER));
         let (atlas_layout, atlas_bind) = bind_atlas(&device, &atlas);
         let emoji = Atlas::new_rgba(&device);
         let emoji_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -491,6 +497,7 @@ impl Renderer {
             shaper: crate::shape::Shaper::new(),
             ligatures: tortty_core::config::Ligatures::default(),
             bold_as_bright: cfg.bold_as_bright,
+            toast_corner,
             instances: Vec::with_capacity(4096),
             palette: cfg.palette256(),
             fg: theme(cfg, cfg.fg, FG),
@@ -664,6 +671,35 @@ impl Renderer {
         };
         self.cache.insert(key, quad);
         quad
+    }
+
+    /// A rounded rectangle: a cross of three rects plus the four corner tiles,
+    /// sampled with `u`/`v` mirrored (`B57`).
+    // x/y/w/h/r are the four edges and the radius of a rectangle: renaming them
+    // only moves the code further from the drawing
+    #[allow(clippy::many_single_char_names)]
+    fn rounded_rect(&mut self, x: f32, y: f32, w: f32, h: f32, r: f32, color: [f32; 4]) {
+        let r = r.min(w / 2.0).min(h / 2.0);
+        let Some([u0, v0, u1, v1]) = self.toast_corner.filter(|_| r > 0.5) else {
+            self.push_rect(x, y, w, h, color);
+            return;
+        };
+        self.push_rect(x + r, y, w - 2.0 * r, h, color);
+        self.push_rect(x, y + r, r, h - 2.0 * r, color);
+        self.push_rect(x + w - r, y + r, r, h - 2.0 * r, color);
+        let tiles = [
+            (x, y, [u0, v0, u1, v1]),
+            (x + w - r, y, [u1, v0, u0, v1]),
+            (x, y + h - r, [u0, v1, u1, v0]),
+            (x + w - r, y + h - r, [u1, v1, u0, v0]),
+        ];
+        for (tx, ty, uv) in tiles {
+            self.instances.push(Instance {
+                rect: [tx, ty, r, r],
+                color,
+                uv,
+            });
+        }
     }
 
     fn push_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) {
@@ -960,14 +996,45 @@ impl Renderer {
             ink[2] * 0.78 + base[2] * 0.22,
         ];
         let edge = [accent[0], accent[1], accent[2], 1.0];
-        self.push_rect(x1, y1, bw, bh, [base[0], base[1], base[2], 1.0]);
-        self.push_rect(x1, y1, bw, bh, [ink[0], ink[1], ink[2], VEIL]);
-        // the quad has no stroke: the border is four 1 px rects
-        self.push_rect(x1, y1, bw, 1.0, edge);
-        self.push_rect(x1, y1 + bh - 1.0, bw, 1.0, edge);
-        self.push_rect(x1, y1, 1.0, bh, edge);
-        self.push_rect(x1 + bw - 1.0, y1, 1.0, bh, edge);
-        self.push_rect(x1 + 1.0, y1 + 1.0, BAR, bh - 2.0, edge);
+        // `B57`: the box has a rounded corner and a shadow made of two veils, the
+        // lighter one a step further out — nested rects cannot be soft, so the
+        // softness is the sum of two edges
+        let r = CORNER as f32;
+        self.rounded_rect(
+            x1 - 2.0,
+            y1 + 3.0,
+            bw + 4.0,
+            bh + 4.0,
+            r + 2.0,
+            [0.0, 0.0, 0.0, 0.10],
+        );
+        self.rounded_rect(
+            x1 - 1.0,
+            y1 + 1.0,
+            bw + 2.0,
+            bh + 2.0,
+            r + 1.0,
+            [0.0, 0.0, 0.0, 0.12],
+        );
+        // the border is the ring between two rounded rects, not four 1 px lines
+        self.rounded_rect(x1, y1, bw, bh, r, edge);
+        self.rounded_rect(
+            x1 + 1.0,
+            y1 + 1.0,
+            bw - 2.0,
+            bh - 2.0,
+            r - 1.0,
+            [base[0], base[1], base[2], 1.0],
+        );
+        self.rounded_rect(
+            x1 + 1.0,
+            y1 + 1.0,
+            bw - 2.0,
+            bh - 2.0,
+            r - 1.0,
+            [ink[0], ink[1], ink[2], VEIL],
+        );
+        self.push_rect(x1 + 1.0, y1 + 2.0, BAR, bh - 4.0, edge);
         let tx = x1 + BAR + PAD_X * cw;
         self.chrome_text(&title, tx, y1 + PAD_Y, ink, 0.0);
         for (i, line) in detail.iter().enumerate() {
@@ -1896,6 +1963,44 @@ impl Renderer {
         }
         FrameOutcome::Drawn
     }
+}
+
+/// Side of the toast's corner tile, in px (`B57`): the radius and the sample
+/// size are the same, so the tile is drawn 1:1 and its antialiasing is not
+/// rescaled.
+const CORNER: u32 = 8;
+
+/// Alpha of a quarter disc filling the top-left of a `CORNER` square, sampled
+/// 4×4 per pixel — the corner of every toast box, mirrored to the other three.
+fn corner_mask(side: u32) -> Vec<u8> {
+    #[allow(clippy::cast_precision_loss)] // 8 px, far below 2^23
+    let radius = side as f32;
+    let mut out = Vec::with_capacity((side * side) as usize);
+    for py in 0..side {
+        for px in 0..side {
+            let mut inside = 0.0_f32;
+            for sy in 0..4 {
+                for sx in 0..4 {
+                    #[allow(clippy::cast_precision_loss)]
+                    let x = px as f32 + (sx as f32 + 0.5) / 4.0;
+                    #[allow(clippy::cast_precision_loss)]
+                    let y = py as f32 + (sy as f32 + 0.5) / 4.0;
+                    let inside_corner = if x <= radius && y <= radius {
+                        let (dx, dy) = (x - radius, y - radius);
+                        dx * dx + dy * dy <= radius * radius
+                    } else {
+                        true
+                    };
+                    if inside_corner {
+                        inside += 1.0;
+                    }
+                }
+            }
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            out.push((inside / 16.0 * 255.0).round() as u8);
+        }
+    }
+    out
 }
 
 /// Protocol image → (width, height, RGBA8) for the texture.

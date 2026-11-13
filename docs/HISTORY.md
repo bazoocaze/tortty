@@ -848,3 +848,19 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 - Measured on Xvfb, two tabs, `OSC 9` from the one in the back: before (1.0.69)
   the whole ` 2 two ` label in `cdcd00`; after, the label dark with a gold bell
   in front of it. `render-check.sh` green.
+
+## 2026-11-12 — `B57`, the toast gets its corner (and a shadow)
+
+- The box was a hard rectangle and the pipeline paints everything through one
+  texture sample (`color.a * atlas.r`), so a corner could not come from geometry
+  alone. The way out without a second pipeline: **one** anti-aliased quarter disc
+  (8×8, 4×4 samples per pixel) baked into the mask atlas once, and a nine-patch
+  that samples it with `u`/`v` mirrored — one tile rounds every corner of every
+  box, and the atlas never grows with the toast's width.
+- The border became the ring between two rounded rects (it was four 1 px lines),
+  and the shadow two stacked veils, the lighter one a step further out: nested
+  rects cannot be soft, so the softness is the sum of two edges.
+- Measured on Xvfb, same notice in both builds, accent-colour pixels at the box
+  bounds: **1.0.69** `cdcd00` at all four corners; **now** `000000` at the three
+  corners and `b3b300` six pixels in (the anti-aliased arc). `render-check.sh`
+  green.
