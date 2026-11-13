@@ -736,3 +736,14 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   cell (4x2 cells, `ff0000` inside, black beside it), 11704 pixels changed; with
   `inline=0` the count stays 1 and the toast shows the refusal. Four tests: the
   placement, the four unit forms, both refusals.
+
+## 2026-11-12 — `B55`, the walk goes both ways
+
+- The row above the cards walks the list **up** as the last row walks it down —
+  symmetric, same 500 ms cadence (crossing from one row to the other keeps the
+  timer running, so the reversal is not a wait of a full step).
+- Both rows exist only while there is more list on that side; with the offset at
+  the top the first row still drops on the first card, and vice versa.
+- Measured on Xvfb, 8 workspaces in 6 rows: down `0→6` in 3.0 s, up `6→0` in
+  2.5 s, gaps 0.46–0.51 s, order untouched (`ws` 0); the drop after the walk
+  lands the workspace at 7, and the row over card 1 still lands at 1.

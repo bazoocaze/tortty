@@ -606,9 +606,12 @@ pub struct App {
     /// the same reason as `bar_frac`.
     card_frac: f32,
     /// When the drag last walked the card list by itself (`B55`): `Some` while
-    /// the pointer rests in the band below the last card, and the instant is the
-    /// last automatic step — so `CARD_WALK` later it steps again.
+    /// the pointer rests in a band at one end of the column, and the instant is
+    /// the last automatic step — so `CARD_WALK` later it steps again.
     card_walk: Option<std::time::Instant>,
+    /// Which way the band walks: `1` down from the bottom row, `-1` up from the
+    /// top one.
+    card_walk_dir: i64,
     /// Workspaces and tabs to reopen, read from the state file before the first
     /// tab is born (`M-I`). `None` = open one tab, as always.
     restore: Option<crate::state::Layout>,
@@ -732,6 +735,7 @@ impl App {
             card_off: 0,
             card_frac: 0.0,
             card_walk: None,
+            card_walk_dir: 1,
             card_alert: false,
             restore: None,
             owner: None,
@@ -1117,31 +1121,36 @@ impl App {
         let at = self.card_walk?;
         if now.duration_since(at) >= CARD_WALK {
             self.card_walk = Some(now);
-            self.scroll_cards(1);
+            self.scroll_cards(self.card_walk_dir);
             self.ask_frame();
         }
         self.card_walk.map(|at| at + CARD_WALK)
     }
 
-    /// The strip at the bottom of the column where a drag walks the list
-    /// (`B55`).
+    /// The row at each end of the column where a drag walks the list (`B55`):
+    /// the last text row walks down, the first one walks up.
     ///
-    /// It is the last text row of the grid, not "below the last card": the
-    /// cards are drawn from the top of the column and the one at the end is cut
-    /// by the bottom edge — there is never empty space under it to aim at. A
-    /// drop on the card above the strip still works, and going back **up**
-    /// during a drag is the wheel's job, which works with the button held.
-    fn in_card_band(&self, x: f64, y: f64) -> bool {
+    /// They are the first and the last text row of the grid, not "above the
+    /// first card / below the last one": the cards are drawn from the top of the
+    /// column and the ones at the ends are cut by the edges, so there is never
+    /// empty space there to aim at. The cost is that the row on the card at each
+    /// end no longer drops on that card — the walk takes it — and a place is
+    /// named from the row that follows.
+    fn card_band(&self, x: f64, y: f64) -> Option<i64> {
         if !self.in_sidebar(x, y) || self.card_press.is_none() {
-            return false;
-        }
-        if self.card_off + self.cards_visible() >= self.ws_count() {
-            return false; // nothing below the last card: nowhere to walk to
+            return None;
         }
         let (_cw, ch, pad) = self.cell_metrics();
+        let top = f64::from(pad) + f64::from(self.bar_h(ch));
         let rows = self.tabs[self.active].term.rows;
-        let bottom = f64::from(pad) + f64::from(self.bar_h(ch) + rows as f32 * ch);
-        y >= bottom - f64::from(ch)
+        let bottom = top + f64::from(rows as f32 * ch);
+        if y >= bottom - f64::from(ch) {
+            return (self.card_off + self.cards_visible() < self.ws_count()).then_some(1);
+        }
+        if y < top + f64::from(ch) {
+            return (self.card_off > 0).then_some(-1);
+        }
+        None
     }
 
     /// Keeps the offset inside the list: closing a workspace or growing the
@@ -1886,8 +1895,9 @@ impl App {
     /// moves as the hand passes, which is the one feedback that says where it
     /// will land.
     ///
-    /// Nothing is auto-scrolled: the column only shows what it shows, and a
-    /// drag that leaves it stops, because a place has to be named by a card.
+    /// Nothing is auto-scrolled except at the two ends of the column, where a
+    /// row is the way to walk it (`B55`): the order only changes over a card,
+    /// because a place has to be named by one.
     fn card_drag(&mut self, x: f64, y: f64) {
         let Some((i, (px, py))) = self.card_press else {
             return;
@@ -1895,13 +1905,14 @@ impl App {
         if (x - px).abs() <= 3.0 && (y - py).abs() <= 3.0 {
             return;
         }
-        // `B55`: in the bottom strip the list walks by itself, one card per
+        // `B55`: in the row at either end the list walks by itself, one card per
         // `CARD_WALK`, so a workspace can be moved to a place that is off the
         // column. The order does not change while it walks: a place is a card
-        // under the pointer, and the card drawn under it here is the one the
-        // strip covers — the drop happens on the way back, over the card that
-        // came into sight.
-        if self.in_card_band(x, y) {
+        // under the pointer, and the row is on the card the walk covers — the
+        // drop happens on the way back, over the card that came into sight.
+        if let Some(dir) = self.card_band(x, y) {
+            // crossing from one row to the other keeps the cadence going
+            self.card_walk_dir = dir;
             self.card_walk.get_or_insert_with(std::time::Instant::now);
             return;
         }

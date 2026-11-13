@@ -150,11 +150,13 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   walks it one card per detent (the touchpad's travel accumulates) and entering a
   workspace by keyboard brings its card into sight; a card is dragged to another
   place in the list, and the cards move under the pointer as it passes,
-  so the drop is seen before the button is released; a drag held in the last row
-  of the column walks the list by itself, one card every 500 ms, so a place that
-  is off the column can be reached. **limit:** the drag moves
-  the cards, not the tabs inside them, and the walk only goes down — back up
-  during a drag is the wheel's job, which works with the button held.
+  so the drop is seen before the button is released; a drag held in the **last row**
+  of the column walks it down by itself, one card every 500 ms, and one held in
+  the **first row** walks it back up, so a place that is off the column can be
+  reached either way. **limit:** the drag moves the cards, not the tabs inside
+  them; the two rows are the walk, so the card at each end drops from the row
+  that follows, and the wheel over the column keeps working with the button
+  held.
 - Title: OSC 0/2, else `basename(cwd)`, else `tortty`; the window title mirrors
   the active tab. **limit:** an app that sets a title without pushing it (`CSI
   22/23 t`) keeps the tab on it after leaving ([`EXTERNALS.md`](EXTERNALS.md)).
