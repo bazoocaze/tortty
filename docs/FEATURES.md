@@ -140,10 +140,22 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   `inline=1` only — `inline=0` (the protocol's default) asks the terminal to write
   the file into the cwd, and the bytes come from the child, so it is refused with
   a notice; no `SetMark`/`CurrentDir` either.
-- **limit:** no animation (`B2`), no sixel (`B3`), and no z-index,
-  placement id or Unicode placeholder (`M-L`); `pi` does not list
-  the name `tortty`, so it falls back to text unless `PI_IMAGE_PROTOCOL=kitty`
-  ([`EXTERNALS.md`](EXTERNALS.md)).
+- **Animation** (`B2`): `a=f` sends a rectangle of a frame — `x=`/`y=` where it
+  goes, `X=1` overwrite or alpha-blend, `Y=` the canvas colour, `c=` the frame it
+  is drawn over, `r=` paints into a frame that already exists, `z=` the gap before
+  the next frame (negative = *gapless*, base data that is never shown) — and
+  `a=a` controls it: `s=1` stop, `s=2` run and wait for more frames, `s=3` run and
+  loop, `c=` jump to a frame, `z=` set a frame's gap, `v=` how many loops (`1` is
+  forever). The frames are recipes in the core and the app composes them into the
+  texture, so the core still has no clock and no PNG decoder; the clock is the
+  app's, one wake-up per frame, and only for the tab on screen — a parked tab is
+  paused, not fast-forwarded. `d=f` drops the frames and keeps the image.
+  **limit:** `a=c` (composing a rectangle from one frame onto another) answers
+  `EINVAL:a=c not implemented`, and `r=1` is refused because the root frame is the
+  image's own bytes.
+- **limit:** no sixel (`B3`) and no Unicode placeholder (`M-L`); `pi` does not
+  list the name `tortty`, so it falls back to text unless
+  `PI_IMAGE_PROTOCOL=kitty` ([`EXTERNALS.md`](EXTERNALS.md)).
 
 ## Window
 

@@ -1012,3 +1012,19 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   trailing blanks are not text, but nothing implemented it, so a bare space
   matched the padding to the right of every line — 94 hits where 4 lines had it.
   A space now finds the gaps inside a line, and no match starts in padding.
+
+## 2026-11-13 — image animation (`B2`)
+
+- The core learned `a=f` (a rectangle of a frame: where it goes, its blend mode,
+  the canvas colour, the frame it is drawn over, the frame it edits, its gap) and
+  `a=a` (stop, run, loading, jump, set a gap, loop count). It stores recipes, not
+  pictures: composing is pixel work and the PNG decoder lives in the app, so the
+  core still has no clock and no decoder — `Graphics::advance` is what the app's
+  clock calls, and `gap_ms` is what it schedules.
+- The app gained the composition (`compose`/`paint`/`blit`: base frame, `Y=`
+  colour, `X=1` replace or source-over, clipped to the image), a texture cache
+  keyed by `(version, frame)` and a per-tab clock in `about_to_wait` — one wake-up
+  per frame, and only for the tab on screen.
+- Verified on Xvfb: red/green/blue frames of 150 ms each came back as `ff0000`,
+  `00ff00`, `0000ff` in turn at the image's own cells, and `s=1` froze it on one
+  frame and one colour. `a=c` and `r=1` answer with a reason instead of nothing.

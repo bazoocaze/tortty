@@ -41,6 +41,104 @@ pub struct Image {
     pub height: u32,
     pub format: Format,
     pub data: Vec<u8>,
+    /// Frame 1 is `data`; these are it and the ones `a=f` added after it, so
+    /// `frames[0]` only ever holds the root's gap (`B2`).
+    pub frames: Vec<Frame>,
+    pub anim: Animation,
+}
+
+/// One rectangle of animation frame data: the bytes the client sent, where in
+/// the image they go, and how they land on what is already there.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Step {
+    pub data: Vec<u8>,
+    pub format: Format,
+    pub width: u32,
+    pub height: u32,
+    /// `x=`,`y=`: where the rectangle goes, in image pixels.
+    pub at: (u32, u32),
+    /// `X=1`: overwrite instead of alpha-blend.
+    pub replace: bool,
+    /// `Y=`: 32-bit RGBA that fills the canvas the data does not reach.
+    pub background: u32,
+    /// `c=`: the 1-based frame used as the canvas; `None` starts from the
+    /// background colour (and `0` is a black, fully transparent pixel).
+    pub base: Option<u32>,
+}
+
+/// One animation frame (`B2`): `steps` is everything the client painted into it,
+/// in the order it arrived — `r=` appends to a frame that already exists instead
+/// of creating a new one.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct Frame {
+    pub steps: Vec<Step>,
+    /// `z=`: milliseconds before the next frame. Negative means *gapless* (the
+    /// frame exists as base data but is never shown). `None` is the 40 ms default
+    /// for a frame and "the root frame shows no gap" for frame 1.
+    pub gap: Option<i32>,
+}
+
+/// The clock-free half of an animation: the app owns the timer, the core owns
+/// which frame is current and what the gaps ask for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Animation {
+    /// `c=`: 1-based frame on screen.
+    pub current: u32,
+    /// `s=`: `0` never controlled, `1` stopped, `2` running and waiting for more
+    /// frames at the end, `3` running and looping.
+    pub mode: u8,
+    /// `v=`: `1` (the default) loops forever, `n` plays `n-1` loops and stops.
+    pub loops: u32,
+    /// How many times the last frame was reached.
+    pub played: u32,
+}
+
+impl Default for Animation {
+    fn default() -> Self {
+        Self {
+            current: 1,
+            mode: 0,
+            loops: 1,
+            played: 0,
+        }
+    }
+}
+
+impl Image {
+    /// A frame with no `z=` waits this long.
+    const DEFAULT_GAP: u32 = 40;
+
+    #[must_use]
+    pub fn frame_count(&self) -> u32 {
+        u32::try_from(self.frames.len().max(1)).unwrap_or(u32::MAX)
+    }
+
+    /// The frame on screen, clamped to what exists (a client can `d=f` the frames
+    /// out from under the current one).
+    #[must_use]
+    pub fn current(&self) -> u32 {
+        self.anim.current.clamp(1, self.frame_count())
+    }
+
+    /// Milliseconds before the next frame, or `None` when this frame is skipped
+    /// over (gapless) or is the only one.
+    #[must_use]
+    pub fn gap_ms(&self, frame: u32) -> Option<u32> {
+        if self.frame_count() < 2 {
+            return None;
+        }
+        let gap = self
+            .frames
+            .get(usize::try_from(frame.saturating_sub(1)).ok()?)
+            .and_then(|f| f.gap);
+        match gap {
+            // negative is gapless: the frame is base data, never presented
+            Some(g) if g < 0 => None,
+            // `z=0` is "unspecified" for the spec, and so is a frame with no `z=`
+            Some(0) | None => Some(Self::DEFAULT_GAP),
+            Some(g) => u32::try_from(g).ok(),
+        }
+    }
 }
 
 /// What is drawn right now. `linha` is a **screen line**: 0..rows-1 is the live
@@ -389,8 +487,11 @@ impl Graphics {
     ) -> Output {
         let param = |k: &str| kv.get(k).map(String::as_str);
         match action {
-            // animation and control: ignored on purpose (H18)
-            "f" | "a" | "c" => Output::default(),
+            "f" => self.frame(kv, data, ident, quiet),
+            "a" => self.anim(kv, ident, quiet),
+            // frame composition (`a=c`): a real feature of the spec, and one no
+            // client here used. Refusing beats pretending.
+            "c" => Self::error(kv, "EINVAL:a=c not implemented"),
             "q" => {
                 // `a=q` is a **capability** probe, not an image query: `kitten icat`
                 // sends three (direct, file, memory) and only proceeds if it gets
@@ -425,6 +526,13 @@ impl Graphics {
                             .retain(|p| !(p.image_id == ident && Some(p.id) == pid));
                     },
                     "P" => self.placements.retain(|p| p.image_id != ident),
+                    // `d=f`: the frames go, the image and its placements stay
+                    "f" | "F" => {
+                        if let Some(img) = self.images.get_mut(&ident) {
+                            img.frames.truncate(1);
+                            img.anim = Animation::default();
+                        }
+                    },
                     _ => {
                         self.placements.clear();
                         self.images.clear();
@@ -504,6 +612,8 @@ impl Graphics {
             height,
             format,
             data: data.to_vec(),
+            frames: vec![Frame::default()],
+            anim: Animation::default(),
         };
         self.images.insert(id, img.clone());
         let mut out = Output {
@@ -532,6 +642,166 @@ impl Graphics {
             }
         }
         out
+    }
+
+    /// `a=f` (`B2`): the payload is a rectangle of an animation frame, not an
+    /// image of its own. Without `r=` it becomes the next frame; with `r=` it is
+    /// painted into a frame that already exists. `r=1` is refused: the root frame
+    /// is `Image.data` itself, and rewriting it would mean composing pixels here,
+    /// in the core, which has no PNG decoder.
+    fn frame(
+        &mut self,
+        kv: &HashMap<String, String>,
+        data: &[u8],
+        ident: u32,
+        quiet: bool,
+    ) -> Output {
+        let param = |k: &str| kv.get(k).map(String::as_str);
+        let number = |k: &str| {
+            param(k)
+                .and_then(|v| v.parse::<u32>().ok())
+                .filter(|n| *n > 0)
+        };
+        let Some((width, height, fmt)) = Self::image_size(kv, data) else {
+            return Self::error(kv, "EINVAL:size");
+        };
+        let edit = number("r");
+        if edit == Some(1) {
+            return Self::error(kv, "EINVAL:r=1");
+        }
+        if ident == 0 {
+            return Self::error(kv, "EINVAL:i needed");
+        }
+        let format = match fmt {
+            100 => Format::Png,
+            24 => Format::Rgb,
+            _ => Format::Rgba,
+        };
+        let step = Step {
+            data: data.to_vec(),
+            format,
+            width,
+            height,
+            at: (number("x").unwrap_or(0), number("y").unwrap_or(0)),
+            replace: param("X") == Some("1"),
+            background: number("Y").unwrap_or(0),
+            base: number("c"),
+        };
+        let gap = param("z").and_then(|z| z.parse::<i32>().ok());
+        let Some(img) = self.images.get_mut(&ident) else {
+            return Self::error(kv, "ENOENT:no such image");
+        };
+        let target = if let Some(r) = edit {
+            let Some(f) = img.frames.get_mut(r as usize - 1) else {
+                return Self::error(kv, "ENOENT:no such frame");
+            };
+            f.steps.push(step);
+            r
+        } else {
+            img.frames.push(Frame {
+                steps: vec![step],
+                gap: None,
+            });
+            img.frame_count()
+        };
+        if let Some(gap) = gap {
+            // the gap belongs to the frame the data landed in, existing or new
+            if let Some(f) = img.frames.get_mut(target as usize - 1) {
+                f.gap = Some(gap);
+            }
+        }
+        Output {
+            responses: if quiet {
+                Vec::new()
+            } else {
+                vec![format!("Gi={ident};OK").into_bytes()]
+            },
+            ..Output::default()
+        }
+    }
+
+    /// `a=a` (`B2`): stop, run, jump to a frame, set a gap, set the loop count.
+    /// Nothing here needs a clock — the app decides when to ask for the next frame.
+    fn anim(&mut self, kv: &HashMap<String, String>, ident: u32, quiet: bool) -> Output {
+        let param = |k: &str| kv.get(k).map(String::as_str);
+        let number = |k: &str| {
+            param(k)
+                .and_then(|v| v.parse::<u32>().ok())
+                .filter(|n| *n > 0)
+        };
+        if ident == 0 {
+            return Self::error(kv, "EINVAL:i needed");
+        }
+        let Some(img) = self.images.get_mut(&ident) else {
+            return Self::error(kv, "ENOENT:no such image");
+        };
+        let count = img.frame_count();
+        if let Some(z) = param("z").and_then(|z| z.parse::<i32>().ok()) {
+            let at = number("r").unwrap_or(img.anim.current).clamp(1, count);
+            if let Some(f) = img.frames.get_mut(at as usize - 1) {
+                f.gap = Some(z);
+            }
+        }
+        match number("s") {
+            // both ways of running start over, which is what the spec's loop
+            // counter reset means (`s=1` resets it too)
+            Some(2 | 3) => {
+                img.anim.mode = if number("s") == Some(2) { 2 } else { 3 };
+                img.anim.played = 0;
+                img.anim.current = 1;
+            },
+            Some(1) => img.anim.mode = 1,
+            _ => {},
+        }
+        if let Some(v) = number("v") {
+            img.anim.loops = v;
+        }
+        if let Some(c) = number("c") {
+            img.anim.current = c.clamp(1, count);
+        }
+        Output {
+            responses: if quiet {
+                Vec::new()
+            } else {
+                vec![format!("Gi={ident};OK").into_bytes()]
+            },
+            ..Output::default()
+        }
+    }
+
+    /// One tick of an animation (`B2`): the app's clock asked for the next frame.
+    /// Answers `false` when nothing changed — stopped, only the root frame, or
+    /// loading and already on the last frame.
+    pub fn advance(&mut self, id: u32) -> bool {
+        let Some(img) = self.images.get_mut(&id) else {
+            return false;
+        };
+        let count = img.frame_count();
+        // `s=0` was never started and `s=1` was stopped
+        if img.anim.mode < 2 || count < 2 {
+            return false;
+        }
+        let mut next = img.current() + 1;
+        if next > count {
+            if img.anim.mode == 2 {
+                return false; // loading: the last frame waits for more to arrive
+            }
+            img.anim.played += 1;
+            if img.anim.loops > 1 && img.anim.played + 1 >= img.anim.loops {
+                img.anim.mode = 1;
+                img.anim.current = count;
+                return true;
+            }
+            next = 1;
+        }
+        // a gapless frame is base data, never a picture: step over it
+        let mut hops = 0;
+        while hops <= count && img.frames[next as usize - 1].gap.is_some_and(|g| g < 0) {
+            next = if next >= count { 1 } else { next + 1 };
+            hops += 1;
+        }
+        img.anim.current = next;
+        true
     }
 
     /// The size `s=`/`v=`/`f=` and the bytes agree on — `None` when they do not
@@ -809,6 +1079,117 @@ mod checks_graphics {
         let out = g.handle(second.as_bytes(), (0, 0), cell());
         assert_eq!(out.responses, [b"Gi=5;OK".to_vec()]);
         assert_eq!(g.images()[&5].data, [9, 8, 7, 255].repeat(4));
+    }
+
+    /// `a=f` adds frames to an image and `a=a` says what to do with them; the
+    /// clock is the app's, so `advance` is what stands in for it.
+    #[test]
+    fn animation_frames_arrive_and_advance_until_stopped() {
+        let mut g = Graphics::new();
+        let body = format!("Ga=T,f=32,s=2,v=2,i=7;{}", rgba2x2());
+        g.handle(body.as_bytes(), (0, 0), cell());
+        assert_eq!(g.images()[&7].frame_count(), 1, "an image is one frame");
+        // two more frames, the second one only a 1x1 patch over the first
+        let one = b64(&[1, 2, 3, 255]);
+        let frame = format!("Ga=f,i=7,f=32,s=2,v=2,z=25;{}", rgba2x2());
+        assert_eq!(
+            g.handle(frame.as_bytes(), (0, 0), cell()).responses,
+            [b"Gi=7;OK".to_vec()]
+        );
+        let patch = format!("Ga=f,i=7,f=32,s=1,v=1,x=1,y=1,X=1;{one}");
+        g.handle(patch.as_bytes(), (0, 0), cell());
+        let img = &g.images()[&7];
+        assert_eq!(img.frame_count(), 3);
+        assert_eq!(img.frames[2].steps[0].at, (1, 1));
+        assert!(img.frames[2].steps[0].replace);
+        // `s=3` runs from the top, looping
+        g.handle(b"Ga=a,i=7,s=3", (0, 0), cell());
+        assert_eq!(g.images()[&7].current(), 1);
+        assert!(g.advance(7));
+        assert_eq!(g.images()[&7].current(), 2);
+        assert!(g.advance(7));
+        assert_eq!(g.images()[&7].current(), 3);
+        assert!(g.advance(7), "s=3 loops back to the first frame");
+        assert_eq!(g.images()[&7].current(), 1);
+        // the gap of the second frame is the one `z=25` set
+        assert_eq!(g.images()[&7].gap_ms(2), Some(25));
+        assert_eq!(g.images()[&7].gap_ms(1), Some(40), "the 40 ms default");
+        // `s=1` stops where it is
+        g.handle(b"Ga=a,i=7,s=1,c=2", (0, 0), cell());
+        assert_eq!(g.images()[&7].current(), 2);
+        assert!(!g.advance(7));
+        assert_eq!(g.images()[&7].current(), 2);
+    }
+
+    /// A gapless frame (`z<0`) is base data: it is never the frame on screen.
+    #[test]
+    fn a_gapless_frame_is_stepped_over() {
+        let mut g = Graphics::new();
+        let body = format!("Ga=T,f=32,s=2,v=2,i=9;{}", rgba2x2());
+        g.handle(body.as_bytes(), (0, 0), cell());
+        for gap in [-1, 30] {
+            let f = format!("Ga=f,i=9,f=32,s=2,v=2,z={gap};{}", rgba2x2());
+            g.handle(f.as_bytes(), (0, 0), cell());
+        }
+        g.handle(b"Ga=a,i=9,s=3", (0, 0), cell());
+        assert!(g.advance(9));
+        assert_eq!(g.images()[&9].current(), 3, "frame 2 is never shown");
+        assert_eq!(g.images()[&9].gap_ms(2), None);
+    }
+
+    /// `v=2` plays the animation once and stops; `s=2` (loading) waits instead of
+    /// looping when it reaches the end.
+    #[test]
+    fn loops_and_loading_mode_stop_on_the_last_frame() {
+        let mut g = Graphics::new();
+        let body = format!("Ga=T,f=32,s=2,v=2,i=4;{}", rgba2x2());
+        g.handle(body.as_bytes(), (0, 0), cell());
+        let f = format!("Ga=f,i=4,f=32,s=2,v=2;{}", rgba2x2());
+        g.handle(f.as_bytes(), (0, 0), cell());
+        // loading: on the last frame it waits for more to arrive
+        g.handle(b"Ga=a,i=4,s=2", (0, 0), cell());
+        assert!(g.advance(4));
+        assert!(!g.advance(4), "s=2 does not wrap");
+        assert_eq!(g.images()[&4].current(), 2);
+        // v=2: one loop, then it stops on its own
+        g.handle(b"Ga=a,i=4,s=3,v=2", (0, 0), cell());
+        assert_eq!(g.images()[&4].current(), 1, "s=3 starts over");
+        assert!(g.advance(4));
+        assert_eq!(g.images()[&4].current(), 2);
+        assert!(g.advance(4), "the end of the one loop it plays");
+        assert_eq!(g.images()[&4].current(), 2, "it stops on the last frame");
+        assert!(!g.advance(4), "v=2 has played its loops");
+    }
+
+    /// What the core does not implement it says so: `a=c` and `r=1` answer with a
+    /// reason instead of silently doing nothing.
+    #[test]
+    fn frame_composition_and_root_edits_are_refused() {
+        let mut g = Graphics::new();
+        let body = format!("Ga=T,f=32,s=2,v=2,i=2;{}", rgba2x2());
+        g.handle(body.as_bytes(), (0, 0), cell());
+        let compose = g.handle(b"Ga=c,i=2,r=1,c=2,w=1,h=1", (0, 0), cell());
+        assert_eq!(
+            compose.responses,
+            [b"Gi=2;EINVAL:a=c not implemented".to_vec()]
+        );
+        let edit = format!("Ga=f,i=2,r=1,f=32,s=2,v=2;{}", rgba2x2());
+        assert_eq!(
+            g.handle(edit.as_bytes(), (0, 0), cell()).responses,
+            [b"Gi=2;EINVAL:r=1".to_vec()]
+        );
+        // a frame for an image nobody sent
+        let orphan = format!("Ga=f,i=99,f=32,s=2,v=2;{}", rgba2x2());
+        assert_eq!(
+            g.handle(orphan.as_bytes(), (0, 0), cell()).responses,
+            [b"Gi=99;ENOENT:no such image".to_vec()]
+        );
+        // `d=f` drops the frames and keeps the image
+        let f = format!("Ga=f,i=2,f=32,s=2,v=2;{}", rgba2x2());
+        g.handle(f.as_bytes(), (0, 0), cell());
+        assert_eq!(g.images()[&2].frame_count(), 2);
+        g.handle(b"Ga=d,d=f,i=2", (0, 0), cell());
+        assert_eq!(g.images()[&2].frame_count(), 1);
     }
 
     #[test]
@@ -1251,17 +1632,17 @@ mod checks_graphics {
     }
 
     #[test]
-    fn animation_and_control_are_ignored_on_purpose() {
-        // H18: `a=f`/`a=a`/`a=c` answer nothing and store nothing
+    fn animation_actions_answer_instead_of_being_ignored() {
+        // H18 was "animation is ignored on purpose"; `B2` is the other side of it:
+        // the three actions answer, and none of them invents an image
         let mut g = Graphics::new();
-        for action in ["f", "a", "c"] {
-            let out = g.handle(
-                format!("Ga={action},i=1;{}", rgba2x2()).as_bytes(),
-                (0, 0),
-                cell(),
-            );
-            assert_eq!(out.responses.len(), 0, "a={action}");
-        }
+        let body = format!("Ga=f,i=1,f=32,s=2,v=2;{}", rgba2x2());
+        let out = g.handle(body.as_bytes(), (0, 0), cell());
+        assert_eq!(out.responses, [b"Gi=1;ENOENT:no such image".to_vec()]);
+        let out = g.handle(b"Ga=a,i=1,s=3", (0, 0), cell());
+        assert_eq!(out.responses, [b"Gi=1;ENOENT:no such image".to_vec()]);
+        let out = g.handle(b"Ga=c,i=1,r=1,c=2", (0, 0), cell());
+        assert_eq!(out.responses, [b"Gi=1;EINVAL:a=c not implemented".to_vec()]);
         assert_eq!(g.images().len(), 0);
     }
 }

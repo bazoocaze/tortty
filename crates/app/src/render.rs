@@ -206,6 +206,9 @@ pub struct Renderer {
 
 struct ImgTex {
     version: u64,
+    /// The frame the texture was built from (`B2`): an animation changes the
+    /// picture without changing the image's `version`.
+    frame: u32,
     bind: wgpu::BindGroup,
 }
 
@@ -1457,11 +1460,11 @@ impl Renderer {
         if self
             .img_cache
             .get(&img.id)
-            .is_some_and(|t| t.version == img.version)
+            .is_some_and(|t| t.version == img.version && t.frame == img.current())
         {
             return true;
         }
-        let Some((w, h, rgba)) = decode(img) else {
+        let Some((w, h, rgba)) = compose(img) else {
             return false;
         };
         let tex = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -1516,6 +1519,7 @@ impl Renderer {
             img.id,
             ImgTex {
                 version: img.version,
+                frame: img.current(),
                 bind,
             },
         );
@@ -2243,62 +2247,176 @@ fn corner_mask(side: u32) -> Vec<u8> {
     out
 }
 
-/// Protocol image → (width, height, RGBA8) for the texture.
+/// The picture to upload for an image: its current animation frame (`B2`),
+/// composed from what the client sent, as (width, height, RGBA8).
 ///
-/// `f=24` becomes RGBA with alpha 255; `f=32` passes through; `f=100` is PNG,
-/// which the app decodes here (the core does not carry a PNG decoder).
-fn decode(img: &tortty_core::graphics::Image) -> Option<(u32, u32, Vec<u8>)> {
-    use tortty_core::graphics::Format;
+/// The core keeps every transmission as a recipe — rectangle, base frame, blend
+/// mode, background — because composing is pixel work and the PNG decoder lives
+/// here. Frame 1 is the image's own data; the rest start from the frame their
+/// `c=` names (or from their background colour) and have their rectangles
+/// painted over it.
+fn compose(img: &tortty_core::graphics::Image) -> Option<(u32, u32, Vec<u8>)> {
     let (width, height) = (img.width, img.height);
     if width == 0 || height == 0 {
         return None;
     }
-    match img.format {
+    #[allow(clippy::cast_possible_truncation)]
+    let mut canvas = vec![0u8; (width as usize) * (height as usize) * 4];
+    let mut seen = vec![false; img.frames.len().max(1)];
+    if paint(img, img.current(), &mut canvas, &mut seen) {
+        Some((width, height, canvas))
+    } else {
+        None
+    }
+}
+
+fn paint(img: &tortty_core::graphics::Image, k: u32, canvas: &mut [u8], seen: &mut [bool]) -> bool {
+    let index = usize::try_from(k.saturating_sub(1)).unwrap_or(0);
+    if index >= seen.len() || std::mem::replace(&mut seen[index], true) {
+        return false; // no such frame, or a `c=` chain that bites its own tail
+    }
+    let full = (img.width, img.height);
+    if index == 0 {
+        let Some((w, h, px)) = decode_pixels(img.format, &img.data, full.0, full.1) else {
+            return false;
+        };
+        blit(canvas, full, (0, 0), true, (w, h), &px);
+        return true;
+    }
+    let frame = &img.frames[index];
+    let Some(first) = frame.steps.first() else {
+        return false;
+    };
+    if let Some(base) = first.base {
+        if !paint(img, base, canvas, seen) {
+            return false;
+        }
+    } else {
+        // a canvas nobody provides starts as one colour: black and transparent,
+        // or whatever `Y=` asked for
+        let rgba = first.background.to_be_bytes();
+        for px in canvas.as_chunks_mut::<4>().0 {
+            px.copy_from_slice(&rgba);
+        }
+    }
+    for step in &frame.steps {
+        let Some((w, h, px)) = decode_pixels(step.format, &step.data, step.width, step.height)
+        else {
+            return false;
+        };
+        blit(canvas, full, step.at, step.replace, (w, h), &px);
+    }
+    true
+}
+
+/// One rectangle's bytes → RGBA8. `f=100` carries its own size in the PNG header,
+/// so `width`/`height` are only a hint for it.
+fn decode_pixels(
+    format: tortty_core::graphics::Format,
+    data: &[u8],
+    width: u32,
+    height: u32,
+) -> Option<(u32, u32, Vec<u8>)> {
+    use tortty_core::graphics::Format;
+    if format == Format::Png {
+        return decode_png(data);
+    }
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let (w, h) = (width as usize, height as usize);
+    match format {
         Format::Rgba => {
-            let need = (width as usize) * (height as usize) * 4;
-            (img.data.len() >= need).then(|| (width, height, img.data[..need].to_vec()))
+            let need = w * h * 4;
+            (data.len() >= need).then(|| (width, height, data[..need].to_vec()))
         },
         Format::Rgb => {
-            let need = (width as usize) * (height as usize) * 3;
-            if img.data.len() < need {
+            let need = w * h * 3;
+            if data.len() < need {
                 return None;
             }
-            let mut out = Vec::with_capacity((width as usize) * (height as usize) * 4);
-            for px in img.data[..need].as_chunks::<3>().0 {
+            let mut out = Vec::with_capacity(w * h * 4);
+            for px in data[..need].as_chunks::<3>().0 {
                 out.extend_from_slice(&[px[0], px[1], px[2], 255]);
             }
             Some((width, height, out))
         },
-        Format::Png => {
-            let mut reader = png::Decoder::new(std::io::Cursor::new(&img.data))
-                .read_info()
-                .ok()?;
-            let mut buf = vec![0; reader.output_buffer_size()];
-            let info = reader.next_frame(&mut buf).ok()?;
-            let (pw, ph) = (info.width, info.height);
-            let mut out = Vec::with_capacity((pw as usize) * (ph as usize) * 4);
-            match info.color_type {
-                png::ColorType::Rgba => out.extend_from_slice(&buf[..info.buffer_size()]),
-                png::ColorType::Rgb => {
-                    for px in buf[..info.buffer_size()].as_chunks::<3>().0 {
-                        out.extend_from_slice(&[px[0], px[1], px[2], 255]);
-                    }
-                },
-                png::ColorType::Grayscale | png::ColorType::GrayscaleAlpha => {
-                    let n = if info.color_type == png::ColorType::Grayscale {
-                        1
-                    } else {
-                        2
-                    };
-                    for px in buf[..info.buffer_size()].chunks_exact(n) {
-                        let a = if n == 2 { px[1] } else { 255 };
-                        out.extend_from_slice(&[px[0], px[0], px[0], a]);
-                    }
-                },
-                png::ColorType::Indexed => return None, // rare: icat sends RGBA
+        Format::Png => decode_png(data),
+    }
+}
+
+/// PNG → RGBA8 (the app owns the decoder; the core does not carry one).
+fn decode_png(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    let mut reader = png::Decoder::new(std::io::Cursor::new(data))
+        .read_info()
+        .ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).ok()?;
+    let (pw, ph) = (info.width, info.height);
+    let mut out = Vec::with_capacity((pw as usize) * (ph as usize) * 4);
+    match info.color_type {
+        png::ColorType::Rgba => out.extend_from_slice(&buf[..info.buffer_size()]),
+        png::ColorType::Rgb => {
+            for px in buf[..info.buffer_size()].as_chunks::<3>().0 {
+                out.extend_from_slice(&[px[0], px[1], px[2], 255]);
             }
-            Some((pw, ph, out))
         },
+        png::ColorType::Grayscale | png::ColorType::GrayscaleAlpha => {
+            let n = if info.color_type == png::ColorType::Grayscale {
+                1
+            } else {
+                2
+            };
+            for px in buf[..info.buffer_size()].chunks_exact(n) {
+                let a = if n == 2 { px[1] } else { 255 };
+                out.extend_from_slice(&[px[0], px[0], px[0], a]);
+            }
+        },
+        png::ColorType::Indexed => return None, // rare: icat sends RGBA
+    }
+    Some((pw, ph, out))
+}
+
+/// Paints one rectangle into the canvas at `at`, clipped to the image. `replace`
+/// overwrites; otherwise it is source-over, in the same 8-bit space as the rest.
+fn blit(
+    canvas: &mut [u8],
+    image: (u32, u32),
+    at: (u32, u32),
+    replace: bool,
+    part: (u32, u32),
+    px: &[u8],
+) {
+    let (iw, ih) = (image.0 as usize, image.1 as usize);
+    let (pw, ph) = (part.0 as usize, part.1 as usize);
+    let (x0, y0) = (at.0 as usize, at.1 as usize);
+    for row in 0..ph {
+        let y = y0 + row;
+        if y >= ih {
+            break;
+        }
+        for col in 0..pw {
+            let x = x0 + col;
+            if x >= iw {
+                break;
+            }
+            let Some(src) = px.get((row * pw + col) * 4..(row * pw + col) * 4 + 4) else {
+                return;
+            };
+            let dst = (y * iw + x) * 4;
+            if replace || src[3] == 255 {
+                canvas[dst..dst + 4].copy_from_slice(src);
+                continue;
+            }
+            let sa = u32::from(src[3]);
+            for c in 0..3 {
+                let s = u32::from(src[c]);
+                let d = u32::from(canvas[dst + c]);
+                canvas[dst + c] = u8::try_from((s * sa + d * (255 - sa)) / 255).unwrap_or(255);
+            }
+            let da = u32::from(canvas[dst + 3]);
+            canvas[dst + 3] = u8::try_from(sa + da * (255 - sa) / 255).unwrap_or(255);
+        }
     }
 }
 

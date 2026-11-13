@@ -367,6 +367,10 @@ pub struct Tab {
     /// went out at drain time. Delivery is not acknowledgement — the badge
     /// lives on `notifs_acked`.
     pub notifs_seen: u32,
+    /// When each animated image of this tab is due (`B2`). Per tab because the
+    /// clock only runs for the tab on screen: a parked animation waits, it does
+    /// not jump six frames when you come back.
+    pub anim_due: std::collections::HashMap<u32, std::time::Instant>,
     /// `OSC 9`/`777` acknowledged (`M-K`): pending while
     /// `notifs_acked != term.notifs`. Unlike the 800 ms bell flash, a badge
     /// stays until the tab is visited or a key lands after the floor.
@@ -399,6 +403,7 @@ impl Tab {
             sync_at: None,
             bells_seen: 0,
             notifs_seen: 0,
+            anim_due: std::collections::HashMap::new(),
             notifs_acked: 0,
             osc_title: String::new(),
             bell_at: None,
@@ -1172,6 +1177,58 @@ impl App {
             self.ask_frame();
         }
         self.card_walk.map(|at| at + CARD_WALK)
+    }
+
+    /// `B2`: the animation clock. The core holds the frames and the gaps; this
+    /// decides *when* — one wake-up per frame, and only for the tab on screen
+    /// (a parked animation is paused, not fast-forwarded).
+    fn anim_tick(&mut self, now: std::time::Instant) -> Option<std::time::Instant> {
+        let mut changed = false;
+        let wake = {
+            let t = &mut self.tabs[self.active];
+            let due = &mut t.anim_due;
+            let g = &mut t.term.graphics;
+            let live: Vec<u32> = g
+                .images()
+                .values()
+                .filter(|i| i.anim.mode >= 2 && i.gap_ms(i.current()).is_some())
+                .map(|i| i.id)
+                .collect();
+            let mut wake: Option<std::time::Instant> = None;
+            for id in live {
+                let gap = g
+                    .images()
+                    .get(&id)
+                    .and_then(|i| i.gap_ms(i.current()))
+                    .map_or(40, u64::from);
+                let at = *due
+                    .entry(id)
+                    .or_insert(now + std::time::Duration::from_millis(gap));
+                if now >= at {
+                    if g.advance(id) {
+                        changed = true;
+                    }
+                    let step = g
+                        .images()
+                        .get(&id)
+                        .and_then(|i| i.gap_ms(i.current()))
+                        .map_or(40, u64::from);
+                    due.insert(id, now + std::time::Duration::from_millis(step));
+                }
+                let at = due[&id];
+                wake = Some(wake.map_or(at, |w| w.min(at)));
+            }
+            due.retain(|id, _| {
+                g.images()
+                    .get(id)
+                    .is_some_and(|i| i.anim.mode >= 2 && i.gap_ms(i.current()).is_some())
+            });
+            wake
+        };
+        if changed {
+            self.ask_frame();
+        }
+        wake
     }
 
     /// The strip at each end of the column where a drag walks the list (`B55`):
@@ -2845,6 +2902,22 @@ impl App {
                     // kitty images: without this there is no way to check the
                     // placement without looking at the screen
                     "images": self.tabs[self.active].term.graphics.images().len(),
+                    // `B2`: an animation is a clock, so a probe has to be able to
+                    // read which frame is on screen without watching pixels
+                    "anims": self.tabs[self.active]
+                        .term
+                        .graphics
+                        .images()
+                        .values()
+                        .filter(|i| i.frame_count() > 1)
+                        .map(|i| serde_json::json!({
+                            "id": i.id,
+                            "frames": i.frame_count(),
+                            "current": i.current(),
+                            "mode": i.anim.mode,
+                            "gap": i.gap_ms(i.current()),
+                        }))
+                        .collect::<Vec<_>>(),
                     // notifications (M-K): what is still unacknowledged, for
                     // probes that cannot watch the toast
                     "notifs": self.tabs.iter().filter(|t| t.notif_pending()).count()
@@ -4453,6 +4526,10 @@ impl ApplicationHandler<UserEvent> for App {
 
         // `B55`: a drag resting in the band below the cards walks the list
         if let Some(t) = self.card_walk_tick(now) {
+            when = when.min(t);
+        }
+        // `B2`: an animation frame is due
+        if let Some(t) = self.anim_tick(now) {
             when = when.min(t);
         }
 
