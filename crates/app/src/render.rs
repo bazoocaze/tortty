@@ -1123,7 +1123,9 @@ impl Renderer {
                         f32::from(pl.rows.max(1)) * chh,
                     ],
                     color: [1.0, 1.0, 1.0, 1.0],
-                    uv: [0.0, 0.0, 1.0, 1.0],
+                    // `x`/`y`/`w`/`h` of the placement crop the source: the uv
+                    // is that rectangle as a fraction of the picture
+                    uv: pl.uv((img.width, img.height)),
                 },
             ));
         }

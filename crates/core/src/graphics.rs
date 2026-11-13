@@ -57,6 +57,28 @@ pub struct Placement {
     /// `icat` centers: it walks whole cells and leaves the remainder here.
     pub dx: i32,
     pub dy: i32,
+    /// `x=`/`y=`/`w=`/`h=`: the rectangle of the **source** to show, in image
+    /// pixels — the whole image when the keys are absent. The cells (`c`/`r`)
+    /// are the destination; this is what is cropped out of the picture.
+    pub crop: (u32, u32, u32, u32),
+}
+
+impl Placement {
+    /// The `uv` rectangle this placement samples: the crop as a fraction of the
+    /// source, which is all a texture sample needs.
+    #[must_use]
+    pub fn uv(&self, source: (u32, u32)) -> [f32; 4] {
+        let full = (source.0.max(1), source.1.max(1));
+        let (x, y, width, height) = self.crop;
+        #[allow(clippy::cast_precision_loss)] // both sides are bounded by 2^32
+        let part = |v: u32, of: u32| v.min(of) as f32 / of as f32;
+        [
+            part(x, full.0),
+            part(y, full.1),
+            part(x.saturating_add(width), full.0),
+            part(y.saturating_add(height), full.1),
+        ]
+    }
 }
 
 /// A transmission by file/temp/shared-memory (`B1`): what the app must load.
@@ -181,30 +203,41 @@ impl Graphics {
         self.placements.retain(|p| p.line >= floor);
     }
 
+    /// `None`: the source rectangle does not fit the image (nothing is placed).
     fn place(
         &mut self,
         img: &Image,
         kv: &HashMap<String, String>,
         cursor: (u16, u16),
         cell: (u32, u32),
-    ) -> u16 {
+    ) -> Option<u16> {
         let cw = cell.0.max(1);
         let ch = cell.1.max(1);
         let num = |k: &str| kv.get(k).and_then(|v| v.parse::<i64>().ok());
+        // `x`/`y`/`w`/`h`: the source rectangle, in image pixels (`x`/`y` are the
+        // offset, `w`/`h` how much of it). Absent keys mean the whole image, and
+        // a rectangle that leaves it is refused rather than clamped: a caller
+        // that got the geometry wrong should hear about it.
+        let (iw, ih) = (img.width.max(1), img.height.max(1));
+        let (x, y) = (num("x").unwrap_or(0), num("y").unwrap_or(0));
+        let (w, h) = (
+            num("w").unwrap_or(i64::from(iw)),
+            num("h").unwrap_or(i64::from(ih)),
+        );
+        if x < 0 || y < 0 || w <= 0 || h <= 0 {
+            return None;
+        }
+        let (x, y) = (u32::try_from(x).ok()?, u32::try_from(y).ok()?);
+        let (w, h) = (u32::try_from(w).ok()?, u32::try_from(h).ok()?);
+        if x.saturating_add(w) > iw || y.saturating_add(h) > ih {
+            return None;
+        }
         let cols = num("c").map_or_else(
-            || {
-                u16::try_from(img.width.div_ceil(cw))
-                    .unwrap_or(u16::MAX)
-                    .max(1)
-            },
+            || u16::try_from(w.div_ceil(cw)).unwrap_or(u16::MAX).max(1),
             |c| u16::try_from(c.max(1)).unwrap_or(u16::MAX),
         );
         let rows = num("r").map_or_else(
-            || {
-                u16::try_from(img.height.div_ceil(ch))
-                    .unwrap_or(u16::MAX)
-                    .max(1)
-            },
+            || u16::try_from(h.div_ceil(ch)).unwrap_or(u16::MAX).max(1),
             |r| u16::try_from(r.max(1)).unwrap_or(u16::MAX),
         );
         self.placements.push(Placement {
@@ -215,8 +248,9 @@ impl Graphics {
             rows,
             dx: i32::try_from(num("X").unwrap_or(0)).unwrap_or(0),
             dy: i32::try_from(num("Y").unwrap_or(0)).unwrap_or(0),
+            crop: (x, y, w, h),
         });
-        rows
+        Some(rows)
     }
 
     /// Processes the body of an APC (`G…`, already without the delimiters).
@@ -384,14 +418,16 @@ impl Graphics {
                 },
                 Some(img) => {
                     let img = img.clone();
-                    let lines = self.place(&img, kv, cursor, cell);
+                    let Some(rows) = self.place(&img, kv, cursor, cell) else {
+                        return Self::error(kv, "EINVAL:crop outside the image");
+                    };
                     Output {
                         responses: if quiet {
                             Vec::new()
                         } else {
                             vec![format!("Gi={ident};OK").into_bytes()]
                         },
-                        lines,
+                        lines: rows,
                         move_cursor: param("C") != Some("1"),
                         ..Output::default()
                     }
@@ -451,8 +487,21 @@ impl Graphics {
             ..Output::default()
         };
         if kv.get("a").is_some_and(|a| a == "T") {
-            out.lines = self.place(&img, kv, cursor, cell);
-            out.move_cursor = kv.get("C").is_none_or(|c| c != "1");
+            match self.place(&img, kv, cursor, cell) {
+                Some(rows) => {
+                    out.lines = rows;
+                    out.move_cursor = kv.get("C").is_none_or(|c| c != "1");
+                },
+                // the image was stored (it is what `transmit` does); only the
+                // placement of a rectangle that does not fit is refused
+                None => {
+                    out.responses = if quiet {
+                        Vec::new()
+                    } else {
+                        vec![format!("Gi={id};EINVAL:crop outside the image").into_bytes()]
+                    };
+                },
+            }
         }
         out
     }
@@ -1006,6 +1055,49 @@ mod checks_graphics {
         png.extend_from_slice(&w.to_be_bytes());
         png.extend_from_slice(&h.to_be_bytes());
         png
+    }
+
+    #[test]
+    fn crop_shows_only_the_source_rectangle() {
+        // `x`/`y`/`w`/`h`: the rectangle of the picture to show, and the cells
+        // follow it — a 20x19 image cropped to its bottom-right quarter is
+        // 1x1 cell in a 10x19 cell, and the uv is that quarter
+        let mut g = Graphics::new();
+        let body = format!("Ga=T,f=100,i=3,x=10,y=9,w=10,h=10;{}", b64(&png(20, 19)));
+        let out = g.handle(body.as_bytes(), (0, 0), cell());
+        assert_eq!(out.responses, [b"Gi=3;OK".to_vec()]);
+        let p = &g.placements()[0];
+        assert_eq!(p.crop, (10, 9, 10, 10));
+        assert_eq!((p.cols, p.rows), (1, 1));
+        let uv = p.uv((20, 19));
+        assert!((uv[0] - 0.5).abs() < 1e-6 && (uv[1] - 9.0 / 19.0).abs() < 1e-6);
+        assert!((uv[2] - 1.0).abs() < 1e-6 && (uv[3] - 1.0).abs() < 1e-6);
+        // no keys at all: the whole picture, `uv` = the full texture
+        let mut g = Graphics::new();
+        let body = format!("Ga=T,f=100,i=4;{}", b64(&png(20, 19)));
+        let _ = g.handle(body.as_bytes(), (0, 0), cell());
+        let p = &g.placements()[0];
+        assert_eq!(p.crop, (0, 0, 20, 19));
+        assert_eq!(p.uv((20, 19)), [0.0, 0.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn crop_outside_the_image_is_refused() {
+        // a rectangle that leaves the picture is a caller mistake: the image is
+        // stored (the transmission happened) and the placement is refused
+        let mut g = Graphics::new();
+        for bad in ["x=10,w=20", "y=19,h=1", "w=0", "x=-1", "h=99"] {
+            let body = format!("Ga=T,f=100,i=5,{bad};{}", b64(&png(20, 19)));
+            let out = g.handle(body.as_bytes(), (0, 0), cell());
+            assert_eq!(
+                out.responses,
+                [b"Gi=5;EINVAL:crop outside the image".to_vec()],
+                "{bad} should be refused"
+            );
+            assert_eq!(out.lines, 0, "{bad} must not move the cursor");
+        }
+        assert_eq!(g.images().len(), 1, "the bytes were stored once");
+        assert_eq!(g.placements().len(), 0);
     }
 
     #[test]

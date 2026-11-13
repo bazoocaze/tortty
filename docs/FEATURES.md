@@ -121,8 +121,11 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   otherwise read but kept — the path comes from the child; POSIX shared
   memory under `/dev/shm` — the app loads it, the core never touches
   the filesystem), `f=24/32/100` (PNG decoded in the app), `o=z`, `s=`/`v=`,
-  `c=`/`r=`, `X=`/`Y=`, `C=1`, `q=`; the image follows the scroll and is pruned
-  with the history; `ED 3` clears images.
+  `c=`/`r=`, `X=`/`Y=`, `C=1`, `q=`, and the **source crop** `x=`/`y=`/`w=`/`h=`
+  (the rectangle of the picture to show, which is the texture `uv`; the cells
+  follow it when `c=`/`r=` are absent, and a rectangle that leaves the image
+  answers `EINVAL:crop outside the image` instead of being clamped); the image
+  follows the scroll and is pruned with the history; `ED 3` clears images.
 - iTerm2's inline image (`OSC 1337;File=…:base64`, what `imgcat` sends): the
   bytes are placed on the cursor cell through the same direct transmission, with
   `width`/`height` in cells, in `px`, in `%` of the grid or `auto`. **limit:**
@@ -130,7 +133,7 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   the file into the cwd, and the bytes come from the child, so it is refused with
   a notice; no `SetMark`/`CurrentDir` either.
 - **limit:** no animation (`B2`), no sixel (`B3`), and no z-index,
-  placement id, Unicode placeholder or source crop (`M-L`); `pi` does not list
+  placement id or Unicode placeholder (`M-L`); `pi` does not list
   the name `tortty`, so it falls back to text unless `PI_IMAGE_PROTOCOL=kitty`
   ([`EXTERNALS.md`](EXTERNALS.md)).
 

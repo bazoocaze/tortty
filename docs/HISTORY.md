@@ -800,3 +800,18 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   `ws=0`); walk to the end (`ws19`), `Super+Q` → **`ws18` selected** (before:
   `ws=0` again). New `--selftest` case `workspace_close_keeps_the_place`, five
   positions including the only-one case.
+
+## 2026-11-12 — the image source crop (`x`/`y`/`w`/`h`)
+
+- The renderer already sampled with a `uv` rectangle, hardcoded to `[0,0,1,1]`:
+  the kitty crop is that rectangle as a fraction of the picture, so the whole
+  feature is the four keys plus `Placement::uv(source)`, which the core can test
+  without a GPU.
+- The cells follow the crop when `c`/`r` are absent (a 20x20 crop of a 40x20
+  image is 3 cells, not 5), and a rectangle that leaves the picture is refused
+  with `EINVAL:crop outside the image` — clamping would hide the caller's
+  geometry mistake. The bytes are still stored: the transmission happened.
+- Measured on Xvfb with a 40x20 PNG, red on the left, blue on the right: whole
+  picture → `ff0000` at the left, `0000ff` at the right; `x=20,w=20` → `0000ff`
+  across the whole 3-cell box; `x=30,w=20` → no placement at all. Two core tests
+  (the fraction and the four refusals).
