@@ -815,3 +815,20 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   picture → `ff0000` at the left, `0000ff` at the right; `x=20,w=20` → `0000ff`
   across the whole 3-cell box; `x=30,w=20` → no placement at all. Two core tests
   (the fraction and the four refusals).
+
+## 2026-11-12 — `bold_as_bright`, parity with the Python version
+
+- The key existed only in `tortty-python`: `SGR 1` over `color0..7` drawing the
+  bright variant (`8..15`), which is xterm's `boldColors` and what most themes
+  assume. Rust and Java refused the key as unknown, so a shared config file lost
+  a line on each.
+- The rule is in the core (`color::bright`), one function, tested on the ends:
+  `Idx(0..7)` gains eight, everything else is itself. Default **off**, as in
+  Python: the palette is the owner's, and a theme that gives the low half its own
+  meaning keeps it.
+- The renderer applies it to the glyph colour of a bold cell, and reverse video
+  is left out of it on purpose — there the glyph colour is the background.
+- Measured on Xvfb with `\e[1;31mbold\e[0m \e[31mplain\e[0m`: `off` → only
+  `cd0000` in the histogram; `on` → `ff0000` for the bold half and `cd0000` still
+  for the plain one. `CONFIG.md` gained the key and `SIBLINGS.md` moved it out of
+  the Python-only column (32 keys in all three, 8 divergences).

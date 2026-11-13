@@ -33,6 +33,7 @@ file.
 | `window_padding_width` | `0` | margin in px around the grid (cap 200) |
 | `bell` | `none` | BEL: `none`, `visual` (marks the window) or `audible` |
 | `copy_on_select` | `off` | the selection goes to CLIPBOARD as well (PRIMARY is always) |
+| `bold_as_bright` | `off` | SGR 1 on the eight low colours (`0`–`7`) draws the bright half (`8`–`15`) — xterm's `boldColors`; off by default, because the palette is the owner's and a theme may give the low half its own meaning |
 | `debug_log` | `off` | diagnostic log; `off` turns it off, a path turns it on |
 | `foreground` | `#d6d6d6` | text colour (`#rrggbb` or `#rgb`) |
 | `background` | `#000000` | background colour |

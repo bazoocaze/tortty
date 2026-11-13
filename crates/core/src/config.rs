@@ -55,6 +55,9 @@ bell none
 # mouse selection goes straight to CLIPBOARD (PRIMARY is always)
 copy_on_select off
 
+# bold text on the eight low colours draws the bright half (SGR 1 + colour 0-7)
+bold_as_bright off
+
 # diagnostic log; `off` turns it off (--debug-log changes the path)
 debug_log off
 
@@ -215,6 +218,7 @@ pub struct Config {
     pub padding: u32,
     pub bell: Bell,
     pub copy_on_select: bool,
+    pub bold_as_bright: bool,
     pub debug_log: Option<String>,
     pub fg: Color,
     pub bg: Color,
@@ -242,6 +246,7 @@ const KNOWN: &[&str] = &[
     "window_padding_width",
     "bell",
     "copy_on_select",
+    "bold_as_bright",
     "debug_log",
     "foreground",
     "background",
@@ -293,6 +298,7 @@ impl Config {
             padding: 0,
             bell: Bell::None,
             copy_on_select: false,
+            bold_as_bright: false,
             debug_log: None,
             fg: Color::Rgb(0xd6, 0xd6, 0xd6),
             bg: Color::Rgb(0, 0, 0),
@@ -431,6 +437,10 @@ impl Config {
                 },
                 "copy_on_select" => match parse_bool(value) {
                     Some(b) => cfg.copy_on_select = b,
+                    None => errors.push(bad(format!("\"{value}\" is not on/off"))),
+                },
+                "bold_as_bright" => match parse_bool(value) {
+                    Some(b) => cfg.bold_as_bright = b,
                     None => errors.push(bad(format!("\"{value}\" is not on/off"))),
                 },
                 "debug_log" => {

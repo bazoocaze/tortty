@@ -105,6 +105,9 @@ pub struct Renderer {
     shaper: crate::shape::Shaper,
     /// Ligature mode coming from the configuration.
     ligatures: tortty_core::config::Ligatures,
+    /// `bold_as_bright`: bold text on the low half of the palette draws the
+    /// bright half (`color::bright`).
+    bold_as_bright: bool,
     instances: Vec<Instance>,
     pub palette: Vec<(u8, u8, u8)>,
     /// Effective theme (config + defaults); `build` resolves cell by cell.
@@ -483,6 +486,7 @@ impl Renderer {
             cache_gid: HashMap::new(),
             shaper: crate::shape::Shaper::new(),
             ligatures: tortty_core::config::Ligatures::default(),
+            bold_as_bright: cfg.bold_as_bright,
             instances: Vec::with_capacity(4096),
             palette: cfg.palette256(),
             fg: theme(cfg, cfg.fg, FG),
@@ -976,7 +980,15 @@ impl Renderer {
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
         let ascent = self.fonts.ascent;
-        let fg = if swap { cell.bg } else { cell.fg };
+        // `bold_as_bright` (opt-in): the glyph of a bold cell in the low half of
+        // the palette takes the bright half — the swapped (reverse video) cell
+        // keeps the palette as it is, because there the glyph colour is the
+        // background
+        let mut fg = cell.fg;
+        if self.bold_as_bright && cell.flags & BOLD != 0 {
+            fg = tortty_core::color::bright(fg);
+        }
+        let fg = if swap { cell.bg } else { fg };
         let mut c = self.color(fg, if swap { self.bg } else { self.fg });
         // faint: the same tone with less opacity (Pango used alpha 0.55)
         let alpha = if cell.flags & FAINT != 0 { 0.55 } else { 1.0 };

@@ -11,8 +11,8 @@ the three drift, which is why it carries the date.
 
 ## Config Parity
 
-33 key names in the union: **31 in all three**, **2 only in Python**
-(`bold_as_bright`, `letter_spacing`). A cell holds that version's default; `—`
+34 key names in the union: **32 in all three**, **1 only in Python**
+(`letter_spacing`); `bold_as_bright` joined Rust on 2026-11-12. A cell holds that version's default; `—`
 means the parser refuses the key as unknown.
 
 | key | Rust (main version) | Python | Java |
@@ -29,7 +29,7 @@ means the parser refuses the key as unknown.
 | `bell` | `none` | `none` | `none` |
 | `copy_on_select` | `off` | `off` | **`on`** |
 | `debug_log` | `off` | **`/tmp/tortty-python.debug.log`** | off (empty) |
-| `bold_as_bright` | — | `off` | — |
+| `bold_as_bright` | `off` | `off` | — |
 | `letter_spacing` | — | `0` (0..20 px) | — |
 | `foreground` | `#d6d6d6` | `#d6d6d6` | `#d6d6d6` |
 | `background` | `#000000` | `#000000` | `#000000` |
@@ -42,7 +42,7 @@ The 16 ANSI colours are the **same values byte for byte** in the three
 `#00ffff`, `#ffffff`); `CONFIG.md` carries the table, and the other two copied it
 because `mc`, `htop` and `ls --color` were calibrated on it.
 
-### The nine divergences
+### The eight divergences
 
 1. **`font_family`** — Java names the face it ships with (`DejaVu Sans Mono`);
    Rust and Python open with the generic `Monospace` alias.
@@ -58,9 +58,7 @@ because `mc`, `htop` and `ls --color` were calibrated on it.
    Rust and Python leave it `off`.
 7. **`debug_log`** — Python logs to `/tmp/tortty-python.debug.log` **by default**
    (a path means on); Rust and Java are off until a path is given.
-8. **`bold_as_bright`** (`off`) — Python only: `SGR 1` over `color0..7` picks the
-   bright variant (xterm's `boldColors`). Absent from Rust and Java.
-9. **`letter_spacing`** (`0`, 0..20 px) — Python only, the cell grows with it.
+8. **`letter_spacing`** (`0`, 0..20 px) — Python only, the cell grows with it.
    Absent from Rust and Java.
 
 One smaller one, in accepted **values** rather than keys: Java also takes `off`

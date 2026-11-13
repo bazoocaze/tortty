@@ -63,6 +63,19 @@ pub const PALETTE: [(u8, u8, u8); 16] = [
 ];
 
 /// Full xterm-256 palette (16 ANSI + 6×6×6 cube + 24 shades of gray).
+/// `bold_as_bright`: SGR 1 on the eight low colours draws the bright half.
+///
+/// It is the rule most terminals have always had (xterm's `boldColors`), and it
+/// is opt-in here because the palette is the owner's: a theme that gives the low
+/// half its own meaning should keep it.
+#[must_use]
+pub fn bright(c: Color) -> Color {
+    match c {
+        Color::Idx(i) if i < 8 => Color::Idx(i + 8),
+        other => other,
+    }
+}
+
 pub fn palette256() -> Vec<(u8, u8, u8)> {
     // 6x6x6 cube: components 0, 95, 135, 175, 215, 255
     const STEPS: [u8; 6] = [0, 95, 135, 175, 215, 255];
@@ -106,6 +119,18 @@ mod tests {
         assert_eq!(p[231], (255, 255, 255));
         assert_eq!(p[232], (8, 8, 8));
         assert_eq!(p[255], (238, 238, 238));
+    }
+
+    #[test]
+    fn bright_moves_only_the_low_half_of_the_palette() {
+        // `bold_as_bright`: 0-7 gain the bright half, everything else is itself
+        assert_eq!(bright(Color::Idx(1)), Color::Idx(9));
+        assert_eq!(bright(Color::Idx(7)), Color::Idx(15));
+        assert_eq!(bright(Color::Idx(0)), Color::Idx(8));
+        assert_eq!(bright(Color::Idx(8)), Color::Idx(8));
+        assert_eq!(bright(Color::Idx(200)), Color::Idx(200));
+        assert_eq!(bright(Color::Rgb(1, 2, 3)), Color::Rgb(1, 2, 3));
+        assert_eq!(bright(Color::Default), Color::Default);
     }
 
     #[test]
