@@ -898,3 +898,17 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   16 cells in lands on tab 2 with the bell in front of tab 1, card 2 selects
   workspace 2, and the strip below the last card changes nothing. `render-check`
   green.
+
+## 2026-11-13 — `OSC 133`, the shell says where the prompt is (`M-R`)
+
+- The core kept nothing of `133;A/B/C/D`, so the scrollback was a wall of lines:
+  no prompt to jump to, no command range, no status. `crates/core/src/prompt.rs`
+  holds the marks — `PromptStart`, `CommandStart`, `OutputStart`, `CommandEnd`
+  with the exit status — on **absolute** lines, capped at 512 and pruned when the
+  history ceiling eats the line they point at.
+- `Ctrl+Shift+Up/Down` walks them: the prompt lands on the first row, and at the
+  ends the key does nothing (a key that moves nothing visible reads as a key that
+  did nothing). The socket's `state` reports the last eight marks.
+- Verified with five `prompt` tests, four `Term` tests (the four letters, the
+  status, an unknown letter ignored, `RIS` forgetting them) and an Xvfb probe:
+  four prompts at lines 6/11/16/21, `pin` 0 → 6 → 11 up and 11 → 6 → 0 down.

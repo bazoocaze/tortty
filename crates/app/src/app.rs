@@ -1327,6 +1327,19 @@ impl App {
                 },
                 _ => {},
             }
+            // Ctrl+Shift+Up/Down walks the prompts the shell marked (`M-R`):
+            // with the marks, the scrollback has places to land on
+            match named {
+                Some(NamedKey::ArrowUp) => {
+                    self.prompt_jump(true);
+                    return true;
+                },
+                Some(NamedKey::ArrowDown) => {
+                    self.prompt_jump(false);
+                    return true;
+                },
+                _ => {},
+            }
             // Ctrl+Shift+F2: the config file in the editor, in a new tab. It
             // comes **before** encoding: vim never sees the key, otherwise it
             // interprets it as a shortcut of its own.
@@ -1387,6 +1400,29 @@ impl App {
             }
         }
         false
+    }
+
+    /// Jumps the view to the previous/next prompt (`M-R`). The prompt lands on
+    /// the first grid row; at the ends nothing moves (a key that does something
+    /// invisible reads as a key that did nothing).
+    fn prompt_jump(&mut self, back: bool) {
+        let t = &self.tabs[self.active];
+        let top = t.term.scrolled as i64 - t.view_off as i64;
+        // walking up looks strictly above the first row in sight; walking down
+        // looks from that row on, so the prompt already at the top is not "next"
+        let from = if back { top - 1 } else { top };
+        let Some(line) = t.term.prompt_line(from, back) else {
+            return;
+        };
+        let max = t.term.scrollback.len();
+        let off = (t.term.scrolled as i64 - line).clamp(0, max as i64);
+        #[allow(clippy::cast_sign_loss)] // clamped to `0..=max` above
+        let off = off as usize;
+        if off == self.tabs[self.active].view_off {
+            return;
+        }
+        self.tabs[self.active].view_off = off;
+        self.ask_frame();
     }
 
     /// Key: window shortcuts first (the child never sees Ctrl+Shift+C/V), then
@@ -2964,6 +3000,16 @@ impl App {
                     "cards_alert": self.wscards().iter().map(|c| c.alert).collect::<Vec<_>>(),
                     "tabs_progress": self.tabs.iter()
                         .map(|t| t.term.progress.map(|p| serde_json::json!([p.state, p.pct])))
+                        .collect::<Vec<_>>(),
+                    "marks": self.tabs[self.active]
+                        .term
+                        .marks
+                        .all()
+                        .iter()
+                        .rev()
+                        .take(8)
+                        .rev()
+                        .map(|m| serde_json::json!([m.line, m.kind as u8, m.status]))
                         .collect::<Vec<_>>(),
                     "errors": self.cfg_errors,
                     "xid": self.xid(),

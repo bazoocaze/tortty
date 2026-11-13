@@ -197,8 +197,18 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   one as a still translucent band of the full width. The fill is in pixels, so
   37% of a 20-cell tab is 7.4 cells of ink; `0` removes it. **limit:** the window
   only (no taskbar), and nothing moves.
+- Prompt marks (`OSC 133`): the shell says where the prompt starts, where the
+  command starts, where the output starts and how the command ended (with the
+  status); the marks live on absolute lines, so scrolling and output do not move
+  them, and `Ctrl+Shift+Up/Down` puts the previous/next prompt on the first row
+  (at the ends the key does nothing). The list is capped at 512 marks per tab and
+  a mark whose line fell out of the scrollback is dropped. **limit:** nothing
+  else consumes them yet — the command's output as a range, the command in the
+  tab label and the redraw are `B39`, and no shell ships a script that emits them
+  (the snippet is the reader's).
 - Shortcuts: Ctrl+Shift+T/W/N/Q/F2 (`F2` is the config in the editor, under
-  *Configuration*), Ctrl+Shift+1…9, Alt+1…9, Super+N/Q/1…9, Super+Up/Down
+  *Configuration*), Ctrl+Shift+Up/Down (previous/next prompt mark),
+  Ctrl+Shift+1…9, Alt+1…9, Super+N/Q/1…9, Super+Up/Down
   (previous/next workspace) and Super+Shift+Up/Down (move the front
   workspace), with the digit taken
   from the physical key so ABNT2 layouts still work.

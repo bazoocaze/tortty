@@ -13,6 +13,7 @@ pub mod color;
 pub mod config;
 pub mod graphics;
 pub mod grid;
+pub mod prompt;
 pub mod select;
 pub mod snapshot;
 pub mod term;

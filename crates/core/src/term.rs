@@ -316,6 +316,10 @@ pub struct Term {
     /// Progress reported by the program (`OSC 9;4`): the tab label draws it.
     /// `None` = nothing to show; state `0` clears it.
     pub progress: Option<Progress>,
+    /// `OSC 133` prompt marks (`M-R`): where a prompt, a command and its output
+    /// start, and how the command ended. Absolute lines, so scrolling and output
+    /// do not move them.
+    pub marks: crate::prompt::Marks,
     /// Something the child asked for that we refused, with the reason, for the
     /// app to show once (`B3`).
     refused: Option<&'static str>,
@@ -428,6 +432,7 @@ impl Term {
             notifs: 0,
             notif_text: String::new(),
             progress: None,
+            marks: crate::prompt::Marks::default(),
             refused: None,
             osc_cap: MAX_OSC,
             respond_size: false,
@@ -1837,6 +1842,8 @@ impl Term {
                 None => self.osc_notify(arg),
             },
             777 => self.osc_notify777(arg),
+            // `OSC 133` prompt marks (`M-R`): the substrate of shell integration
+            133 => self.osc_prompt(arg),
             // iTerm2 inline image (`1337;File=…:base64`) — `B3`'s cheap half
             1337 => self.osc_iterm(arg),
             104 => self.osc_reset_palette(arg),
@@ -1846,6 +1853,47 @@ impl Term {
             _ => {},
         }
         self.osc_record(data);
+    }
+
+    /// `OSC 133` (`M-R`): the shell says where the prompt, the command and the
+    /// output start, and how the command ended.
+    ///
+    /// The letter is all that matters: `B`/`C` may carry kitty's extensions
+    /// (`;cl=line`, `;aid=…`) and `D` carries the exit status. An unknown letter
+    /// is ignored — the protocol is a stream of hints, not a command, and a
+    /// terminal that refuses unknown ones would break the next extension.
+    fn osc_prompt(&mut self, arg: &[u8]) {
+        use crate::prompt::{Mark, MarkKind};
+        let mut it = arg.split(|&b| b == b';');
+        let kind = match it.next().unwrap_or_default() {
+            b"A" => MarkKind::PromptStart,
+            b"B" => MarkKind::CommandStart,
+            b"C" => MarkKind::OutputStart,
+            b"D" => MarkKind::CommandEnd,
+            _ => return,
+        };
+        // the status travels on `D`, as the first argument after the letter
+        let status = if kind == MarkKind::CommandEnd {
+            it.next()
+                .and_then(|s| std::str::from_utf8(s).ok())
+                .and_then(|s| s.trim().parse::<i32>().ok())
+        } else {
+            None
+        };
+        let line = self.scrolled as i64 + self.cy as i64;
+        let first = self.abs_first();
+        self.marks.push(Mark { line, kind, status }, first);
+    }
+
+    /// Previous/next prompt start for the navigation (`M-R`), as an absolute
+    /// line. `back` walks towards the history.
+    #[must_use]
+    pub fn prompt_line(&self, from: i64, back: bool) -> Option<i64> {
+        if back {
+            self.marks.prompt_before(from)
+        } else {
+            self.marks.prompt_after(from)
+        }
     }
 
     /// `CSI 22 ; Ps t`: saves the title for the matching `23`.
@@ -3120,6 +3168,77 @@ mod damage_precision_tests {
         t.clear_damage();
         t.feed(b"\x1b[2J");
         assert_eq!(marks(&t).1, "touch_all", "ED2 is the whole screen");
+    }
+}
+
+#[cfg(test)]
+mod marks_tests {
+    use super::*;
+    use crate::prompt::MarkKind;
+
+    #[test]
+    fn the_shell_marks_a_prompt_and_its_command() {
+        let mut t = Term::new(20, 4);
+        t.feed(b"\x1b]133;A\x07$ ");
+        t.feed(b"\x1b]133;B\x07ls\r\n");
+        t.feed(b"\x1b]133;C\x07out\r\n");
+        t.feed(b"\x1b]133;D;3\x07");
+        let kinds: Vec<_> = t.marks.all().iter().map(|m| m.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                MarkKind::PromptStart,
+                MarkKind::CommandStart,
+                MarkKind::OutputStart,
+                MarkKind::CommandEnd
+            ]
+        );
+        // the status of the command that ended
+        assert_eq!(t.marks.all()[3].status, Some(3));
+        // the marks are on the lines the cursor was on: A/B on line 0, C after
+        // the newline, D on the line of the last output
+        assert_eq!(t.marks.all()[0].line, 0);
+        assert_eq!(t.marks.all()[2].line, 1);
+    }
+
+    #[test]
+    fn an_unknown_133_letter_is_ignored() {
+        let mut t = Term::new(20, 4);
+        t.feed(b"\x1b]133;Z;1;2\x07hi");
+        assert!(t.marks.is_empty());
+        // and the text after it is untouched
+        assert_eq!(t.row_text(0).trim_end(), "hi");
+    }
+
+    #[test]
+    fn the_navigation_walks_the_prompts_it_has() {
+        let mut t = Term::new(20, 4);
+        for _ in 0..3 {
+            t.feed(b"\x1b]133;A\x07$ ");
+            t.feed(b"\x1b]133;B\x07echo hi\r\n");
+            t.feed(b"\x1b]133;C\x07hi\r\n");
+            t.feed(b"\x1b]133;D;0\x07");
+        }
+        let lines: Vec<i64> = t
+            .marks
+            .all()
+            .iter()
+            .filter(|m| m.kind == MarkKind::PromptStart)
+            .map(|m| m.line)
+            .collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(t.prompt_line(lines[2], true), Some(lines[1]));
+        assert_eq!(t.prompt_line(lines[0], true), None);
+        assert_eq!(t.prompt_line(lines[0], false), Some(lines[1]));
+    }
+
+    #[test]
+    fn a_reset_forgets_the_marks() {
+        let mut t = Term::new(20, 4);
+        t.feed(b"\x1b]133;A\x07$ ");
+        assert_eq!(t.marks.len(), 1);
+        t.feed(b"\x1bc"); // RIS
+        assert!(t.marks.is_empty());
     }
 }
 
