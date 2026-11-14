@@ -18,6 +18,7 @@ pub mod placeholder;
 pub mod prompt;
 pub mod search;
 pub mod select;
+pub mod sixel;
 pub mod snapshot;
 pub mod status;
 pub mod term;

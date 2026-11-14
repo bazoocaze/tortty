@@ -168,8 +168,16 @@ down? Measured on the same machine, `--release`, best of 20 passes through
 | plain text | 4 MB | 51.0 ms | 82 MB/s | what a session normally sends |
 | DCS, discarded | 4 MB | **7.9 ms** | 531 MB/s | what the parser does with `ESC P` today |
 | kitty APC (accumulate + base64 + size check) | 4 MB | 21.9 ms | 192 MB/s | the existing image path |
-| sixel decode 800×480 (prototype, `rustc -O`) | 212 KB | **2.0 ms** | 5.2 ns/px | → 1.5 MB RGBA |
+| sixel decode 800×480 (shipped decoder, `rustc -O`) | 207 KB | **4.7 ms** | 12.2 ns/px | → 1.5 MB RGBA |
 | PNG decode 800×480 (`decode_png`, `-O`) | 70 KB | 3.3 ms | — | → 1.5 MB RGBA |
+
+The shipped number is the honest one: the prototype that sized the work painted
+bands into a buffer and measured 2.0 ms, and the decoder that shipped — painting
+straight into the canvas, with the bounds the stream needs — measures 4.7 ms for
+the same picture. Simplifying it did not cost anything measurable (a band buffer,
+precomputed row offsets and a data-run fast path were all within 0.2 ms); the
+writes themselves are the cost. `size`, which is what the core pays while
+feeding, is 0.35 ms.
 
 Reading: the body of a DCS is the **cheapest** thing the parser touches today
 (531 MB/s against 82 for text), so detection adds one compare per DCS and

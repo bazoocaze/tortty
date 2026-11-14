@@ -362,11 +362,15 @@ pub struct Term {
     osc: Vec<u8>,
     /// APC body (`ESC _`): this is how the kitty image arrives.
     apc: Vec<u8>,
+    /// The body of a DCS in flight (`B3`): only the sixel kind keeps it, and it is
+    /// what the decoder walks when the string closes.
+    dcs: Vec<u8>,
     /// Image files waiting for the app (`t=f`/`t=t`/`t=s`, `B1`): the payload
     /// named them, the bytes have not arrived yet.
     pub image_files: Vec<crate::graphics::FileRequest>,
     /// The in-flight `Str` is an APC (not DCS/PM/SOS, which are discarded).
     apc_active: bool,
+    dcs_active: bool,
     csi_prefix: u8,
     csi_inter: u8,
     esc_inter: u8,
@@ -458,8 +462,10 @@ impl Term {
             csi: Vec::with_capacity(64),
             osc: Vec::with_capacity(128),
             apc: Vec::new(),
+            dcs: Vec::new(),
             image_files: Vec::new(),
             apc_active: false,
+            dcs_active: false,
             csi_prefix: 0,
             csi_inter: 0,
             esc_inter: 0,
@@ -1693,7 +1699,7 @@ impl Term {
                     // DA2: the reply MUST start with '>'
                     self.child_out.extend_from_slice(b"\x1b[>1;100;0c");
                 } else if body.is_empty() || body == b"0" {
-                    self.child_out.extend_from_slice(b"\x1b[?62c");
+                    self.child_out.extend_from_slice(b"\x1b[?62;4c");
                 }
             },
             b'd' => {
@@ -2451,6 +2457,9 @@ impl Term {
                         if std::mem::take(&mut self.apc_active) {
                             self.apc_done();
                         }
+                        if std::mem::take(&mut self.dcs_active) {
+                            self.dcs_done();
+                        }
                     } else {
                         self.state = State::Str;
                     }
@@ -2459,9 +2468,13 @@ impl Term {
         }
     }
 
-    /// One byte inside DCS/APC/PM/SOS: only the APC keeps content.
+    /// One byte inside DCS/APC/PM/SOS: the APC keeps its body for the kitty
+    /// protocol, the DCS keeps its own for sixel (`B3`), and PM/SOS keep nothing.
     fn str_byte(&mut self, b: u8) {
         let body: &[u8] = if self.apc_active { &self.apc } else { &[] };
+        // the DCS of a sixel is a picture: it needs a body to decode, so the two
+        // kinds share the cap and the closing, and differ in what they do with it
+        let keep = self.apc_active || self.dcs_active;
         if b == 0x1b {
             self.state = State::StrEsc;
         } else if b == 0x9c && st_c1(body) {
@@ -2469,13 +2482,24 @@ impl Term {
             if self.apc.last() == Some(&0xc2) {
                 self.apc.pop();
             }
+            if self.dcs.last() == Some(&0xc2) {
+                self.dcs.pop();
+            }
             self.state = State::Ground;
             if std::mem::take(&mut self.apc_active) {
                 self.apc_done();
             }
-        } else if self.apc_active && self.apc.len() < crate::graphics::MAX_APC {
+            if std::mem::take(&mut self.dcs_active) {
+                self.dcs_done();
+            }
+        } else if keep {
             // cap: a transmission that never closes must not grow without bound
-            self.apc.push(b);
+            if self.apc_active && self.apc.len() < crate::graphics::MAX_APC {
+                self.apc.push(b);
+            }
+            if self.dcs_active && self.dcs.len() < crate::graphics::MAX_APC {
+                self.dcs.push(b);
+            }
         }
     }
 
@@ -2493,6 +2517,22 @@ impl Term {
             self.image_files.push(req);
         }
         self.apc_output(out);
+    }
+
+    /// A complete DCS arrived: the sixel kind becomes a picture, everything else
+    /// (the fonts, the `DECRQSS` answers) is still not ours and is dropped.
+    fn dcs_done(&mut self) {
+        let dcs = std::mem::take(&mut self.dcs);
+        let cursor = (
+            u16::try_from(self.cx).unwrap_or(0),
+            u16::try_from(self.cy).unwrap_or(0),
+        );
+        let out = self.graphics.sixel(&dcs, cursor, self.cell_size);
+        if out.refused.is_some() || !out.responses.is_empty() {
+            self.apc_output(out);
+        } else {
+            self.touch_all();
+        }
     }
 
     /// Frames the responses and moves the cursor — the same tail for an APC
@@ -2581,8 +2621,15 @@ impl Term {
                 self.apc_active = true;
                 self.state = State::Str;
             },
-            b'P' | b'^' | b'X' => {
+            b'P' => {
                 self.apc_active = false;
+                self.dcs.clear();
+                self.dcs_active = true;
+                self.state = State::Str;
+            },
+            b'^' | b'X' => {
+                self.apc_active = false;
+                self.dcs_active = false;
                 self.state = State::Str;
             },
             0x20..=0x2f => {
@@ -3502,6 +3549,38 @@ mod tests {
         assert_eq!(t.graphics.placements().len(), 1);
     }
 
+    /// `B3`: a sixel arrives as a DCS and becomes a picture at the cursor cell,
+    /// with the cursor left where it was and nothing answered.
+    #[test]
+    fn a_sixel_dcs_becomes_an_image_and_keeps_the_cursor() {
+        let mut t = Term::new(20, 6);
+        t.cell_size = (8, 16);
+        t.feed(b"\x1b[2;3H");
+        // four columns of six rows, red, opaque
+        t.feed(b"\x1bP0;0;0q#1;2;100;0;0!4~\x1b\\");
+        let imgs: Vec<_> = t.graphics.images().values().collect();
+        assert_eq!(imgs.len(), 1);
+        assert_eq!((imgs[0].width, imgs[0].height), (4, 6));
+        assert_eq!(imgs[0].format, crate::graphics::Format::Sixel);
+        let p = &t.graphics.placements()[0];
+        assert_eq!((p.col, p.line), (2, 1), "at the cursor cell, one-based");
+        assert_eq!((p.cols, p.rows), (1, 1), "4x6 px against an 8x16 cell");
+        assert_eq!((t.cx, t.cy), (2, 1), "a sixel does not move the cursor");
+        assert_eq!(t.take_child_out(), Vec::<u8>::new(), "and answers nothing");
+        // `P2=1` is the transparent background
+        t.feed(b"\x1bP0;1;0q#1;2;100;0;0@\x1b\\");
+        let transparent = t
+            .graphics
+            .images()
+            .values()
+            .filter(|i| i.format == crate::graphics::Format::SixelAlpha)
+            .count();
+        assert_eq!(transparent, 1);
+        // and a DCS that is not a sixel still stores nothing
+        t.feed(b"\x1bP$q\"p\x1b\\");
+        assert_eq!(t.graphics.images().len(), 2);
+    }
+
     #[test]
     fn dcs_and_a_non_kitty_apc_store_nothing() {
         let mut t = Term::new(20, 4);
@@ -3983,7 +4062,7 @@ mod tests {
     fn replies_to_the_child() {
         let mut t = term();
         t.feed(b"\x1b[c");
-        assert_eq!(t.take_child_out(), b"\x1b[?62c".to_vec());
+        assert_eq!(t.take_child_out(), b"\x1b[?62;4c".to_vec());
         t.feed(b"\x1b[>c");
         assert_eq!(t.take_child_out(), b"\x1b[>1;100;0c".to_vec());
         t.feed(b"\x1b[2;3H\x1b[6n");

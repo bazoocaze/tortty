@@ -1064,3 +1064,29 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 - Verified on Xvfb with a 2x2 image in four colours and a 2x2 grid of
   placeholders: the four cells came out red, green, blue and yellow. The
   diacritic table is the protocol's own list (297 entries), not a formula.
+
+## 2026-11-13 — Sixel (`B3`)
+
+- `ESC P <p1>;<p2>;<p3> q … ST` now becomes a picture. The decoder
+  (`crates/core/src/sixel.rs`) is pure arithmetic — palette, `!n` runs, `$`, `-`,
+  and both colour spaces (`;2` percentages, `;1` HLS) — so it has no dependency,
+  no clock and no allocation beyond the raster: `size` walks the stream to answer
+  the geometry the core needs to place the picture, and `decode` paints once.
+- The body is kept as it arrived and decoded in the app, exactly like a PNG:
+  `Format::Sixel` and `Format::SixelAlpha` (the transparent background of `P2=1`)
+  go through `decode_pixels`, with the theme's background passed down for the
+  opaque case. That is why nothing in the renderer's placement, crop, depth or
+  pruning code had to learn a new trick.
+- `DA1` gained the `4`: a producer checks that before it sends sixel at all, so
+  without it the feature would exist and never be used. The cursor stays put (a
+  sixel is drawn *over* the cell) — the child's newline is what carries text on.
+- Bounded on both ends: the DCS body shares the image cap, a raster above 8.5 M px
+  is refused with a notice, and because sixel has no id and no `d=`, the oldest
+  of the kept pictures goes once there are more than 64 — with its placements, so
+  no orphan is left.
+- Verified on Xvfb with our own streams: a 40×36 red picture at a known cell
+  (`48..95 × 56..92`, 1596 px, the cell geometry exactly); a 64×64 four-quadrant
+  stream with per-band palettes and RLE came out red/green/blue/yellow in the four
+  quadrants; `P2=1` left the glyph strokes of "ABAB…" visible under the picture
+  where `P2=0` covered them. `chafa`/`lsix` are not installed here, so the
+  real-producer pass is the owner's to run.

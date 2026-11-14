@@ -154,6 +154,20 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   animation frame and `a=c` composition stay refused, and a mark is placed by the
   font's own bearing — base and mark are not re-shaped together, so an accent can
   sit a little off on a glyph wider than a cell.
+- **Sixel** (`B3`): the bitmap protocol `chafa -f sixel`, `img2sixel` and
+  `lsix` speak, inside a DCS (`ESC P <p1>;<p2>;<p3> q … ST`) — bands six pixels
+  tall, `!n` runs, `$` to repaint a band, `-` for the next one, and both colour
+  spaces the protocol defines (`#n;2;<h>;<l>;<s>` percentages and `#n;1` HLS).
+  `P2=0` fills the cell with the terminal background and `P2=1` leaves it
+  transparent, so text behind shows through. `DA1` advertises it
+  (`ESC[?62;4c`), which is what makes the producers try. The picture is placed at
+  the cursor and **the cursor does not move** — the child's own newline carries
+  the text on. The stream is kept as it arrived and decoded in the app like a
+  PNG (see [`BENCHMARKS`](BENCHMARKS.md#images-what-one-picture-costs-b3-sizing-2026-11-13)).
+  **limit:** the aspect hint `P1` is parsed and ignored (pixels are square), `P2=2`
+  behaves as `P2=0` (nothing reads a framebuffer back), a picture above
+  8.5 M px is refused, and since sixel has no id and no `d=` at most 64 pictures
+  are kept — the oldest goes with its placements.
 - iTerm2's inline image (`OSC 1337;File=…:base64`, what `imgcat` sends): the
   bytes are placed on the cursor cell through the same direct transmission, with
   `width`/`height` in cells, in `px`, in `%` of the grid or `auto`. **limit:**
@@ -173,7 +187,7 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   **limit:** `a=c` (composing a rectangle from one frame onto another) answers
   `EINVAL:a=c not implemented`, and `r=1` is refused because the root frame is the
   image's own bytes.
-- **limit:** no sixel (`B3`); `pi` does not
+- **limit:** `pi` does not
   list the name `tortty`, so it falls back to text unless
   `PI_IMAGE_PROTOCOL=kitty` ([`EXTERNALS.md`](EXTERNALS.md)).
 

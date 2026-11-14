@@ -1634,7 +1634,8 @@ impl Renderer {
         {
             return true;
         }
-        let Some((w, h, rgba)) = compose(img) else {
+        let (br, bgc, bb) = self.bg;
+        let Some((w, h, rgba)) = compose(img, [br, bgc, bb]) else {
             return false;
         };
         let tex = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -2450,7 +2451,7 @@ fn ink_id(colour: tortty_core::color::Color) -> u32 {
 /// here. Frame 1 is the image's own data; the rest start from the frame their
 /// `c=` names (or from their background colour) and have their rectangles
 /// painted over it.
-fn compose(img: &tortty_core::graphics::Image) -> Option<(u32, u32, Vec<u8>)> {
+fn compose(img: &tortty_core::graphics::Image, background: [u8; 3]) -> Option<(u32, u32, Vec<u8>)> {
     let (width, height) = (img.width, img.height);
     if width == 0 || height == 0 {
         return None;
@@ -2458,21 +2459,28 @@ fn compose(img: &tortty_core::graphics::Image) -> Option<(u32, u32, Vec<u8>)> {
     #[allow(clippy::cast_possible_truncation)]
     let mut canvas = vec![0u8; (width as usize) * (height as usize) * 4];
     let mut seen = vec![false; img.frames.len().max(1)];
-    if paint(img, img.current(), &mut canvas, &mut seen) {
+    if paint(img, img.current(), &mut canvas, &mut seen, background) {
         Some((width, height, canvas))
     } else {
         None
     }
 }
 
-fn paint(img: &tortty_core::graphics::Image, k: u32, canvas: &mut [u8], seen: &mut [bool]) -> bool {
+fn paint(
+    img: &tortty_core::graphics::Image,
+    k: u32,
+    canvas: &mut [u8],
+    seen: &mut [bool],
+    background: [u8; 3],
+) -> bool {
     let index = usize::try_from(k.saturating_sub(1)).unwrap_or(0);
     if index >= seen.len() || std::mem::replace(&mut seen[index], true) {
         return false; // no such frame, or a `c=` chain that bites its own tail
     }
     let full = (img.width, img.height);
     if index == 0 {
-        let Some((w, h, px)) = decode_pixels(img.format, &img.data, full.0, full.1) else {
+        let Some((w, h, px)) = decode_pixels(img.format, &img.data, full.0, full.1, background)
+        else {
             return false;
         };
         blit(canvas, full, (0, 0), true, (w, h), &px);
@@ -2483,7 +2491,7 @@ fn paint(img: &tortty_core::graphics::Image, k: u32, canvas: &mut [u8], seen: &m
         return false;
     };
     if let Some(base) = first.base {
-        if !paint(img, base, canvas, seen) {
+        if !paint(img, base, canvas, seen, background) {
             return false;
         }
     } else {
@@ -2495,7 +2503,8 @@ fn paint(img: &tortty_core::graphics::Image, k: u32, canvas: &mut [u8], seen: &m
         }
     }
     for step in &frame.steps {
-        let Some((w, h, px)) = decode_pixels(step.format, &step.data, step.width, step.height)
+        let Some((w, h, px)) =
+            decode_pixels(step.format, &step.data, step.width, step.height, background)
         else {
             return false;
         };
@@ -2511,6 +2520,7 @@ fn decode_pixels(
     data: &[u8],
     width: u32,
     height: u32,
+    background: [u8; 3],
 ) -> Option<(u32, u32, Vec<u8>)> {
     use tortty_core::graphics::Format;
     if format == Format::Png {
@@ -2537,7 +2547,27 @@ fn decode_pixels(
             Some((width, height, out))
         },
         Format::Png => decode_png(data),
+        // `P2=0` draws the terminal's own background behind the picture;
+        // `P2=1` leaves it transparent, so the text behind shows through
+        Format::Sixel => sixel(data, Some(background), width, height),
+        Format::SixelAlpha => sixel(data, None, width, height),
     }
+}
+
+/// A sixel stream → RGBA8 (`B3`). The picture's own raster is what counts; the
+/// `width`/`height` the core measured are the same numbers, so a stream whose
+/// walk disagrees with them is not drawn at all.
+fn sixel(
+    data: &[u8],
+    under: Option<[u8; 3]>,
+    width: u32,
+    height: u32,
+) -> Option<(u32, u32, Vec<u8>)> {
+    let raster = tortty_core::sixel::decode(data, under, (width, height), u32::MAX)?;
+    if (raster.width, raster.height) != (width, height) {
+        return None;
+    }
+    Some((raster.width, raster.height, raster.rgba))
 }
 
 /// PNG → RGBA8 (the app owns the decoder; the core does not carry one).

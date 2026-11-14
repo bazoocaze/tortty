@@ -19,16 +19,32 @@
 
 use std::collections::HashMap;
 
+use crate::sixel;
+
 /// Cap on the buffer of a chunked transmission: an app that opens an `m=1` and
 /// never closes it cannot grow forever (here the parser is
 /// fed by anything that writes to the pty).
 pub const MAX_APC: usize = 64 * 1024 * 1024;
+
+/// The ceiling on a sixel picture, in pixels: 4K at the widest (8.3 M px is
+/// 33 MB of RGBA), which is above any screen a cell grid is drawn on and below
+/// what a broken stream could ask for.
+pub const MAX_SIXEL_PIXELS: u32 = 8_500_000;
+
+/// How many sixel pictures are kept. They have no id to delete them by, so the
+/// oldest are dropped instead of letting a loop of `chafa` grow the map.
+pub const SIXEL_KEEP: usize = 64;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Format {
     Rgb,
     Rgba,
     Png,
+    /// A sixel stream (`B3`), kept as it arrived: the app decodes it into a
+    /// texture the same way it decodes a PNG.
+    Sixel,
+    /// The same, with the transparent background of `P2=1`.
+    SixelAlpha,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -1002,6 +1018,73 @@ impl Graphics {
         self.transmit(&kv, &data, 0, true, cursor, cell)
     }
 
+    /// Sixel (`B3`): the DCS the bitmap protocols speak. The picture is placed at
+    /// the cursor and the cursor stays where it is — a sixel is drawn *over* the
+    /// cell, and it is the child's own newline that moves the text on.
+    pub fn sixel(&mut self, dcs: &[u8], cursor: (u16, u16), cell: (u32, u32)) -> Output {
+        let Some((params, body)) = sixel::split(dcs) else {
+            return Output::default(); // not a sixel: a DCS keeps its own meaning
+        };
+        let Some((width, height)) = sixel::size(body) else {
+            return Output {
+                refused: Some("sixel: the stream draws nothing"),
+                ..Output::default()
+            };
+        };
+        if u64::from(width) * u64::from(height) > u64::from(MAX_SIXEL_PIXELS) {
+            return Output {
+                refused: Some("sixel: the picture is above the pixel cap"),
+                ..Output::default()
+            };
+        }
+        // the picture replaces whatever the same slot held: a sixel has no id of
+        // its own, so the id is ours and it only has to be unique
+        let id = self.next_id.max(1);
+        self.next_id = id + 1;
+        self.generation += 1;
+        let img = Image {
+            id,
+            version: self.generation,
+            width,
+            height,
+            format: if params.background == 1 {
+                Format::SixelAlpha
+            } else {
+                Format::Sixel
+            },
+            data: body.to_vec(),
+            frames: vec![Frame::default()],
+            anim: Animation::default(),
+        };
+        self.images.insert(id, img.clone());
+        self.prune_sixel();
+        self.place(&img, &HashMap::new(), cursor, cell);
+        Output::default()
+    }
+
+    /// A sixel has no `d=` and no id: a program that draws one per frame of a
+    /// video (`chafa` in a loop) would grow the map forever. The oldest pictures
+    /// go, with their placements — the ones on screen are the recent ones.
+    fn prune_sixel(&mut self) {
+        let mut sixel: Vec<(u64, u32)> = self
+            .images
+            .values()
+            .filter(|i| matches!(i.format, Format::Sixel | Format::SixelAlpha))
+            .map(|i| (i.version, i.id))
+            .collect();
+        if sixel.len() <= SIXEL_KEEP {
+            return;
+        }
+        sixel.sort_unstable();
+        let drop: Vec<u32> = sixel
+            .iter()
+            .take(sixel.len() - SIXEL_KEEP)
+            .map(|(_, id)| *id)
+            .collect();
+        self.images.retain(|id, _| !drop.contains(id));
+        self.placements.retain(|p| !drop.contains(&p.image_id));
+    }
+
     fn error(kv: &HashMap<String, String>, msg: &str) -> Output {
         let ident = kv.get("i").map_or("0", String::as_str);
         Output {
@@ -1043,7 +1126,7 @@ fn inflate(data: &[u8]) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod checks_graphics {
-    use super::{png_size, FileUse, Format, Graphics};
+    use super::{png_size, FileUse, Format, Graphics, MAX_SIXEL_PIXELS, SIXEL_KEEP};
     use base64::Engine as _;
 
     fn b64(data: &[u8]) -> String {
@@ -1103,6 +1186,42 @@ mod checks_graphics {
         let out = g.handle(second.as_bytes(), (0, 0), cell());
         assert_eq!(out.responses, [b"Gi=5;OK".to_vec()]);
         assert_eq!(g.images()[&5].data, [9, 8, 7, 255].repeat(4));
+    }
+
+    /// `B3`: sixel has no id and no `d=`, so the map cannot grow forever: the
+    /// oldest pictures go, and their placements with them.
+    #[test]
+    fn sixel_pictures_beyond_the_keep_cap_drop_the_oldest() {
+        let mut g = Graphics::new();
+        let dcs: &[u8] = b"0;0;0q#1;2;100;0;0!2~";
+        for _ in 0..(SIXEL_KEEP + 6) {
+            g.sixel(dcs, (0, 0), (8, 16));
+        }
+        assert_eq!(g.images().len(), SIXEL_KEEP, "the oldest are dropped");
+        assert_eq!(g.placements().len(), SIXEL_KEEP);
+        let first = g.images().values().map(|i| i.id).min().unwrap_or(0);
+        assert!(first > 1, "picture 1 was dropped, not the newest");
+        for p in g.placements() {
+            assert!(g.images().contains_key(&p.image_id), "no orphan placement");
+        }
+    }
+
+    /// `B3`: a stream that claims a picture above the pixel cap is refused with a
+    /// reason and stores nothing — the ceiling exists so a broken producer cannot
+    /// ask for an allocation.
+    #[test]
+    fn a_sixel_above_the_pixel_cap_is_refused() {
+        let mut g = Graphics::new();
+        let wide = format!("0;0;0q#1;2;100;0;0!{MAX_SIXEL_PIXELS}~");
+        let out = g.sixel(wide.as_bytes(), (0, 0), (8, 16));
+        assert_eq!(
+            out.refused,
+            Some("sixel: the picture is above the pixel cap")
+        );
+        assert_eq!(g.images().len(), 0);
+        // and a DCS that is not a sixel is not ours at all
+        assert_eq!(g.sixel(b"$q\"p", (0, 0), (8, 16)).refused, None);
+        assert_eq!(g.images().len(), 0);
     }
 
     /// `U=1` (`M-L`): a placement that is a prototype for the grid's placeholder
