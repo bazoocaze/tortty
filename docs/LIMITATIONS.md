@@ -23,11 +23,17 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   (`B48`): it shows on the screen and leaves no trace in the file, which is the
   point — but it also means the picture never records *where* a past run ended, so
   two runs look continuous in the restored content.
-- **One image, drawn as it arrived.** The kitty protocol is accepted for what
-  `icat` needs (direct, file, temp and SHM transmission), and iTerm2's inline
-  one (`OSC 1337;File=`, display only — `inline=0` would have the terminal write
-  the child's bytes to disk, and that it does not do): one image per id, with no
-  notion of frame.
+- **Images are stored as they arrived, not as they are drawn.** The kitty
+  protocol is accepted for what `icat` needs (direct, file, temp and SHM
+  transmission plus animation frames), and iTerm2's inline one (`OSC
+  1337;File=`, display only — `inline=0` would have the terminal write the
+  child's bytes to disk, and that it does not do). Two consequences are
+  accepted: the **raw bytes are kept for the life of the image** — a frame is a
+  recipe composed into a texture when it is drawn, so an id that is never
+  deleted costs its PNG plus its rectangles — and **composition happens at draw
+  time**: `a=c` (a rectangle of one frame onto another) and `r=1` (editing the
+  root frame, which is the image's own bytes) answer `EINVAL` instead of keeping
+  a second copy of what the child already sent.
 - **`TERM=xterm-256color`.** We do not invent our own terminfo entry: the goal
   is that `vim`, `mc`, `less` and `dmesg` work with what already exists.
 

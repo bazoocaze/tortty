@@ -157,6 +157,29 @@ It is this pair that explains the old build "freezing" while a log is dumped:
 42–79 ms of work on the UI thread, several times a second, against 2.2 ms. In
 Rust the whole `dmesg` costs less than one 60 Hz frame.
 
+## Images: what one picture costs (`B3` sizing, 2026-11-13)
+
+The question behind it: does sixel (a body of DCS, up to a few MB) slow the pipe
+down? Measured on the same machine, `--release`, best of 20 passes through
+`parsebench` (4 MB payload each) plus two decoders timed on their own:
+
+| payload | bytes | time | rate | note |
+|---|---|---|---|---|
+| plain text | 4 MB | 51.0 ms | 82 MB/s | what a session normally sends |
+| DCS, discarded | 4 MB | **7.9 ms** | 531 MB/s | what the parser does with `ESC P` today |
+| kitty APC (accumulate + base64 + size check) | 4 MB | 21.9 ms | 192 MB/s | the existing image path |
+| sixel decode 800×480 (prototype, `rustc -O`) | 212 KB | **2.0 ms** | 5.2 ns/px | → 1.5 MB RGBA |
+| PNG decode 800×480 (`decode_png`, `-O`) | 70 KB | 3.3 ms | — | → 1.5 MB RGBA |
+
+Reading: the body of a DCS is the **cheapest** thing the parser touches today
+(531 MB/s against 82 for text), so detection adds one compare per DCS and
+nothing per byte of ordinary traffic. Accumulating instead of discarding lands
+between the second and third line — and sixel skips base64, which is most of
+what the third line pays. The decode is the app's, once per image, at the same
+order of magnitude as the PNG the kitty path already decodes; 1920×1080
+extrapolates to ~11 ms and 8.3 MB of RGBA per picture. The pipe (the reader
+thread) never decodes: the core keeps the bytes, the app composes the texture.
+
 ## Footprint
 
 | | Rust | reference |
