@@ -1157,3 +1157,19 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   (1 image, 1 placement, 23×8 cells) and the prompt lands under the picture.
   `chafa` never reads its own stdin (`strace`: zero `read(0)`), so the correct
   `Gi=…;OK` reply is echoed by the shell — its bug, now in `docs/EXTERNALS.md`.
+
+## 2026-11-14 — the alternate screen keeps the history (`B63`, 1.0.87)
+
+- Reported: after running `mc` the scrollback that had gone off screen was gone.
+  Measured on 1.0.86 — 40 lines in a 12-row grid leave `scrollback 29`, starting
+  `mc` gives `0`, quitting gives `1`; `less` does the same.
+- Cause: `CSI ? 1049 h` arrived at `enter_alt()` as the *clear the history* flag.
+  `1049` asks for the **alternate** screen to be cleared, not the main one's saved
+  lines; and nothing refilled the hole, since alt-screen scrolling already refuses
+  to enter the history (`scroll_up`: `keep = full && alt.is_none()`).
+- `enter_alt()` stopped clearing it, and `ED 3` in the alternate screen became a
+  no-op for the history and for the pictures under the app (it used to wipe both
+  through `graphics.clear()`).
+- Proof: core test `the_alternate_screen_keeps_the_history`; probe on Xvfb with
+  `mc` (29 → 30 → 31, never 0) and `less` (32 in, 32 out), plus `?1049h` + `ED 3`
+  changing nothing (33 → 33).

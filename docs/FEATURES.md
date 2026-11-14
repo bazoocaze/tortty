@@ -22,7 +22,8 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   moves count from the region top and relative walks stop at its margins; the
   mode homes the cursor as it flips, and only the region bounds an absolute one.
 - Editing: IL/DL/ICH/DCH/ECH, EL 0/1/2, ED 0/1/2/3 — `ED 3` clears the scrollback
-  and kills the selection anchors.
+  and kills the selection anchors; **limit:** only from the main screen — up in
+  the alternate screen it clears nothing of what lies under the app (`B63`).
 - Modes: `?1` DECCKM, `?25`, `?47`/`?1047`/`?1049` alt screen, `?1048`,
   `?1000`/`?1002`/`?1003`/`?1006`/`?1016`, `?1004` focus, `?2004` paste, `?2026`
   sync, and `20` LNM (LF returns the column too).
@@ -38,7 +39,10 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   child and `xdg-open` runs whatever handler the desktop registered.
 - DEC Special Graphics charset (G0).
 - Alt screen: separate grid, swap preserving the cursor, crop/pad on resize (no
-  reflow there).
+  reflow there). The switch lends the screen and takes it back: the history
+  survives `mc`/`less`/`vim` whole, what they write up there never enters it, and
+  a `clear` up there takes neither the history nor the pictures it covers
+  (`B63`).
 - Reflow on resize: joins and splits soft lines, keeps the coloured background
   and carries the selection to the same characters.
 - Scrollback with a configurable cap ([`CONFIG.md`](CONFIG.md)) and an 8 px

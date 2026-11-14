@@ -1236,7 +1236,10 @@ impl Term {
                     row.cells.fill(cell);
                     self.grid[y] = row;
                 }
-                if n == 3 {
+                // The alternate screen has no saved lines and no say about what
+                // it covers: a `clear` (`ED 3`) up there used to take the
+                // reader's history and the pictures under the app with it (`B63`).
+                if n == 3 && self.alt.is_none() {
                     // H13: `ED 3` clears the scrollback **and** the images —
                     // without this an image was left hanging on an empty screen
                     self.graphics.clear();
@@ -1530,7 +1533,7 @@ impl Term {
                 47 | 1047 | 1049 => {
                     self.sync_count(|t| t.alt += 1);
                     if on {
-                        self.enter_alt(p == 1049);
+                        self.enter_alt();
                     } else {
                         self.leave_alt();
                     }
@@ -1581,7 +1584,13 @@ impl Term {
         }
     }
 
-    fn enter_alt(&mut self, clear_scrollback: bool) {
+    /// The switch hands the screen to the child and takes it back; the history
+    /// is not part of the exchange. `1049` asks for the *alternate* screen to be
+    /// cleared, not the main one's saved lines — and the lines written on the
+    /// alternate screen never enter that history either (`scroll_up` keeps them
+    /// out), so nothing can refill it. Clearing here cost the reader every line
+    /// that had scrolled out the first time an `mc` or a `less` started (`B63`).
+    fn enter_alt(&mut self) {
         if self.alt.is_some() {
             return;
         }
@@ -1591,10 +1600,6 @@ impl Term {
         self.abs_gen += 1;
         let blank = (0..self.rows).map(|_| Row::blank(self.cols)).collect();
         self.alt = Some(std::mem::replace(&mut self.grid, blank));
-        if clear_scrollback {
-            self.scrollback.clear();
-            self.hist_gen += 1;
-        }
         self.cx = 0;
         self.cy = 0;
         self.top = 0;
@@ -3665,6 +3670,48 @@ mod tests {
         let left = t.graphics.placements();
         assert_eq!(left.len(), 1, "leaving brings the main one back");
         assert_eq!(left[0].line, 0, "in the line it was drawn on");
+    }
+
+    /// The screen is lent, not traded: an app taking the alternate screen keeps
+    /// the history that had scrolled out, and what it writes up there stays up
+    /// there. `mc`, `less` and `vim` all enter this way (`B63`).
+    #[test]
+    fn the_alternate_screen_keeps_the_history() {
+        let mut t = Term::new(10, 3);
+        for i in 0..6 {
+            t.feed(format!("line {i}\r\n").as_bytes());
+        }
+        let before = t.history_text(0, 64);
+        assert_eq!(before.len(), 4, "four of the six lines scrolled out");
+        t.feed(b"\x1b[?1049h");
+        assert_eq!(t.history_text(0, 64), before, "the switch takes nothing");
+        for i in 0..5 {
+            t.feed(format!("alt {i}\r\n").as_bytes());
+        }
+        t.feed(b"\x1b[?1049l");
+        assert_eq!(
+            t.history_text(0, 64),
+            before,
+            "coming back brings the same history, with no alt line in it"
+        );
+        // and a `clear` up there is the alternate screen's business alone
+        t.feed(b"\x1bP0;0;0q#1;2;100;0;0!1~\x1b\\");
+        let picture = t.graphics.placements().len();
+        let filled = t.history_text(0, 64);
+        assert_eq!(picture, 1, "a picture on the main screen");
+        t.feed(b"\x1b[?1049h\x1b[3J");
+        assert_eq!(
+            t.history_text(0, 64),
+            filled,
+            "`ED 3` in the alt screen neither"
+        );
+        t.feed(b"\x1b[?1049l");
+        assert_eq!(t.history_text(0, 64), filled);
+        assert_eq!(
+            t.graphics.placements().len(),
+            picture,
+            "nor does it take the picture it was covering"
+        );
     }
 
     /// The screen clear reaches only the screen: a picture that scrolled into the
