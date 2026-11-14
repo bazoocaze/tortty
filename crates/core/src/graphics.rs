@@ -1019,8 +1019,11 @@ impl Graphics {
     }
 
     /// Sixel (`B3`): the DCS the bitmap protocols speak. The picture is placed at
-    /// the cursor and the cursor stays where it is — a sixel is drawn *over* the
-    /// cell, and it is the child's own newline that moves the text on.
+    /// the cursor and the cursor ends up **below it**, the way kitty and WezTerm
+    /// leave it and what a producer expects: `chafa` sends no newlines of its
+    /// own, so a terminal that keeps the cursor where it was prints the prompt
+    /// over the picture. The DEC VT340 left it in place; a screen with scrollback
+    /// gives the picture the room it took.
     pub fn sixel(&mut self, dcs: &[u8], cursor: (u16, u16), cell: (u32, u32)) -> Output {
         let Some((params, body)) = sixel::split(dcs) else {
             return Output::default(); // not a sixel: a DCS keeps its own meaning
@@ -1058,8 +1061,14 @@ impl Graphics {
         };
         self.images.insert(id, img.clone());
         self.prune_sixel();
-        self.place(&img, &HashMap::new(), cursor, cell);
-        Output::default()
+        let Some(rows) = self.place(&img, &HashMap::new(), cursor, cell) else {
+            return Output::default();
+        };
+        Output {
+            lines: rows,
+            move_cursor: true,
+            ..Output::default()
+        }
     }
 
     /// A sixel has no `d=` and no id: a program that draws one per frame of a

@@ -1090,3 +1090,22 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   quadrants; `P2=1` left the glyph strokes of "ABAB…" visible under the picture
   where `P2=0` covered them. `chafa`/`lsix` are not installed here, so the
   real-producer pass is the owner's to run.
+
+## 2026-11-13 — Sixel leaves the cursor under the picture (`B3`, 1.0.84)
+
+- Reported against 1.0.83: `chafa -f sixel` drew the picture and the prompt never
+  appeared — the image started on the prompt line and ran past the bottom of the
+  window. The DEC VT340 leaves the cursor in place after a sixel; `chafa` sends no
+  newline of its own, so "in place" means the shell prints over the picture. The
+  cursor now ends below it (`Output.lines` + `move_cursor` on the same path the
+  kitty `C=1` uses), which also means the content scrolls up when the room is not
+  there — the picture gets the rows it took.
+- The `apc_output` tail now clamps those rows to the grid height and returns the
+  column to 0; the cursor moving down is what makes `Graphics::scroll` move the
+  placement, so a tall picture rides up with the text instead of being pinned.
+- Verified on Xvfb: a picture ending past the bottom of a 10-row window now leaves
+  `PROMPT-BELOW` on the row below it; a picture drawn mid-screen, pushed out by 30
+  lines (`placement.line = -24`) came back intact after `shift+pgup`
+  (`view_off = 25`, 3552 red pixels in the same box) — the scrollback carries it.
+- `docs/FEATURES.md` says both: the cursor ends below, and a picture taller than
+  the whole grid is clipped at the top.

@@ -161,13 +161,17 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   `P2=0` fills the cell with the terminal background and `P2=1` leaves it
   transparent, so text behind shows through. `DA1` advertises it
   (`ESC[?62;4c`), which is what makes the producers try. The picture is placed at
-  the cursor and **the cursor does not move** — the child's own newline carries
-  the text on. The stream is kept as it arrived and decoded in the app like a
-  PNG (see [`BENCHMARKS`](BENCHMARKS.md#images-what-one-picture-costs-b3-sizing-2026-11-13)).
+  the cursor and **the cursor ends below it**, scrolling the content up when the
+  room is not there — `chafa` sends no newline of its own, so a terminal that
+  keeps the cursor in place prints the prompt over the picture (`B3`, reported
+  against `1.0.83`). The stream is kept as it arrived and decoded in the app like
+  a PNG (see
+  [`BENCHMARKS`](BENCHMARKS.md#images-what-one-picture-costs-b3-sizing-2026-11-13)).
   **limit:** the aspect hint `P1` is parsed and ignored (pixels are square), `P2=2`
   behaves as `P2=0` (nothing reads a framebuffer back), a picture above
-  8.5 M px is refused, and since sixel has no id and no `d=` at most 64 pictures
-  are kept — the oldest goes with its placements.
+  8.5 M px is refused, one taller than the whole grid is clipped at the top (it
+  could not fit either way), and since sixel has no id and no `d=` at most 64
+  pictures are kept — the oldest goes with its placements.
 - iTerm2's inline image (`OSC 1337;File=…:base64`, what `imgcat` sends): the
   bytes are placed on the cursor cell through the same direct transmission, with
   `width`/`height` in cells, in `px`, in `%` of the grid or `auto`. **limit:**

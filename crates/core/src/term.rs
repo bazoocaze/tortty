@@ -2528,11 +2528,7 @@ impl Term {
             u16::try_from(self.cy).unwrap_or(0),
         );
         let out = self.graphics.sixel(&dcs, cursor, self.cell_size);
-        if out.refused.is_some() || !out.responses.is_empty() {
-            self.apc_output(out);
-        } else {
-            self.touch_all();
-        }
+        self.apc_output(out);
     }
 
     /// Frames the responses and moves the cursor — the same tail for an APC
@@ -2543,11 +2539,15 @@ impl Term {
             self.child_out.extend_from_slice(&r);
             self.child_out.extend_from_slice(b"\x1b\\");
         }
-        // H10: without `C=1` the cursor goes down the rows the image took
+        // H10: without `C=1` the cursor goes down the rows the image took. The
+        // picture itself moves up with the content, so a `scroll_up` here is what
+        // gives a tall image the room it needs (`B3`).
         if out.move_cursor {
-            for _ in 0..out.lines {
+            let lines = out.lines.min(u16::try_from(self.rows).unwrap_or(u16::MAX));
+            for _ in 0..lines {
                 self.newline();
             }
+            self.cx = 0;
         }
         self.touch_all();
     }
@@ -3549,10 +3549,11 @@ mod tests {
         assert_eq!(t.graphics.placements().len(), 1);
     }
 
-    /// `B3`: a sixel arrives as a DCS and becomes a picture at the cursor cell,
-    /// with the cursor left where it was and nothing answered.
+    /// `B3`: a sixel arrives as a DCS and becomes a picture at the cursor cell;
+    /// the cursor ends below it, because a producer like `chafa` sends no newline
+    /// of its own and the prompt would land on top of the picture.
     #[test]
-    fn a_sixel_dcs_becomes_an_image_and_keeps_the_cursor() {
+    fn a_sixel_dcs_becomes_an_image_and_the_cursor_goes_below_it() {
         let mut t = Term::new(20, 6);
         t.cell_size = (8, 16);
         t.feed(b"\x1b[2;3H");
@@ -3565,7 +3566,7 @@ mod tests {
         let p = &t.graphics.placements()[0];
         assert_eq!((p.col, p.line), (2, 1), "at the cursor cell, one-based");
         assert_eq!((p.cols, p.rows), (1, 1), "4x6 px against an 8x16 cell");
-        assert_eq!((t.cx, t.cy), (2, 1), "a sixel does not move the cursor");
+        assert_eq!((t.cx, t.cy), (0, 2), "the cursor ends under the picture");
         assert_eq!(t.take_child_out(), Vec::<u8>::new(), "and answers nothing");
         // `P2=1` is the transparent background
         t.feed(b"\x1bP0;1;0q#1;2;100;0;0@\x1b\\");
@@ -3579,6 +3580,21 @@ mod tests {
         // and a DCS that is not a sixel still stores nothing
         t.feed(b"\x1bP$q\"p\x1b\\");
         assert_eq!(t.graphics.images().len(), 2);
+    }
+
+    /// `B3`: a picture taller than what is left of the screen scrolls the content
+    /// up, and its placement rides with it — that is the room the picture took.
+    #[test]
+    fn a_tall_sixel_scrolls_the_content_up_to_fit() {
+        let mut t = Term::new(20, 6);
+        t.cell_size = (8, 16);
+        t.feed(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix");
+        // four bands of six pixels: 24 px against a 16 px cell is two rows
+        t.feed(b"\x1bP0;0;0q#1;2;100;0;0!1~-!1~-!1~-!1~\x1b\\");
+        let p = &t.graphics.placements()[0];
+        assert_eq!(p.rows, 2, "two cell rows of six-pixel bands");
+        assert_eq!(p.line, 3, "the picture rode up with the two scrolled lines");
+        assert_eq!((t.cx, t.cy), (0, 5), "and the cursor sits on the last row");
     }
 
     #[test]
