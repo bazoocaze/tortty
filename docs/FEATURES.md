@@ -12,6 +12,11 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 
 - VT parser: C0/C1, CSI, OSC, and DCS/APC/PM/SOS routing, incremental UTF-8 with a
   buffered partial and invalid input as U+FFFD.
+- Combining marks (`M-U`) compose into the character before them — up to three
+  per cell, drawn over it at the font's own bearing — so `e` + `U+0301` is one
+  cell with an accent and not two cells. **limit:** more than three are dropped,
+  a mark at the very start of the grid has nothing to attach to, and a reflow
+  drops them (a mark is not addressed by a column).
 - Cursor: CUU/CUD/CUF/CUB/CNL/CPL/CHA/VPA/CUP/HVP, DECSC/DECRC and `CSI s`/`u`,
   DECSTBM scroll region, RI at the margin. With `?6` (DECOM) on, the absolute
   moves count from the region top and relative walks stop at its margins; the
@@ -138,10 +143,17 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   an image without deleting the image) and the **depth** `z=` (negative draws
   *behind* the text — the span goes out before the grid's first draw — positive
   in front, ties in placement order); the image follows the scroll and is pruned
-  with the history; `ED 3` clears images. **limit:** the Unicode placeholder
-  (`U=1`, `U+10EEEE` in the cells) is not implemented — an image is placed by
-  cell and pixel offset only, so a program that positions its picture through
-  placeholder cells draws nothing.
+  with the history; `ED 3` clears images.
+- **Unicode placeholders** (`U=1`, `M-L`): a virtual placement (`a=p,U=1,i=…,
+  c=<cols>,r=<rows>`) is the prototype for cells holding `U+10EEEE` — the picture
+  is drawn wherever those cells are, so any program that moves text moves the
+  image. The cell's foreground colour carries the image id, its underline colour
+  the placement id, and the combining diacritics the row and column, with the
+  protocol's inheritance from the cell to the left (the table is the one from
+  `rowcolumn-diacritics.txt`, in its order). **limit:** `r=1` edits of an
+  animation frame and `a=c` composition stay refused, and a mark is placed by the
+  font's own bearing — base and mark are not re-shaped together, so an accent can
+  sit a little off on a glyph wider than a cell.
 - iTerm2's inline image (`OSC 1337;File=…:base64`, what `imgcat` sends): the
   bytes are placed on the cursor cell through the same direct transmission, with
   `width`/`height` in cells, in `px`, in `%` of the grid or `auto`. **limit:**
@@ -161,7 +173,7 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   **limit:** `a=c` (composing a rectangle from one frame onto another) answers
   `EINVAL:a=c not implemented`, and `r=1` is refused because the root frame is the
   image's own bytes.
-- **limit:** no sixel (`B3`) and no Unicode placeholder (`M-L`); `pi` does not
+- **limit:** no sixel (`B3`); `pi` does not
   list the name `tortty`, so it falls back to text unless
   `PI_IMAGE_PROTOCOL=kitty` ([`EXTERNALS.md`](EXTERNALS.md)).
 

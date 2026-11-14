@@ -1044,3 +1044,23 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   rows), clicking its 4th row opened a second tab, Escape put back exactly the
   same pixels, and the label of the widest row was being cut by a rounded-down
   width limit (`Open lin`) until the cell-to-pixel remainder got its pixel.
+
+## 2026-11-13 — Unicode placeholders and combining marks (`M-L`, `M-U`)
+
+- The parser learned to compose: a zero-width character no longer takes a cell,
+  it lands on the character before the cursor (up to three per cell) and is drawn
+  over it at the font's own bearing. The marks live beside the cells
+  (`Row::marks`) and not inside `Cell`, so the whole scrollback does not pay for a
+  feature almost no row uses. Writing a character clears the marks of its cell,
+  in the slow path and in the ASCII run fast path — the fast path is what writes
+  an ordinary `x`, and it was the one that kept a stale accent.
+- With that substrate, `U+10EEEE` cells work: `a=p,U=1,i=…,c=…,r=…` creates a
+  **virtual** placement (no position, no cursor move), the cell's foreground
+  colour carries the image id, its underline colour the placement id, the
+  diacritics the row and column, and `placeholder::decode` applies the spec's three
+  inheritance rules from the cell to the left. The renderer walks the visible rows
+  once and draws each placeholder cell's slice of the picture — so an image rides
+  along with text a program moves.
+- Verified on Xvfb with a 2x2 image in four colours and a 2x2 grid of
+  placeholders: the four cells came out red, green, blue and yellow. The
+  diacritic table is the protocol's own list (297 entries), not a formula.

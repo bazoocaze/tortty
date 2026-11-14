@@ -814,6 +814,12 @@ impl Term {
                     };
                 }
             }
+            // the cells just written replace whatever was there, marks included
+            // (`M-U`): one pass per run, and only when the row has any
+            if !row.marks.is_empty() {
+                row.marks
+                    .retain(|(c, _)| usize::from(*c) < cx || usize::from(*c) >= cx + n);
+            }
             self.last_char = run[i + n - 1] as char;
             self.dirty[cy] = true;
             i += n;
@@ -835,11 +841,31 @@ impl Term {
         self.wrap_pending = false;
     }
 
+    /// `M-U`: a combining mark has no cell of its own — it lands on the character
+    /// before the cursor and moves nothing. With nothing before it (start of the
+    /// grid) it is dropped rather than inventing a cell to hold it.
+    fn put_mark(&mut self, ch: char) {
+        let before = if self.cx > 0 {
+            Some((self.cy, self.cx - 1))
+        } else if self.cy > 0 {
+            Some((
+                self.cy - 1,
+                self.grid[self.cy - 1].cells.len().saturating_sub(1),
+            ))
+        } else {
+            None
+        };
+        if let Some((row, col)) = before {
+            if let Some(r) = self.grid.get_mut(row) {
+                r.add_mark(col, ch);
+            }
+        }
+    }
+
     fn put_char(&mut self, ch: char) {
         let w = ch.width().unwrap_or(1);
         if w == 0 {
-            // combining: a cell does not compose. Ignoring it beats drawing a
-            // box.
+            self.put_mark(ch);
             return;
         }
         if self.wrap_pending {
@@ -861,6 +887,8 @@ impl Term {
                 link: self.link,
             };
             self.grid[self.cy].cells[self.cx] = cell;
+            // the character that was there is gone, and its marks go with it
+            self.grid[self.cy].clear_marks(self.cx);
             if self.chrome_feed {
                 self.grid[self.cy].chrome = true;
             }
@@ -3080,11 +3108,7 @@ fn reflow(
             let mut chunk: Vec<Cell> = cells[*a..*b].to_vec();
             chunk.resize(cols, Cell::BLANK);
             let last = ci + 1 == chunks.len();
-            rows.push(Row {
-                cells: chunk,
-                wrapped: !last,
-                chrome: decoration[pi],
-            });
+            rows.push(Row::filled(chunk, !last, decoration[pi]));
         }
         for (k, (para, off)) in pts_at.iter().enumerate() {
             if *para == pi {
@@ -3239,6 +3263,30 @@ mod damage_precision_tests {
         t.clear_damage();
         t.feed(b"\x1b[2J");
         assert_eq!(marks(&t).1, "touch_all", "ED2 is the whole screen");
+    }
+}
+
+#[cfg(test)]
+mod compose_tests {
+    use super::*;
+
+    /// `M-U`: a combining mark composes into the cell before it instead of
+    /// taking one of its own.
+    #[test]
+    fn a_combining_mark_lands_on_the_character_before_it() {
+        let mut t = Term::new(10, 2);
+        t.feed("e\u{301}".as_bytes());
+        assert_eq!(t.grid[0].cells[0].ch, 'e');
+        assert_eq!(t.grid[0].marks_at(0), ['\u{301}']);
+        assert_eq!(t.cx, 1, "the mark takes no cell of its own");
+        assert_eq!(t.grid[0].cells[1].ch, ' ');
+        // more marks on the same cell keep arriving, up to the cap
+        t.feed("\u{302}\u{303}\u{304}".as_bytes());
+        assert_eq!(t.grid[0].marks_at(0).len(), crate::grid::MAX_MARKS);
+        // writing a new character over the cell replaces its marks
+        t.feed(b"\x08x");
+        assert_eq!(t.grid[0].cells[0].ch, 'x');
+        assert_eq!(t.grid[0].marks_at(0).len(), 0);
     }
 }
 

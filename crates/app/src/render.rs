@@ -167,6 +167,9 @@ pub struct Renderer {
     img_below: usize,
     /// Texture per image (id → bind group). The bind group keeps the texture alive.
     img_cache: HashMap<u32, ImgTex>,
+    /// Combining marks of the cell `draw_cell` is painting (`M-U`), and how many.
+    cur_marks: [char; tortty_core::grid::MAX_MARKS],
+    n_marks: usize,
     /// Grid instances, kept **per row**: only the dirty row is rebuilt
     /// (A17/G17). The final list (`instances`) is their concatenation plus the
     /// images, the chrome and the cursor, in blend order.
@@ -534,6 +537,8 @@ impl Renderer {
             img_layout,
             img_sampler,
             img_cache: HashMap::new(),
+            cur_marks: ['\0'; tortty_core::grid::MAX_MARKS],
+            n_marks: 0,
             per_line: Vec::new(),
             signature: crate::damage::Signature::default(),
             theme_gen: 0,
@@ -1337,40 +1342,14 @@ impl Renderer {
         // faint: the same tone with less opacity (Pango used alpha 0.55)
         let alpha = if cell.flags & FAINT != 0 { 0.55 } else { 1.0 };
 
-        if cell.ch != ' ' {
+        self.paint_glyph(cell, x, py, glyph, [c[0], c[1], c[2], alpha]);
+
+        // `M-U`: a combining mark has no cell of its own — it is drawn over the
+        // one it follows, at the same origin, which is where the font put it
+        if self.n_marks > 0 {
             let bold = cell.flags & BOLD != 0;
             let italic = cell.flags & ITALIC != 0;
-            let quad = glyph
-                .and_then(|(face, gid, _)| self.quad_gid(face, gid))
-                .or_else(|| self.glyph_quad(cell.ch, bold, italic));
-            let desloc = glyph.map_or(0.0, |(_, _, dx)| dx);
-            if let Some(q) = quad {
-                let mut gx = x as f32 * cw + desloc + q.left as f32;
-                let mut gw = q.w as f32;
-                // Box drawing and block elements are the glyphs that touch the
-                // neighbour's ink on purpose: at a fractional cell width the
-                // antialias of two neighbours meets with less than full ink, and
-                // a dim column shows at the seam. The quad goes half a pixel
-                // wider on each side, so the two coverages add up instead. A
-                // stroke (`│`) does not span the cell and stays where the advance
-                // puts it.
-                if tiles(cell.ch) && gw >= cw - 1.0 {
-                    gx = x as f32 * cw + desloc + q.left as f32 - 0.5;
-                    gw += 1.0;
-                }
-                let gy = py + ascent - q.top as f32;
-                // colour emoji gets no tinting: only the cell alpha
-                let (cor, target) = if q.color {
-                    ([1.0, 1.0, 1.0, alpha], &mut self.emoji_row)
-                } else {
-                    ([c[0], c[1], c[2], alpha], &mut self.instances)
-                };
-                target.push(Instance {
-                    rect: [gx, gy, gw, q.h as f32],
-                    color: cor,
-                    uv: q.uv,
-                });
-            }
+            self.paint_marks(x, py, [c[0], c[1], c[2], alpha], bold, italic);
         }
 
         // decoration colour: the text one, except SGR 58 (which does not invert)
@@ -1464,6 +1443,11 @@ impl Renderer {
         self.img_below = placed.iter().take_while(|p| p.z < 0).count();
         let mut quads: Vec<(u32, Instance)> = Vec::new();
         for pl in placed {
+            // `U=1` placements are prototypes: the grid's `U+10EEEE` cells below
+            // decide where the picture goes
+            if pl.placeholder {
+                continue;
+            }
             let y = pl.line + view;
             // off screen (above or below) does not become an instance
             if y >= lines || y + i32::from(pl.rows) <= 0 || usize::from(pl.col) >= cols {
@@ -1491,6 +1475,7 @@ impl Renderer {
                 },
             ));
         }
+        self.placeholder_cells(f, (cw, chh), &mut quads);
         // images the app deleted do not need a live texture
         self.img_cache
             .retain(|id, _| term.graphics.images().contains_key(id));
@@ -1508,6 +1493,134 @@ impl Renderer {
         if need > 0 {
             self.queue
                 .write_buffer(&self.img_buf, 0, bytemuck::cast_slice(&self.img_instances));
+        }
+    }
+
+    /// The glyph of one cell, with the two special cases it has: the half-pixel
+    /// overlap that makes box-drawing neighbours meet, and the placeholder cell,
+    /// whose private-use glyph is not drawn at all because an image goes there.
+    fn paint_glyph(
+        &mut self,
+        cell: &Cell,
+        x: usize,
+        py: f32,
+        glyph: Option<(usize, u16, f32)>,
+        colour: [f32; 4],
+    ) {
+        let cw = self.fonts.cw;
+        let ascent = self.fonts.ascent;
+        let alpha = colour[3];
+        let bold = cell.flags & tortty_core::cell::BOLD != 0;
+        let italic = cell.flags & tortty_core::cell::ITALIC != 0;
+        // the placeholder cell is a pixel of an image (`M-L`), which the image
+        // pass draws over it: the glyph itself would be a box
+        if cell.ch == ' ' || cell.ch == tortty_core::placeholder::PLACEHOLDER {
+            return;
+        }
+        let quad = glyph
+            .and_then(|(face, gid, _)| self.quad_gid(face, gid))
+            .or_else(|| self.glyph_quad(cell.ch, bold, italic));
+        let desloc = glyph.map_or(0.0, |(_, _, dx)| dx);
+        let Some(q) = quad else {
+            return;
+        };
+        let mut gx = x as f32 * cw + desloc + q.left as f32;
+        let mut gw = q.w as f32;
+        // Box drawing and block elements are the glyphs that touch the
+        // neighbour's ink on purpose: at a fractional cell width the antialias of
+        // two neighbours meets with less than full ink, and a dim column shows at
+        // the seam. The quad goes half a pixel wider on each side, so the two
+        // coverages add up instead. A stroke (`│`) does not span the cell and
+        // stays where the advance puts it.
+        if tiles(cell.ch) && gw >= cw - 1.0 {
+            gx -= 0.5;
+            gw += 1.0;
+        }
+        let gy = py + ascent - q.top as f32;
+        // colour emoji gets no tinting: only the cell alpha
+        let (cor, target) = if q.color {
+            ([1.0, 1.0, 1.0, alpha], &mut self.emoji_row)
+        } else {
+            (colour, &mut self.instances)
+        };
+        target.push(Instance {
+            rect: [gx, gy, gw, q.h as f32],
+            color: cor,
+            uv: q.uv,
+        });
+    }
+
+    /// The combining marks of the cell being drawn (`M-U`), in `cur_marks`.
+    fn paint_marks(&mut self, x: usize, py: f32, colour: [f32; 4], bold: bool, italic: bool) {
+        let cw = self.fonts.cw;
+        let ascent = self.fonts.ascent;
+        for i in 0..self.n_marks {
+            let Some(q) = self.glyph_quad(self.cur_marks[i], bold, italic) else {
+                continue;
+            };
+            self.instances.push(Instance {
+                rect: [
+                    x as f32 * cw + q.left as f32,
+                    py + ascent - q.top as f32,
+                    q.w as f32,
+                    q.h as f32,
+                ],
+                color: colour,
+                uv: q.uv,
+            });
+        }
+    }
+
+    /// `U=1` (`M-L`): a cell holding `U+10EEEE` is one pixel of an image whose
+    /// prototype placement says how many cells it spans. The cell's foreground
+    /// colour carries the image id, its underline colour the placement id, and the
+    /// diacritics the row and column — with the spec's inheritance from the cell
+    /// to the left, which is why this walks each row in order.
+    fn placeholder_cells(
+        &mut self,
+        f: &Frame<'_>,
+        cell: (f32, f32),
+        quads: &mut Vec<(u32, Instance)>,
+    ) {
+        use tortty_core::placeholder::{decode, uv, Cell as Where, PLACEHOLDER};
+        let (cw, chh) = cell;
+        let view = f.view_off;
+        for (row_index, row) in f.term.visible_rows(view).iter().enumerate() {
+            // the inheritance is only allowed from a neighbour with the same
+            // colours, so the colours are part of what is carried
+            let mut prev: Option<(Where, u32, u32)> = None;
+            for (col, c) in row.cells.iter().enumerate() {
+                if c.ch != PLACEHOLDER {
+                    prev = None;
+                    continue;
+                }
+                let id = ink_id(c.fg);
+                let pid = ink_id(c.ul_color);
+                let inherited = prev
+                    .filter(|(_, fg, ul)| *fg == id && *ul == pid)
+                    .map(|(cell, _, _)| cell);
+                let where_ = decode(row.marks_at(col), inherited);
+                prev = Some((where_, id, pid));
+                let Some(vpl) = f.term.graphics.placeholder(where_.image(id), pid) else {
+                    continue;
+                };
+                let Some(img) = f.term.graphics.images().get(&vpl.image_id) else {
+                    continue;
+                };
+                if !self.ensure_texture(img) {
+                    continue;
+                }
+                #[allow(clippy::cast_precision_loss)]
+                let rect = [col as f32 * cw, row_index as f32 * chh, cw, chh];
+                quads.push((
+                    vpl.image_id,
+                    Instance {
+                        rect,
+                        color: [1.0, 1.0, 1.0, 1.0],
+                        uv: uv(where_, vpl.cols, vpl.rows),
+                    },
+                ));
+            }
         }
     }
 
@@ -1981,6 +2094,12 @@ impl Renderer {
                 };
                 self.cur_mark = self.mark_at(y, cx);
                 let swap = self.cur_mark == 0 && is_swap(&c, sel, y, cx);
+                // the marks of this cell, for `draw_cell` (a field instead of a
+                // seventh parameter, the way `cur_mark` already works)
+                let marks = row.marks_at(cx);
+                let n = marks.len().min(tortty_core::grid::MAX_MARKS);
+                self.cur_marks[..n].copy_from_slice(&marks[..n]);
+                self.n_marks = n;
                 self.draw_cell(&c, cx, py, swap, glyph, links);
             }
             x = end;
@@ -2309,6 +2428,18 @@ fn corner_mask(side: u32) -> Vec<u8> {
         }
     }
     out
+}
+
+/// A cell colour read as a number, which is how a placeholder cell names its
+/// image (the foreground) and its placement (the underline): true colour carries
+/// 24 bits, the palette one byte, and the default colour names nothing.
+fn ink_id(colour: tortty_core::color::Color) -> u32 {
+    use tortty_core::color::Color;
+    match colour {
+        Color::Rgb(r, g, b) => (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b),
+        Color::Idx(i) => u32::from(i),
+        Color::Default => 0,
+    }
 }
 
 /// The picture to upload for an image: its current animation frame (`B2`),

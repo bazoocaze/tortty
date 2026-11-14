@@ -166,6 +166,11 @@ pub struct Placement {
     /// pixels — the whole image when the keys are absent. The cells (`c`/`r`)
     /// are the destination; this is what is cropped out of the picture.
     pub crop: (u32, u32, u32, u32),
+    /// `U=1`: a **virtual** placement. It has no position of its own — it is the
+    /// prototype the `U+10EEEE` cells of the grid display, and the picture is
+    /// drawn wherever those cells are. A virtual placement is never drawn by
+    /// itself and never moves the cursor.
+    pub placeholder: bool,
 }
 
 impl Placement {
@@ -274,6 +279,17 @@ impl Graphics {
         &self.placements
     }
 
+    /// The virtual placement (`U=1`) a placeholder cell asks for: the one whose
+    /// image is `id` and whose placement id is `pid` — or, when the cell names no
+    /// placement (`pid == 0`), any virtual placement of that image, which is what
+    /// the spec allows.
+    #[must_use]
+    pub fn placeholder(&self, id: u32, pid: u32) -> Option<&Placement> {
+        self.placements
+            .iter()
+            .find(|p| p.placeholder && p.image_id == id && (pid == 0 || p.id == pid))
+    }
+
     /// `ED 3` (H13): no image survives.
     pub fn clear(&mut self) {
         self.images.clear();
@@ -347,6 +363,10 @@ impl Graphics {
         );
         let pid = u32::try_from(num("p").unwrap_or(0)).unwrap_or(0);
         let depth = i32::try_from(num("z").unwrap_or(0)).unwrap_or(0);
+        // `U=1`: the placement is a prototype for Unicode placeholder cells, so
+        // it has no cell of its own (`M-L`). The `c`/`r` above are the size of the
+        // placeholder grid the picture is cut into.
+        let placeholder = kv.get("U").is_some_and(|u| u == "1");
         // a placement id is unique per image: reusing it moves that placement
         // instead of adding another one
         if pid != 0 {
@@ -364,6 +384,7 @@ impl Graphics {
             dx: i32::try_from(num("X").unwrap_or(0)).unwrap_or(0),
             dy: i32::try_from(num("Y").unwrap_or(0)).unwrap_or(0),
             crop: (x, y, w, h),
+            placeholder,
         });
         Some(rows)
     }
@@ -563,8 +584,10 @@ impl Graphics {
                         } else {
                             vec![format!("Gi={ident};OK").into_bytes()]
                         },
-                        lines: rows,
-                        move_cursor: param("C") != Some("1"),
+                        // `U=1` is a prototype for the grid's placeholder cells:
+                        // it has no place on screen, so nothing moves
+                        lines: if param("U") == Some("1") { 0 } else { rows },
+                        move_cursor: param("C") != Some("1") && param("U") != Some("1"),
                         ..Output::default()
                     }
                 },
@@ -627,8 +650,9 @@ impl Graphics {
         if kv.get("a").is_some_and(|a| a == "T") {
             match self.place(&img, kv, cursor, cell) {
                 Some(rows) => {
-                    out.lines = rows;
-                    out.move_cursor = kv.get("C").is_none_or(|c| c != "1");
+                    let virt = kv.get("U").is_some_and(|u| u == "1");
+                    out.lines = if virt { 0 } else { rows };
+                    out.move_cursor = !virt && kv.get("C").is_none_or(|c| c != "1");
                 },
                 // the image was stored (it is what `transmit` does); only the
                 // placement of a rectangle that does not fit is refused
@@ -1079,6 +1103,36 @@ mod checks_graphics {
         let out = g.handle(second.as_bytes(), (0, 0), cell());
         assert_eq!(out.responses, [b"Gi=5;OK".to_vec()]);
         assert_eq!(g.images()[&5].data, [9, 8, 7, 255].repeat(4));
+    }
+
+    /// `U=1` (`M-L`): a placement that is a prototype for the grid's placeholder
+    /// cells. It is not drawn by itself and does not move the cursor, and the
+    /// cells find it by image id and placement id.
+    #[test]
+    fn a_virtual_placement_is_found_by_the_placeholder_cells() {
+        let mut g = Graphics::new();
+        let body = format!("Ga=t,f=32,s=2,v=2,i=42,q=2;{}", rgba2x2());
+        let out = g.handle(body.as_bytes(), (0, 0), cell());
+        assert_eq!(
+            out.responses,
+            Vec::<Vec<u8>>::new(),
+            "q=2 says nothing back"
+        );
+        assert_eq!(g.placements().len(), 0);
+        let virt = g.handle(b"Ga=p,U=1,i=42,c=3,r=2", (4, 2), cell());
+        assert_eq!(virt.lines, 0, "a virtual placement takes no rows");
+        assert!(!virt.move_cursor, "and does not touch the cursor");
+        let p = g.placeholder(42, 0).expect("the cells find it");
+        assert_eq!((p.image_id, p.cols, p.rows), (42, 3, 2));
+        assert!(p.placeholder, "and it knows it is not a real placement");
+        // a placement id names one of them when an image has several
+        g.handle(b"Ga=p,U=1,i=42,p=7,c=1,r=1", (4, 2), cell());
+        assert_eq!(g.placeholder(42, 7).map(|p| p.cols), Some(1));
+        assert_eq!(g.placeholder(42, 0).map(|p| p.cols), Some(3), "any of them");
+        assert!(g.placeholder(41, 0).is_none(), "another image has none");
+        // and a real placement is never a prototype
+        g.handle(b"Ga=p,i=42,c=1,r=1", (0, 0), cell());
+        assert_eq!(g.placeholder(42, 0).map(|p| p.cols), Some(3));
     }
 
     /// `a=f` adds frames to an image and `a=a` says what to do with them; the
