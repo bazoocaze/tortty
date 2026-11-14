@@ -1129,3 +1129,31 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   flag shows a clean screen; `less` shows no picture while it is up, and the
   picture is back — same line, same pixels — after quitting it. Three core tests:
   erase by row/chars, history survives a clear, alt screen isolation.
+
+## 2026-11-14 — `chafa` in the other two formats (`B3`, 1.0.86)
+
+- Reported against 1.0.85: `chafa -f kitty` and `chafa -f iterm` drew nothing —
+  sixel and `cat`ing the raw sequence worked, so the picture path was fine; both
+  producers were refused by two separate defects.
+- **Kitty**: `chafa` base64-encodes each chunk of a transmission **on its own**, so
+  the padding sits in the middle of the joined string and the strict decoder
+  answered `EINVAL:base64` to every third chunk (137 refusals over one 384×136
+  picture, zero images). The chunks are now decoded as they arrive, a padded chunk
+  taken whole and an unpadded one handing its leftover characters to the next; the
+  base64 engine allows the spare bits of the last symbol to be non-zero, which is
+  how `chafa` writes them (proven on a real capture: 408 chunks, 208 896 bytes,
+  exactly `384×136×4`).
+- **iTerm2**: `chafa -f iterm` sends an **uncompressed TIFF** (`II*\0`, pixels
+  first, IFD at `0x1808`), not the PNG `imgcat` sends, and the PNG reader refused
+  it as "not the size it claims". New `crates/core/src/tiff.rs` reads what that
+  writer produces — strips, eight bits per sample, no compression, either byte
+  order — and hands the pixels to the existing `f=32` RGBA path, so placement,
+  crop, `z=` and the rest did not learn a new format. A compressed TIFF is refused
+  with a reason instead of guessed at.
+- The iTerm2 cursor no longer stays inside the picture: `inline=1` takes the cells
+  it covers, the same rule sixel got in 1.0.84 — `chafa` sends one `\r\n` and
+  expects the terminal to have moved.
+- Verified on Xvfb with the owner's own `brazil_flag.png`: both formats draw
+  (1 image, 1 placement, 23×8 cells) and the prompt lands under the picture.
+  `chafa` never reads its own stdin (`strace`: zero `read(0)`), so the correct
+  `Gi=…;OK` reply is echoed by the shell — its bug, now in `docs/EXTERNALS.md`.

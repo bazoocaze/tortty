@@ -172,6 +172,14 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   8.5 M px is refused, one taller than the whole grid is clipped at the top (it
   could not fit either way), and since sixel has no id and no `d=` at most 64
   pictures are kept — the oldest goes with its placements.
+- **The kitty protocol takes the chunks the producers really send** (`1.0.86`):
+  the payload of a transmission may be cut in pieces, and `chafa` base64-encodes
+  **each piece on its own** — the padding therefore lands in the middle and a
+  decoder that joins first refuses everything (`EINVAL:base64` on every third
+  chunk, and no picture). The pieces are decoded as they arrive, so a piece that
+  pads itself and a piece that does not are both taken; the spare bits of the
+  last symbol are not required to be zero, which is how `chafa` writes them.
+  **limit:** the whole transmission is capped at 64 MiB, like a single one.
 - **A picture lives in its cells** (`B3`, reported against `1.0.84`): `ED`/`EL`/
   `ECH` erase the cells, so they take the picture covering them — `clear` no
   longer leaves the last `chafa` behind, and a full-screen app that paints over
@@ -184,10 +192,14 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   cell loses the placement (the bytes stay until the `d=` or the keep cap).
 - iTerm2's inline image (`OSC 1337;File=…:base64`, what `imgcat` sends): the
   bytes are placed on the cursor cell through the same direct transmission, with
-  `width`/`height` in cells, in `px`, in `%` of the grid or `auto`. **limit:**
-  `inline=1` only — `inline=0` (the protocol's default) asks the terminal to write
-  the file into the cwd, and the bytes come from the child, so it is refused with
-  a notice; no `SetMark`/`CurrentDir` either.
+  `width`/`height` in cells, in `px`, in `%` of the grid or `auto`, and **the
+  cursor ends below the picture** (it takes the cells it covers). Two payload
+  shapes are read: a **PNG** (`imgcat`) and an **uncompressed TIFF**, which is
+  what `chafa -f iterm` writes instead (`1.0.86`). **limit:** `inline=1` only —
+  `inline=0` (the protocol's default) asks the terminal to write the file into the
+  cwd, and the bytes come from the child, so it is refused with a notice; a JPEG
+  or a compressed TIFF is refused with a notice as well (one decoder, no zlib
+  inside a container that is not a PNG); no `SetMark`/`CurrentDir` either.
 - **Animation** (`B2`): `a=f` sends a rectangle of a frame — `x=`/`y=` where it
   goes, `X=1` overwrite or alpha-blend, `Y=` the canvas colour, `c=` the frame it
   is drawn over, `r=` paints into a frame that already exists, `z=` the gap before

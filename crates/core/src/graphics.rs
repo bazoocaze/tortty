@@ -19,7 +19,7 @@
 
 use std::collections::HashMap;
 
-use crate::sixel;
+use crate::{sixel, tiff};
 
 /// Cap on the buffer of a chunked transmission: an app that opens an `m=1` and
 /// never closes it cannot grow forever (here the parser is
@@ -274,7 +274,10 @@ pub struct Graphics {
 }
 
 struct Buf {
-    b64: String,
+    /// The bytes decoded so far, chunk by chunk.
+    data: Vec<u8>,
+    /// The characters of the last chunk that did not complete a group of four.
+    tail: String,
     kv: HashMap<String, String>,
 }
 
@@ -472,19 +475,39 @@ impl Graphics {
         let new = self.buf.is_none();
         if new {
             self.buf = Some(Buf {
-                b64: String::new(),
+                data: Vec::new(),
+                tail: String::new(),
                 kv: cur.clone(),
             });
         }
         if let Some(buf) = self.buf.as_mut() {
-            if buf.b64.len() + payload.len() > MAX_APC {
+            if buf.data.len() + buf.tail.len() + payload.len() > MAX_APC {
                 self.buf = None;
                 return Output {
                     responses: vec![b"Gi=0;EINVAL:too big".to_vec()],
                     ..Output::default()
                 };
             }
-            buf.b64.push_str(payload);
+            // Base64 decodes in groups of four, and the senders do not agree on
+            // where to cut: the kitty clients cut at 4096 characters and let the
+            // string carry on, while `chafa` encodes each chunk on its own and so
+            // **pads every chunk** — joined into one string, those `=` are
+            // "excess data after padding" and the whole transmission was refused
+            // (`chafa -f kitty` against `1.0.85`). Decoding chunk by chunk takes
+            // both: a padded chunk is complete in itself, an unpadded one hands
+            // its leftover characters to the next.
+            let mut pending = std::mem::take(&mut buf.tail);
+            pending.push_str(payload);
+            let usable = pending.len() - pending.len() % 4;
+            if usable > 0 {
+                let Some(bytes) = base64_decode(&pending[..usable]) else {
+                    let kv = buf.kv.clone();
+                    self.buf = None;
+                    return Self::error(&kv, "EINVAL:base64");
+                };
+                buf.data.extend_from_slice(&bytes);
+            }
+            buf.tail = pending[usable..].to_string();
         }
         if cur.get("m").is_some_and(|m| m == "1") {
             return Output::default(); // there is still a chunk coming
@@ -493,9 +516,11 @@ impl Graphics {
             return Output::default();
         };
         let kv = buf.kv;
-        let Some(data) = base64_decode(&buf.b64) else {
+        if !buf.tail.is_empty() {
+            // a cut inside a group of four that nothing completed
             return Self::error(&kv, "EINVAL:base64");
-        };
+        }
+        let data = buf.data;
         let param = |k: &str| kv.get(k).map(String::as_str);
         let action = param("a").unwrap_or("t");
         let medium = param("t").unwrap_or("d");
@@ -1019,6 +1044,21 @@ impl Graphics {
                 ..Output::default()
             };
         }
+        // `imgcat` sends a PNG; `chafa -f iterm` sends an **uncompressed TIFF**,
+        // which the PNG reader below cannot size and so refused with "not the size
+        // it claims". It is decoded here and handed on as the raw RGBA the kitty
+        // `f=32` path already takes, so nothing downstream learns a new format.
+        let (data, tiff_size) = if tiff::is_tiff(&data) {
+            let Some((w, h, rgba)) = tiff::rgba(&data) else {
+                return Output {
+                    refused: Some("the TIFF is not one we decode (compression or depth)"),
+                    ..Output::default()
+                };
+            };
+            (rgba, Some((w, h)))
+        } else {
+            (data, None)
+        };
         // the full-size cells are what the placement counts in, so a bare
         // `width`/`height` means the terminal's cells
         let cw = cell.0.max(1);
@@ -1042,12 +1082,17 @@ impl Graphics {
             };
             u16::try_from(out).ok()
         };
+        if let Some((w, h)) = tiff_size {
+            kv.insert("s".to_string(), w.to_string());
+            kv.insert("v".to_string(), h.to_string());
+        }
         let (iw, ih) = Self::image_size(&kv, &data).map_or((0, 0), |(w, h, _)| (w, h));
-        // a display transmission, without the kitty reply and without moving the
-        // cursor: iTerm2 draws over the cells and the program's own newline
-        // decides where the text goes on
+        // A display transmission, without the kitty reply. The cursor **ends below
+        // the picture**: an inline image takes the cells it covers, and `chafa`
+        // sends one `\r\n` after it — a terminal that keeps the cursor where it
+        // was prints the prompt over the picture (the same report that came with
+        // sixel in `1.0.83`).
         kv.insert("a".to_string(), "T".to_string());
-        kv.insert("C".to_string(), "1".to_string());
         if let Some(c) = cells(kv.get("width").map(String::as_str), grid.0, cw, iw) {
             kv.insert("c".to_string(), c.to_string());
         }
@@ -1159,13 +1204,22 @@ pub fn png_size(data: &[u8]) -> (u32, u32) {
     (w, h)
 }
 
-/// base64 with optional padding (the app may send it unpadded): `None` = skewed.
+/// base64 as the producers actually send it: padded or not, and with the spare
+/// bits of the last symbol left as they fell. `chafa` pads every chunk of a kitty
+/// transmission and does not zero those bits, and a strict decoder answered
+/// `EINVAL:base64` to every third chunk — the picture never arrived.
 pub(crate) fn base64_decode(text: &str) -> Option<Vec<u8>> {
+    use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig};
+    use base64::engine::DecodePaddingMode;
     use base64::Engine as _;
     let clean: String = text.chars().filter(|c| !c.is_whitespace()).collect();
-    base64::engine::general_purpose::STANDARD_NO_PAD
-        .decode(clean.trim_end_matches('='))
-        .ok()
+    let engine = GeneralPurpose::new(
+        &base64::alphabet::STANDARD,
+        GeneralPurposeConfig::new()
+            .with_decode_padding_mode(DecodePaddingMode::Indifferent)
+            .with_decode_allow_trailing_bits(true),
+    );
+    engine.decode(clean).ok()
 }
 
 /// `o=z`: zlib (not gzip, not raw deflate) — it is what kitty sends.
@@ -1240,6 +1294,73 @@ mod checks_graphics {
         let out = g.handle(second.as_bytes(), (0, 0), cell());
         assert_eq!(out.responses, [b"Gi=5;OK".to_vec()]);
         assert_eq!(g.images()[&5].data, [9, 8, 7, 255].repeat(4));
+    }
+
+    /// `chafa -f iterm` sends an **uncompressed TIFF**, not a PNG: it is decoded
+    /// into raw RGBA and placed through the same path `f=32` uses.
+    #[test]
+    fn iterm_takes_the_tiff_chafa_sends() {
+        // 2x2 RGB: red, green / blue, white, in the layout chafa writes (pixels
+        // first, the IFD after them)
+        let px: Vec<u8> = vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
+        let mut t = Vec::new();
+        t.extend_from_slice(b"II*\0");
+        t.extend_from_slice(&u32::try_from(8 + px.len()).unwrap_or(0).to_le_bytes());
+        t.extend_from_slice(&px);
+        let entries: [(u16, u16, u32, u32); 9] = [
+            (256, 4, 1, 2),
+            (257, 4, 1, 2),
+            (258, 3, 3, 0),
+            (259, 3, 1, 1),
+            (262, 3, 1, 2),
+            (273, 4, 1, 8),
+            (277, 3, 1, 3),
+            (278, 4, 1, 2),
+            (279, 4, 1, 12),
+        ];
+        let bits_at = u32::try_from(8 + px.len() + 2 + entries.len() * 12 + 4).unwrap_or(0);
+        t.extend_from_slice(&u16::try_from(entries.len()).unwrap_or(0).to_le_bytes());
+        for (tag, kind, count, value) in entries {
+            t.extend_from_slice(&tag.to_le_bytes());
+            t.extend_from_slice(&kind.to_le_bytes());
+            t.extend_from_slice(&count.to_le_bytes());
+            let value = if tag == 258 { bits_at } else { value };
+            t.extend_from_slice(&value.to_le_bytes());
+        }
+        t.extend_from_slice(&0u32.to_le_bytes());
+        for _ in 0..3 {
+            t.extend_from_slice(&8u16.to_le_bytes());
+        }
+        let arg = format!("File=inline=1;width=2;height=2:{}", b64(&t));
+        let mut g = Graphics::new();
+        let out = g.iterm(arg.as_bytes(), (1, 1), cell(), (40, 12));
+        assert_eq!(out.refused, None, "a chafa TIFF is taken");
+        let img = g.images().values().next().expect("one image");
+        assert_eq!((img.width, img.height), (2, 2));
+        assert_eq!(img.format, Format::Rgba);
+        assert_eq!(
+            img.data,
+            [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255]
+        );
+    }
+
+    /// `chafa -f kitty` encodes **each chunk on its own** and so pads each one:
+    /// joined, the payload carries `=` in the middle and a single decode refuses
+    /// it as "excess data after padding". Decoding chunk by chunk takes it.
+    #[test]
+    fn chunks_padded_one_by_one_are_taken() {
+        let mut g = Graphics::new();
+        // two rows of two pixels, each row encoded (and padded) on its own
+        let row = b64(&[9, 8, 7, 255].repeat(2));
+        assert!(row.ends_with('='), "chafa pads the chunk: {row}");
+        let first = format!("Ga=t,f=32,s=2,v=2,i=7,m=1;{row}");
+        let out = g.handle(first.as_bytes(), (0, 0), cell());
+        assert_eq!(out.responses.len(), 0, "a chunk does not answer");
+        let second = format!("Gm=1;{row}");
+        g.handle(second.as_bytes(), (0, 0), cell());
+        let out = g.handle(b"Gm=0", (0, 0), cell());
+        assert_eq!(out.responses, [b"Gi=7;OK".to_vec()], "the trailing `m=0`");
+        assert_eq!(g.images()[&7].data, [9, 8, 7, 255].repeat(4));
     }
 
     /// `B3`: sixel has no id and no `d=`, so the map cannot grow forever: the
@@ -1739,7 +1860,8 @@ mod checks_graphics {
     #[test]
     fn iterm_inline_places_the_image_at_the_cursor() {
         // `B3`: the iTerm2 payload is a PNG in base64, `inline=1`, and it lands
-        // on the cell the cursor was on — the same placements list as kitty
+        // on the cell the cursor was on — the same placements list as kitty. The
+        // cursor ends on the row below it, where `chafa` adds its own `\r\n`.
         let mut g = Graphics::new();
         let body = format!(
             "File=name={};inline=1;width=2;height=1:{}",
@@ -1749,7 +1871,8 @@ mod checks_graphics {
         let out = g.iterm(body.as_bytes(), (3, 4), cell(), (80, 24));
         assert!(out.responses.is_empty(), "iTerm2 has no reply channel");
         assert_eq!(out.refused, None);
-        assert!(!out.move_cursor, "the program's own newline decides");
+        assert!(out.move_cursor, "the picture takes the row it covers");
+        assert_eq!(out.lines, 1, "one cell row of picture, one line down");
         let p = g.placements();
         assert_eq!(p.len(), 1);
         assert_eq!((p[0].col, p[0].line, p[0].cols, p[0].rows), (3, 4, 2, 1));

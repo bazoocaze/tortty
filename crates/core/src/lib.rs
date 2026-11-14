@@ -22,6 +22,7 @@ pub mod sixel;
 pub mod snapshot;
 pub mod status;
 pub mod term;
+pub mod tiff;
 
 pub use cell::Cell;
 pub use color::Color;
