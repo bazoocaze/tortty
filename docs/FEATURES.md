@@ -325,17 +325,16 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   ctrl+shift+y new_tab` re-binds, `unmap ctrl+shift+w` frees the chord so the
   program sees the key again. Nineteen actions (copy, paste, tab and workspace
   open/close, prompt walk, config, the four scroll moves, `select_tab`/
-  `select_workspace` with a number, the workspace walk and carry); the defaults
-  are the chords that existed. **limit:** chord + action only — no sequences, no
-  per-program tables — and a digit under `Ctrl`/`Alt`/`Super` is read from the
-  physical key, so a non-QWERTY layout reaches the same number.
-- Shortcuts: Ctrl+Shift+T/W/N/Q/F2 (`F2` is the config in the editor, under
-  *Configuration*), Ctrl+Shift+Up/Down (previous/next prompt mark),
-  Ctrl+Shift+1…9, Alt+1…9, Super+N/Q/1…9, Super+Up/Down
-  (previous/next workspace) and Super+Shift+Up/Down (move the front
-  workspace), with the digit taken
-  from the physical key so ABNT2 layouts still work.
-  **limit:** they are fixed, no remapping yet (`M-H`).
+  `select_workspace` with a number, the workspace walk and carry). **The defaults
+  are `map` lines in the defaults file itself** — fifty of them, one per chord,
+  the same syntax you write: `Ctrl+Shift+C/V/T/W/N/Q`, `Ctrl+Shift+Up/Down/F/F2`,
+  `Shift+PgUp/PgDn/Home/End`, `Alt+1`…`0` (tab), `Ctrl+Shift+1`…`0` and
+  `Super+1`…`0` (workspace), `Super+N/Q`, `Super+Up/Down` and
+  `Super+Shift+Up/Down`. Deleting a line frees the key (no `unmap` needed), and
+  the auto-reload reparses from that base, so an edit takes effect without a
+  restart. **limit:** chord + action only — no sequences, no per-program tables —
+  and a digit under `Ctrl`/`Alt`/`Super` is read from the physical key, so a
+  non-QWERTY layout reaches the same number.
 - Geometry: 980×640 without state, size restored, maximized tracked separately
   from the normal size, invalid geometry rejected; the workspaces and tabs of the
   last session come back with the workspace and tab that were in front, each

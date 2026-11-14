@@ -399,8 +399,12 @@ impl Config {
         Config::parse_text(&Config::base(), text)
     }
 
-    /// Like `parse`, but starting from an arbitrary configuration (this is the
-    /// reload: the one in effect is the base).
+    /// Like `parse`, but starting from an arbitrary configuration.
+    ///
+    /// Not the shape of the reload: that one rebuilds from `Config::base()`
+    /// (`cli::Options::build`), so a `map` line deleted from the file frees the
+    /// chord at once (`B63`-era fix). Stacking on the configuration in force
+    /// would keep the old chord alive until the next start.
     #[must_use]
     pub fn over(&self, text: &str) -> (Config, Vec<Error>) {
         Config::parse_text(self, text)
