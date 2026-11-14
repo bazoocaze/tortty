@@ -328,6 +328,18 @@ fn tally(t: &tortty_core::term::SyncTrace) -> String {
 /// The split matters because of F4: with N live tabs at once, each pty keeps
 /// reading; only what is "looking" (scrolling, selection) stays frozen in the
 /// tab that is not active.
+/// The grid's context menu (`M-V`), open at the pointer.
+struct MenuState {
+    /// Where it was opened, in window px: the box hangs from this cell.
+    at: (f64, f64),
+    /// The `OSC 8` target under the pointer when it opened, if any.
+    link: Option<String>,
+    /// Which rows were usable, in the order of `chrome::MENU`.
+    enabled: Vec<bool>,
+    /// The row the pointer is on, for the highlight.
+    hover: Option<usize>,
+}
+
 pub struct Tab {
     /// Tab identity, monotonic and unique per run. The per-line damage
     /// (A17/G17) stores per-line instances of the `Renderer`, so switching tabs
@@ -671,6 +683,8 @@ pub struct App {
     /// Button currently held, to report release/motion with it.
     held: Option<u8>,
     clip: Clip,
+    /// The grid's context menu (`M-V`), when it is open.
+    menu_open: Option<MenuState>,
     /// Wakes the loop when pty data arrives (the child is born after the
     /// window, when the grid is already the final one).
     wake: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -787,6 +801,7 @@ impl App {
             cursor_px: (0.0, 0.0),
             held: None,
             clip: Clip::new(),
+            menu_open: None,
             wake: None,
             spawned: false,
             cfg_mtime,
@@ -1087,6 +1102,121 @@ impl App {
     /// scrolls from (`B55`), and the layout simply has no slot there.
     fn card_at(&self, px: f64, py: f64) -> Option<usize> {
         self.chrome_layout().card_at(px, py)
+    }
+
+    /// The grid's context menu (`M-V`), when it is open. The geometry is built on
+    /// demand from the pointer's cell, so it can never go stale; what is kept here
+    /// is what the menu was opened **on** (the link under the pointer) and the
+    /// rows that were usable at that moment.
+    /// Opens the menu at the pointer. `enabled` is decided once, when it opens:
+    /// whether there is a selection to copy and whether there is a link to open
+    /// belong to the click, not to the frame.
+    fn open_menu(&mut self) {
+        let (col, row) = self.cell_at(self.cursor_px.0, self.cursor_px.1);
+        let link = self.link_at(row, col);
+        let copy = self.selection_text().is_some_and(|s| !s.trim().is_empty());
+        self.menu_open = Some(MenuState {
+            at: self.cursor_px,
+            link: link.clone(),
+            enabled: vec![copy, true, link.is_some(), true],
+            hover: None,
+        });
+        self.redraw();
+    }
+
+    fn close_menu(&mut self) {
+        if self.menu_open.take().is_some() {
+            self.redraw();
+        }
+    }
+
+    /// Runs row `i` of the menu (the order of `chrome::MENU`).
+    fn menu_action(&mut self, i: usize) {
+        let Some(state) = self.menu_open.take() else {
+            return;
+        };
+        if !state.enabled.get(i).copied().unwrap_or(false) {
+            self.redraw();
+            return;
+        }
+        match i {
+            0 => self.copy(),
+            1 => self.paste(),
+            2 => {
+                if let Some(uri) = state.link {
+                    self.open_link(&uri);
+                }
+            },
+            _ => self.new_tab(),
+        }
+        self.redraw();
+    }
+
+    /// Keys of the open menu: arrows walk the rows, `Enter` runs the one under
+    /// the hand, `Escape` closes. Anything else closes it and goes on its way
+    /// (the child keeps its keyboard).
+    fn menu_key(&mut self, k: &KeyIn<'_>) -> bool {
+        let Some(state) = self.menu_open.as_mut() else {
+            return false;
+        };
+        let usable: Vec<usize> = (0..state.enabled.len())
+            .filter(|i| state.enabled[*i])
+            .collect();
+        match k.named {
+            Some(NamedKey::Escape) => {
+                self.close_menu();
+                true
+            },
+            Some(NamedKey::Enter | NamedKey::Space) => {
+                if let Some(i) = state.hover.or_else(|| usable.first().copied()) {
+                    self.menu_action(i);
+                } else {
+                    self.close_menu();
+                }
+                true
+            },
+            Some(NamedKey::ArrowDown | NamedKey::ArrowUp) => {
+                let down = k.named == Some(NamedKey::ArrowDown);
+                let at = state
+                    .hover
+                    .and_then(|h| usable.iter().position(|i| *i == h));
+                let next = match (at, down) {
+                    (Some(i), true) => usable
+                        .get(i + 1)
+                        .copied()
+                        .or_else(|| usable.first().copied()),
+                    (Some(i), false) => i
+                        .checked_sub(1)
+                        .and_then(|p| usable.get(p).copied())
+                        .or_else(|| usable.last().copied()),
+                    (None, _) => usable.first().copied(),
+                };
+                state.hover = next;
+                self.redraw();
+                true
+            },
+            _ => {
+                self.close_menu();
+                false
+            },
+        }
+    }
+
+    /// What the renderer needs to draw the open menu (`M-V`).
+    fn menu_view(&self) -> Option<crate::render::MenuView> {
+        let state = self.menu_open.as_ref()?;
+        Some(crate::render::MenuView {
+            layout: self.menu_layout()?,
+            enabled: state.enabled.clone(),
+            hover: state.hover,
+        })
+    }
+
+    /// The chrome layout of the menu (built from the pointer each time).
+    fn menu_layout(&self) -> Option<crate::chrome::Menu> {
+        self.menu_open
+            .as_ref()
+            .map(|m| crate::chrome::Menu::build(self.chrome_metrics(), m.at))
     }
 
     /// The pointer is on the sidebar column (`B42`).
@@ -1430,6 +1560,12 @@ impl App {
         if self.search_key(k) {
             return true;
         }
+        // the context menu takes Escape, the arrows, Enter and Space, and any
+        // other key closes it (`M-V`) — a menu that swallows the keyboard is a
+        // dialog, and this is not one
+        if self.menu_open.is_some() && self.menu_key(k) {
+            return true;
+        }
         // The shortcut table (`M-H`): one lookup, no `match` on the key here. A
         // chord nobody bound reaches the encoder (and the child).
         if let Some(chord) = k.chord() {
@@ -1548,6 +1684,30 @@ impl App {
             if self.toast_clicked(self.cursor_px.0, self.cursor_px.1) {
                 return;
             }
+        }
+        // `M-V`: the menu is above everything it covers, for both buttons — a
+        // release must not reach a child whose press it never saw
+        if self.menu_open.is_some() {
+            if state == ElementState::Pressed && btn == crate::mouse::LEFT {
+                match self.menu_layout().and_then(|m| {
+                    m.row_at(self.chrome_metrics(), self.cursor_px.0, self.cursor_px.1)
+                }) {
+                    Some(i) => self.menu_action(i),
+                    None => self.close_menu(),
+                }
+            } else if state == ElementState::Pressed {
+                self.close_menu();
+            }
+            return;
+        }
+        // the grid's own menu: right button, unless the child asked for the
+        // mouse (then the button is the child's, and Shift asks for ours)
+        if btn == crate::mouse::RIGHT
+            && state == ElementState::Pressed
+            && (self.mods.shift_key() || self.tabs[self.active].term.mouse_mode == 0)
+        {
+            self.open_menu();
+            return;
         }
         // Alt+Left drags a local block selection instead of reporting to the
         // child (`B5` already gives Alt that meaning without the mouse). The
@@ -2742,6 +2902,7 @@ impl App {
             None
         };
         let search = self.search_view();
+        let menu = self.menu_view();
         let frame = crate::render::Frame {
             tab: self.tabs[self.active].id,
             term: &self.tabs[self.active].term,
@@ -2754,6 +2915,7 @@ impl App {
             cards_off: self.card_off,
             links: self.mods.control_key(),
             search: search.as_ref(),
+            menu: menu.as_ref(),
         };
         let drew = {
             let Some(renderer) = self.renderer.as_mut() else {

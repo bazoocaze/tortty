@@ -78,6 +78,14 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   across a resize by its two corners (the reflow does not re-derive the
   rectangle), and with the child asking for the mouse a plain drag is reported
   to it instead — Alt+drag still selects a block.
+- Context menu (`M-V`): the right button on the grid opens it — **Copy**,
+  **Paste**, **Open link** and **New tab** — and it is chrome from the `M-Q`
+  layout (a chip like the search bar's, hanging from the pointer's cell and
+  flipping up when the bottom would cut it). The arrow keys walk the usable rows,
+  `Enter` runs one, `Escape` or any other key closes it, and a row that cannot be
+  used (no selection, no link under the pointer) is drawn dim and does nothing.
+  **limit:** with the child asking for the mouse the button is the child's —
+  `Shift`+right opens the menu then.
 - Clipboard: PRIMARY on release, CLIPBOARD with `copy_on_select`,
   Ctrl+Shift+C/V, button 2 pastes PRIMARY, bracketed paste, `OSC 52` from the
   child (`c` sets CLIPBOARD, `p` PRIMARY — the `ssh` copy). **limit:** PRIMARY

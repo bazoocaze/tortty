@@ -1123,6 +1123,63 @@ impl Renderer {
             .unwrap_or(0)
     }
 
+    /// The grid's context menu (`M-V`): a chip like the search bar's — the same
+    /// opaque surface, so the grid behind it does not read through — with one row
+    /// per item and the row under the pointer filled in.
+    fn menu(&mut self, mv: &MenuView) {
+        let cw = self.fonts.cw;
+        let [x0, y0, w, _] = mv.layout.rect;
+        let base = self.color(Color::Default, self.bg);
+        let ink = self.color(Color::Default, self.fg);
+        let accent = self.color(Color::Idx(4), self.fg);
+        let dim = [
+            ink[0] * 0.45 + base[0] * 0.55,
+            ink[1] * 0.45 + base[1] * 0.55,
+            ink[2] * 0.45 + base[2] * 0.55,
+        ];
+        let corner = CORNER as f32;
+        let height = mv.layout.rect[3];
+        // shadow, body and edge: the same three layers as `chip`, drawn at once
+        // because a menu is one box and not a row of boxes
+        self.rounded_rect(
+            x0 - 1.0,
+            y0 + 2.0,
+            w + 2.0,
+            height + 1.0,
+            corner + 1.0,
+            [0.0, 0.0, 0.0, 0.12],
+        );
+        self.rounded_rect(x0, y0, w, height, corner, [0.6, 0.6, 0.6, 1.0]);
+        let surface = [
+            base[0] + (ink[0] - base[0]) * 0.14,
+            base[1] + (ink[1] - base[1]) * 0.14,
+            base[2] + (ink[2] - base[2]) * 0.14,
+        ];
+        self.rounded_rect(
+            x0 + 1.0,
+            y0 + 1.0,
+            w - 2.0,
+            height - 2.0,
+            corner - 1.0,
+            [surface[0], surface[1], surface[2], 1.0],
+        );
+        for slot in &mv.layout.rows {
+            let [x, y, width, h] = slot.rect;
+            let Some(label) = crate::chrome::MENU.get(slot.i) else {
+                continue;
+            };
+            let enabled = mv.enabled.get(slot.i).copied().unwrap_or(false);
+            if mv.hover == Some(slot.i) && enabled {
+                self.push_rect(x, y, width, h, [accent[0], accent[1], accent[2], 0.22]);
+            }
+            let fg = if enabled { ink } else { dim };
+            // `+1.0`: a cell is a fractional number of pixels, and `ceil` is what
+            // keeps the last letter of a label from falling off a rounded-down
+            // limit — the gutter has the pixel to spare
+            self.chrome_text(label, x + cw, y, fg, width - 2.0 * cw + 1.0);
+        }
+    }
+
     /// The search bar (`M-D`): two chips on the grid's bottom row, `[find:
     /// query_ ]` and `[ 1/3 ]`. The brackets are text, so the shape reads the same
     /// at any cell width; the surface is opaque and one step off the grid's, which
@@ -1606,6 +1663,7 @@ impl Renderer {
             cards_off,
             links,
             search,
+            menu,
         } = *f;
         let cols = term.cols;
         // selection rectangle in the view (stuck to the screen); outside it
@@ -1723,6 +1781,12 @@ impl Renderer {
         self.toast_rect = None;
         if let Some(t) = toast {
             self.toast(t, cols, rows.len());
+        }
+
+        // 6) the grid's context menu (`M-V`): it is opened *by* a click on what
+        // it covers, so it is drawn last
+        if let Some(mv) = menu {
+            self.menu(mv);
         }
     }
 
@@ -2596,6 +2660,16 @@ pub struct Frame<'a> {
     pub links: bool,
     /// The scrollback search (`M-D`): the matches in **view rows**, plus the bar.
     pub search: Option<&'a SearchView>,
+    /// The grid's context menu (`M-V`), when it is open.
+    pub menu: Option<&'a MenuView>,
+}
+
+/// The context menu as the renderer needs it: its geometry, which rows are
+/// usable and the one under the pointer.
+pub struct MenuView {
+    pub layout: crate::chrome::Menu,
+    pub enabled: Vec<bool>,
+    pub hover: Option<usize>,
 }
 
 /// What the renderer needs from the search: the visible matches and the query.

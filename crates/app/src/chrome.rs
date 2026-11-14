@@ -80,6 +80,33 @@ impl Metrics {
         rows * self.ch + self.pad
     }
 
+    /// Window px → origin space, where `(0, 0)` is the grid's first cell.
+    #[must_use]
+    pub fn in_origin(&self, px: f64, py: f64) -> (f32, f32) {
+        #[allow(clippy::cast_possible_truncation)] // a window coordinate
+        let (x, y) = (px as f32, py as f32);
+        (x - self.pad - self.side, y - self.pad - self.bar)
+    }
+
+    /// The grid cell under the pointer (0, 0 when it is left of/above the grid).
+    #[must_use]
+    pub fn cell_at(&self, px: f64, py: f64) -> (usize, usize) {
+        let (x, y) = self.in_origin(px, py);
+        let col = if self.cw > 0.0 {
+            (x / self.cw).floor().max(0.0)
+        } else {
+            0.0
+        };
+        let row = if self.ch > 0.0 {
+            (y / self.ch).floor().max(0.0)
+        } else {
+            0.0
+        };
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let cells = (col as usize, row as usize);
+        cells
+    }
+
     /// How many **whole** cards fit in the column, at least one, leaving the last
     /// text row free (`B55`: that row is the drag's walk strip, and a card cut by
     /// the bottom edge would be a place and a scroll trigger at once).
@@ -144,9 +171,7 @@ impl Layout {
 
     /// Window px → origin space: the grid's `(0, 0)` is not the window's.
     fn origin(&self, px: f64, py: f64) -> (f32, f32) {
-        #[allow(clippy::cast_possible_truncation)]
-        let (x, y) = (px as f32, py as f32);
-        (x - self.m.pad - self.m.side, y - self.m.pad - self.m.bar)
+        self.m.in_origin(px, py)
     }
 
     /// The tab under the pointer, if any.
@@ -186,9 +211,99 @@ impl Layout {
     }
 }
 
+/// The rows of the grid's context menu (`M-V`), top to bottom. The labels live
+/// here because the geometry needs their width; what each one does is the app's.
+pub const MENU: [&str; 4] = ["Copy", "Paste", "Open link", "New tab"];
+
+/// Cells of gutter on each side of a menu label.
+const MENU_GUTTER: usize = 1;
+
+/// The right-button menu of the grid (`M-V`): one row per item, hanging from the
+/// pointer, in the same origin space as the rest of the chrome. Built on demand
+/// (not kept between frames), so it can never disagree with the pointer.
+pub struct Menu {
+    /// The whole box, in origin space.
+    pub rect: Rect,
+    pub rows: Vec<Slot>,
+}
+
+impl Menu {
+    /// `at` is the pointer in window px. The box hangs below and to the right of
+    /// the cell under it, and flips up when the bottom would cut it — a menu with
+    /// rows nobody can reach is worse than no menu.
+    #[must_use]
+    pub fn build(m: Metrics, at: (f64, f64)) -> Menu {
+        let text = MENU.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+        let cells = (text + 2 * MENU_GUTTER).clamp(1, m.cols.max(1));
+        let count = MENU.len().clamp(1, m.rows.max(1));
+        let (col, row) = m.cell_at(at.0, at.1);
+        let col = col.min(m.cols.saturating_sub(cells));
+        // a menu that would be cut by the bottom edge flips above the pointer
+        let row = if row + count > m.rows {
+            row.saturating_sub(count)
+        } else {
+            row
+        };
+        #[allow(clippy::cast_precision_loss)] // columns and rows, far below 2^23
+        let (left, top) = (col as f32 * m.cw, row as f32 * m.ch);
+        #[allow(clippy::cast_precision_loss)]
+        let (width, step) = (cells as f32 * m.cw, m.ch);
+        let mut rows = Vec::with_capacity(count);
+        for i in 0..count {
+            #[allow(clippy::cast_precision_loss)]
+            let y = top + i as f32 * step;
+            rows.push(Slot {
+                i,
+                rect: [left, y, width, step],
+            });
+        }
+        Menu {
+            #[allow(clippy::cast_precision_loss)]
+            rect: [left, top, width, step * count as f32],
+            rows,
+        }
+    }
+
+    /// The row under the pointer. `m` is needed for the origin shift, which the
+    /// menu shares with every other overlay.
+    #[must_use]
+    pub fn row_at(&self, m: Metrics, px: f64, py: f64) -> Option<usize> {
+        let (x, y) = m.in_origin(px, py);
+        self.rows
+            .iter()
+            .find(|slot| {
+                let [x0, y0, width, height] = slot.rect;
+                x >= x0 && x < x0 + width && y >= y0 && y < y0 + height
+            })
+            .map(|slot| slot.i)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The menu hangs from the pointer's cell and never leaves the grid: at the
+    /// bottom it flips up, and its rows are the ones the pointer can hit.
+    #[test]
+    fn the_menu_hangs_from_the_pointer_and_stays_inside() {
+        let m = metrics();
+        // pad 4 + side 180 = 184: the grid starts there, and the bar adds 20
+        let menu = Menu::build(m, (184.0 + 15.0, 24.0 + 15.0));
+        assert_eq!(menu.rows.len(), MENU.len());
+        assert_eq!(menu.rect[0], 10.0, "the pointer's cell, in origin space");
+        assert_eq!(menu.rect[1], 0.0);
+        // the widest label plus a cell of gutter on each side
+        assert_eq!(menu.rect[2], 11.0 * 10.0);
+        // a click inside a row names it, one pixel below the box names nothing
+        let y = 24.0 + 20.0 * 1.5;
+        assert_eq!(menu.row_at(m, 184.0 + 20.0, y), Some(1));
+        assert_eq!(menu.row_at(m, 184.0 + 20.0, 24.0 + 20.0 * 4.5), None);
+        // near the bottom (row 9 of 10) it flips up instead of running off
+        let low = Menu::build(m, (184.0, 24.0 + 9.5 * 20.0));
+        assert_eq!(low.rect[1], 5.0 * 20.0);
+        assert!(low.rect[1] + low.rect[3] <= 10.0 * 20.0);
+    }
 
     fn metrics() -> Metrics {
         Metrics {

@@ -1028,3 +1028,19 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 - Verified on Xvfb: red/green/blue frames of 150 ms each came back as `ff0000`,
   `00ff00`, `0000ff` in turn at the image's own cells, and `s=1` froze it on one
   frame and one colour. `a=c` and `r=1` answer with a reason instead of nothing.
+
+## 2026-11-13 — the grid's context menu (`M-V`)
+
+- Right button on the grid: Copy, Paste, Open link, New tab. The geometry is the
+  `M-Q` chrome's — `chrome::Menu` hangs the box from the pointer's cell and flips
+  it up when the bottom would cut it, and the same numbers are used to draw and to
+  hit-test, so the two cannot disagree.
+- What is usable is decided when it opens and not per frame: Copy needs a
+  selection, Open link needs an `OSC 8` target under the pointer. Unusable rows are
+  dim and do nothing. Arrows walk the usable rows, Enter runs one, Escape and any
+  other key close it — a menu that swallows the keyboard would be a dialog.
+- With a child asking for the mouse the right button stays the child's; Shift
+  asks for the menu. Verified on Xvfb: the box opens at 106x75 px (11 cells by 4
+  rows), clicking its 4th row opened a second tab, Escape put back exactly the
+  same pixels, and the label of the widest row was being cut by a rounded-down
+  width limit (`Open lin`) until the cell-to-pixel remainder got its pixel.
