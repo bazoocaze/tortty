@@ -64,15 +64,66 @@ debug_log off
 # shortcuts: `map CHORD ACTION [N]` and `unmap CHORD`. CHORD is modifiers joined
 # with `+` (ctrl, alt, shift, super) plus one key: `ctrl+shift+t`, `alt+1`,
 # `shift+pgup`, `f2`. `N`, for select_tab/select_workspace, is 1..10 (10 = key 0).
-# Actions: copy paste new_tab close_tab new_workspace close_workspace prev_prompt
+# `unmap` frees a chord so the program sees the key again. Actions:
+# copy paste new_tab close_tab new_workspace close_workspace prev_prompt
 # next_prompt open_config scroll_page_up scroll_page_down scroll_top scroll_bottom
-# search
-# select_tab select_workspace ws_prev ws_next ws_move_up ws_move_down.
-# The defaults are this table (see Bindings::base): Ctrl+Shift+C/V/T/W/N/Q,
-# Ctrl+Shift+Up/Down/F/F2, Shift+PgUp/PgDn/Home/End, Alt+1..0 (tab),
-# Ctrl+Shift+1..0 and Super+1..0 (workspace), Super+Up/Down and Super+Shift+Up/Down.
-# map ctrl+shift+y new_tab
-# unmap ctrl+shift+w
+# search select_tab select_workspace ws_prev ws_next ws_move_up ws_move_down.
+# The lines below ARE the defaults: delete one and the key goes to the program,
+# change the action and it changes for you. A digit under Ctrl/Alt/Super is read
+# from the physical key, so Ctrl+Shift+2 still means 2 where it types `@`.
+map ctrl+shift+c copy
+map ctrl+shift+v paste
+map ctrl+shift+t new_tab
+map ctrl+shift+w close_tab
+map ctrl+shift+n new_workspace
+map ctrl+shift+q close_workspace
+map ctrl+shift+up prev_prompt
+map ctrl+shift+down next_prompt
+map ctrl+shift+f2 open_config
+map shift+pgup scroll_page_up
+map shift+pgdn scroll_page_down
+map shift+home scroll_top
+map shift+end scroll_bottom
+map ctrl+shift+f search
+# the workspace aliases the window manager may swallow
+map super+n new_workspace
+map super+q close_workspace
+map super+up ws_prev
+map super+down ws_next
+map super+shift+up ws_move_up
+map super+shift+down ws_move_down
+# the three digit families: a tab, a workspace (twice, for the two habits).
+# Key 1 picks the first and key 0 the tenth.
+map alt+1 select_tab 1
+map alt+2 select_tab 2
+map alt+3 select_tab 3
+map alt+4 select_tab 4
+map alt+5 select_tab 5
+map alt+6 select_tab 6
+map alt+7 select_tab 7
+map alt+8 select_tab 8
+map alt+9 select_tab 9
+map alt+0 select_tab 10
+map ctrl+shift+1 select_workspace 1
+map ctrl+shift+2 select_workspace 2
+map ctrl+shift+3 select_workspace 3
+map ctrl+shift+4 select_workspace 4
+map ctrl+shift+5 select_workspace 5
+map ctrl+shift+6 select_workspace 6
+map ctrl+shift+7 select_workspace 7
+map ctrl+shift+8 select_workspace 8
+map ctrl+shift+9 select_workspace 9
+map ctrl+shift+0 select_workspace 10
+map super+1 select_workspace 1
+map super+2 select_workspace 2
+map super+3 select_workspace 3
+map super+4 select_workspace 4
+map super+5 select_workspace 5
+map super+6 select_workspace 6
+map super+7 select_workspace 7
+map super+8 select_workspace 8
+map super+9 select_workspace 9
+map super+0 select_workspace 10
 
 # colours: foreground/background/cursor and the 16-colour ANSI palette.
 # The defaults are the classic xterm palette: mc,
@@ -317,7 +368,7 @@ impl Config {
             copy_on_select: false,
             bold_as_bright: false,
             debug_log: None,
-            bindings: crate::keymap::Bindings::base(),
+            bindings: crate::keymap::Bindings::default(),
             fg: Color::Rgb(0xd6, 0xd6, 0xd6),
             bg: Color::Rgb(0, 0, 0),
             cursor: Color::Rgb(0xd6, 0xd6, 0xd6),

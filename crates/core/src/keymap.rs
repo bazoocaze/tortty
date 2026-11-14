@@ -1,9 +1,10 @@
 //! Remappable shortcuts (`M-H`, config v2): one table, `map`/`unmap` in the
 //! config file.
 //!
-//! The table lives here and not in the app for the same reason the palette does:
-//! the defaults are a fact of the configuration, they are read from
-//! `DEFAULT_CONF`'s own syntax, and a test can prove them without a window.
+//! The machinery lives here; the **defaults** are `map` lines in `DEFAULT_CONF`,
+//! like every other default (the palette, the font, the history cap). One table,
+//! one place: an empty `Bindings` plus that text is the app's shortcut set, and a
+//! test proves it without a window.
 //!
 //! A shortcut is a **chord** (one key plus modifiers) and an **action** (what the
 //! app does). `map ctrl+shift+t new_tab` adds or replaces the chord;
@@ -246,65 +247,8 @@ pub struct Bindings {
 }
 
 impl Bindings {
-    /// The app's own shortcuts, in the chords they have always had.
-    #[must_use]
-    pub fn base() -> Bindings {
-        let mut b = Bindings { list: Vec::new() };
-        let mut bind = |text: &str, action: Action| {
-            if let Some(c) = Chord::parse(text) {
-                b.set(c, action);
-            }
-        };
-        bind("ctrl+shift+c", Action::Copy);
-        bind("ctrl+shift+v", Action::Paste);
-        bind("ctrl+shift+t", Action::NewTab);
-        bind("ctrl+shift+w", Action::CloseTab);
-        bind("ctrl+shift+n", Action::NewWorkspace);
-        bind("ctrl+shift+q", Action::CloseWorkspace);
-        bind("ctrl+shift+up", Action::PrevPrompt);
-        bind("ctrl+shift+down", Action::NextPrompt);
-        bind("ctrl+shift+f2", Action::OpenConfig);
-        bind("shift+pgup", Action::ScrollPageUp);
-        bind("shift+pgdn", Action::ScrollPageDown);
-        bind("shift+home", Action::ScrollTop);
-        bind("shift+end", Action::ScrollBottom);
-        bind("ctrl+shift+f", Action::Search);
-        // the workspace aliases the WM may swallow, and its own pair
-        bind("super+n", Action::NewWorkspace);
-        bind("super+q", Action::CloseWorkspace);
-        bind("super+up", Action::WsPrev);
-        bind("super+down", Action::WsNext);
-        bind("super+shift+up", Action::WsMoveUp);
-        bind("super+shift+down", Action::WsMoveDown);
-        // the three digit families: tab, workspace (with Ctrl+Shift and Super).
-        // Key 1 picks the first, and key 0 the tenth.
-        for n in 1..=9u8 {
-            if let Some(c) = Chord::parse(&format!("alt+{n}")) {
-                b.set(c, Action::SelectTab(n));
-            }
-            if let Some(c) = Chord::parse(&format!("ctrl+shift+{n}")) {
-                b.set(c, Action::SelectWorkspace(n));
-            }
-            if let Some(c) = Chord::parse(&format!("super+{n}")) {
-                b.set(c, Action::SelectWorkspace(n));
-            }
-        }
-        // the tenth of each family
-        for text in ["alt+0", "ctrl+shift+0", "super+0"] {
-            if let Some(c) = Chord::parse(text) {
-                let action = if text.starts_with("alt") {
-                    Action::SelectTab(10)
-                } else {
-                    Action::SelectWorkspace(10)
-                };
-                b.set(c, action);
-            }
-        }
-        b
-    }
-
     /// Adds or replaces one chord.
-    pub fn set(&mut self, chord: Chord, action: Action) {
+    fn set(&mut self, chord: Chord, action: Action) {
         match self.list.iter_mut().find(|(c, _)| c.same(chord)) {
             Some(slot) => slot.1 = action,
             None => self.list.push((chord, action)),
@@ -381,9 +325,14 @@ mod tests {
         assert_eq!(Chord::parse("T").unwrap().id, Id::Char('t'));
     }
 
+    /// The defaults live in `DEFAULT_CONF`, so the tests read them from there.
+    fn base() -> Bindings {
+        crate::config::Config::base().bindings
+    }
+
     #[test]
     fn the_default_table_keeps_every_shortcut_the_app_had() {
-        let b = Bindings::base();
+        let b = base();
         let cases = [
             ("ctrl+shift+c", Action::Copy),
             ("ctrl+shift+v", Action::Paste),
@@ -416,7 +365,7 @@ mod tests {
 
     #[test]
     fn map_replaces_a_chord_and_unmap_frees_it() {
-        let mut b = Bindings::base();
+        let mut b = base();
         b.map_text("ctrl+shift+t new_workspace").unwrap();
         let chord = Chord::parse("ctrl+shift+t").unwrap();
         assert_eq!(b.get(chord), Some(Action::NewWorkspace));
@@ -437,7 +386,7 @@ mod tests {
 
     #[test]
     fn a_bad_map_line_says_what_is_wrong() {
-        let mut b = Bindings::base();
+        let mut b = base();
         assert!(b.map_text("ctrl+shift+y new_tab").is_ok());
         assert!(b.map_text("ctrl+shift+t").is_err(), "no action");
         assert!(

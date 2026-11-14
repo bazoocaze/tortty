@@ -1173,3 +1173,18 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 - Proof: core test `the_alternate_screen_keeps_the_history`; probe on Xvfb with
   `mc` (29 → 30 → 31, never 0) and `less` (32 in, 32 out), plus `?1049h` + `ED 3`
   changing nothing (33 → 33).
+
+## 2026-11-14 — the shortcuts are `map` lines in the defaults (`M-H`, 1.0.88)
+
+- The default chord table was the one family of defaults still hardcoded
+  (`keymap::Bindings::base()`), duplicated as a comment in `DEFAULT_CONF` with
+  nothing keeping the two in sync.
+- The table now *is* the defaults text: 50 `map` lines in `DEFAULT_CONF`, an empty
+  `Bindings` in the fallback, and `Bindings::base()` is gone. `Config::base()` is
+  again "the parse of `DEFAULT_CONF`", as `config.rs` has always claimed.
+- Deleting a default line frees the key, like `unmap`; the app's table and a user's
+  copy of it are the same syntax. Proof: the keymap test `the_default_table_keeps
+  …` reads `Config::base().bindings`, so a dropped chord fails the suite.
+- Probe (Xvfb): plain → `Ctrl+Shift+T` opens a tab (2 tabs) and `Alt+2`/`Alt+1`
+  walk them; `map ctrl+shift+t new_workspace` → 2 workspaces, no tab; `unmap` →
+  the chord does nothing.
