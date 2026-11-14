@@ -1229,6 +1229,7 @@ impl Term {
         }
         match n {
             2 | 3 => {
+                self.graphics.erase(0..self.rows, 0..self.cols);
                 let cell = self.blank_cell();
                 for y in 0..self.rows {
                     let mut row = Row::blank(self.cols);
@@ -1251,6 +1252,8 @@ impl Term {
                 self.cy = 0;
             },
             1 => {
+                self.graphics.erase(0..self.cy, 0..self.cols);
+                self.graphics.erase(self.cy..self.cy + 1, 0..self.cx + 1);
                 let cell = self.blank_cell();
                 for x in 0..=self.cx.min(self.cols - 1) {
                     self.grid[self.cy].cells[x] = cell;
@@ -1262,6 +1265,9 @@ impl Term {
                 }
             },
             _ => {
+                self.graphics.erase(self.cy + 1..self.rows, 0..self.cols);
+                self.graphics
+                    .erase(self.cy..self.cy + 1, self.cx..self.cols);
                 let cell = self.blank_cell();
                 for x in self.cx..self.cols {
                     self.grid[self.cy].cells[x] = cell;
@@ -1278,6 +1284,12 @@ impl Term {
     fn erase_line(&mut self, n: u32) {
         self.sync_count(|t| t.el += 1);
         self.touch(self.cy);
+        let cols = match n {
+            2 => 0..self.cols,
+            1 => 0..self.cx + 1,
+            _ => self.cx..self.cols,
+        };
+        self.graphics.erase(self.cy..self.cy + 1, cols);
         let cell = self.blank_cell();
         match n {
             2 => {
@@ -1357,6 +1369,7 @@ impl Term {
         self.touch(self.cy);
         let cell = self.blank_cell();
         let end = (self.cx + n).min(self.cols);
+        self.graphics.erase(self.cy..self.cy + 1, self.cx..end);
         for x in self.cx..end {
             self.grid[self.cy].cells[x] = cell;
         }
@@ -1573,6 +1586,7 @@ impl Term {
             return;
         }
         self.mark_global("enter_alt");
+        self.graphics.enter_alt();
         self.save_cursor();
         self.abs_gen += 1;
         let blank = (0..self.rows).map(|_| Row::blank(self.cols)).collect();
@@ -1593,6 +1607,7 @@ impl Term {
             return;
         };
         self.mark_global("leave_alt");
+        self.graphics.leave_alt();
         self.abs_gen += 1;
         self.grid = saved_grid;
         if self.grid.len() != self.rows
@@ -3595,6 +3610,81 @@ mod tests {
         assert_eq!(p.rows, 2, "two cell rows of six-pixel bands");
         assert_eq!(p.line, 3, "the picture rode up with the two scrolled lines");
         assert_eq!((t.cx, t.cy), (0, 5), "and the cursor sits on the last row");
+    }
+
+    /// A picture is drawn where cells are: erasing those cells takes it away.
+    /// `clear` and a full-screen app that paints over (no alternate screen, like
+    /// `mc`) rely on this — without it the picture stays visible in every cell
+    /// they leave blank.
+    #[test]
+    fn erasing_the_cells_takes_the_picture_with_them() {
+        let mut t = Term::new(20, 6);
+        t.cell_size = (8, 16);
+        // one band: six pixels, one 16 px cell row
+        let pic = b"\x1bP0;0;0q#1;2;100;0;0!1~\x1b\\";
+        t.feed(b"\x1b[2;9H");
+        t.feed(pic);
+        assert_eq!(t.graphics.placements().len(), 1, "placed at row 1, col 8");
+        // EL from the first cell to the end of the row: the picture is in the
+        // erased span, so it goes
+        t.feed(b"\x1b[2;1H\x1b[K");
+        assert!(t.graphics.placements().is_empty(), "EL took it");
+        // a picture further right survives an erase to its left
+        t.feed(b"\x1b[3;13H");
+        t.feed(pic);
+        t.feed(b"\x1b[3;1H\x1b[4X");
+        assert_eq!(
+            t.graphics.placements().len(),
+            1,
+            "ECH of the first four cells leaves a picture starting at col 12"
+        );
+        // and the whole screen clearing removes what is on it
+        t.feed(b"\x1b[2J");
+        assert!(t.graphics.placements().is_empty(), "ED 2 took it");
+    }
+
+    /// The alternate screen is its own place: an app that clears it (`vim`,
+    /// `less`, `top`) must not erase the pictures of the screen it covers, and
+    /// the pictures it draws itself must not follow it out.
+    #[test]
+    fn the_alternate_screen_has_its_own_pictures() {
+        let mut t = Term::new(20, 6);
+        t.cell_size = (8, 16);
+        let pic = b"\x1bP0;0;0q#1;2;100;0;0!1~\x1b\\";
+        t.feed(b"\x1b[1;1H");
+        t.feed(pic);
+        assert_eq!(t.graphics.placements().len(), 1);
+        t.feed(b"\x1b[?1049h\x1b[H\x1b[2J");
+        assert!(
+            t.graphics.placements().is_empty(),
+            "the alt screen starts empty even after its clear"
+        );
+        t.feed(pic);
+        assert_eq!(t.graphics.placements().len(), 1, "the alt one has its own");
+        t.feed(b"\x1b[?1049l");
+        let left = t.graphics.placements();
+        assert_eq!(left.len(), 1, "leaving brings the main one back");
+        assert_eq!(left[0].line, 0, "in the line it was drawn on");
+    }
+
+    /// The screen clear reaches only the screen: a picture that scrolled into the
+    /// history stays there, and comes back when the reader scrolls up to it.
+    #[test]
+    fn a_clear_leaves_the_pictures_in_the_history() {
+        let mut t = Term::new(20, 4);
+        t.cell_size = (8, 16);
+        t.feed(b"\x1b[1;1H");
+        t.feed(b"\x1bP0;0;0q#1;2;100;0;0!1~\x1b\\");
+        // three newlines push it two lines up, into the history of a 4-row grid
+        t.feed(b"\r\n\r\n\r\n");
+        let line = t.graphics.placements()[0].line;
+        assert!(line < 0, "the picture went into the history (line {line})");
+        t.feed(b"\x1b[H\x1b[2J");
+        assert_eq!(
+            t.graphics.placements().len(),
+            1,
+            "ED 2 clears the screen, not the history"
+        );
     }
 
     #[test]

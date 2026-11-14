@@ -264,6 +264,8 @@ pub struct Output {
 pub struct Graphics {
     images: HashMap<u32, Image>,
     placements: Vec<Placement>,
+    /// Placements of the main screen, held while the alternate one is up.
+    saved: Option<Vec<Placement>>,
     next_id: u32,
     /// Image version counter (one per transmission).
     generation: u64,
@@ -306,10 +308,53 @@ impl Graphics {
             .find(|p| p.placeholder && p.image_id == id && (pid == 0 || p.id == pid))
     }
 
+    /// `ED`, `EL`, `ECH`: a picture whose cells are being erased goes with them.
+    ///
+    /// The cells are the picture's place in the screen. Without this the picture
+    /// survived every repaint: `clear` left it behind, and a full-screen app that
+    /// does not use the alternate screen (`mc`) drew its panels **around** the
+    /// picture, which stayed visible in every cell it did not paint. Only
+    /// placements are dropped — the bytes stay until the keep cap prunes them,
+    /// because `d=`/`ED 3` are what a program uses to free them.
+    ///
+    /// Static placements are the ones that leave; a virtual one has no position
+    /// of its own (the `U+10EEEE` cells are its position) and stays.
+    pub fn erase(&mut self, rows: std::ops::Range<usize>, cols: std::ops::Range<usize>) {
+        let to_i32 = |v: usize| i32::try_from(v).unwrap_or(i32::MAX);
+        let (top, bottom) = (to_i32(rows.start), to_i32(rows.end));
+        let (left, right) = (to_i32(cols.start), to_i32(cols.end));
+        if top >= bottom || left >= right {
+            return;
+        }
+        self.placements.retain(|p| {
+            if p.placeholder {
+                return true;
+            }
+            let (p_top, p_bottom) = (p.line, p.line + i32::from(p.rows));
+            let (p_left, p_right) = (i32::from(p.col), i32::from(p.col) + i32::from(p.cols));
+            !(p_top < bottom && p_bottom > top && p_left < right && p_right > left)
+        });
+    }
+
+    /// The alternate screen is its own place: the placements of the main one wait
+    /// here while an app that uses it (`vim`, `less`, `top`) draws and clears —
+    /// and come back when it leaves. Without this the first `CSI 2J` of such an
+    /// app erased the pictures of the screen it was covering.
+    pub fn enter_alt(&mut self) {
+        self.saved = Some(std::mem::take(&mut self.placements));
+    }
+
+    pub fn leave_alt(&mut self) {
+        if let Some(v) = self.saved.take() {
+            self.placements = v;
+        }
+    }
+
     /// `ED 3` (H13): no image survives.
     pub fn clear(&mut self) {
         self.images.clear();
         self.placements.clear();
+        self.saved = None;
         self.buf = None;
     }
 

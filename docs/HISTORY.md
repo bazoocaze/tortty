@@ -1109,3 +1109,23 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   (`view_off = 25`, 3552 red pixels in the same box) — the scrollback carries it.
 - `docs/FEATURES.md` says both: the cursor ends below, and a picture taller than
   the whole grid is clipped at the top.
+
+## 2026-11-13 — A picture lives in its cells (`B3`, 1.0.85)
+
+- Reported against 1.0.84: `chafa` drew the flag, then `mc` opened and the flag
+  stayed visible in every cell `mc` left blank — `mc` does not take the alternate
+  screen, it only clears what it paints. The cause was ours: `ED`/`EL`/`ECH`
+  erased the cells and left the placements, so `clear` after a picture also left
+  it behind.
+- `Graphics::erase()` drops the placements that intersect the erased span, and
+  `erase_display`/`erase_line`/`erase_chars` call it with the span they touch. A
+  picture in the history is untouched (the screen is what was erased), so
+  scrolling up to it still shows it.
+- Because that erase would have killed the pictures of the main screen the first
+  time `vim`/`less` cleared the alternate one, the alternate screen now has its
+  own placements: `Graphics::enter_alt`/`leave_alt` hold the main screen's set and
+  give it back on the way out.
+- Verified on Xvfb: `clear` after a picture leaves zero placements; `mc` over the
+  flag shows a clean screen; `less` shows no picture while it is up, and the
+  picture is back — same line, same pixels — after quitting it. Three core tests:
+  erase by row/chars, history survives a clear, alt screen isolation.

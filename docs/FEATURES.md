@@ -172,6 +172,16 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   8.5 M px is refused, one taller than the whole grid is clipped at the top (it
   could not fit either way), and since sixel has no id and no `d=` at most 64
   pictures are kept — the oldest goes with its placements.
+- **A picture lives in its cells** (`B3`, reported against `1.0.84`): `ED`/`EL`/
+  `ECH` erase the cells, so they take the picture covering them — `clear` no
+  longer leaves the last `chafa` behind, and a full-screen app that paints over
+  without the alternate screen (`mc`) no longer keeps it in every cell it leaves
+  blank. A picture in the scrollback is untouched by a screen clear (the screen
+  is what was erased), and the **alternate screen is its own place**: what
+  `vim`/`less`/`top` draw and clear does not reach the pictures of the screen
+  they cover, and their own pictures do not follow them out.
+  **limit:** the erase is all or nothing per picture — a picture that loses one
+  cell loses the placement (the bytes stay until the `d=` or the keep cap).
 - iTerm2's inline image (`OSC 1337;File=…:base64`, what `imgcat` sends): the
   bytes are placed on the cursor cell through the same direct transmission, with
   `width`/`height` in cells, in `px`, in `%` of the grid or `auto`. **limit:**
