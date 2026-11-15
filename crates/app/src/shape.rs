@@ -189,6 +189,27 @@ fn shape(
     Some(Plan { pieces })
 }
 
+/// The single glyph a face gives a whole grapheme cluster, or `None` when the
+/// face does not compose it — two glyphs for a sequence is not a sequence, it is
+/// the pieces (`B66`). This is what tells a font with the ZWJ ligature (Noto
+/// Color Emoji draws a family as one picture) from one that just has a glyph for
+/// each emoji.
+#[must_use]
+pub fn cluster_gid(face: &GlyphFace, text: &str) -> Option<u16> {
+    if text.is_empty() {
+        return None;
+    }
+    let font = Face::from_slice(&face.data, face.index)?;
+    let mut buf = UnicodeBuffer::new();
+    buf.push_str(text);
+    let out = rustybuzz::shape(&font, &features(Ligatures::All), buf);
+    let infos = out.glyph_infos();
+    if infos.len() != 1 {
+        return None;
+    }
+    u16::try_from(infos[0].glyph_id).ok()
+}
+
 /// The test font face, embedded in the binary (`cargo test` does not depend
 /// on an installed font). OFL license in `assets/fonts/JetBrainsMono-OFL.txt`.
 #[cfg(test)]
@@ -200,6 +221,23 @@ mod tests {
 
     const CW: f32 = 10.0;
     const PX: f32 = 17.0;
+
+    /// `B66`: a face composes a cluster only when it gives **one** glyph for the
+    /// whole string. Two glyphs is the pieces, and the base character is drawn.
+    #[test]
+    fn a_cluster_composes_only_when_the_face_has_the_ligature() {
+        let f = face();
+        // `->` is a ligature piece per cell: two glyphs, so not a cluster
+        assert!(cluster_gid(&f, "->").is_none());
+        assert!(cluster_gid(&f, "a").is_some(), "one character, one glyph");
+        // a precomposed accent is one glyph for two codepoints
+        assert!(cluster_gid(&f, "e\u{301}").is_some());
+        // and a family in a text font is not composed
+        assert!(
+            cluster_gid(&f, "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}").is_none(),
+            "no ZWJ ligature in a text font"
+        );
+    }
 
     fn face() -> GlyphFace {
         GlyphFace {

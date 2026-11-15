@@ -765,6 +765,15 @@ impl Term {
     fn put_ascii_run(&mut self, run: &[u8]) {
         let mut i = 0usize;
         while i < run.len() {
+            // a pending joiner (`B66`) wants the very next character, ASCII
+            // included (`a\u{200D}b` asks the font for a ligature): that one goes
+            // through the slow path instead of being written as a cell of its own
+            if self.joiner_pending() {
+                let ch = run[i] as char;
+                self.put_char(ch);
+                i += 1;
+                continue;
+            }
             if self.wrap_pending {
                 self.do_wrap();
             }
@@ -822,8 +831,8 @@ impl Term {
             }
             // the cells just written replace whatever was there, marks included
             // (`M-U`): one pass per run, and only when the row has any
-            if !row.marks.is_empty() {
-                row.marks
+            if !row.tail.is_empty() {
+                row.tail
                     .retain(|(c, _)| usize::from(*c) < cx || usize::from(*c) >= cx + n);
             }
             self.last_char = run[i + n - 1] as char;
@@ -845,6 +854,100 @@ impl Term {
         self.cx = 0;
         self.newline();
         self.wrap_pending = false;
+    }
+
+    /// The cell a zero-width or joining character belongs to: the one behind the
+    /// cursor, skipping the continuation half of a wide character. `None` at the
+    /// very start of the grid, where there is nothing to belong to.
+    fn cluster_target(&self) -> Option<(usize, usize)> {
+        if self.cx > 0 {
+            let mut col = self.cx - 1;
+            if self.grid[self.cy].cells.get(col).is_some_and(Cell::is_cont) {
+                col = col.saturating_sub(1);
+            }
+            Some((self.cy, col))
+        } else if self.cy > 0 {
+            let row = &self.grid[self.cy - 1];
+            let mut col = row.cells.len().saturating_sub(1);
+            if row.cells.get(col).is_some_and(Cell::is_cont) {
+                col = col.saturating_sub(1);
+            }
+            Some((self.cy - 1, col))
+        } else {
+            None
+        }
+    }
+
+    /// Is the cell before the cursor waiting for the character a joiner names? A
+    /// cluster never crosses a row: a dangling joiner at the end of a line joins
+    /// nothing, and the first character of the next line is a character.
+    fn joiner_pending(&self) -> bool {
+        self.cluster_target().is_some_and(|(row, col)| {
+            row == self.cy && self.grid[row].tail_at(col).last() == Some(&'\u{200D}')
+        })
+    }
+
+    /// Does `ch` continue the cluster of the cell before the cursor (`B66`)?
+    /// It does when it is a combining mark, a joiner, a variation selector, a
+    /// keycap, a tag, a skin-tone modifier, the base a joiner is waiting for, or
+    /// the second half of a flag. Consumed here, so it takes no cell and moves
+    /// the cursor nowhere — and when the sequence is now emoji presentation the
+    /// cell grows to two columns (`❤️` next to `❤︎`).
+    fn try_cluster(&mut self, ch: char) -> bool {
+        let Some((row, col)) = self.cluster_target() else {
+            return false;
+        };
+        let base = self.grid[row].cells[col].ch;
+        let tail = self.grid[row].tail_at(col);
+        let mark = crate::grid::is_mark(ch);
+        let joined = row == self.cy && tail.last() == Some(&'\u{200D}');
+        let flag = crate::grid::is_regional(ch)
+            && crate::grid::is_regional(base)
+            && !tail.iter().any(|c| crate::grid::is_regional(*c));
+        // a sequence needs a base that was written; a plain mark does not (a
+        // mark on a space is a mark on a space)
+        if !mark && base == ' ' {
+            return false;
+        }
+        if !(mark
+            || joined
+            || flag
+            || crate::grid::is_structural(ch)
+            || crate::grid::is_modifier(ch))
+        {
+            return false;
+        }
+        self.grid[row].add_tail(col, ch);
+        if crate::grid::emoji_presentation(base, self.grid[row].tail_at(col)) {
+            self.promote_wide(row, col);
+        }
+        true
+    }
+
+    /// A cluster with emoji presentation is two columns wide, so the cell takes
+    /// the column to its right (`B66`). Only when the cursor stands there and a
+    /// column is free: growing a cell that already has a character to its right
+    /// would eat it, and there is no reflow for that.
+    fn promote_wide(&mut self, row: usize, col: usize) {
+        if row != self.cy || col + 1 != self.cx || col + 1 >= self.cols {
+            return;
+        }
+        if self.grid[row].cells[col + 1].is_cont() {
+            return;
+        }
+        let c = self.grid[row].cells[col];
+        let cont = Cell { ch: WIDE_CONT, ..c };
+        self.grid[row].clear_marks(col + 1);
+        self.grid[row].cells[col + 1] = cont;
+        self.dirty[row] = true;
+        if col + 2 >= self.cols {
+            self.cx = self.cols - 1;
+            if self.autowrap {
+                self.wrap_pending = true;
+            }
+        } else {
+            self.cx = col + 2;
+        }
     }
 
     /// `M-U`: a combining mark has no cell of its own — it lands on the character
@@ -869,6 +972,9 @@ impl Term {
     }
 
     fn put_char(&mut self, ch: char) {
+        if self.try_cluster(ch) {
+            return;
+        }
         let w = ch.width().unwrap_or(1);
         if w == 0 {
             self.put_mark(ch);
@@ -3355,13 +3461,125 @@ mod compose_tests {
         assert_eq!(t.grid[0].marks_at(0), ['\u{301}']);
         assert_eq!(t.cx, 1, "the mark takes no cell of its own");
         assert_eq!(t.grid[0].cells[1].ch, ' ');
-        // more marks on the same cell keep arriving, up to the cap
+        // more marks on the same cell keep arriving, up to the cluster cap
         t.feed("\u{302}\u{303}\u{304}".as_bytes());
-        assert_eq!(t.grid[0].marks_at(0).len(), crate::grid::MAX_MARKS);
+        assert_eq!(t.grid[0].marks_at(0).len(), 4);
+        assert!(t.grid[0].marks_at(0).len() <= crate::grid::MAX_TAIL);
         // writing a new character over the cell replaces its marks
         t.feed(b"\x08x");
         assert_eq!(t.grid[0].cells[0].ch, 'x');
         assert_eq!(t.grid[0].marks_at(0).len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod cluster_tests {
+    use super::*;
+
+    /// `B66`: a ZWJ family is one two-column cell, not six columns of faces.
+    #[test]
+    fn a_zwj_family_takes_two_columns() {
+        let mut t = Term::new(20, 2);
+        t.feed("\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}".as_bytes());
+        assert_eq!(t.cx, 2, "one wide cell");
+        assert_eq!(t.grid[0].cells[0].ch, '\u{1F468}');
+        assert_eq!(
+            t.grid[0].tail_at(0),
+            ['\u{200D}', '\u{1F469}', '\u{200D}', '\u{1F467}'],
+            "the joiners and the members belong to the cell"
+        );
+        assert!(t.grid[0].cells[1].is_cont());
+        // and the whole sequence is what a copy takes out of the row
+        assert_eq!(t.row_text(0), "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}");
+    }
+
+    /// A family of four is seven codepoints: the tail has room for it, which
+    /// three marks would not have.
+    #[test]
+    fn a_big_family_fits_one_cell() {
+        let mut t = Term::new(20, 2);
+        t.feed("\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}".as_bytes());
+        assert_eq!(t.cx, 2);
+        assert_eq!(t.grid[0].tail_at(0).len(), 6);
+    }
+
+    /// Two regional indicators are one flag of two columns, not two letters.
+    #[test]
+    fn a_flag_pair_is_one_cell() {
+        let mut t = Term::new(20, 2);
+        t.feed("\u{1F1E7}\u{1F1F7}".as_bytes());
+        assert_eq!(t.cx, 2);
+        assert_eq!(t.grid[0].cells[0].ch, '\u{1F1E7}');
+        assert_eq!(t.grid[0].tail_at(0), ['\u{1F1F7}']);
+        assert!(t.grid[0].cells[1].is_cont());
+        // a third indicator starts a new flag
+        t.feed("x\u{1F1FA}".as_bytes());
+        assert_eq!(t.grid[0].cells[2].ch, 'x');
+    }
+
+    /// The skin tone tints the base beside it; it is not a second picture.
+    #[test]
+    fn a_skin_tone_tints_the_base() {
+        let mut t = Term::new(20, 2);
+        t.feed("\u{1F44D}\u{1F3FD}".as_bytes());
+        assert_eq!(t.cx, 2);
+        assert_eq!(t.grid[0].tail_at(0), ['\u{1F3FD}']);
+        assert!(!t.grid[0].cells[2].is_cont());
+    }
+
+    /// `VS16` asks for the emoji picture and `VS15` for the text glyph, and the
+    /// width follows: the same heart is two columns in one and one in the other.
+    #[test]
+    fn vs16_is_wide_and_vs15_is_not() {
+        let mut emoji = Term::new(20, 2);
+        emoji.feed("\u{2764}\u{FE0F}".as_bytes());
+        assert_eq!(emoji.cx, 2, "emoji presentation is two columns");
+        assert!(emoji.grid[0].cells[1].is_cont());
+        let mut text = Term::new(20, 2);
+        text.feed("\u{2764}\u{FE0E}".as_bytes());
+        assert_eq!(text.cx, 1, "text presentation is one column");
+        assert!(!text.grid[0].cells[1].is_cont());
+    }
+
+    /// A keycap is one character with a box around it, two columns wide.
+    #[test]
+    fn a_keycap_is_one_cell() {
+        let mut t = Term::new(20, 2);
+        t.feed("1\u{FE0F}\u{20E3}".as_bytes());
+        assert_eq!(t.cx, 2);
+        assert_eq!(t.grid[0].cells[0].ch, '1');
+        assert_eq!(t.grid[0].tail_at(0), ['\u{FE0F}', '\u{20E3}']);
+    }
+
+    /// A joiner that starts a line has nothing to join and is not a cell of its
+    /// own: it is dropped, and the character after it lands normally.
+    #[test]
+    fn a_joiner_with_no_base_is_dropped() {
+        let mut t = Term::new(20, 2);
+        t.feed("\u{200D}x".as_bytes());
+        assert_eq!(t.grid[0].cells[0].ch, 'x');
+        assert_eq!(t.cx, 1);
+    }
+
+    /// A joiner at the end of a line joins nothing: the character on the next
+    /// line is a character, not a family member of the cell above.
+    #[test]
+    fn a_joiner_does_not_reach_the_next_row() {
+        let mut t = Term::new(4, 2);
+        t.feed("ab\u{200D}\r\ncd".as_bytes());
+        assert_eq!(t.grid[0].tail_at(1), ['\u{200D}']);
+        assert_eq!(t.grid[1].cells[0].ch, 'c', "the next row starts clean");
+        assert_eq!(t.cx, 2);
+    }
+
+    /// Text with a joiner but no emoji in it stays one column: `a\u{200D}b` is a
+    /// text ligature request, not a picture.
+    #[test]
+    fn a_joiner_without_emoji_stays_narrow() {
+        let mut t = Term::new(20, 2);
+        t.feed("a\u{200D}b".as_bytes());
+        assert_eq!(t.cx, 1);
+        assert_eq!(t.grid[0].tail_at(0), ['\u{200D}', 'b']);
     }
 }
 

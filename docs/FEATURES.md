@@ -124,6 +124,18 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - Ligatures and shaping with `rustybuzz` (`off`/`standard`/`all`). **limit:**
   single-cell runs are not shaped, the cursor and the selection break the
   ligature around them, and bidi is not reordered.
+- **A grapheme cluster is one cell** (`B66`): `👨‍👩‍👧`, `🇧🇷`, `👍🏽`, `1️⃣` and
+  `❤️` occupy the two columns of one character, and the codepoints that live
+  beside the base sit in the row's tail (`Row::tail`) — that is what makes the
+  width right, so a box drawn around an emoji lines up. Drawing shapes the whole
+  cluster: `shape::cluster_gid` asks each face of the chain for **one** glyph for
+  the whole string, and only a face with the ligature answers (Noto Color Emoji
+  draws the family, the flag, the tinted hand and the keycap), so a family is one
+  picture and not three faces. `VS16` makes the cell emoji presentation (two
+  columns) and `VS15` keeps the text glyph (one). Copy takes the whole cluster,
+  joiners included. **limit:** the tail keeps 16 codepoints; a face without the
+  ligature draws the base and its combining marks only; and a cluster never
+  crosses a row, so a joiner at the end of a line joins nothing.
 - Cursor block/beam/underline with blink; `CSI 6 q` from an application wins.
 - Underline at the width of the run, selection as inversion, padding in px,
   background painted to the border.

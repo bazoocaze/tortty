@@ -1255,3 +1255,28 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 - Measured: the four `chafa` formats on a normal size are unchanged (59x30,
   60x30, 60x30 cells; same correlations 0.977 / 0.991 / 0.992); the oversized
   kitty placement is now 60x45 at row -2 and **survives** the prompt redraw.
+
+## 2026-11-14 — an emoji sequence is one cell (1.0.94, `B66`)
+
+- The cell held a `char`, and what had no width went to the marks table capped at
+  three: `👨‍👩‍👧` took **six columns** and drew three faces, `👍🏽` took four and drew a
+  hand **and** a box, `1️⃣` showed `1▯`, `❤️` kept the width of `❤︎`, `🇧🇷` was the
+  letters `BR`. Measured in the core and on screen before the change.
+- Core: the row's `marks` became `tail` — the codepoints of the cluster beside the
+  base, `MAX_TAIL` 16 — and `put_char` first asks `try_cluster`: a combining mark,
+  a joiner, a selector, a keycap, a modifier, the base a joiner is waiting for or
+  the second half of a flag belong to the cell behind the cursor, take no cell
+  and move it nowhere. `emoji_presentation` decides the width and `promote_wide`
+  gives the cell the column to its right (`❤️` 2, `❤︎` 1). The ASCII fast path
+  gave up the one character after a joiner so `a\u{200D}b` still joins. `text`/
+  `text_cols_full` now speak the cluster, so copy keeps the joiners and accents.
+- Drawing: `shape::cluster_gid` returns the **one** glyph a face gives the whole
+  cluster, and `Fonts::cluster_bitmap` walks the chain for the first face that
+  composes it and can rasterize it; `Renderer::cluster_quad` caches by style and
+  cluster. Only plain marks are painted over the base now — a joiner, a member or
+  a modifier is not a mark, and painting them was the square beside the hand.
+- Measured on `1.0.94`, Xvfb, `emoji-check.txt` of the siblings repo: the family
+  is Noto's composed icon, the flags are flags, the five hands are five tints,
+  the keycaps are keycaps, `VS15`/`VS16` differ, and the five alignment boxes
+  `│a😀b│ │🇧🇷x│ │👍🏽│ │你好│ │abc│` line up. Parser: 39.8 → 40.1 MB/s (median of
+  three) on the same 1358-line file, so the extra check per run costs nothing.

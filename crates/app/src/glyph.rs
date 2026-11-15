@@ -256,6 +256,31 @@ impl Fonts {
         rasterize(ctx, f, self.px, gid).map(|b| (b, false))
     }
 
+    /// Bitmap of a whole grapheme cluster (`B66`), from the first face of the
+    /// chain that **composes** it and can draw it. A face that only has a glyph
+    /// per codepoint gives two glyphs for `👨‍👩‍👧`, and two glyphs are not a
+    /// cluster: the caller then keeps the base character and its marks.
+    pub fn cluster_bitmap(
+        &self,
+        ctx: &mut ScaleContext,
+        text: &str,
+        bold: bool,
+        italic: bool,
+    ) -> Option<(GlyphBitmap, bool)> {
+        for idx in self.candidates(bold, italic) {
+            let Some(gid) = crate::shape::cluster_gid(self.face(idx), text) else {
+                continue;
+            };
+            if let Some(b) = rasterize_color(ctx, self.face(idx), self.px, gid) {
+                return Some((b, true));
+            }
+            if let Some(b) = rasterize(ctx, self.face(idx), self.px, gid) {
+                return Some((b, false));
+            }
+        }
+        None
+    }
+
     /// First face in the chain whose cmap has the character — it is what groups
     /// cells into shaping runs. It says who **maps** the character, not who can
     /// draw it: drawing checks and, with no bitmap, falls back to the whole

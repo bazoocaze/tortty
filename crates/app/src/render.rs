@@ -170,6 +170,17 @@ pub struct Renderer {
     /// Combining marks of the cell `draw_cell` is painting (`M-U`), and how many.
     cur_marks: [char; tortty_core::grid::MAX_MARKS],
     n_marks: usize,
+    /// The whole grapheme cluster of the cell being painted (`B66`): the base and
+    /// everything the row keeps beside it. Empty for a cell with no tail, which
+    /// is almost every cell.
+    cur_cluster: String,
+    /// How many codepoints the cell has beside its base, so the cluster path is
+    /// not even looked for when there are none.
+    n_tail: usize,
+    /// Composed cluster glyphs already rasterized, by style and cluster. A family
+    /// or a flag repeats on screen (a listing of emoji, a redraw) and shaping is
+    /// not free.
+    cluster_cache: HashMap<(u8, String), Option<GlyphQuad>>,
     /// Grid instances, kept **per row**: only the dirty row is rebuilt
     /// (A17/G17). The final list (`instances`) is their concatenation plus the
     /// images, the chrome and the cursor, in blend order.
@@ -541,6 +552,9 @@ impl Renderer {
             img_cache: HashMap::new(),
             cur_marks: ['\0'; tortty_core::grid::MAX_MARKS],
             n_marks: 0,
+            cur_cluster: String::new(),
+            n_tail: 0,
+            cluster_cache: HashMap::new(),
             per_line: Vec::new(),
             signature: crate::damage::Signature::default(),
             theme_gen: 0,
@@ -1519,8 +1533,9 @@ impl Renderer {
         if cell.ch == ' ' || cell.ch == tortty_core::placeholder::PLACEHOLDER {
             return;
         }
-        let quad = glyph
-            .and_then(|(face, gid, _)| self.quad_gid(face, gid))
+        let quad = self
+            .cluster_quad(bold, italic)
+            .or_else(|| glyph.and_then(|(face, gid, _)| self.quad_gid(face, gid)))
             .or_else(|| self.glyph_quad(cell.ch, bold, italic));
         let desloc = glyph.map_or(0.0, |(_, _, dx)| dx);
         let Some(q) = quad else {
@@ -1550,6 +1565,53 @@ impl Renderer {
             color: cor,
             uv: q.uv,
         });
+    }
+
+    /// Fills what drawing needs from a cell's tail (`B66`): the cluster as text,
+    /// and how many of its codepoints are plain combining marks. A joiner, a
+    /// selector, a keycap, a skin tone or a joined member is **not** a mark —
+    /// painting those over the base is what drew a square beside the hand.
+    fn set_tail(&mut self, cell: Cell, tail: &[char]) {
+        self.n_tail = tail.len();
+        self.cur_cluster.clear();
+        if tail.is_empty() {
+            self.n_marks = 0;
+            return;
+        }
+        self.cur_cluster.push(cell.ch);
+        self.cur_cluster.extend(tail.iter());
+        let mut n = 0;
+        for ch in tail.iter().filter(|c| tortty_core::grid::is_mark(**c)) {
+            if n == tortty_core::grid::MAX_MARKS {
+                break;
+            }
+            self.cur_marks[n] = *ch;
+            n += 1;
+        }
+        self.n_marks = n;
+    }
+
+    /// The glyph of a cell's **whole cluster** (`B66`), when a face composes it
+    /// into one: a family of four is one picture, not four. `None` when no face
+    /// has the ligature, and then the cell is drawn as it was — the base and its
+    /// combining marks.
+    fn cluster_quad(&mut self, bold: bool, italic: bool) -> Option<GlyphQuad> {
+        if self.n_tail == 0 {
+            return None;
+        }
+        let key = (
+            u8::from(bold) | (u8::from(italic) << 1),
+            self.cur_cluster.clone(),
+        );
+        if let Some(hit) = self.cluster_cache.get(&key) {
+            return *hit;
+        }
+        let bitmap =
+            self.fonts
+                .cluster_bitmap(&mut self.scale_ctx, &self.cur_cluster, bold, italic);
+        let quad = bitmap.and_then(|(b, color)| self.quad_of(&b, color));
+        self.cluster_cache.insert(key, quad);
+        quad
     }
 
     /// The combining marks of the cell being drawn (`M-U`), in `cur_marks`.
@@ -2097,12 +2159,11 @@ impl Renderer {
                 };
                 self.cur_mark = self.mark_at(y, cx);
                 let swap = self.cur_mark == 0 && is_swap(&c, sel, y, cx);
-                // the marks of this cell, for `draw_cell` (a field instead of a
-                // seventh parameter, the way `cur_mark` already works)
-                let marks = row.marks_at(cx);
-                let n = marks.len().min(tortty_core::grid::MAX_MARKS);
-                self.cur_marks[..n].copy_from_slice(&marks[..n]);
-                self.n_marks = n;
+                // the tail of this cell, for `draw_cell` (fields instead of a
+                // seventh parameter, the way `cur_mark` already works): the whole
+                // cluster for shaping (`B66`), and — of it — only the plain
+                // combining marks to paint one over the other (`M-U`)
+                self.set_tail(c, row.tail_at(cx));
                 self.draw_cell(&c, cx, py, swap, glyph, links);
             }
             x = end;
