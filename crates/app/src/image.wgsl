@@ -48,10 +48,24 @@ fn vs_img(@builtin(vertex_index) vi: u32, inst: Inst) -> VOut {
     return o;
 }
 
+// The render target is **not** sRGB (`render.rs` picks the non-srgb format on
+// purpose: the cell colours are already sRGB and must not be linearized again),
+// but the emoji atlas and the image textures are `Rgba8UnormSrgb`, so sampling
+// hands back linear values. Without encoding them again on the way out, every
+// emoji and every protocol image is drawn one gamma too dark: the red of the
+// heart `(244, 67, 54)` came out `(231, 14, 9)`, which is exactly the linear
+// value of the same colour.
+fn encode_srgb(c: vec3<f32>) -> vec3<f32> {
+    let x = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
+    let lo = x * 12.92;
+    let hi = 1.055 * pow(x, vec3<f32>(1.0 / 2.4)) - 0.055;
+    return select(hi, lo, x < vec3<f32>(0.0031308));
+}
+
 @fragment
 fn fs_img(in: VOut) -> @location(0) vec4<f32> {
     // image with alpha (PNG, raw RGBA) goes in as is; the instance colour
     // multiplies so the app can erase/tint in the future
     let c = textureSample(tex, samp, in.uv);
-    return vec4<f32>(c.rgb * in.color.rgb, c.a * in.color.a);
+    return vec4<f32>(encode_srgb(c.rgb * in.color.rgb), c.a * in.color.a);
 }

@@ -1280,3 +1280,23 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   the keycaps are keycaps, `VS15`/`VS16` differ, and the five alignment boxes
   `│a😀b│ │🇧🇷x│ │👍🏽│ │你好│ │abc│` line up. Parser: 39.8 → 40.1 MB/s (median of
   three) on the same 1358-line file, so the extra check per run costs nothing.
+
+## 2026-11-14 — emoji and images were one gamma dark (1.0.95)
+
+- Reported as "os emojis parecem escuros": the colour of the heart in the font is
+  `(244, 67, 54)` and the screen showed `(231, 14, 9)` — which is exactly that
+  colour taken through sRGB → linear, i.e. the decode with no encode back. The
+  banana's `(255, 228, 180)` came out as `(255, 197, 115)`, same rule. Not a
+  judgement call: the numbers are the definition of the curve.
+- Cause: `render.rs` picks a **non-srgb** target on purpose (the cell colours are
+  already sRGB and must not be linearized again), while the emoji atlas and the
+  image textures are `Rgba8UnormSrgb`, so sampling decodes them and nothing
+  encoded them back. The protocol pictures had the same defect — a solid
+  `(128, 128, 128)` was drawn as `(55, 55, 55)`.
+- Fix: `image.wgsl` gained `encode_srgb` and `fs_img` returns the encoded colour.
+  The textures stay sRGB, so minification still filters in linear space; only the
+  output is encoded, and blending stays in the same space as the rest of the
+  screen.
+- Verified: the heart is `(244, 67, 54)` and the banana `(255, 227, 179)` (one
+  LSB of rounding), the grin's outline `(66, 43, 13)` is exact, and an iTerm2
+  inline image of `(128, 128, 128)` reads back `(128, 128, 128)`.

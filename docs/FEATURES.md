@@ -120,7 +120,11 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - Bold and italic from a real face, no synthesis: without the face it falls back
   to regular.
 - Per-glyph fallback chain by name, so a missing font does not become another
-  one; colour emoji (CBDT) in their own RGBA atlas; CJK, arrows, Greek.
+  one; colour emoji (CBDT) in their own RGBA atlas; CJK, arrows, Greek. The
+  emoji and image textures are `Rgba8UnormSrgb` while the render target is not
+  (the cell colours are already sRGB), so `image.wgsl` encodes linear → sRGB on
+  the way out: without that, every emoji and every protocol picture was drawn one
+  gamma too dark (the heart's `(244, 67, 54)` reached the screen as `(231, 14, 9)`).
 - Ligatures and shaping with `rustybuzz` (`off`/`standard`/`all`). **limit:**
   single-cell runs are not shaped, the cursor and the selection break the
   ligature around them, and bidi is not reordered.
