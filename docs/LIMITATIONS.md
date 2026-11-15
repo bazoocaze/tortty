@@ -69,7 +69,8 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   does not grow; the cap there is 16 codepoints (a family of four is seven).
   Three consequences are accepted: a **reflow (a resize) drops the tail**, as it
   already dropped combining marks — the row is cut by column and a tail is not
-  addressed, so an emoji loses its joiners and a letter its accents; a face
+  addressed, so an emoji loses its joiners and a letter its accents — a tab
+  restored into a **different** width goes through that same reflow; a face
   **without the ZWJ ligature** draws the base character and its combining marks
   (the width is still right, the picture is just the first emoji); and a cluster
   never crosses a row, so a sequence broken across a wrap is two cells.

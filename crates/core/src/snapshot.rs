@@ -136,15 +136,17 @@ pub fn snapshot(t: &Term) -> Vec<u8> {
         prev_wrapped = row.wrapped;
         // a soft-wrapped row is full by definition: its trailing spaces are
         // content, and trimming them would move the wrap
+        // a space that carries the rest of a cluster is content, not padding
         let end = if row.wrapped {
             row.cells.len()
         } else {
             row.cells
                 .iter()
-                .rposition(|c| !padding(c))
+                .enumerate()
+                .rposition(|(x, c)| !padding(c) || !row.tail_at(x).is_empty())
                 .map_or(0, |i| i + 1)
         };
-        for c in &row.cells[..end] {
+        for (x, c) in row.cells[..end].iter().enumerate() {
             if c.is_cont() {
                 continue; // the wide char before it takes the two cells
             }
@@ -172,6 +174,10 @@ pub fn snapshot(t: &Term) -> Vec<u8> {
                 pen = p;
             }
             out.push(c.ch);
+            // the codepoints of the cluster live beside the row, not in the cell
+            // (`B66`): without them the restored screen draws the base alone —
+            // the family back as one face, the flag back as one letter
+            out.extend(row.tail_at(x).iter());
         }
     }
     if link != 0 {
@@ -254,6 +260,38 @@ mod checks_snapshot {
         // and in the original width it is the same two rows
         let same = round(&snap, 20, 6);
         assert_eq!(all_text(&same), all_text(&t));
+    }
+
+    /// The shapes `emoji-check.txt` is made of — the ones `B66` taught the grid
+    /// to compose. A restore that dropped the tail brought back the picture from
+    /// before it, which is what B67 was.
+    #[test]
+    fn a_cluster_survives_the_snapshot() {
+        for (seq, wide) in [
+            ("\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}", true), // family, joiner
+            ("\u{1F1E7}\u{1F1F7}", true),                          // flag, two indicators
+            ("\u{1F44D}\u{1F3FD}", true),                          // skin tone
+            ("\u{2764}\u{FE0F}", true), // a selector turns the heart into a picture
+            ("\u{2764}", false),        // and without it the heart stays a glyph
+        ] {
+            let mut t = Term::new(20, 4);
+            t.feed(seq.as_bytes());
+            let tail = t.primary()[0].tail_at(0).to_vec();
+            let copy = round(&snapshot(&t), 20, 4);
+            assert_eq!(copy.primary()[0].cells[0].ch, t.primary()[0].cells[0].ch);
+            assert_eq!(copy.primary()[0].tail_at(0), tail.as_slice(), "{seq:?}");
+            assert!(tail.is_empty() || wide, "{seq:?} composes a tail: {tail:?}");
+            assert_eq!(
+                copy.primary()[0].cells[1].is_cont(),
+                wide,
+                "{seq:?} keeps its width"
+            );
+            assert_eq!(
+                t.primary()[0].cells[1].is_cont(),
+                wide,
+                "{seq:?} had that width before"
+            );
+        }
     }
 
     #[test]

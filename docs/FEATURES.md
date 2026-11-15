@@ -376,7 +376,9 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   decoration, drawn on the screen and **never** saved, so a tab reopened five
   times does not come back with five markers; the
   window closes with a hangup and the ptys are drained for a quarter of a second
-  before the snapshot, so the child's last words travel with it).
+  before the snapshot, so the child's last words travel with it; the snapshot
+  carries the **whole cell**, the codepoints of a grapheme cluster included, so a
+  family emoji comes back composed instead of as its first face).
   **limit:** a photograph, not the process — a new shell starts in the same
   directory and the previous programs are gone.
 - One owner of the state: the window that opens the session holds a `flock` on

@@ -1300,3 +1300,24 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 - Verified: the heart is `(244, 67, 54)` and the banana `(255, 227, 179)` (one
   LSB of rounding), the grin's outline `(66, 43, 13)` is exact, and an iTerm2
   inline image of `(128, 128, 128)` reads back `(128, 128, 128)`.
+
+## 2026-11-15 — the restored screen keeps its clusters (1.0.96)
+
+- Reported: `restore_state content` brought `emoji-check.txt` back with the
+  picture from before `B66` — the family as one face, the flag as one letter.
+  `B67` in the queue, confirmed and closed in the same session.
+- Cause: `snapshot()` writes one character per cell (`out.push(c.ch)`) and the
+  `Row.tail` that carries the codepoints of the cluster never reached the bytes.
+  Measured in the core: `👨‍👩‍👧` is a 2-column cell with a tail of 4 and its
+  snapshot was the three bytes of `👨`; `🇧🇷` → `🇧`; `👍🏽` → `👍`; `❤️` → `❤`,
+  the `VS16` gone and the width back to 1.
+- Fix: `snapshot()` writes `row.tail_at(x)` after the base character — the same
+  order the bytes arrived in, so the restore path composes it again through
+  `try_cluster`. A trailing space that carries the rest of a cluster is now
+  content, not padding. Test `a_cluster_survives_the_snapshot` covers the five
+  shapes of the file (family, flag, skin tone, heart with and without `VS16`),
+  comparing base, tail and width, and it fails without the fix.
+- Verified end to end (release build, `restore_state content`): `session-0-0.ans`
+  carries `1f468 200d 1f469 200d 1f467`, `1f1e7 1f1f7`, `1f44d 1f3fd`,
+  `2764 fe0f`, and the line in the restored window is pixel-identical to the one
+  before the restart — family icon, flag, tinted thumb, red heart.
