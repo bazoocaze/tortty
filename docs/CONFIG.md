@@ -10,10 +10,14 @@ wins.
 ~/.config/tortty/tortty.conf          # or $XDG_CONFIG_HOME/tortty/tortty.conf
 ```
 
-You do not need to create it: **the defaults are built in** in
-`crates/core/src/config.rs` (`DEFAULT_CONF`) and your file goes on top,
-key by key. A test guarantees the defaults parse clean and that every key of
-them appears on this page — the documentation does not age silently.
+You do not need to create it: **the defaults are built in**, and your file goes
+on top, key by key. They live in
+[`crates/core/defaults/tortty.conf`](../crates/core/defaults/tortty.conf), taken
+into the binary at build time (`include_str!`, so there is still one file to
+install), which makes them readable, diffable and usable as a reset:
+`tortty --config crates/core/defaults/tortty.conf`. A test guarantees the
+defaults parse clean and that every key of them appears on this page — the
+documentation does not age silently.
 
 The command line options (`--font-size`, `--scrollback`, `--cmd`…) override the
 file.

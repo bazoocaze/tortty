@@ -1188,3 +1188,18 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 - Probe (Xvfb): plain → `Ctrl+Shift+T` opens a tab (2 tabs) and `Alt+2`/`Alt+1`
   walk them; `map ctrl+shift+t new_workspace` → 2 workspaces, no tab; `unmap` →
   the chord does nothing.
+
+## 2026-11-14 — the defaults are a file (`1.0.90`)
+
+- `DEFAULT_CONF` was a 131-line, 4 431-byte string literal inside `config.rs`,
+  the one place where git saw configuration as code — `\"pretty theme\"` in the
+  middle of the palette comment.
+- It is now `crates/core/defaults/tortty.conf`, taken in at build time with
+  `include_str!`: still one binary, still no disk read at runtime, still "the
+  parse of `DEFAULT_CONF`" as `Config::base()`. Cargo tracks the file, so an edit
+  rebuilds.
+- Gain that is not cosmetic: the defaults can be pointed at
+  (`tortty --config crates/core/defaults/tortty.conf` is a factory reset) and
+  copied, which no one could do while they were a string.
+- Proof of no drift: `Config::base()` dumped before and after the move is
+  identical, line for line (626 lines of `Debug`, the 50 chords included).
