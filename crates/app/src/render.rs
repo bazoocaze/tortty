@@ -1170,7 +1170,7 @@ impl Renderer {
         );
         for slot in &mv.layout.rows {
             let [x, y, width, h] = slot.rect;
-            let Some(label) = crate::chrome::MENU.get(slot.i) else {
+            let Some(label) = mv.layout.items.get(slot.i).map(|i| i.label()) else {
                 continue;
             };
             let enabled = mv.enabled.get(slot.i).copied().unwrap_or(false);

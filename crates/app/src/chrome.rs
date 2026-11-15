@@ -211,9 +211,70 @@ impl Layout {
     }
 }
 
-/// The rows of the grid's context menu (`M-V`), top to bottom. The labels live
-/// here because the geometry needs their width; what each one does is the app's.
-pub const MENU: [&str; 4] = ["Copy", "Paste", "Open link", "New tab"];
+/// One row a context menu can offer. The label lives here because the geometry
+/// needs its width; what the row *does* is the app's (`MenuState`).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Item {
+    Copy,
+    Paste,
+    OpenLink,
+    NewTab,
+    CloseTab,
+    NewWorkspace,
+    Rename,
+    CloseWorkspace,
+    MoveUp,
+    MoveDown,
+}
+
+impl Item {
+    /// The text of the row, which is also its width in cells.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Item::Copy => "Copy",
+            Item::Paste => "Paste",
+            Item::OpenLink => "Open link",
+            Item::NewTab => "New tab",
+            Item::CloseTab => "Close tab",
+            Item::NewWorkspace => "New workspace",
+            Item::Rename => "Rename",
+            Item::CloseWorkspace => "Close workspace",
+            Item::MoveUp => "Move up",
+            Item::MoveDown => "Move down",
+        }
+    }
+}
+
+/// A context menu is a context menu: one box, drawn and hit the same way, and
+/// told apart only by **which** rows it lists and **what** it hangs from. Every
+/// menu the app has is one of these arrays, so adding a row is a variant of
+/// [`Item`] plus a line here — never a second menu to draw.
+///
+/// The grid's (`M-V`), where the pointer is on a cell of the screen.
+pub static GRID_MENU: [Item; 4] = [Item::Copy, Item::Paste, Item::OpenLink, Item::NewTab];
+/// A workspace card's, hung from the pointer (the sidebar is not made of cells).
+pub static CARD_MENU: [Item; 5] = [
+    Item::NewWorkspace,
+    Item::Rename,
+    Item::MoveUp,
+    Item::MoveDown,
+    Item::CloseWorkspace,
+];
+/// A tab's.
+pub static TAB_MENU: [Item; 2] = [Item::NewTab, Item::CloseTab];
+/// The bar's empty strip, right of the last tab: the only thing it can do.
+pub static BAR_MENU: [Item; 1] = [Item::NewTab];
+
+/// What a menu hangs from.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Anchor {
+    /// The cell under the pointer: the grid, where lining up with the text is
+    /// what makes "Open link" mean the link it covers.
+    Cell,
+    /// The pointer itself: the sidebar and the bar, which are not made of cells.
+    Pointer,
+}
 
 /// Cells of gutter on each side of a menu label.
 const MENU_GUTTER: usize = 1;
@@ -225,29 +286,53 @@ pub struct Menu {
     /// The whole box, in origin space.
     pub rect: Rect,
     pub rows: Vec<Slot>,
+    /// The rows it lists, in the order it lists them.
+    pub items: &'static [Item],
 }
 
 impl Menu {
-    /// `at` is the pointer in window px. The box hangs below and to the right of
-    /// the cell under it, and flips up when the bottom would cut it — a menu with
-    /// rows nobody can reach is worse than no menu.
+    /// `at` is the pointer in window px. The box hangs from [`Anchor`] — the cell
+    /// under the pointer on the grid, the pointer itself on the sidebar and the
+    /// bar — and is then kept inside the window, which is what takes the place of
+    /// the flip on the bottom and the left edge: a menu with rows nobody can
+    /// reach is worse than no menu.
     #[must_use]
-    pub fn build(m: Metrics, at: (f64, f64)) -> Menu {
-        let text = MENU.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+    pub fn build(m: Metrics, items: &'static [Item], anchor: Anchor, at: (f64, f64)) -> Menu {
+        let text = items
+            .iter()
+            .map(|i| i.label().chars().count())
+            .max()
+            .unwrap_or(0);
         let cells = (text + 2 * MENU_GUTTER).clamp(1, m.cols.max(1));
-        let count = MENU.len().clamp(1, m.rows.max(1));
-        let (col, row) = m.cell_at(at.0, at.1);
-        let col = col.min(m.cols.saturating_sub(cells));
-        // a menu that would be cut by the bottom edge flips above the pointer
-        let row = if row + count > m.rows {
-            row.saturating_sub(count)
-        } else {
-            row
-        };
-        #[allow(clippy::cast_precision_loss)] // columns and rows, far below 2^23
-        let (left, top) = (col as f32 * m.cw, row as f32 * m.ch);
+        let count = items.len().clamp(1, m.rows.max(1));
         #[allow(clippy::cast_precision_loss)]
         let (width, step) = (cells as f32 * m.cw, m.ch);
+        #[allow(clippy::cast_precision_loss)]
+        let height = step * count as f32;
+        let (left, top) = match anchor {
+            Anchor::Cell => {
+                let (col, row) = m.cell_at(at.0, at.1);
+                let col = col.min(m.cols.saturating_sub(cells));
+                // a menu that would be cut by the bottom edge flips above the cell
+                let row = if row + count > m.rows {
+                    row.saturating_sub(count)
+                } else {
+                    row
+                };
+                #[allow(clippy::cast_precision_loss)] // cells, far below 2^23
+                (col as f32 * m.cw, row as f32 * m.ch)
+            },
+            Anchor::Pointer => m.in_origin(at.0, at.1),
+        };
+        // the window in origin space: the sidebar and the bar are negative, and a
+        // menu opened over them must still fit the screen it is drawn on
+        #[allow(clippy::cast_precision_loss)]
+        let (min_x, min_y) = (-(m.pad + m.side), -(m.pad + m.bar));
+        #[allow(clippy::cast_precision_loss)]
+        let (max_x, max_y) = (m.cols as f32 * m.cw - width, m.rows as f32 * m.ch - height);
+        // `min(min, max)`: in a window too small for the box, the top/left wins
+        let left = left.clamp(min_x.min(max_x), max_x);
+        let top = top.clamp(min_y.min(max_y), max_y);
         let mut rows = Vec::with_capacity(count);
         for i in 0..count {
             #[allow(clippy::cast_precision_loss)]
@@ -258,9 +343,9 @@ impl Menu {
             });
         }
         Menu {
-            #[allow(clippy::cast_precision_loss)]
-            rect: [left, top, width, step * count as f32],
+            rect: [left, top, width, height],
             rows,
+            items,
         }
     }
 
@@ -283,26 +368,63 @@ impl Menu {
 mod tests {
     use super::*;
 
-    /// The menu hangs from the pointer's cell and never leaves the grid: at the
-    /// bottom it flips up, and its rows are the ones the pointer can hit.
+    /// The grid's menu hangs from the pointer's cell and never leaves the grid: at
+    /// the bottom it flips up, and its rows are the ones the pointer can hit.
     #[test]
     fn the_menu_hangs_from_the_pointer_and_stays_inside() {
         let m = metrics();
         // pad 4 + side 180 = 184: the grid starts there, and the bar adds 20
-        let menu = Menu::build(m, (184.0 + 15.0, 24.0 + 15.0));
-        assert_eq!(menu.rows.len(), MENU.len());
+        let menu = Menu::build(m, &GRID_MENU, Anchor::Cell, (184.0 + 15.0, 24.0 + 15.0));
+        assert_eq!(menu.rows.len(), GRID_MENU.len());
         assert_eq!(menu.rect[0], 10.0, "the pointer's cell, in origin space");
         assert_eq!(menu.rect[1], 0.0);
-        // the widest label plus a cell of gutter on each side
+        // the widest label plus a cell of gutter on each side: "Open link" = 9
         assert_eq!(menu.rect[2], 11.0 * 10.0);
         // a click inside a row names it, one pixel below the box names nothing
         let y = 24.0 + 20.0 * 1.5;
         assert_eq!(menu.row_at(m, 184.0 + 20.0, y), Some(1));
         assert_eq!(menu.row_at(m, 184.0 + 20.0, 24.0 + 20.0 * 4.5), None);
         // near the bottom (row 9 of 10) it flips up instead of running off
-        let low = Menu::build(m, (184.0, 24.0 + 9.5 * 20.0));
+        let low = Menu::build(m, &GRID_MENU, Anchor::Cell, (184.0, 24.0 + 9.5 * 20.0));
         assert_eq!(low.rect[1], 5.0 * 20.0);
         assert!(low.rect[1] + low.rect[3] <= 10.0 * 20.0);
+    }
+
+    /// A card's menu hangs from the **pointer**, not from a cell: the pointer's
+    /// pixel is the box's corner, the sidebar being left of the grid (negative
+    /// origin), and it still fits the window (`B64`, the reported bug: a click on
+    /// the sidebar used to put the grid's menu at the grid's edge).
+    #[test]
+    fn a_card_menu_hangs_from_the_pointer_and_fits_the_window() {
+        let m = metrics();
+        // "Close workspace" is 15 cells + 2 of gutter = 17
+        let menu = Menu::build(m, &CARD_MENU, Anchor::Pointer, (20.0, 24.0 + 40.0));
+        assert_eq!(menu.rows.len(), CARD_MENU.len());
+        assert_eq!(menu.rect[0], 20.0 - 184.0, "the pointer, over the sidebar");
+        assert_eq!(menu.rect[1], 40.0);
+        assert_eq!(menu.rect[2], 17.0 * 10.0);
+        // the window in origin space runs from -(pad+side) to cols*cw: the box
+        // never leaves it, neither at the right edge nor in the left margin
+        let right = Menu::build(m, &CARD_MENU, Anchor::Pointer, (570.0, 100.0));
+        assert!(
+            right.rect[0] + right.rect[2] <= 40.0 * 10.0,
+            "it never spills out on the right"
+        );
+        let margin = Menu::build(m, &CARD_MENU, Anchor::Pointer, (0.0, 100.0));
+        assert_eq!(
+            margin.rect[0], -184.0,
+            "nor past the left edge of the window"
+        );
+        // a click in its first row names row 0, the one under the pointer
+        let px = 20.0;
+        assert_eq!(menu.row_at(m, px, 24.0 + 40.0 + 5.0), Some(0));
+        // at the bottom of the window it is pulled up, not cut
+        let low = Menu::build(m, &CARD_MENU, Anchor::Pointer, (20.0, 24.0 + 199.0));
+        assert!(low.rect[1] + low.rect[3] <= 10.0 * 20.0);
+        // and the bar's own strip, above the grid, stays inside the window too
+        let bar = Menu::build(m, &BAR_MENU, Anchor::Pointer, (500.0, 6.0));
+        assert_eq!(bar.rect[1], 6.0 - 24.0, "the pointer's pixel, in origin");
+        assert!(bar.rect[1] >= -24.0, "above the bar is off-window");
     }
 
     fn metrics() -> Metrics {

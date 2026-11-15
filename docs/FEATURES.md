@@ -87,14 +87,21 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   across a resize by its two corners (the reflow does not re-derive the
   rectangle), and with the child asking for the mouse a plain drag is reported
   to it instead — Alt+drag still selects a block.
-- Context menu (`M-V`): the right button on the grid opens it — **Copy**,
-  **Paste**, **Open link** and **New tab** — and it is chrome from the `M-Q`
-  layout (a chip like the search bar's, hanging from the pointer's cell and
-  flipping up when the bottom would cut it). The arrow keys walk the usable rows,
+- Context menu (`M-V`, `B64`): **one menu, four contexts**, chosen by where the
+  pointer is — on the grid (**Copy**, **Paste**, **Open link**, **New tab**), on a
+  workspace card (**New workspace**, **Rename**, **Move up**, **Move down**,
+  **Close workspace**), on a tab (**New tab**, **Close tab**) and on the bar's
+  empty strip right of the last tab (**New tab** alone). It is chrome from the
+  `M-Q` layout: a chip like the search bar's, hanging from the pointer's **cell**
+  on the grid (so a row lines up with the text it covers) and from the **pointer**
+  on the sidebar and the bar, which are not made of cells, then pulled inside the
+  window. One box, one hit test, one key path: the arrows walk the usable rows,
   `Enter` runs one, `Escape` or any other key closes it, and a row that cannot be
-  used (no selection, no link under the pointer) is drawn dim and does nothing.
-  **limit:** with the child asking for the mouse the button is the child's —
-  `Shift`+right opens the menu then.
+  used is drawn dim and does nothing — no selection to copy, no link under the
+  pointer, only one workspace left to close, `Move up` on the first card.
+  **limit:** with the child asking for the mouse the grid's menu is the child's —
+  `Shift`+right opens it then; the sidebar and the bar are always ours. The
+  sidebar's free row and the window's margin act on nothing.
 - Clipboard: PRIMARY on release, CLIPBOARD with `copy_on_select`,
   Ctrl+Shift+C/V, button 2 pastes PRIMARY, bracketed paste, `OSC 52` from the
   child (`c` sets CLIPBOARD, `p` PRIMARY — the `ssh` copy). **limit:** PRIMARY

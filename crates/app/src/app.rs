@@ -322,24 +322,34 @@ fn tally(t: &tortty_core::term::SyncTrace) -> String {
     )
 }
 
+/// A context menu open at the pointer (`M-V`): which rows it lists, what it
+/// hangs from, and what it was opened **on**. The rows are [`chrome::Item`]s, so
+/// the grid's, a card's and a tab's menu are the same struct with a different
+/// list — nothing here knows which menu it is.
+struct MenuState {
+    /// Where it was opened, in window px: the box hangs from here.
+    at: (f64, f64),
+    /// The rows, in the order they are drawn and hit.
+    items: &'static [crate::chrome::Item],
+    /// Whether the box hangs from a cell or from the pointer itself.
+    anchor: crate::chrome::Anchor,
+    /// The card or tab it acts on (the grid's menu, and the bar's strip, have no
+    /// subject).
+    subject: Option<usize>,
+    /// The `OSC 8` target under the pointer when it opened, if any.
+    link: Option<String>,
+    /// Which rows were usable, decided once: they belong to the click.
+    enabled: Vec<bool>,
+    /// The row the pointer is on, for the highlight.
+    hover: Option<usize>,
+}
+
 /// One tab: a terminal and the pty feeding it, plus the state that only makes
 /// sense while it is in front (view, selection, mouse drag).
 ///
 /// The split matters because of F4: with N live tabs at once, each pty keeps
 /// reading; only what is "looking" (scrolling, selection) stays frozen in the
 /// tab that is not active.
-/// The grid's context menu (`M-V`), open at the pointer.
-struct MenuState {
-    /// Where it was opened, in window px: the box hangs from this cell.
-    at: (f64, f64),
-    /// The `OSC 8` target under the pointer when it opened, if any.
-    link: Option<String>,
-    /// Which rows were usable, in the order of `chrome::MENU`.
-    enabled: Vec<bool>,
-    /// The row the pointer is on, for the highlight.
-    hover: Option<usize>,
-}
-
 pub struct Tab {
     /// Tab identity, monotonic and unique per run. The per-line damage
     /// (A17/G17) stores per-line instances of the `Renderer`, so switching tabs
@@ -1104,24 +1114,104 @@ impl App {
         self.chrome_layout().card_at(px, py)
     }
 
-    /// The grid's context menu (`M-V`), when it is open. The geometry is built on
-    /// demand from the pointer's cell, so it can never go stale; what is kept here
-    /// is what the menu was opened **on** (the link under the pointer) and the
-    /// rows that were usable at that moment.
-    /// Opens the menu at the pointer. `enabled` is decided once, when it opens:
-    /// whether there is a selection to copy and whether there is a link to open
-    /// belong to the click, not to the frame.
-    fn open_menu(&mut self) {
-        let (col, row) = self.cell_at(self.cursor_px.0, self.cursor_px.1);
-        let link = self.link_at(row, col);
-        let copy = self.selection_text().is_some_and(|s| !s.trim().is_empty());
+    /// Opens the context menu the pointer is standing on (`M-V`, `B64`): a card's
+    /// on the sidebar, a tab's on the bar, the bar's own strip right of the last
+    /// tab, and the grid's over the screen — which is the child's, when the child
+    /// asked for the mouse (then `Shift` asks for ours, and nothing opens without
+    /// it).
+    ///
+    /// The geometry is built on demand from the pointer, so it can never go
+    /// stale; what is kept is what the menu was opened **on** (the link under the
+    /// pointer, which card or tab) and the rows that were usable at that moment —
+    /// they belong to the click, not to the frame. Answers whether it opened, so
+    /// the caller knows whether the press is ours.
+    fn open_menu(&mut self) -> bool {
+        let (px, py) = self.cursor_px;
+        let (me, layout) = (self.chrome_metrics(), self.chrome_layout());
+        let (items, anchor, subject) = if let Some(i) = layout.card_at(px, py) {
+            (
+                &crate::chrome::CARD_MENU[..],
+                crate::chrome::Anchor::Pointer,
+                Some(i),
+            )
+        } else if let Some(i) = layout.tab_at(px, py) {
+            (
+                &crate::chrome::TAB_MENU[..],
+                crate::chrome::Anchor::Pointer,
+                Some(i),
+            )
+        } else if py < f64::from(me.pad + me.bar) {
+            (
+                &crate::chrome::BAR_MENU[..],
+                crate::chrome::Anchor::Pointer,
+                None,
+            )
+        } else if self.in_grid(px, py) {
+            if !(self.mods.shift_key() || self.tabs[self.active].term.mouse_mode == 0) {
+                return false;
+            }
+            (
+                &crate::chrome::GRID_MENU[..],
+                crate::chrome::Anchor::Cell,
+                None,
+            )
+        } else {
+            // the sidebar's free row and the window's margin act on nothing
+            return false;
+        };
+        // a link can only be under the pointer where there are cells to hold it
+        let link = match anchor {
+            crate::chrome::Anchor::Cell => {
+                let (col, row) = self.cell_at(px, py);
+                self.link_at(row, col)
+            },
+            crate::chrome::Anchor::Pointer => None,
+        };
+        let enabled = items
+            .iter()
+            .map(|i| self.item_usable(*i, subject, link.is_some()))
+            .collect();
         self.menu_open = Some(MenuState {
             at: self.cursor_px,
-            link: link.clone(),
-            enabled: vec![copy, true, link.is_some(), true],
+            items,
+            anchor,
+            subject,
+            link,
+            enabled,
             hover: None,
         });
         self.redraw();
+        true
+    }
+
+    /// Whether the pointer is over the grid's own area (not the sidebar, not the
+    /// bar, not the margin).
+    fn in_grid(&self, px: f64, py: f64) -> bool {
+        let metrics = self.chrome_metrics();
+        let (x, y) = metrics.in_origin(px, py);
+        #[allow(clippy::cast_precision_loss)]
+        let (width, height) = (
+            metrics.cols as f32 * metrics.cw,
+            metrics.rows as f32 * metrics.ch,
+        );
+        x >= 0.0 && y >= 0.0 && x < width && y < height
+    }
+
+    /// Whether one row of a menu can do anything right now. `subject` is the card
+    /// or tab it would act on; `link` says whether the pointer is on a link.
+    fn item_usable(&self, item: crate::chrome::Item, subject: Option<usize>, link: bool) -> bool {
+        use crate::chrome::Item;
+        match item {
+            Item::Copy => self.selection_text().is_some_and(|t| !t.trim().is_empty()),
+            Item::OpenLink => link,
+            Item::Paste | Item::NewTab | Item::NewWorkspace | Item::Rename => true,
+            // closing the last one closes the window (`I20`): that is a keyboard
+            // decision, not one a menu row should make by accident
+            Item::CloseTab => self.tabs.len() > 1,
+            Item::CloseWorkspace => self.ws_count() > 1,
+            Item::MoveUp => subject.is_some_and(|i| i > 0),
+            Item::MoveDown => subject.is_some_and(|i| i + 1 < self.ws_count()),
+        }
     }
 
     fn close_menu(&mut self) {
@@ -1130,24 +1220,58 @@ impl App {
         }
     }
 
-    /// Runs row `i` of the menu (the order of `chrome::MENU`).
+    /// Runs row `i` of the open menu. The row names itself (`chrome::Item`), so a
+    /// menu is a list and not an index table; `subject` is the card or the tab it
+    /// acts on, which the item knows nothing about.
     fn menu_action(&mut self, i: usize) {
+        use crate::chrome::Item;
         let Some(state) = self.menu_open.take() else {
+            return;
+        };
+        let Some(item) = state.items.get(i).copied() else {
+            self.redraw();
             return;
         };
         if !state.enabled.get(i).copied().unwrap_or(false) {
             self.redraw();
             return;
         }
-        match i {
-            0 => self.copy(),
-            1 => self.paste(),
-            2 => {
+        let subject = state.subject;
+        match item {
+            Item::Copy => self.copy(),
+            Item::Paste => self.paste(),
+            Item::OpenLink => {
                 if let Some(uri) = state.link {
                     self.open_link(&uri);
                 }
             },
-            _ => self.new_tab(),
+            Item::NewTab => self.new_tab(),
+            Item::CloseTab => {
+                if let Some(i) = subject {
+                    self.close_tab_at(i);
+                }
+            },
+            Item::NewWorkspace => self.new_workspace(),
+            Item::Rename => {
+                if let Some(i) = subject {
+                    self.start_rename(i);
+                }
+            },
+            Item::CloseWorkspace => {
+                if let Some(i) = subject {
+                    self.close_workspace(i);
+                }
+            },
+            Item::MoveUp => {
+                if let Some(i) = subject {
+                    self.move_workspace(i, ws_above(i));
+                }
+            },
+            Item::MoveDown => {
+                if let Some(i) = subject {
+                    self.move_workspace(i, ws_below(i, self.ws_count()));
+                }
+            },
         }
         self.redraw();
     }
@@ -1212,11 +1336,11 @@ impl App {
         })
     }
 
-    /// The chrome layout of the menu (built from the pointer each time).
+    /// The chrome layout of the open menu (built from the pointer each time).
     fn menu_layout(&self) -> Option<crate::chrome::Menu> {
         self.menu_open
             .as_ref()
-            .map(|m| crate::chrome::Menu::build(self.chrome_metrics(), m.at))
+            .map(|m| crate::chrome::Menu::build(self.chrome_metrics(), m.items, m.anchor, m.at))
     }
 
     /// The pointer is on the sidebar column (`B42`).
@@ -1700,13 +1824,10 @@ impl App {
             }
             return;
         }
-        // the grid's own menu: right button, unless the child asked for the
-        // mouse (then the button is the child's, and Shift asks for ours)
-        if btn == crate::mouse::RIGHT
-            && state == ElementState::Pressed
-            && (self.mods.shift_key() || self.tabs[self.active].term.mouse_mode == 0)
-        {
-            self.open_menu();
+        // a context menu: right button. Which one, and whether the press is even
+        // ours, is the pointer's business (`open_menu`): over the grid the child
+        // may have asked for the mouse, over the sidebar and the bar it never did
+        if btn == crate::mouse::RIGHT && state == ElementState::Pressed && self.open_menu() {
             return;
         }
         // Alt+Left drags a local block selection instead of reporting to the
@@ -3142,6 +3263,30 @@ impl App {
                         .collect::<Vec<_>>(),
                     "search": self.search.as_ref().map(|s| {
                         serde_json::json!([s.query, s.at, s.hits.len()])
+                    }),
+                    // the open context menu (`B64`): which rows, which card or
+                    // tab it acts on, and where the box landed in window px —
+                    // a probe can check the anchor without reading pixels
+                    "menu": self.menu_open.as_ref().and_then(|state| {
+                        let m = self.menu_layout()?;
+                        let metrics = self.chrome_metrics();
+                        let (pad, side, bar) = (
+                            f64::from(metrics.pad),
+                            f64::from(metrics.side),
+                            f64::from(metrics.bar),
+                        );
+                        Some(serde_json::json!({
+                            "items": m.items.iter().map(|i| i.label()).collect::<Vec<_>>(),
+                            "enabled": state.enabled,
+                            "subject": state.subject,
+                            "at": [state.at.0, state.at.1],
+                            "rect": [
+                                f64::from(m.rect[0]) + pad + side,
+                                f64::from(m.rect[1]) + pad + bar,
+                                m.rect[2],
+                                m.rect[3],
+                            ],
+                        }))
                     }),
                     "status": self.tabs[self.active]
                         .term

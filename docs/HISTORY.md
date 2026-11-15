@@ -1203,3 +1203,26 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   copied, which no one could do while they were a string.
 - Proof of no drift: `Config::base()` dumped before and after the move is
   identical, line for line (626 lines of `Debug`, the 50 chords included).
+
+## 2026-11-14 — a context menu per place (`B64`, 1.0.91)
+
+- Reported: with the pointer on the sidebar the menu did not come out under the
+  mouse. Cause: the box was built from `cell_at`, which clamps to column 0, so a
+  click 164 px into the sidebar put the grid's menu at the grid's left edge; and
+  `link_at` was read from that same clamped cell, enabling "Open link" for a link
+  the pointer was not on.
+- The menu became one type with four lists (`chrome::Item`, `GRID_MENU`,
+  `CARD_MENU`, `TAB_MENU`, `BAR_MENU`) and two anchors: the cell on the grid, the
+  pointer on the sidebar and the bar, then clamped to the window. `MenuState`
+  carries only the list, the anchor and the subject, so drawing, hit test,
+  keyboard and click are one path each — a new context is an array, not a menu.
+- Cards got their own rows (new/rename/move up/move down/close workspace) and a
+  tab its two; `Close tab`/`Close workspace` are dim on the last one, because
+  closing the window is a keyboard decision (`I20`), and `Move up`/`Move down` are
+  dim at the ends. The press decides: the sidebar and the bar are always ours, the
+  grid's menu stays the child's when it asked for the mouse.
+- Probe on Xvfb: card menu at the pointer with `Move up` dim on the first card;
+  `Rename` named three workspaces, `Move down`/`Move up`/`Close workspace` acted;
+  tab menu closed a tab (2→1); the strip's single `New tab` opened one (2→3) with
+  the box pulled inside the window; the grid's menu still snapped to the cell and
+  enabled `Open link` on the line holding the `OSC 8` link.
