@@ -1226,3 +1226,14 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   tab menu closed a tab (2→1); the strip's single `New tab` opened one (2→3) with
   the box pulled inside the window; the grid's menu still snapped to the cell and
   enabled `Open link` on the line holding the `OSC 8` link.
+
+## 2026-11-14 — the damage counters speak English (1.0.92)
+
+- `Renderer::linhas_remontadas`/`celulas_remontadas` were the last Portuguese
+  symbols in `render.rs`, against the convention; they are now `rows_built`/
+  `cells_built`, which is also what the socket has been publishing (`"rows_built"`,
+  `"cells_built"`) since the counters were added — the field and the JSON key now
+  carry the same name.
+- Probe (Xvfb, 40×12): the first frame built 12 rows and 480 cells (one screen,
+  40 per row); after `seq 200` across 4 draws, 36 rows and 1440 cells, ratio
+  exactly `cols` — the counter still counts what it counted.

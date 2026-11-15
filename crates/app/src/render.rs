@@ -203,8 +203,10 @@ pub struct Renderer {
     /// `signature` (something full-screen changed). Without it the counter only
     /// says it happened, not who asked for it.
     pub all_reason: &'static str,
-    pub linhas_remontadas: u64,
-    pub celulas_remontadas: u64,
+    /// Rows and cells the last frames actually rebuilt (`A17`/`G17`): the
+    /// proof that partial drawing works, and the numbers the socket publishes.
+    pub rows_built: u64,
+    pub cells_built: u64,
 }
 
 struct ImgTex {
@@ -551,8 +553,8 @@ impl Renderer {
             frames_all: 0,
             rows_max: 0,
             all_reason: "",
-            linhas_remontadas: 0,
-            celulas_remontadas: 0,
+            rows_built: 0,
+            cells_built: 0,
         })
     }
 
@@ -2174,8 +2176,8 @@ impl Renderer {
         }
 
         self.paint_glyphs(row, y, ctx);
-        self.linhas_remontadas = self.linhas_remontadas.saturating_add(1);
-        self.celulas_remontadas = self.celulas_remontadas.saturating_add(cols as u64);
+        self.rows_built = self.rows_built.saturating_add(1);
+        self.cells_built = self.cells_built.saturating_add(cols as u64);
     }
 
     /// Face and attributes that define a shaping run, plus the inversion

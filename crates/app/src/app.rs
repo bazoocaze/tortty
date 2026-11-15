@@ -3180,8 +3180,8 @@ impl App {
                     "global_marks": self.tabs[self.active].term.global_marks,
                     "global_why": self.tabs[self.active].term.global_why,
                     "dirty_rows": self.tabs[self.active].term.dirty.iter().filter(|d| **d).count(),
-                    "rows_built": self.renderer.as_ref().map_or(0, |r| r.linhas_remontadas),
-                    "cells_built": self.renderer.as_ref().map_or(0, |r| r.celulas_remontadas),
+                    "rows_built": self.renderer.as_ref().map_or(0, |r| r.rows_built),
+                    "cells_built": self.renderer.as_ref().map_or(0, |r| r.cells_built),
                     // kitty images: without this there is no way to check the
                     // placement without looking at the screen
                     "images": self.tabs[self.active].term.graphics.images().len(),
