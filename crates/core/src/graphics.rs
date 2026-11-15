@@ -239,6 +239,8 @@ pub struct FileRequest {
     pub kv: HashMap<String, String>,
     pub cursor: (u16, u16),
     pub cell: (u32, u32),
+    /// The grid the cursor was on: a picture is cut to what fits in it (`B65`).
+    pub grid: (u16, u16),
 }
 
 /// What the `Term` must do after an APC.
@@ -395,6 +397,7 @@ impl Graphics {
         kv: &HashMap<String, String>,
         cursor: (u16, u16),
         cell: (u32, u32),
+        grid: (u16, u16),
     ) -> Option<u16> {
         let cw = cell.0.max(1);
         let ch = cell.1.max(1);
@@ -431,6 +434,27 @@ impl Graphics {
         // it has no cell of its own (`M-L`). The `c`/`r` above are the size of the
         // placeholder grid the picture is cut into.
         let placeholder = kv.get("U").is_some_and(|u| u == "1");
+        // A placement never claims cells the grid does not have (`B65`): past
+        // the edge there is nothing to draw on, and a picture bigger than the
+        // screen owned rows that do not exist — it read back as `row=-2` with
+        // a hundred rows on a 45-row grid, and the erase rule (`B3`, "a picture
+        // lives in its cells") then wiped it on the first `EL` of the child,
+        // since the phantom rectangle covered every cell there is. The source
+        // rectangle is cut in the same proportion, so what a big picture shows
+        // is the part that fits, undistorted. A placeholder has no place of its
+        // own (`U=1`: the `U+10EEEE` cells are it), so it keeps its grid.
+        let (cols, rows, crop) = if placeholder {
+            (cols, rows, (x, y, w, h))
+        } else {
+            let (vc, vr) = (cols.min(grid.0.max(1)), rows.min(grid.1.max(1)));
+            if vc < cols || vr < rows {
+                let w2 = (w * u32::from(vc) / u32::from(cols)).max(1);
+                let h2 = (h * u32::from(vr) / u32::from(rows)).max(1);
+                (vc, vr, (x, y, w2, h2))
+            } else {
+                (cols, rows, (x, y, w, h))
+            }
+        };
         // a placement id is unique per image: reusing it moves that placement
         // instead of adding another one
         if pid != 0 {
@@ -447,14 +471,20 @@ impl Graphics {
             rows,
             dx: i32::try_from(num("X").unwrap_or(0)).unwrap_or(0),
             dy: i32::try_from(num("Y").unwrap_or(0)).unwrap_or(0),
-            crop: (x, y, w, h),
+            crop,
             placeholder,
         });
         Some(rows)
     }
 
     /// Processes the body of an APC (`G…`, already without the delimiters).
-    pub fn handle(&mut self, body: &[u8], cursor: (u16, u16), cell: (u32, u32)) -> Output {
+    pub fn handle(
+        &mut self,
+        body: &[u8],
+        cursor: (u16, u16),
+        cell: (u32, u32),
+        grid: (u16, u16),
+    ) -> Output {
         let Some(body) = body.strip_prefix(b"G") else {
             return Output::default();
         };
@@ -563,6 +593,7 @@ impl Graphics {
                     kv,
                     cursor,
                     cell,
+                    grid,
                 }),
                 ..Output::default()
             };
@@ -576,7 +607,7 @@ impl Graphics {
                 None => return Self::error(&kv, "EINVAL:zlib"),
             }
         }
-        self.dispatch(action, &kv, &data, ident, quiet, cursor, cell)
+        self.dispatch(action, &kv, &data, ident, quiet, cursor, cell, grid)
     }
 
     /// Routes the APC action. Kept apart from the parse so the protocol fits in
@@ -591,6 +622,7 @@ impl Graphics {
         quiet: bool,
         cursor: (u16, u16),
         cell: (u32, u32),
+        grid: (u16, u16),
     ) -> Output {
         let param = |k: &str| kv.get(k).map(String::as_str);
         match action {
@@ -661,7 +693,7 @@ impl Graphics {
                 },
                 Some(img) => {
                     let img = img.clone();
-                    let Some(rows) = self.place(&img, kv, cursor, cell) else {
+                    let Some(rows) = self.place(&img, kv, cursor, cell, grid) else {
                         return Self::error(kv, "EINVAL:crop outside the image");
                     };
                     Output {
@@ -678,7 +710,7 @@ impl Graphics {
                     }
                 },
             },
-            "t" | "T" => self.transmit(kv, data, ident, quiet, cursor, cell),
+            "t" | "T" => self.transmit(kv, data, ident, quiet, cursor, cell, grid),
             _ => {
                 if quiet {
                     Output::default()
@@ -689,6 +721,8 @@ impl Graphics {
         }
     }
 
+    // the request's fields, not a bag: the same shape `dispatch` needs
+    #[allow(clippy::too_many_arguments)]
     fn transmit(
         &mut self,
         kv: &HashMap<String, String>,
@@ -697,6 +731,7 @@ impl Graphics {
         quiet: bool,
         cursor: (u16, u16),
         cell: (u32, u32),
+        grid: (u16, u16),
     ) -> Output {
         let Some((width, height, fmt)) = Self::image_size(kv, data) else {
             return Self::error(kv, "EINVAL:size");
@@ -734,7 +769,7 @@ impl Graphics {
             ..Output::default()
         };
         if kv.get("a").is_some_and(|a| a == "T") {
-            match self.place(&img, kv, cursor, cell) {
+            match self.place(&img, kv, cursor, cell, grid) {
                 Some(rows) => {
                     let virt = kv.get("U").is_some_and(|u| u == "1");
                     out.lines = if virt { 0 } else { rows };
@@ -988,7 +1023,9 @@ impl Graphics {
                 ..Output::default()
             };
         }
-        self.transmit(&req.kv, data, req.ident, req.quiet, req.cursor, req.cell)
+        self.transmit(
+            &req.kv, data, req.ident, req.quiet, req.cursor, req.cell, req.grid,
+        )
     }
 
     /// The app could not load the file (`B1`): missing, unreadable, a
@@ -1105,7 +1142,7 @@ impl Graphics {
                 ..Output::default()
             };
         }
-        self.transmit(&kv, &data, 0, true, cursor, cell)
+        self.transmit(&kv, &data, 0, true, cursor, cell, grid)
     }
 
     /// Sixel (`B3`): the DCS the bitmap protocols speak. The picture is placed at
@@ -1114,7 +1151,13 @@ impl Graphics {
     /// own, so a terminal that keeps the cursor where it was prints the prompt
     /// over the picture. The DEC VT340 left it in place; a screen with scrollback
     /// gives the picture the room it took.
-    pub fn sixel(&mut self, dcs: &[u8], cursor: (u16, u16), cell: (u32, u32)) -> Output {
+    pub fn sixel(
+        &mut self,
+        dcs: &[u8],
+        cursor: (u16, u16),
+        cell: (u32, u32),
+        grid: (u16, u16),
+    ) -> Output {
         let Some((params, body)) = sixel::split(dcs) else {
             return Output::default(); // not a sixel: a DCS keeps its own meaning
         };
@@ -1151,7 +1194,7 @@ impl Graphics {
         };
         self.images.insert(id, img.clone());
         self.prune_sixel();
-        let Some(rows) = self.place(&img, &HashMap::new(), cursor, cell) else {
+        let Some(rows) = self.place(&img, &HashMap::new(), cursor, cell, grid) else {
             return Output::default();
         };
         Output {
@@ -1255,7 +1298,7 @@ mod checks_graphics {
         // 2x2 in a 10x19 cell = 1x1
         let mut g = Graphics::new();
         let body = format!("Ga=T,f=32,s=2,v=2,i=3;{}", rgba2x2());
-        let out = g.handle(body.as_bytes(), (0, 1), cell());
+        let out = g.handle(body.as_bytes(), (0, 1), cell(), (80, 24));
         assert_eq!(out.responses, [b"Gi=3;OK".to_vec()]);
         assert!(out.move_cursor);
         assert_eq!(out.lines, 1);
@@ -1274,7 +1317,7 @@ mod checks_graphics {
         let zip = comp.finish().expect("zlib");
         let mut g = Graphics::new();
         let body = format!("Ga=T,f=24,o=z,s=4,v=2,C=1,X=3;{}", b64(&zip));
-        let out = g.handle(body.as_bytes(), (0, 0), cell());
+        let out = g.handle(body.as_bytes(), (0, 0), cell(), (80, 24));
         assert!(!out.move_cursor, "C=1 asks not to touch the cursor");
         let p = g.placements()[0];
         assert_eq!((p.dx, p.cols, p.rows), (3, 1, 1));
@@ -1286,12 +1329,12 @@ mod checks_graphics {
         let all = rgba2x2();
         let (a, b) = all.split_at(8);
         let first = format!("Ga=t,f=32,s=2,v=2,i=5,m=1;{a}");
-        let out = g.handle(first.as_bytes(), (0, 0), cell());
+        let out = g.handle(first.as_bytes(), (0, 0), cell(), (80, 24));
         assert_eq!(out.responses.len(), 0, "a chunk does not answer");
         assert!(g.images().is_empty(), "the image only exists at the end");
         // the second chunk carries only `m=0`: the first one's control data holds
         let second = format!("Gm=0;{b}");
-        let out = g.handle(second.as_bytes(), (0, 0), cell());
+        let out = g.handle(second.as_bytes(), (0, 0), cell(), (80, 24));
         assert_eq!(out.responses, [b"Gi=5;OK".to_vec()]);
         assert_eq!(g.images()[&5].data, [9, 8, 7, 255].repeat(4));
     }
@@ -1354,11 +1397,11 @@ mod checks_graphics {
         let row = b64(&[9, 8, 7, 255].repeat(2));
         assert!(row.ends_with('='), "chafa pads the chunk: {row}");
         let first = format!("Ga=t,f=32,s=2,v=2,i=7,m=1;{row}");
-        let out = g.handle(first.as_bytes(), (0, 0), cell());
+        let out = g.handle(first.as_bytes(), (0, 0), cell(), (80, 24));
         assert_eq!(out.responses.len(), 0, "a chunk does not answer");
         let second = format!("Gm=1;{row}");
-        g.handle(second.as_bytes(), (0, 0), cell());
-        let out = g.handle(b"Gm=0", (0, 0), cell());
+        g.handle(second.as_bytes(), (0, 0), cell(), (80, 24));
+        let out = g.handle(b"Gm=0", (0, 0), cell(), (80, 24));
         assert_eq!(out.responses, [b"Gi=7;OK".to_vec()], "the trailing `m=0`");
         assert_eq!(g.images()[&7].data, [9, 8, 7, 255].repeat(4));
     }
@@ -1370,7 +1413,7 @@ mod checks_graphics {
         let mut g = Graphics::new();
         let dcs: &[u8] = b"0;0;0q#1;2;100;0;0!2~";
         for _ in 0..(SIXEL_KEEP + 6) {
-            g.sixel(dcs, (0, 0), (8, 16));
+            g.sixel(dcs, (0, 0), (8, 16), (80, 24));
         }
         assert_eq!(g.images().len(), SIXEL_KEEP, "the oldest are dropped");
         assert_eq!(g.placements().len(), SIXEL_KEEP);
@@ -1388,14 +1431,14 @@ mod checks_graphics {
     fn a_sixel_above_the_pixel_cap_is_refused() {
         let mut g = Graphics::new();
         let wide = format!("0;0;0q#1;2;100;0;0!{MAX_SIXEL_PIXELS}~");
-        let out = g.sixel(wide.as_bytes(), (0, 0), (8, 16));
+        let out = g.sixel(wide.as_bytes(), (0, 0), (8, 16), (80, 24));
         assert_eq!(
             out.refused,
             Some("sixel: the picture is above the pixel cap")
         );
         assert_eq!(g.images().len(), 0);
         // and a DCS that is not a sixel is not ours at all
-        assert_eq!(g.sixel(b"$q\"p", (0, 0), (8, 16)).refused, None);
+        assert_eq!(g.sixel(b"$q\"p", (0, 0), (8, 16), (80, 24)).refused, None);
         assert_eq!(g.images().len(), 0);
     }
 
@@ -1406,26 +1449,26 @@ mod checks_graphics {
     fn a_virtual_placement_is_found_by_the_placeholder_cells() {
         let mut g = Graphics::new();
         let body = format!("Ga=t,f=32,s=2,v=2,i=42,q=2;{}", rgba2x2());
-        let out = g.handle(body.as_bytes(), (0, 0), cell());
+        let out = g.handle(body.as_bytes(), (0, 0), cell(), (80, 24));
         assert_eq!(
             out.responses,
             Vec::<Vec<u8>>::new(),
             "q=2 says nothing back"
         );
         assert_eq!(g.placements().len(), 0);
-        let virt = g.handle(b"Ga=p,U=1,i=42,c=3,r=2", (4, 2), cell());
+        let virt = g.handle(b"Ga=p,U=1,i=42,c=3,r=2", (4, 2), cell(), (80, 24));
         assert_eq!(virt.lines, 0, "a virtual placement takes no rows");
         assert!(!virt.move_cursor, "and does not touch the cursor");
         let p = g.placeholder(42, 0).expect("the cells find it");
         assert_eq!((p.image_id, p.cols, p.rows), (42, 3, 2));
         assert!(p.placeholder, "and it knows it is not a real placement");
         // a placement id names one of them when an image has several
-        g.handle(b"Ga=p,U=1,i=42,p=7,c=1,r=1", (4, 2), cell());
+        g.handle(b"Ga=p,U=1,i=42,p=7,c=1,r=1", (4, 2), cell(), (80, 24));
         assert_eq!(g.placeholder(42, 7).map(|p| p.cols), Some(1));
         assert_eq!(g.placeholder(42, 0).map(|p| p.cols), Some(3), "any of them");
         assert!(g.placeholder(41, 0).is_none(), "another image has none");
         // and a real placement is never a prototype
-        g.handle(b"Ga=p,i=42,c=1,r=1", (0, 0), cell());
+        g.handle(b"Ga=p,i=42,c=1,r=1", (0, 0), cell(), (80, 24));
         assert_eq!(g.placeholder(42, 0).map(|p| p.cols), Some(3));
     }
 
@@ -1435,23 +1478,24 @@ mod checks_graphics {
     fn animation_frames_arrive_and_advance_until_stopped() {
         let mut g = Graphics::new();
         let body = format!("Ga=T,f=32,s=2,v=2,i=7;{}", rgba2x2());
-        g.handle(body.as_bytes(), (0, 0), cell());
+        g.handle(body.as_bytes(), (0, 0), cell(), (80, 24));
         assert_eq!(g.images()[&7].frame_count(), 1, "an image is one frame");
         // two more frames, the second one only a 1x1 patch over the first
         let one = b64(&[1, 2, 3, 255]);
         let frame = format!("Ga=f,i=7,f=32,s=2,v=2,z=25;{}", rgba2x2());
         assert_eq!(
-            g.handle(frame.as_bytes(), (0, 0), cell()).responses,
+            g.handle(frame.as_bytes(), (0, 0), cell(), (80, 24))
+                .responses,
             [b"Gi=7;OK".to_vec()]
         );
         let patch = format!("Ga=f,i=7,f=32,s=1,v=1,x=1,y=1,X=1;{one}");
-        g.handle(patch.as_bytes(), (0, 0), cell());
+        g.handle(patch.as_bytes(), (0, 0), cell(), (80, 24));
         let img = &g.images()[&7];
         assert_eq!(img.frame_count(), 3);
         assert_eq!(img.frames[2].steps[0].at, (1, 1));
         assert!(img.frames[2].steps[0].replace);
         // `s=3` runs from the top, looping
-        g.handle(b"Ga=a,i=7,s=3", (0, 0), cell());
+        g.handle(b"Ga=a,i=7,s=3", (0, 0), cell(), (80, 24));
         assert_eq!(g.images()[&7].current(), 1);
         assert!(g.advance(7));
         assert_eq!(g.images()[&7].current(), 2);
@@ -1463,7 +1507,7 @@ mod checks_graphics {
         assert_eq!(g.images()[&7].gap_ms(2), Some(25));
         assert_eq!(g.images()[&7].gap_ms(1), Some(40), "the 40 ms default");
         // `s=1` stops where it is
-        g.handle(b"Ga=a,i=7,s=1,c=2", (0, 0), cell());
+        g.handle(b"Ga=a,i=7,s=1,c=2", (0, 0), cell(), (80, 24));
         assert_eq!(g.images()[&7].current(), 2);
         assert!(!g.advance(7));
         assert_eq!(g.images()[&7].current(), 2);
@@ -1474,12 +1518,12 @@ mod checks_graphics {
     fn a_gapless_frame_is_stepped_over() {
         let mut g = Graphics::new();
         let body = format!("Ga=T,f=32,s=2,v=2,i=9;{}", rgba2x2());
-        g.handle(body.as_bytes(), (0, 0), cell());
+        g.handle(body.as_bytes(), (0, 0), cell(), (80, 24));
         for gap in [-1, 30] {
             let f = format!("Ga=f,i=9,f=32,s=2,v=2,z={gap};{}", rgba2x2());
-            g.handle(f.as_bytes(), (0, 0), cell());
+            g.handle(f.as_bytes(), (0, 0), cell(), (80, 24));
         }
-        g.handle(b"Ga=a,i=9,s=3", (0, 0), cell());
+        g.handle(b"Ga=a,i=9,s=3", (0, 0), cell(), (80, 24));
         assert!(g.advance(9));
         assert_eq!(g.images()[&9].current(), 3, "frame 2 is never shown");
         assert_eq!(g.images()[&9].gap_ms(2), None);
@@ -1491,16 +1535,16 @@ mod checks_graphics {
     fn loops_and_loading_mode_stop_on_the_last_frame() {
         let mut g = Graphics::new();
         let body = format!("Ga=T,f=32,s=2,v=2,i=4;{}", rgba2x2());
-        g.handle(body.as_bytes(), (0, 0), cell());
+        g.handle(body.as_bytes(), (0, 0), cell(), (80, 24));
         let f = format!("Ga=f,i=4,f=32,s=2,v=2;{}", rgba2x2());
-        g.handle(f.as_bytes(), (0, 0), cell());
+        g.handle(f.as_bytes(), (0, 0), cell(), (80, 24));
         // loading: on the last frame it waits for more to arrive
-        g.handle(b"Ga=a,i=4,s=2", (0, 0), cell());
+        g.handle(b"Ga=a,i=4,s=2", (0, 0), cell(), (80, 24));
         assert!(g.advance(4));
         assert!(!g.advance(4), "s=2 does not wrap");
         assert_eq!(g.images()[&4].current(), 2);
         // v=2: one loop, then it stops on its own
-        g.handle(b"Ga=a,i=4,s=3,v=2", (0, 0), cell());
+        g.handle(b"Ga=a,i=4,s=3,v=2", (0, 0), cell(), (80, 24));
         assert_eq!(g.images()[&4].current(), 1, "s=3 starts over");
         assert!(g.advance(4));
         assert_eq!(g.images()[&4].current(), 2);
@@ -1515,28 +1559,30 @@ mod checks_graphics {
     fn frame_composition_and_root_edits_are_refused() {
         let mut g = Graphics::new();
         let body = format!("Ga=T,f=32,s=2,v=2,i=2;{}", rgba2x2());
-        g.handle(body.as_bytes(), (0, 0), cell());
-        let compose = g.handle(b"Ga=c,i=2,r=1,c=2,w=1,h=1", (0, 0), cell());
+        g.handle(body.as_bytes(), (0, 0), cell(), (80, 24));
+        let compose = g.handle(b"Ga=c,i=2,r=1,c=2,w=1,h=1", (0, 0), cell(), (80, 24));
         assert_eq!(
             compose.responses,
             [b"Gi=2;EINVAL:a=c not implemented".to_vec()]
         );
         let edit = format!("Ga=f,i=2,r=1,f=32,s=2,v=2;{}", rgba2x2());
         assert_eq!(
-            g.handle(edit.as_bytes(), (0, 0), cell()).responses,
+            g.handle(edit.as_bytes(), (0, 0), cell(), (80, 24))
+                .responses,
             [b"Gi=2;EINVAL:r=1".to_vec()]
         );
         // a frame for an image nobody sent
         let orphan = format!("Ga=f,i=99,f=32,s=2,v=2;{}", rgba2x2());
         assert_eq!(
-            g.handle(orphan.as_bytes(), (0, 0), cell()).responses,
+            g.handle(orphan.as_bytes(), (0, 0), cell(), (80, 24))
+                .responses,
             [b"Gi=99;ENOENT:no such image".to_vec()]
         );
         // `d=f` drops the frames and keeps the image
         let f = format!("Ga=f,i=2,f=32,s=2,v=2;{}", rgba2x2());
-        g.handle(f.as_bytes(), (0, 0), cell());
+        g.handle(f.as_bytes(), (0, 0), cell(), (80, 24));
         assert_eq!(g.images()[&2].frame_count(), 2);
-        g.handle(b"Ga=d,d=f,i=2", (0, 0), cell());
+        g.handle(b"Ga=d,d=f,i=2", (0, 0), cell(), (80, 24));
         assert_eq!(g.images()[&2].frame_count(), 1);
     }
 
@@ -1547,7 +1593,7 @@ mod checks_graphics {
         let mut g = Graphics::new();
         for (f, ok) in [(24, true), (32, true), (100, true), (16, false)] {
             let body = format!("Ga=q,i=1,f={f},t=d");
-            let out = g.handle(body.as_bytes(), (0, 0), cell());
+            let out = g.handle(body.as_bytes(), (0, 0), cell(), (80, 24));
             let expected = if ok {
                 "Gi=1;OK"
             } else {
@@ -1557,7 +1603,7 @@ mod checks_graphics {
         }
         for t in ["f", "t", "s"] {
             let body = format!("Ga=q,i=1,f=32,t={t}");
-            let out = g.handle(body.as_bytes(), (0, 0), cell());
+            let out = g.handle(body.as_bytes(), (0, 0), cell(), (80, 24));
             assert_eq!(out.responses, [b"Gi=1;OK".to_vec()], "t={t}");
         }
     }
@@ -1583,7 +1629,7 @@ mod checks_graphics {
     #[test]
     fn file_transmission_waits_for_the_app_instead_of_answering() {
         let mut g = Graphics::new();
-        let out = g.handle(&file_body("f", "T"), (1, 2), cell());
+        let out = g.handle(&file_body("f", "T"), (1, 2), cell(), (80, 24));
         assert!(out.responses.is_empty(), "no verdict before the bytes");
         assert!(g.images().is_empty(), "no image before the bytes");
         let req = out.file.expect("the path waits for the app");
@@ -1596,12 +1642,12 @@ mod checks_graphics {
     #[test]
     fn temp_marks_for_delete_and_transmit_only_does_not_place() {
         let mut g = Graphics::new();
-        let out = g.handle(&file_body("t", "t"), (0, 0), cell());
+        let out = g.handle(&file_body("t", "t"), (0, 0), cell(), (80, 24));
         let req = out.file.expect("t=t also waits");
         assert!(req.delete, "t=t deletes after reading");
         assert_eq!(req.usage, FileUse::Transmit, "a=t only transmits");
         let mut g = Graphics::new();
-        let out = g.handle(&shm_body("icat-ABC", "T"), (0, 0), cell());
+        let out = g.handle(&shm_body("icat-ABC", "T"), (0, 0), cell(), (80, 24));
         assert!(!out.file.expect("t=s waits").delete, "shm never deletes");
     }
 
@@ -1611,7 +1657,7 @@ mod checks_graphics {
         // what `kitten icat` sends: a bare name, not a path. Opened as-is
         // it resolved against the app cwd and every shm transmission
         // answered `ENOENT` with the file sitting in `/dev/shm`.
-        let out = g.handle(&shm_body("icat-ABC", "T"), (1, 2), cell());
+        let out = g.handle(&shm_body("icat-ABC", "T"), (1, 2), cell(), (80, 24));
         assert!(out.responses.is_empty(), "no verdict before the bytes");
         let req = out.file.expect("the shm waits for the app");
         assert_eq!(req.path, "/dev/shm/icat-ABC");
@@ -1624,7 +1670,7 @@ mod checks_graphics {
     fn shm_name_with_a_slash_is_not_a_path() {
         let mut g = Graphics::new();
         // `../../x` under `/dev/shm` escapes it: refuse instead of loading.
-        let out = g.handle(&shm_body("../../x", "T"), (0, 0), cell());
+        let out = g.handle(&shm_body("../../x", "T"), (0, 0), cell(), (80, 24));
         assert!(out.file.is_none(), "no load of an escaped name");
         assert_eq!(out.responses, [b"Gi=7;EINVAL:shm name".to_vec()]);
         assert!(g.images().is_empty());
@@ -1635,7 +1681,7 @@ mod checks_graphics {
         let mut g = Graphics::new();
         let path = b64(b"/tmp/x.rgba");
         let body = format!("Ga=T,f=32,s=2,v=2,t=f,i=7;{path}").into_bytes();
-        let out = g.handle(&body, (0, 1), cell());
+        let out = g.handle(&body, (0, 1), cell(), (80, 24));
         let req = out.file.expect("request");
         let data = [9, 8, 7, 255].repeat(4);
         let out = g.provide(&req, &data);
@@ -1654,7 +1700,7 @@ mod checks_graphics {
     #[test]
     fn a_query_over_a_file_loads_it_and_stores_nothing() {
         let mut g = Graphics::new();
-        let out = g.handle(&query_body("f", 24, 1, 1), (0, 0), cell());
+        let out = g.handle(&query_body("f", 24, 1, 1), (0, 0), cell(), (80, 24));
         assert!(out.responses.is_empty(), "the verdict waits for the bytes");
         let req = out.file.expect("the query names a file too");
         assert_eq!(
@@ -1673,7 +1719,7 @@ mod checks_graphics {
     fn a_query_over_a_missing_file_answers_enoent() {
         let mut g = Graphics::new();
         let req = g
-            .handle(&query_body("f", 24, 1, 1), (0, 0), cell())
+            .handle(&query_body("f", 24, 1, 1), (0, 0), cell(), (80, 24))
             .file
             .expect("request");
         let out = Graphics::missing(&req);
@@ -1687,7 +1733,7 @@ mod checks_graphics {
     fn a_query_over_data_of_another_size_is_refused() {
         let mut g = Graphics::new();
         let req = g
-            .handle(&query_body("f", 24, 1, 1), (0, 0), cell())
+            .handle(&query_body("f", 24, 1, 1), (0, 0), cell(), (80, 24))
             .file
             .expect("request");
         let out = g.provide(&req, &[1, 2]);
@@ -1703,7 +1749,7 @@ mod checks_graphics {
     fn a_query_marked_temp_asks_for_the_delete() {
         let mut g = Graphics::new();
         let req = g
-            .handle(&query_body("t", 24, 1, 1), (0, 0), cell())
+            .handle(&query_body("t", 24, 1, 1), (0, 0), cell(), (80, 24))
             .file
             .expect("request");
         assert!(req.delete, "t=t is ours to remove, query or not");
@@ -1715,7 +1761,7 @@ mod checks_graphics {
     #[test]
     fn missing_file_answers_enoent_and_stores_nothing() {
         let mut g = Graphics::new();
-        let out = g.handle(&file_body("f", "T"), (0, 0), cell());
+        let out = g.handle(&file_body("f", "T"), (0, 0), cell(), (80, 24));
         let req = out.file.expect("request");
         let out = Graphics::missing(&req);
         assert_eq!(out.responses, [b"Gi=7;ENOENT".to_vec()]);
@@ -1725,11 +1771,41 @@ mod checks_graphics {
     #[test]
     fn oversize_file_answers_like_an_overlong_chunk() {
         let mut g = Graphics::new();
-        let out = g.handle(&file_body("f", "t"), (0, 0), cell());
+        let out = g.handle(&file_body("f", "t"), (0, 0), cell(), (80, 24));
         let req = out.file.expect("request");
         let out = g.provide(&req, &vec![0; super::MAX_APC + 1]);
         assert_eq!(out.responses, [b"Gi=7;EINVAL:too big".to_vec()]);
         assert!(g.images().is_empty());
+    }
+
+    /// `B65`: a picture bigger than the grid is cut to the cells there are, and
+    /// the source rectangle with it, so what is shown of it is what fits and
+    /// nothing claims rows that do not exist.
+    #[test]
+    fn a_picture_bigger_than_the_grid_is_cut_to_what_fits() {
+        let mut g = Graphics::new();
+        let body = format!(
+            "Ga=T,f=32,s=8,v=4,c=200,r=100,i=11;{}",
+            b64(&[0; 8 * 4 * 4])
+        );
+        let out = g.handle(body.as_bytes(), (0, 0), cell(), (60, 45));
+        assert_eq!(out.responses, [b"Gi=11;OK".to_vec()]);
+        let p = g.placements()[0];
+        assert_eq!((p.cols, p.rows), (60, 45), "the grid is the ceiling");
+        assert_eq!(p.crop, (0, 0, 2, 1), "and the source is cut in proportion");
+        assert_eq!(out.lines, 45, "the cursor goes down the rows the grid has");
+    }
+
+    /// The same picture, in a grid that has room for it, keeps every cell and the
+    /// whole source: the cut above is only for what does not fit.
+    #[test]
+    fn a_picture_that_fits_keeps_its_cells_and_its_source() {
+        let mut g = Graphics::new();
+        let body = format!("Ga=T,f=32,s=8,v=4,c=10,r=3,i=12;{}", b64(&[0; 8 * 4 * 4]));
+        g.handle(body.as_bytes(), (0, 0), cell(), (60, 45));
+        let p = g.placements()[0];
+        assert_eq!((p.cols, p.rows), (10, 3));
+        assert_eq!(p.crop, (0, 0, 8, 4));
     }
 
     #[test]
@@ -1739,12 +1815,13 @@ mod checks_graphics {
             format!("Ga=t,f=32,s=2,v=2,i=9;{}", rgba2x2()).as_bytes(),
             (0, 0),
             cell(),
+            (80, 24),
         );
-        let out = g.handle(b"Ga=p,i=9,c=3,r=2", (2, 1), cell());
+        let out = g.handle(b"Ga=p,i=9,c=3,r=2", (2, 1), cell(), (80, 24));
         assert_eq!(out.responses, [b"Gi=9;OK".to_vec()]);
         let p = g.placements()[0];
         assert_eq!((p.col, p.line, p.cols, p.rows), (2, 1, 3, 2));
-        let out = g.handle(b"Ga=p,i=404", (0, 0), cell());
+        let out = g.handle(b"Ga=p,i=404", (0, 0), cell(), (80, 24));
         assert_eq!(out.responses, [b"Gi=404;ENOENT".to_vec()]);
     }
 
@@ -1756,16 +1833,17 @@ mod checks_graphics {
                 format!("Ga=T,f=32,s=2,v=2,i={i};{}", rgba2x2()).as_bytes(),
                 (0, 0),
                 cell(),
+                (80, 24),
             );
         }
         assert_eq!(g.placements().len(), 2);
         // `d=i`: one image and its placement
-        g.handle(b"Ga=d,d=i,i=1", (0, 0), cell());
+        g.handle(b"Ga=d,d=i,i=1", (0, 0), cell(), (80, 24));
         assert!(!g.images().contains_key(&1));
         assert!(g.images().contains_key(&2));
         assert_eq!(g.placements().len(), 1);
         // `d=a`: everything goes
-        g.handle(b"Ga=d,d=a", (0, 0), cell());
+        g.handle(b"Ga=d,d=a", (0, 0), cell(), (80, 24));
         assert_eq!(g.images().len(), 0);
         assert_eq!(g.placements(), []);
     }
@@ -1777,6 +1855,7 @@ mod checks_graphics {
             format!("Ga=T,f=32,s=2,v=2,i=4,q=2;{}", rgba2x2()).as_bytes(),
             (0, 0),
             cell(),
+            (80, 24),
         );
         assert_eq!(out.responses.len(), 0, "q=2 asks for silence");
         assert_eq!(g.images()[&4].width, 2);
@@ -1797,6 +1876,7 @@ mod checks_graphics {
             format!("Ga=t,f=32,i=8;{}", b64(&png)).as_bytes(),
             (0, 0),
             cell(),
+            (80, 24),
         );
         assert_eq!(out.responses, [b"Gi=8;OK".to_vec()]);
         let img = &g.images()[&8];
@@ -1821,7 +1901,7 @@ mod checks_graphics {
         // 1x1 cell in a 10x19 cell, and the uv is that quarter
         let mut g = Graphics::new();
         let body = format!("Ga=T,f=100,i=3,x=10,y=9,w=10,h=10;{}", b64(&png(20, 19)));
-        let out = g.handle(body.as_bytes(), (0, 0), cell());
+        let out = g.handle(body.as_bytes(), (0, 0), cell(), (80, 24));
         assert_eq!(out.responses, [b"Gi=3;OK".to_vec()]);
         let p = &g.placements()[0];
         assert_eq!(p.crop, (10, 9, 10, 10));
@@ -1832,7 +1912,7 @@ mod checks_graphics {
         // no keys at all: the whole picture, `uv` = the full texture
         let mut g = Graphics::new();
         let body = format!("Ga=T,f=100,i=4;{}", b64(&png(20, 19)));
-        let _ = g.handle(body.as_bytes(), (0, 0), cell());
+        let _ = g.handle(body.as_bytes(), (0, 0), cell(), (80, 24));
         let p = &g.placements()[0];
         assert_eq!(p.crop, (0, 0, 20, 19));
         assert_eq!(p.uv((20, 19)), [0.0, 0.0, 1.0, 1.0]);
@@ -1845,7 +1925,7 @@ mod checks_graphics {
         let mut g = Graphics::new();
         for bad in ["x=10,w=20", "y=19,h=1", "w=0", "x=-1", "h=99"] {
             let body = format!("Ga=T,f=100,i=5,{bad};{}", b64(&png(20, 19)));
-            let out = g.handle(body.as_bytes(), (0, 0), cell());
+            let out = g.handle(body.as_bytes(), (0, 0), cell(), (80, 24));
             assert_eq!(
                 out.responses,
                 [b"Gi=5;EINVAL:crop outside the image".to_vec()],
@@ -1917,12 +1997,14 @@ mod checks_graphics {
             format!("Ga=t,f=32,s=2,v=2;{}", rgba2x2()).as_bytes(),
             (0, 0),
             cell(),
+            (80, 24),
         );
         assert_eq!(out.responses, [b"Gi=1;OK".to_vec()]);
         let out = g.handle(
             format!("Ga=t,f=32,s=2,v=2;{}", rgba2x2()).as_bytes(),
             (0, 0),
             cell(),
+            (80, 24),
         );
         assert_eq!(out.responses, [b"Gi=2;OK".to_vec()]);
     }
@@ -1930,15 +2012,16 @@ mod checks_graphics {
     #[test]
     fn skewed_payload_answers_einval_and_keeps_nothing() {
         let mut g = Graphics::new();
-        let out = g.handle(b"Ga=t,f=32,s=2,v=2,i=1;@@@@", (0, 0), cell());
+        let out = g.handle(b"Ga=t,f=32,s=2,v=2,i=1;@@@@", (0, 0), cell(), (80, 24));
         assert_eq!(out.responses, [b"Gi=1;EINVAL:base64".to_vec()]);
-        let out = g.handle(b"Ga=t,f=24,o=z,s=2,v=2,i=1;AAAA", (0, 0), cell());
+        let out = g.handle(b"Ga=t,f=24,o=z,s=2,v=2,i=1;AAAA", (0, 0), cell(), (80, 24));
         assert_eq!(out.responses, [b"Gi=1;EINVAL:zlib".to_vec()]);
         // raw RGB announcing 2x2 but with 2 bytes: the size lied
         let out = g.handle(
             format!("Ga=t,f=24,s=2,v=2,i=1;{}", b64(&[1, 2])).as_bytes(),
             (0, 0),
             cell(),
+            (80, 24),
         );
         assert_eq!(out.responses, [b"Gi=1;EINVAL:size".to_vec()]);
         assert!(g.images().is_empty(), "no half image");
@@ -1951,6 +2034,7 @@ mod checks_graphics {
             format!("Ga=T,f=32,s=2,v=2,i=1;{}", rgba2x2()).as_bytes(),
             (0, 0),
             cell(),
+            (80, 24),
         );
         assert_eq!(g.placements()[0].line, 0);
         // full screen with history: the placement goes to line -1
@@ -1967,6 +2051,7 @@ mod checks_graphics {
             format!("Ga=T,f=32,s=2,v=2,i=1;{}", rgba2x2()).as_bytes(),
             (0, 0),
             cell(),
+            (80, 24),
         );
         g.scroll(0, 1, None);
         assert_eq!(g.placements(), []);
@@ -1976,6 +2061,7 @@ mod checks_graphics {
             format!("Ga=T,f=32,s=2,v=2,i=1;{}", rgba2x2()).as_bytes(),
             (0, 3),
             cell(),
+            (80, 24),
         );
         g.scroll(0, 1, None);
         assert_eq!(g.placements()[0].line, 3);
@@ -1987,11 +2073,11 @@ mod checks_graphics {
         // the three actions answer, and none of them invents an image
         let mut g = Graphics::new();
         let body = format!("Ga=f,i=1,f=32,s=2,v=2;{}", rgba2x2());
-        let out = g.handle(body.as_bytes(), (0, 0), cell());
+        let out = g.handle(body.as_bytes(), (0, 0), cell(), (80, 24));
         assert_eq!(out.responses, [b"Gi=1;ENOENT:no such image".to_vec()]);
-        let out = g.handle(b"Ga=a,i=1,s=3", (0, 0), cell());
+        let out = g.handle(b"Ga=a,i=1,s=3", (0, 0), cell(), (80, 24));
         assert_eq!(out.responses, [b"Gi=1;ENOENT:no such image".to_vec()]);
-        let out = g.handle(b"Ga=c,i=1,r=1,c=2", (0, 0), cell());
+        let out = g.handle(b"Ga=c,i=1,r=1,c=2", (0, 0), cell(), (80, 24));
         assert_eq!(out.responses, [b"Gi=1;EINVAL:a=c not implemented".to_vec()]);
         assert_eq!(g.images().len(), 0);
     }

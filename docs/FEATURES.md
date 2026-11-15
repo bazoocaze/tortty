@@ -201,6 +201,10 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   they cover, and their own pictures do not follow them out.
   **limit:** the erase is all or nothing per picture — a picture that loses one
   cell loses the placement (the bytes stay until the `d=` or the keep cap).
+  A picture that asks for **more cells than the grid has** (`c`/`r` bigger than
+  the screen, what `chafa --size` can be forced to do) is cut to the cells there
+  are, and its source rectangle with it: the part that fits is drawn, in
+  proportion, and the placement never claims rows or columns beyond the grid.
 - iTerm2's inline image (`OSC 1337;File=…:base64`, what `imgcat` sends): the
   bytes are placed on the cursor cell through the same direct transmission, with
   `width`/`height` in cells, in `px`, in `%` of the grid or `auto`, and **the

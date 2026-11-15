@@ -34,6 +34,15 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   time**: `a=c` (a rectangle of one frame onto another) and `r=1` (editing the
   root frame, which is the image's own bytes) answer `EINVAL` instead of keeping
   a second copy of what the child already sent.
+- **A picture bigger than the grid is cut, and a full-screen one is not stable.**
+  A placement that asks for more cells than the screen has is clipped to the grid
+  and its source rectangle is cut with it, so what is shown is the part that fits
+  — the rest is never drawn, because the cells to draw it on do not exist. And
+  the erase stays all or nothing per picture: one cell repainted by the child
+  takes the picture whole. `chafa --size 200x120` on a 60x45 grid now shows a
+  corner of the image (60x45 cells) and survives the prompt, but a picture that
+  reaches the row the prompt is drawn on does not. Sizing to the grid, which
+  `chafa` does by itself, is the way to keep a picture.
 - **`TERM=xterm-256color`.** We do not invent our own terminfo entry: the goal
   is that `vim`, `mc`, `less` and `dmesg` work with what already exists.
 

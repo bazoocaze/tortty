@@ -1237,3 +1237,21 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 - Probe (Xvfb, 40×12): the first frame built 12 rows and 480 cells (one screen,
   40 per row); after `seq 200` across 4 draws, 36 rows and 1440 cells, ratio
   exactly `cols` — the counter still counts what it counted.
+
+## 2026-11-14 — a picture cannot claim cells the grid has not (1.0.93)
+
+- Found while measuring `chafa`'s four formats: `chafa --size 200x120 -f kitty`
+  on a 60x45 grid left a placement of **200x100 cells at row -2** — rows
+  that do not exist — and the first `EL` of the shell's prompt then took the
+  whole picture away, because `ED`/`EL`/`ECH` erase a picture whole (`B3`) and
+  that phantom rectangle covered every cell there is. The same request through
+  `-f sixels` stayed half on screen and through `-f iterm` was refused with a
+  toast (chafa switches to a compressed TIFF at that size).
+- `Graphics::place` now takes the grid and cuts `cols`/`rows` to it, cutting the
+  source rectangle in the same proportion: what a big picture shows is the part
+  that fits, in proportion, and the placement claims no cell beyond the screen.
+  `handle`, `sixel` and `FileRequest` carry the grid the way `iterm` already did.
+  A placeholder (`U=1`) keeps its grid, since its cells are the position.
+- Measured: the four `chafa` formats on a normal size are unchanged (59x30,
+  60x30, 60x30 cells; same correlations 0.977 / 0.991 / 0.992); the oversized
+  kitty placement is now 60x45 at row -2 and **survives** the prompt redraw.

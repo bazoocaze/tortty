@@ -2530,7 +2530,11 @@ impl Term {
             u16::try_from(self.cx).unwrap_or(0),
             u16::try_from(self.cy).unwrap_or(0),
         );
-        let mut out = self.graphics.handle(&body, cursor, self.cell_size);
+        let grid = (
+            u16::try_from(self.cols).unwrap_or(0),
+            u16::try_from(self.rows).unwrap_or(0),
+        );
+        let mut out = self.graphics.handle(&body, cursor, self.cell_size, grid);
         // `t=f`/`t=t`/`t=s`: the payload named a file — it waits for the app,
         // which answers with `serve_images` (`B1`)
         if let Some(req) = out.file.take() {
@@ -2547,7 +2551,11 @@ impl Term {
             u16::try_from(self.cx).unwrap_or(0),
             u16::try_from(self.cy).unwrap_or(0),
         );
-        let out = self.graphics.sixel(&dcs, cursor, self.cell_size);
+        let grid = (
+            u16::try_from(self.cols).unwrap_or(0),
+            u16::try_from(self.rows).unwrap_or(0),
+        );
+        let out = self.graphics.sixel(&dcs, cursor, self.cell_size, grid);
         self.apc_output(out);
     }
 
