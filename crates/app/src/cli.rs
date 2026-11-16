@@ -129,7 +129,7 @@ OPTIONS:
   --cmd CMD             initial command (empty = $SHELL)
   --cols N --rows N     initial grid (default 80x24)
   -c, --config FILE     configuration file (default ~/.config/tortty/tortty.conf)
-  --font-family NAME    family (file default: Monospace)
+  --font-family NAME    family, or a comma separated list of them
   --font-size POINTS    size in points (file default: 12)
   --dpi N               dpi to convert points into pixels (default 96)
   --scrollback N        cap on history lines

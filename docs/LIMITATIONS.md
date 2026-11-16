@@ -56,7 +56,10 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   `Ctrl+Shift+T` arrived as `WM_SYSKEYDOWN`/`WM_KEYDOWN` in the focused window.
   That is why the Windows template has no `super` family and why the walk is on
   `Alt`. The same run listed the installed monospaced families — `Consolas`,
-  `Courier New`, `Lucida Console` — and **no Cascadia Mono**, so the default is
+  `Courier New`, `Lucida Console` — and **no Cascadia Mono**, which is why the
+  template names both (`Cascadia Mono, Consolas`: the value is a fallback list).
+  Neither Cascadia nor the preference chain (DejaVu, Liberation, Noto, Menlo) is
+  installed on a plain Windows 10, so the one name that always answers there is
   `Consolas`. The macOS template follows the ⌘ conventions and nobody has
   measured them: there is no macOS host yet (`M-Y`).
 

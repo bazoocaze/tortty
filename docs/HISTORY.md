@@ -1356,3 +1356,11 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 - The chords chosen instead do arrive: `Alt+1`, `Alt+↑`, `Alt+Shift+↑`, `Ctrl+Shift+1` and `Ctrl+Shift+T` came in as `WM_SYSKEYDOWN`/`WM_KEYDOWN` in the focused window.
 - Font: the default became **`Consolas`** — the same run listed 103 families and no Cascadia Mono (that one belongs to Windows 11 and to Windows Terminal, absent on a plain 10), so the template named a family that could only fall back.
 - The macOS template stays unmeasured (`M-Y`); the guest was left as it was (autologin, pt-BR ABNT2) and the probe scripts live beside the VM, outside this repo.
+
+## 2026-11-16 — `font_family` is a list
+
+- The value is now a fallback order — `Cascadia Mono, Consolas` — and the first **installed** name wins, so one template serves Windows 11 (Cascadia ships with Windows Terminal) and the measured Windows 10 21H2, which has neither Cascadia nor anything in the built-in chain.
+- The defect behind it: when the configured family was absent the code still asked for bold and italic **by that absent name**, so the text silently lost its weight and slant. The styles now come from the family that was really found.
+- A generic name inside the list (`Monospace`, the file default) ends the walk on the preference chain; no comma is the old single name; empty entries are skipped; a list of nothing falls back to the chain.
+- Measured end to end on Xvfb: `Tortty Nao Existe, Liberation Mono` lands on Liberation (cell 11.202×21.146) and not on the chain's DejaVu (11.238×21.729).
+- The Windows template now says `font_family Cascadia Mono, Consolas`; `CONFIG.md`, `PORTABILITY.md` and the `--font-family` help follow.

@@ -575,7 +575,7 @@ mod tests {
         for (os, family) in [
             (Os::Linux, "Monospace"),
             (Os::Macos, "Menlo"),
-            (Os::Windows, "Consolas"),
+            (Os::Windows, "Cascadia Mono, Consolas"),
         ] {
             let cfg = Config::base_for(os);
             assert_eq!(cfg.font_family, family, "{}", os.name());

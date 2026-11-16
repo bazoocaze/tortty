@@ -72,35 +72,32 @@ impl Fonts {
         let mut db = fontdb::Database::new();
         db.load_system_fonts();
 
-        // A generic name (`Monospace`, which is the file default) has to land
-        // on the preference list: fontdb does **not** have the fontconfig
-        // aliases, so matching "Monospace" by name gives FreeMono — the ugly
-        // font nobody meant to pick.
-        let generic = matches!(
-            family.to_ascii_lowercase().as_str(),
-            "" | "monospace" | "mono" | "fixed" | "sans-serif" | "sans" | "serif" | "system-ui"
-        );
-        let explicit = !generic;
+        // `font_family` is a list and the first **installed** name wins, so a
+        // single template covers the versions of a system: `Cascadia Mono,
+        // Consolas` is Cascadia on Windows 11 and Consolas on Windows 10. A
+        // generic name (`Monospace`, the file default) ends the walk on the
+        // preference list: fontdb does **not** have the fontconfig aliases, so
+        // matching "Monospace" by name gives FreeMono — the ugly font nobody
+        // meant to pick.
         let mut chosen: Option<(Face, String)> = None;
-        if explicit {
-            chosen = query(&db, family, 400, fontdb::Style::Normal);
-        }
-        if chosen.is_none() {
-            for name in PREFER {
-                if let Some(r) = query(&db, name, 400, fontdb::Style::Normal) {
-                    chosen = Some(r);
-                    break;
-                }
+        for name in family.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+            chosen = if generic_name(name) {
+                prefer_chain(&db)
+            } else {
+                query(&db, name, 400, fontdb::Style::Normal)
+            };
+            if chosen.is_some() {
+                break;
             }
         }
         let (primary, real_family) = chosen
-            .or_else(|| query(&db, "monospace", 400, fontdb::Style::Normal))
+            .or_else(|| prefer_chain(&db))
             .ok_or_else(|| format!("no monospaced font found ({family})"))?;
-        let family: &str = if explicit {
-            family
-        } else {
-            real_family.as_str()
-        };
+        // The styles are asked of the family that was really found. The old code
+        // kept the configured name here, so a name that was absent from the
+        // machine returned `None` for bold and italic and the text lost its
+        // weight and slant instead of falling back.
+        let family: &str = real_family.as_str();
 
         let styled = query(&db, family, 700, fontdb::Style::Normal).map(|(f, _)| f);
         let italic = query(&db, family, 400, fontdb::Style::Italic).map(|(f, _)| f);
@@ -327,6 +324,23 @@ fn fallback_chain(db: &fontdb::Database, primary: &Face, family: &str) -> Vec<Fa
     out
 }
 
+/// A name that asks for "whatever this system has", not for a family.
+fn generic_name(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "" | "monospace" | "mono" | "fixed" | "sans-serif" | "sans" | "serif" | "system-ui"
+    )
+}
+
+/// What a generic name means here: the preference list first, fontdb's own
+/// "monospace" last (it lands on FreeMono, which is nobody's idea of monospace).
+fn prefer_chain(db: &fontdb::Database) -> Option<(Face, String)> {
+    PREFER
+        .iter()
+        .find_map(|name| query(db, name, 400, fontdb::Style::Normal))
+        .or_else(|| query(db, "monospace", 400, fontdb::Style::Normal))
+}
+
 fn query(
     db: &fontdb::Database,
     family: &str,
@@ -490,6 +504,40 @@ mod tests {
             assert!(cor, "{ch} came out as a mask, it should be color");
             assert!(b.w > 1 && b.h > 1, "{ch} empty bitmap");
         }
+    }
+
+    /// `font_family` is a fallback list and the first **installed** name wins,
+    /// so one template serves two versions of a system: `Cascadia Mono,
+    /// Consolas` is Cascadia where it exists and Consolas where it does not.
+    #[test]
+    fn a_family_list_takes_the_first_name_that_is_installed() {
+        let f =
+            Fonts::new("Tortty Font That Does Not Exist, DejaVu Sans Mono", 17.0).expect("font");
+        assert_eq!(f.family, "DejaVu Sans Mono");
+        // and the styles follow the family that was found: the old code asked
+        // for bold and italic by the configured name and got `None`.
+        assert!(f.styled.is_some(), "bold lost behind an absent first name");
+    }
+
+    /// A generic name in the list ends the walk on the built-in chain.
+    #[test]
+    fn a_generic_name_in_the_list_uses_the_preference_chain() {
+        let f = Fonts::new("Tortty Font That Does Not Exist, monospace", 17.0).expect("font");
+        assert_eq!(f.family, "DejaVu Sans Mono");
+    }
+
+    /// No comma is the old single-name value, spaces around it included.
+    #[test]
+    fn one_name_without_a_comma_is_still_one_name() {
+        let f = Fonts::new("  DejaVu Sans Mono  ", 17.0).expect("font");
+        assert_eq!(f.family, "DejaVu Sans Mono");
+    }
+
+    /// A list of empty entries names nothing: the chain answers.
+    #[test]
+    fn a_list_of_empty_names_falls_back_to_the_chain() {
+        let f = Fonts::new(" , , ", 17.0).expect("font");
+        assert_eq!(f.family, "DejaVu Sans Mono");
     }
 
     /// A missing fallback font cannot become another font: that is how

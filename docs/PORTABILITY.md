@@ -56,10 +56,12 @@ Ordered by severity. None of them is architectural; all are boundary ones.
 3. **`$SHELL` and `/bin/sh`** as default: on Windows the shell is `$COMSPEC`
    (`cmd.exe`) and `--cmd` needs to be `cmd /c`. `portable-pty` already abstracts
    the spawn; the per-platform shell choice is missing.
-4. **Font scan**: `fontdb` covers each system's font directories, but the
-   **preference list** today is of Linux fonts (DejaVu, Liberation, Noto). On
-   macOS the default monospaced font is Menlo/SF Mono; on Windows, Consolas and
-   Cascadia Mono. It is a list per `cfg(target_os)`.
+4. **Font scan**: `fontdb` covers each system's font directories, and the
+   per-OS template names the family (or the fallback list) for that system:
+   `Menlo` on macOS, `Cascadia Mono, Consolas` on Windows. What is still
+   Linux-shaped is the **preference chain** behind a generic `font_family`
+   (DejaVu, Liberation, Noto): it is the last resort, and on a system without
+   them the chain ends on fontdb's own "monospace".
 5. **Configuration path** (`$XDG_CONFIG_HOME`): on Windows
    `%APPDATA%\tortty`, on macOS `~/Library/Application Support/tortty`. It only
    exists once the config file exists.

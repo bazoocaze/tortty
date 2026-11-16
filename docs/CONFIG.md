@@ -42,7 +42,7 @@ file.
 | key | default | what it does |
 |---|---|---|
 | `shell` | empty | initial program of the tabs; empty = `$SHELL` (`--cmd` wins) |
-| `font_family` | `Monospace` | font family; monospaced only (the cell is the advance of "M"). The default is the template's: `Menlo` on macOS, `Cascadia Mono` on Windows |
+| `font_family` | `Monospace` | font family — one name, or a list separated by commas where the first **installed** one wins (`Cascadia Mono, Consolas` is Cascadia on Windows 11 and Consolas on Windows 10); bold and italic come from the family that was found. Monospaced only (the cell is the advance of "M"). The default is the template's: `Menlo` on macOS, `Cascadia Mono, Consolas` on Windows |
 | `font_size` | `12` | size in **points** (4..96); the DPI converts to pixels |
 | `ligatures` | `standard` | font ligatures: `off`, `standard` (`liga`/`calt`: `fi`, `->`, `!=`) or `all` (`standard` + discretionary). Only shows up in a font that has them (Fira Code, JetBrains Mono); it does not merge cells — the cell is still one character |
 | `cursor_shape` | `block` | `block`, `beam` or `underline`; a `CSI 6 q` from an app wins while it lasts |
