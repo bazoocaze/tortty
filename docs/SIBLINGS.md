@@ -48,7 +48,8 @@ because `mc`, `htop` and `ls --color` were calibrated on it.
 ### The eight divergences
 
 1. **`font_family`** — Java names the face it ships with (`DejaVu Sans Mono`);
-   Rust and Python open with the generic `Monospace` alias.
+   Rust and Python open with the generic `Monospace` alias, and only Rust reads
+   a comma separated fallback list (`Cascadia Mono, Consolas`).
 2. **`font_size`** — Java opens at 17 pt, twice the other two, and Python stops
    at **30 pt** where Rust and Java go to 96.
 3. **`ligatures`** — Java defaults to `off`; the other two to `standard`.

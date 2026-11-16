@@ -121,6 +121,9 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   baseline layout, whole cells.
 - Bold and italic from a real face, no synthesis: without the face it falls back
   to regular.
+- `font_family` takes a fallback list (`Cascadia Mono, Consolas`): the first name
+  installed on the machine wins and the bold and italic faces follow it, so one
+  template can name what two versions of a system ship.
 - Per-glyph fallback chain by name, so a missing font does not become another
   one; colour emoji (CBDT) in their own RGBA atlas; CJK, arrows, Greek. The
   emoji and image textures are `Rgba8UnormSrgb` while the render target is not
