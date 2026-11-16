@@ -584,7 +584,7 @@ profile, not a different backend; the app warns about it in one line on stderr.
 `winit` keeps the last X error of the connection and `expect()`s it on the next
 call that flushes (`x11/window.rs:1028`, in `set_window_title`). An error that
 **is not ours** — the Mesa WSI leaves it pending while creating/destroying a
-pixmap — killed the process. `crates/app/src/xguard.rs` registers winit's
+pixmap — killed the process. `crates/app/src/platform/x11.rs` registers winit's
 public hook (`platform::x11::register_xlib_error_hook`) and swallows it,
 recording it on stderr:
 

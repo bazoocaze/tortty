@@ -113,10 +113,11 @@ impl Options {
 /// `$XDG_CONFIG_HOME/tortty/tortty.conf` (or `~/.config/...`).
 #[must_use]
 pub fn default_path() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join("tortty").join("tortty.conf"))
+    Some(
+        crate::platform::config_dir()?
+            .join("tortty")
+            .join("tortty.conf"),
+    )
 }
 
 pub const HELP: &str = "\

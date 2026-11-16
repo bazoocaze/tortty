@@ -78,11 +78,11 @@ pub type Monitor = (i32, i32, u32, u32);
 /// `$XDG_STATE_HOME/tortty/window.json`, with `~/.local/state` as fallback.
 #[must_use]
 pub fn state_path() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .filter(|p| !p.as_os_str().is_empty())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
-    Some(base.join("tortty").join("window.json"))
+    Some(
+        crate::platform::state_dir()?
+            .join("tortty")
+            .join("window.json"),
+    )
 }
 
 /// The `flock` that makes one window the **owner** of the state (`B46`).
@@ -108,8 +108,8 @@ impl Owner {
 
 /// Tries to become the owner; `None` when another instance already is.
 ///
-/// Never blocks: the lock is taken with `LOCK_NB`, and an instance that finds it
-/// taken is a scratch window, not a second owner. A lock file that cannot be
+/// Never blocks: the lock is asked for without waiting, and an instance that finds
+/// it taken is a scratch window, not a second owner. A lock file that cannot be
 /// created means "no remembered state", which is the same as not owning it.
 #[must_use]
 pub fn lock() -> Option<Owner> {
@@ -118,14 +118,10 @@ pub fn lock() -> Option<Owner> {
 }
 
 /// `lock` on a given path (the test uses its own file: environment is not test
-/// state).
-///
-/// `unsafe`: `flock(2)` has no wrapper in the standard library, and an advisory
-/// lock is a descriptor property — there is no safe way to ask for it.
+/// state). The lock itself is `platform::try_lock` — which primitive takes it is
+/// the platform's business.
 #[must_use]
-#[allow(unsafe_code)]
 pub fn lock_at(path: &std::path::Path) -> Option<Owner> {
-    use std::os::unix::io::AsRawFd;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).ok()?;
     }
@@ -135,14 +131,7 @@ pub fn lock_at(path: &std::path::Path) -> Option<Owner> {
         .write(true)
         .open(path)
         .ok()?;
-    // SAFETY: `flock(2)` with a valid descriptor and a valid operation flag;
-    // there is no Rust wrapper for it in the standard library.
-    let got = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0;
-    if got {
-        Some(Owner { _file: file })
-    } else {
-        None
-    }
+    crate::platform::try_lock(&file).then_some(Owner { _file: file })
 }
 
 /// Reads the file; `None` for missing, unreadable, crooked JSON or wrong type.

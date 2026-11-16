@@ -432,7 +432,8 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   ([`DEBUG.md`](DEBUG.md) has the shape of each).
 - `--debug-socket auto` opens `$XDG_RUNTIME_DIR/tortty-<pid>.sock`; the socket is
   `0600` and checks `SO_PEERCRED`, and it never deletes a file that is not its
-  own.
+  own. The socket itself is the `platform` seam (one capability, not a `#[cfg]`
+  in the protocol code); **limit:** only the Linux implementation exists.
 - `--dump-to` and `SIGUSR1` give the same view with no socket.
 - One instance per PID file: `tools/devkill.sh` kills that PID, checking
   `/proc/<pid>/exe`.

@@ -7,8 +7,8 @@
 //! display: same rule as the core — build the scenario, exercise
 //! it, compare with the expected result, and fail saying why.
 
+use crate::platform::Conn;
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::sync::mpsc;
 
 use tortty_core::checks::Check;
@@ -412,19 +412,11 @@ fn debug_socket() -> Result<(), String> {
     let srv =
         debugsock::DebugServer::start(&path, test_sink as fn(String, mpsc::Sender<String>) -> bool)
             .map_err(|e| format!("start: {e}"))?;
-    // mode 0600: another user's terminal cannot read the screen
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(&path)
-            .map_err(|e| e.to_string())?
-            .permissions()
-            .mode()
-            & 0o777;
-        if mode != 0o600 {
-            return Err(format!("socket with mode {mode:o}, expected 600"));
-        }
+    // owner-only: another user's terminal cannot read the screen
+    if !crate::platform::socket_is_owner_only(std::path::Path::new(&path)) {
+        return Err(format!("socket at {path} is not owner-only (0600)"));
     }
-    let mut s = UnixStream::connect(&path).map_err(|e| format!("connect: {e}"))?;
+    let mut s = Conn::connect(&path).map_err(|e| format!("connect: {e}"))?;
     let mut f = BufReader::new(s.try_clone().map_err(|e| e.to_string())?);
     let mut read = |expected: &str| -> Result<String, String> {
         let mut l = String::new();

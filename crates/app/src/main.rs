@@ -14,12 +14,12 @@ mod frame;
 mod glyph;
 mod keys;
 mod mouse;
+mod platform;
 mod prof;
 mod pty;
 mod render;
 mod shape;
 mod state;
-mod xguard;
 
 use winit::event_loop::{ControlFlow, EventLoop};
 
@@ -47,7 +47,7 @@ fn main() {
     }
 
     // before any window: a GPU WSI X error cannot bring the app down
-    xguard::install();
+    platform::install_error_guard();
     let event_loop = match EventLoop::<UserEvent>::with_user_event().build() {
         Ok(e) => e,
         Err(e) => {
@@ -70,14 +70,9 @@ fn main() {
 fn selftest() -> i32 {
     // `tortty --selftest | head` closes the pipe in the middle of the list: with
     // SIGPIPE ignored (the Rust default) the next `println!` becomes a panic. Here
-    // it goes back to the Unix default only on this path — the app itself writes
+    // it goes back to the system default only on this path — the app itself writes
     // BEL to stdout and must not die because of a closed pipe.
-    #[allow(unsafe_code)]
-    // SAFETY: `signal` with `SIG_DFL` installs no handler and reads no memory; it
-    // is the only way to restore the default SIGPIPE disposition.
-    unsafe {
-        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
-    }
+    platform::default_sigpipe();
     let all: Vec<_> = tortty_core::checks::all()
         .into_iter()
         .chain(checks_app::all())

@@ -20,6 +20,7 @@ use crate::clip::Clip;
 use crate::debugsock::{self, DebugServer};
 use crate::glyph::Fonts;
 use crate::keys;
+use crate::platform;
 use crate::prof;
 use crate::pty::Pty;
 use crate::render::{Renderer, Severity, ToastText};
@@ -30,16 +31,6 @@ use crate::render::{Renderer, Severity, ToastText};
 fn inside_box(rect: [f32; 4], px: f64, py: f64) -> bool {
     let [x, y, w, h] = rect.map(f64::from);
     px >= x && px < x + w && py >= y && py < y + h
-}
-
-/// Shell argument: `'…'` with `'` becoming `'\''` — enough for the common case.
-fn shell_quote(s: &str) -> String {
-    if s.chars()
-        .all(|c| c.is_ascii_alphanumeric() || "/._-+:%=@,".contains(c))
-    {
-        return s.to_string();
-    }
-    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// Digit of the **physical** key (0..=9), ignoring layout and Shift.
@@ -64,25 +55,6 @@ fn digit_of(event: &winit::event::KeyEvent) -> Option<usize> {
         KeyCode::Digit9 => 9,
         _ => return None,
     })
-}
-
-/// PID of the deepest descendant of `pid` (the program in the foreground: the
-/// shell, or the `vim`/`mc` it launched). `/proc/<pid>/task/<pid>/children`
-/// lists the direct children; walking down to the end is what yields the
-/// process the person is actually using.
-fn descendant(pid: u32) -> u32 {
-    let mut cur = pid;
-    for _ in 0..8 {
-        let path = format!("/proc/{cur}/task/{cur}/children");
-        let Ok(txt) = std::fs::read_to_string(path) else {
-            break;
-        };
-        let Some(child) = txt.split_whitespace().next().and_then(|s| s.parse().ok()) else {
-            break;
-        };
-        cur = child;
-    }
-    cur
 }
 
 pub enum UserEvent {
@@ -750,15 +722,6 @@ pub struct App {
     remember_geom: bool,
 }
 
-/// Is the WM here X11? It is the one that accepts a window position; on
-/// Wayland that does not exist (J6). `winit` does not expose which backend it
-/// picked, so the reading comes from the environment — the same choice it
-/// makes: Wayland when `WAYLAND_DISPLAY` exists.
-fn backend_x11() -> bool {
-    std::env::var_os("WAYLAND_DISPLAY").is_none_or(|v| v.is_empty())
-        && std::env::var_os("DISPLAY").is_some_and(|v| !v.is_empty())
-}
-
 impl App {
     pub fn new(
         opts: Options,
@@ -884,13 +847,13 @@ impl App {
         s
     }
 
-    /// Writes the dump where `--dump-to` said (else /tmp/tortty-dump.txt).
+    /// Writes the dump where `--dump-to` said (else the system's default).
     fn dump(&mut self) {
         let path = self
             .opts
             .dump_to
             .clone()
-            .unwrap_or_else(|| std::path::PathBuf::from("/tmp/tortty-dump.txt"));
+            .unwrap_or_else(platform::dump_path);
         match std::fs::write(&path, self.dump_text()) {
             Ok(()) => {
                 self.dumped = true;
@@ -903,15 +866,7 @@ impl App {
     /// Window XID on X11 (0 on Wayland): whoever is going to capture pixels asks
     /// the app, not X, so the capture cannot pick another window.
     fn xid(&self) -> u64 {
-        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        let Some(w) = self.window.as_ref() else {
-            return 0;
-        };
-        match w.window_handle().map(|h| h.as_raw()) {
-            Ok(RawWindowHandle::Xlib(x)) => x.window,
-            Ok(RawWindowHandle::Xcb(x)) => u64::from(x.window.get()),
-            _ => 0,
-        }
+        self.window.as_ref().map_or(0, |w| platform::window_id(w))
     }
 
     /// pty write with counters (`prof`): bytes and repeats per `EAGAIN`.
@@ -927,8 +882,7 @@ impl App {
     fn read_image_file(path: &str, delete: bool) -> Option<Vec<u8>> {
         let path = match path.strip_prefix('~') {
             Some(rest) if rest.is_empty() || rest.starts_with('/') => {
-                std::path::PathBuf::from(std::env::var_os("HOME")?)
-                    .join(rest.trim_start_matches('/'))
+                platform::home()?.join(rest.trim_start_matches('/'))
             },
             _ => std::path::PathBuf::from(path),
         };
@@ -940,25 +894,10 @@ impl App {
         std::io::Read::take(file, u64::from(tortty_core::graphics::MAX_APC as u32) + 1)
             .read_to_end(&mut data)
             .ok()?;
-        if delete && Self::temp_delete_allowed(&path) {
+        if delete && platform::temp_delete_allowed(&path) {
             let _ = std::fs::remove_file(&path);
         }
         Some(data)
-    }
-
-    /// What `t=t` may delete: the protocol lets the child name the file, so
-    /// only a path inside a known temporary directory carrying
-    /// `tty-graphics-protocol` qualifies. Canonicalized first, so `..` and
-    /// symlinks cannot walk the check out of the temp dir. Decided after
-    /// the read, on a path that exists — a dangling name never deletes.
-    fn temp_delete_allowed(path: &std::path::Path) -> bool {
-        let canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        if !canon.to_string_lossy().contains("tty-graphics-protocol") {
-            return false;
-        }
-        canon.starts_with(std::env::temp_dir())
-            || canon.starts_with("/tmp")
-            || canon.starts_with("/dev/shm")
     }
 
     fn pty_write(&mut self, bytes: &[u8]) {
@@ -1557,13 +1496,8 @@ impl App {
             self.toast("Link refused", uri, Severity::Err);
             return;
         }
-        match std::process::Command::new("xdg-open")
-            .arg(uri)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-        {
-            Ok(_) => self.toast("Opening", uri, Severity::Ok),
+        match platform::open_uri(uri) {
+            Ok(()) => self.toast("Opening", uri, Severity::Ok),
             Err(e) => self.toast("Link failed", &e.to_string(), Severity::Err),
         }
     }
@@ -2378,7 +2312,7 @@ impl App {
     /// terminal does not know what is running, and a program that is not a shell
     /// still gets a path it can read.
     fn drop_path(&mut self, path: &std::path::Path) {
-        let txt = shell_quoted(&path.to_string_lossy());
+        let txt = platform::shell_quote(&path.to_string_lossy());
         self.blink_reset();
         self.tabs[self.active].view_off = 0;
         self.write_paste(&txt);
@@ -3700,7 +3634,7 @@ impl App {
             .unwrap_or_default();
         self.geom_normal = (geom.w.max(1), geom.h.max(1));
         // J6: only X11 accepts a window position; on Wayland it does not exist
-        let pos = geom.x.zip(geom.y).filter(|_| backend_x11());
+        let pos = geom.x.zip(geom.y).filter(|_| platform::backend_x11());
         (geom.w.max(1), geom.h.max(1), pos, maximized)
     }
 
@@ -3722,7 +3656,7 @@ impl App {
             return;
         }
         let maximized = self.window.as_ref().is_some_and(|w| w.is_maximized());
-        let (x, y) = match self.geom_pos.filter(|_| backend_x11()) {
+        let (x, y) = match self.geom_pos.filter(|_| platform::backend_x11()) {
             Some((x, y)) => (Some(x), Some(y)),
             None => (None, None), // Wayland: no position to remember (J6)
         };
@@ -4265,10 +4199,12 @@ impl App {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        let editor = std::env::var("VISUAL")
-            .or_else(|_| std::env::var("EDITOR"))
-            .unwrap_or_else(|_| "vim".to_string());
-        let cmd = format!("{} {}", editor, shell_quote(&path.to_string_lossy()));
+        let editor = platform::editor();
+        let cmd = format!(
+            "{} {}",
+            editor,
+            platform::shell_quote(&path.to_string_lossy())
+        );
         self.new_tab_cmd(Some(&cmd));
     }
 
@@ -4557,8 +4493,9 @@ impl ApplicationHandler<UserEvent> for App {
         // the window is born one column/row short (the WM does not give it back)
         // the padding enters the request: the grid is `cols*cw` and the rest is
         // padding
-        // signals: `SIGUSR1` (dump) and `SIGTERM` (clean exit)
-        instala_sinais();
+        // `SIGUSR1` (dump) and `SIGTERM` (clean exit). Which trigger the system
+        // has instead is `platform`'s business.
+        platform::install_triggers();
         let (w, h, pos, maximized) = self.geometry_initial(event_loop, &fonts);
         let mut attrs = Window::default_attributes()
             .with_title("tortty")
@@ -4567,14 +4504,9 @@ impl ApplicationHandler<UserEvent> for App {
         if let Some((x, y)) = pos {
             attrs = attrs.with_position(PhysicalPosition::new(x, y));
         }
-        // K19: explicit `WM_CLASS`, not inherited from the executable name — it
-        // is what the `.desktop` `StartupWMClass` looks for to group the window
-        // in the dock. A renamed binary (`tortty-rs`) cannot change WM_CLASS.
-        #[cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))]
-        let attrs = {
-            use winit::platform::x11::WindowAttributesExtX11 as _;
-            attrs.with_name("tortty", "tortty")
-        };
+        // K19: the window class `StartupWMClass` looks for is set by the
+        // platform, not inherited from the executable name.
+        let attrs = platform::name_window(attrs);
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
             Err(e) => {
@@ -4793,8 +4725,8 @@ impl ApplicationHandler<UserEvent> for App {
             when = when.min(t);
         }
 
-        // signals: the handler only raises the flag, whoever acts is here
-        let (dump, finish) = signals();
+        // the handler only raises the flag, whoever acts is here
+        let (dump, finish) = platform::take_triggers();
         if dump {
             self.dump();
         }
@@ -5000,43 +4932,6 @@ fn dump_tab(t: &Tab, ativa: bool) -> Vec<String> {
     out
 }
 
-// ------------------------------------------------------------ signals
-
-/// `SIGUSR1` asked for a dump; `SIGTERM` asked for a clean exit (dump + close).
-static SIGNAL_DUMP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-static SIGNAL_TERM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-extern "C" fn on_usr1(_: libc::c_int) {
-    SIGNAL_DUMP.store(true, std::sync::atomic::Ordering::Relaxed);
-}
-
-extern "C" fn on_term(_: libc::c_int) {
-    SIGNAL_TERM.store(true, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// Installs `SIGUSR1`/`SIGTERM`. The handler only raises an `AtomicBool`:
-/// `store` on `AtomicBool` is lock free and safe in a handler, and whoever acts
-/// is the event loop (which wakes up every 250 ms anyway).
-///
-/// `unsafe`: `libc::signal` swaps the process handler — there is no safe API
-/// for that, as with the `debugsock` `SO_PEERCRED`.
-#[allow(unsafe_code)]
-pub fn instala_sinais() {
-    unsafe {
-        libc::signal(libc::SIGUSR1, on_usr1 as *const () as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, on_term as *const () as libc::sighandler_t);
-    }
-}
-
-/// Signal readout (once each): (dump, quit).
-fn signals() -> (bool, bool) {
-    use std::sync::atomic::Ordering::Relaxed;
-    (
-        SIGNAL_DUMP.swap(false, Relaxed),
-        SIGNAL_TERM.swap(false, Relaxed),
-    )
-}
-
 /// cwd for the next tab: `/proc` answers where the program in front really is,
 /// `OSC 7` only where the shell thinks it is — so `/proc` wins and the shell's
 /// word is the last resort (a container, a stricter mount, a process tree the
@@ -5050,9 +4945,7 @@ fn signals() -> (bool, bool) {
 /// `App::exiting` reads the layout before the hangup (`B51`): a tab read after
 /// the farewell has no directory left to give.
 fn tab_cwd(pty: Option<&Pty>, from_osc: Option<&str>) -> Option<std::path::PathBuf> {
-    let from_proc = pty
-        .and_then(Pty::child_pid)
-        .and_then(|pid| std::fs::read_link(format!("/proc/{}/cwd", descendant(pid))).ok());
+    let from_proc = pty.and_then(Pty::child_pid).and_then(platform::child_cwd);
     prefer_cwd(from_proc, from_osc)
 }
 
@@ -5072,32 +4965,6 @@ fn prefer_cwd(
 /// lives in `tabs`/`active`; the others go to `parked`). The second value is the
 /// logical index the front keeps afterwards — being built last is a matter of
 /// where it is stored, and it must not renumber the session (`B44`).
-/// A path quoted for a POSIX shell, which is what a dropped file becomes.
-///
-/// Two rules: a path made only of characters the shell does not touch goes out as
-/// it is (the common case, readable), everything else is wrapped in single quotes
-/// with the embedded `'` closed and escaped (`'\''`) — the one form that survives
-/// `$`, spaces, quotes and newlines without a second interpretation.
-fn shell_quoted(path: &str) -> String {
-    fn safe(c: char) -> bool {
-        c.is_ascii_alphanumeric() || "/._-+=@,:".contains(c)
-    }
-    if !path.is_empty() && path.chars().all(safe) {
-        return path.to_string();
-    }
-    let mut out = String::with_capacity(path.len() + 2);
-    out.push('\'');
-    for c in path.chars() {
-        if c == '\'' {
-            out.push_str("'\\''");
-        } else {
-            out.push(c);
-        }
-    }
-    out.push('\'');
-    out
-}
-
 fn restore_order(total: usize, ws: usize) -> (Vec<usize>, usize) {
     let front = ws.min(total.saturating_sub(1));
     let order = (0..total).filter(|j| *j != front).chain([front]).collect();
@@ -5154,24 +5021,6 @@ mod tests {
         assert!(!inside_box(toast, 99.0, 55.0), "one pixel to the left");
         assert!(!inside_box(toast, 300.0, 55.0), "the right edge");
         assert!(!inside_box(toast, 150.0, 70.0), "the bottom edge");
-    }
-
-    #[test]
-    fn a_dropped_file_becomes_a_quoted_path() {
-        // the common case stays readable: nothing to quote
-        assert_eq!(shell_quoted("/tmp/a.txt"), "/tmp/a.txt");
-        assert_eq!(
-            shell_quoted("/home/user/x-1_2.tar.gz"),
-            "/home/user/x-1_2.tar.gz"
-        );
-        // a space, a `$` and a quote are the shell's, not ours
-        assert_eq!(shell_quoted("/tmp/a b.txt"), "'/tmp/a b.txt'");
-        assert_eq!(shell_quoted("/tmp/$HOME"), "'/tmp/$HOME'");
-        assert_eq!(shell_quoted("/tmp/it's"), "'/tmp/it'\\''s'");
-        // a newline cannot break the line it lands in
-        assert_eq!(shell_quoted("/tmp/a\nb"), "'/tmp/a\nb'");
-        // nothing is not a path worth pasting
-        assert_eq!(shell_quoted(""), "''");
     }
 
     #[test]

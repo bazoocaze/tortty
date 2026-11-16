@@ -1364,3 +1364,11 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 - A generic name inside the list (`Monospace`, the file default) ends the walk on the preference chain; no comma is the old single name; empty entries are skipped; a list of nothing falls back to the chain.
 - Measured end to end on Xvfb: `Tortty Nao Existe, Liberation Mono` lands on Liberation (cell 11.202×21.146) and not on the chain's DejaVu (11.238×21.729).
 - The Windows template now says `font_family Cascadia Mono, Consolas`; `CONFIG.md`, `PORTABILITY.md` and the `--font-family` help follow.
+
+## 2026-11-16 — the `platform` seam
+
+- The OS-naming code left `debugsock`, `state`, `pty`, `main`, `app` and `xguard` for `crates/app/src/platform/`: the app now asks for a **capability** (`try_lock`, `hangup`, `shell_quote`, `open_uri`, `child_cwd`, `install_triggers`, `name_window`, `runtime_dir`) and the system is named in one module.
+- Measured before: 35 compile errors for `x86_64-pc-windows-gnu` and 4 for `x86_64-apple-darwin`. After: **1 and 1** — the seam's `compile_error!`, which says only Linux is measured and points at `M-X`/`M-Y`.
+- The 4 macOS errors are the reason the implementation is named `linux` and not `unix`: `libc::ucred`, `SO_PEERCRED` and `winit::platform::x11` do not exist there. Being a unix buys nothing.
+- The ruler is `tools/platform-gate.sh`, a step of `tools/quality-check.sh`: it fails when `std::os::unix`, `libc::`, `windows_sys::`, `winapi::` or `winit::platform::` appears outside the seam (proven by adding a bare `libc::getuid()` to `prof.rs`: the gate named the line).
+- Drive-by: the doc comment of `restore_order` had been left orphaned above `shell_quoted` (two doc blocks in a row); it went back onto its function, and the two shell-quoting copies in `app.rs` became one `platform::shell_quote`.

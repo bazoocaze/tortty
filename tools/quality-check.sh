@@ -47,6 +47,9 @@ if [ "$FIX" = 1 ]; then
         --workspace --release >/dev/null 2>&1 || true
 fi
 
+# the platform seam first: it is a grep, it costs nothing, and it fails with the
+# offending line instead of a compile error on another target
+step "platform seam" ./tools/platform-gate.sh
 step "cargo fmt --check" cargo fmt --all -- --check
 step "clippy -D warnings" cargo clippy --workspace --all-targets --release -- -D warnings
 step "cargo test" cargo test --workspace --quiet

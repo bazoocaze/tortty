@@ -35,22 +35,18 @@ pub struct Pty {
 }
 
 /// SHELL of the child, **always a path**: config (empty inherits the environment)
-/// → `$SHELL` → `/bin/bash`. A value that does not exist in `PATH` falls back to
-/// `/bin/bash`. Taking the raw `$SHELL` is what breaks: a stale `$SHELL` pointing
-/// at a dead path makes the child die on the spot, and the default of the system
-/// is `/bin/sh` (dash on Debian), not `/bin/bash`.
+/// → `$SHELL` → the default of the system (`platform::default_shell`). A value
+/// that does not exist in `PATH` falls back to the default too. Taking the raw
+/// `$SHELL` is what breaks: a stale `$SHELL` pointing at a dead path makes the
+/// child die on the spot, and the default of the system is `/bin/sh` (dash on
+/// Debian), not `/bin/bash`.
 #[must_use]
 pub fn effective_shell(configured: Option<&str>, env_shell: Option<&str>) -> String {
     let cand = configured
         .filter(|s| !s.is_empty())
         .or_else(|| env_shell.filter(|s| !s.is_empty()));
-    cand.and_then(which).unwrap_or_else(|| {
-        if std::path::Path::new("/bin/bash").exists() {
-            "/bin/bash".to_string()
-        } else {
-            "/bin/sh".to_string()
-        }
-    })
+    cand.and_then(which)
+        .unwrap_or_else(crate::platform::default_shell)
 }
 
 /// Path of an executable: absolute/relative is checked directly, a bare name is
@@ -195,22 +191,16 @@ impl Pty {
         matches!(self.child.try_wait(), Ok(Some(_)))
     }
 
-    /// Sends `SIGHUP` and returns without waiting: what closing a terminal
-    /// does, and the signal a program uses to say its last words (`B48`).
+    /// Says goodbye with `SIGHUP` and returns without waiting: what closing a
+    /// terminal does, and the signal a program uses to say its last words (`B48`).
+    /// What the system has instead of a hangup is `platform`'s business.
     ///
-    /// `kill` would do it too — `portable-pty` sends `SIGHUP` and waits 200 ms
-    /// before the `SIGKILL` — but it waits **per child**, and the app has to be
-    /// draining the ptys while they die, not blocked in the first of them.
+    /// `child.kill` would do it too — `portable-pty` sends `SIGHUP` and waits
+    /// 200 ms before the `SIGKILL` — but it waits **per child**, and the app has
+    /// to be draining the ptys while they die, not blocked in the first of them.
     pub fn hangup(&mut self) {
-        #[cfg(unix)]
         if let Some(pid) = self.child.process_id() {
-            // a bare `kill(2)`: the only libc call in this file, and the return
-            // says nothing the caller could act on (a child that already left is
-            // the normal case here)
-            #[allow(unsafe_code)]
-            unsafe {
-                libc::kill(pid as i32, libc::SIGHUP);
-            }
+            crate::platform::hangup(pid);
         }
     }
 

@@ -66,6 +66,15 @@ per category, in order).
 
 ## Code conventions
 
+- `platform` names the operating system; the rest of the code names the
+  **capability**. `crates/app/src/platform/` is the only module allowed to name a
+  system — syscalls, paths, signals, shell quoting, windowing details — and the app
+  asks it for `try_lock`, `hangup`, `shell_quote`. What the implementation does not
+  have comes back as `Option`/`Err` with the reason, never as a silent `#[cfg]` in
+  the feature code. Policy per system (chords, default font, shell name as data) is
+  **not** there: it lives in `crates/core/defaults/`. The ruler is
+  `tools/platform-gate.sh`, a step of `tools/quality-check.sh`.
+
 - Version: bump the patch in `Cargo.toml` (root, `workspace.package`) in **every
   commit that changes code** (`crates/`, `tools/`, `install.sh`) — closing an item
   of `docs/BACKLOG.md` is one of those cases, not a separate one. The bump rides

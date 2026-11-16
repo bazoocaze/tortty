@@ -41,35 +41,57 @@ that is what the CI matrix below does for free).
 | macOS Apple Silicon | Metal | POSIX pty | **no** — needs a macOS runner |
 | macOS Intel | Metal | POSIX pty | **no** — `macos-13` runner |
 
-## Concrete blockers in today's code
+## The seam, and what each target still has to answer
 
-Ordered by severity. None of them is architectural; all are boundary ones.
+The boundary is **one module**: `crates/app/src/platform/`, whose rule and whose
+gate are in `AGENTS.md` (`tools/platform-gate.sh` fails if `std::os::unix`,
+`libc::`, `windows_sys::`, `winapi::` or `winit::platform::` appears anywhere else
+in `crates/`). The app asks for a capability — `platform::try_lock`,
+`platform::hangup`, `platform::shell_quote`, `platform::open_uri` — and the name of
+a system exists only there. Only the Linux implementation was written, and it is
+the measured one.
 
-1. **Debug socket is a Unix socket** (`UnixListener`). On Windows it does not
-   exist: it needs a named pipe or TCP on `127.0.0.1`. Decision: keep the Unix
-   socket on POSIX systems and use a named pipe (`\\.\pipe\tortty-<pid>`) on
-   Windows, with the same one-line JSON framing. `tools/benchrun.py` starts
-   choosing the transport by the path.
-2. **`$XDG_RUNTIME_DIR`** for `--debug-socket auto`: on Windows it is
-   `%LOCALAPPDATA%\Temp`, on macOS it is `$TMPDIR`. One `runtime_dir()` function
-   and it is done.
-3. **`$SHELL` and `/bin/sh`** as default: on Windows the shell is `$COMSPEC`
-   (`cmd.exe`) and `--cmd` needs to be `cmd /c`. `portable-pty` already abstracts
-   the spawn; the per-platform shell choice is missing.
+Measured on 2026-11-16, with the seam in place: a build for Windows stops with
+**one** error instead of 35, and for macOS with **one** instead of 4. That error is
+the `compile_error!` naming `M-X`/`M-Y`. Note what the 4 macOS errors were — they
+are the reason the implementation is named `linux` and not `unix`: `libc::ucred`
+and `SO_PEERCRED` do not exist there, and `winit::platform::x11` is not compiled
+either. **macOS is not a free ride for being a unix.**
+
+What follows is the list a second implementation has to answer, ordered by
+severity. None of them is architectural.
+
+1. **The debug socket** is `platform::Listener`/`Conn` (Linux: `UnixListener`,
+   `0600`, `SO_PEERCRED`, and the same uid only). Windows has no unix socket: it
+   needs a named pipe or TCP on `127.0.0.1`, behind the same two types and the same
+   one-line JSON framing. `tools/benchrun.py` will pick the transport by the path.
+2. **The runtime directory** of `--debug-socket auto` is `platform::runtime_dir()`
+   (Linux: `$XDG_RUNTIME_DIR` or `/tmp`; Windows `%LOCALAPPDATA%\Temp`, macOS
+   `$TMPDIR`).
+3. **The shell** is `platform::default_shell()` (Linux: `/bin/bash` then `/bin/sh`)
+   and `platform::shell_quote` quotes what the child receives; on Windows the shell
+   is `$COMSPEC` (`cmd.exe`), `--cmd` needs `cmd /c`, and quoting is another
+   function. `portable-pty` already abstracts the spawn.
 4. **Font scan**: `fontdb` covers each system's font directories, and the
    per-OS template names the family (or the fallback list) for that system:
    `Menlo` on macOS, `Cascadia Mono, Consolas` on Windows. What is still
    Linux-shaped is the **preference chain** behind a generic `font_family`
    (DejaVu, Liberation, Noto): it is the last resort, and on a system without
    them the chain ends on fontdb's own "monospace".
-5. **Configuration path** (`$XDG_CONFIG_HOME`): on Windows
-   `%APPDATA%\tortty`, on macOS `~/Library/Application Support/tortty`. It only
-   exists once the config file exists.
+5. **The directories** are the seam's: `config_dir` (Linux `$XDG_CONFIG_HOME` or
+   `~/.config`; Windows `%APPDATA%`, macOS `~/Library/Application Support`),
+   `state_dir` (`$XDG_STATE_HOME` or `~/.local/state`; Windows `%LOCALAPPDATA%`),
+   `dump_path`, `home`.
 6. **Clipboard and IME**: when they come in, they are platform-specific
    (`arboard`/`winit::Ime`); `winit` already exposes IME on all targets.
 7. **Bracketed paste / terminal modes**: nothing to do, it is the parser's.
 8. **Wayland**: the client does not choose the window position (it never will).
    Geometry persistence on Wayland stores size and maximized, not `x`/`y`.
+9. **No answer exists for three capabilities**, and each one has to be honest
+   instead of emulated: the cwd of the front process (Linux reads
+   `/proc/<pid>/cwd`; Windows has no `/proc`), the farewell of `SIGHUP` (`B48` —
+   ConPTY kills the tree), and an editor from `$VISUAL`/`$EDITOR`. The seam returns
+   `Option`/`Err` with the reason; the feature code says so in `LIMITATIONS.md`.
 
 ## Distribution
 

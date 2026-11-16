@@ -1,5 +1,9 @@
 //! An X extension error must not bring the app down.
 //!
+//! Linux only: the hook lives in `winit::platform::x11`, which does not exist on
+//! another target — one of the reasons the seam is named after the system and not
+//! after the unix family.
+//!
 //! `winit` stores the last X error of the connection and `expect()`s it on the
 //! next call that flushes (`flush_requests`). An error that is **not ours** — the
 //! Mesa WSI leaves `BadDrawable` pending while creating and destroying pixmaps to

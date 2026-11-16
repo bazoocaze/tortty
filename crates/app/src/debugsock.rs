@@ -2,7 +2,9 @@
 //!
 //! The protocol is `{"ok":true,...}` / `{"ok":false,"err":...}`, on a socket with
 //! `0600` and the same uid only — it is what lets a measurement harness pin the
-//! grid and read the state.
+//! grid and read the state. The socket itself (bind, permissions, peer
+//! credential, stale file) is the `platform` seam: this module owns the protocol
+//! and the threading.
 //!
 //! The socket runs on its own thread, but **the UI thread is the one that
 //! answers**: the request goes through the `Sink` and the reply comes back over a
@@ -13,8 +15,6 @@
 //! not know (nor needs to know) that winit exists.
 
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -22,6 +22,7 @@ use std::sync::Arc;
 use winit::event_loop::EventLoopProxy;
 
 use crate::app::UserEvent;
+use crate::platform::{self, Conn, Listener};
 
 /// Whoever queues the request for the UI thread. It exists so the socket can be
 /// exercised in a headless test: without this seam the only way to test it would
@@ -61,30 +62,25 @@ impl DebugServer {
     /// self.proxy.clone())` still holds) and a channel in the tests.
     pub fn start(path: &str, sink: impl Sink) -> Result<DebugServer, String> {
         let path = resolve(path);
-        clear_stale(&path)?;
-        let listener = UnixListener::bind(&path).map_err(|e| format!("{path}: {e}"))?;
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-        }
+        let listener = Listener::bind(std::path::Path::new(&path))?;
         let stop = Arc::new(AtomicBool::new(false));
         let stop_thread = stop.clone();
         let sink: Arc<dyn Sink> = Arc::new(sink);
 
         std::thread::Builder::new()
             .name("debug-sock".into())
-            .spawn(move || {
-                for conn in listener.incoming() {
-                    if stop_thread.load(Ordering::SeqCst) {
-                        break;
-                    }
-                    let Ok(conn) = conn else { continue };
-                    if !same_uid(&conn) {
-                        continue;
-                    }
-                    let sink = Arc::clone(&sink);
-                    std::thread::spawn(move || serves(conn, sink.as_ref()));
+            .spawn(move || loop {
+                let Ok(conn) = listener.accept() else {
+                    continue;
+                };
+                if stop_thread.load(Ordering::SeqCst) {
+                    break;
                 }
+                if !platform::same_user(&conn) {
+                    continue;
+                }
+                let sink = Arc::clone(&sink);
+                std::thread::spawn(move || serves(conn, sink.as_ref()));
             })
             .map_err(|e| format!("socket thread: {e}"))?;
         Ok(DebugServer { path, stop })
@@ -97,13 +93,15 @@ impl DebugServer {
 
 impl Drop for DebugServer {
     fn drop(&mut self) {
+        // `stop` first, then a throwaway connection to wake `accept`: the loop
+        // checks the flag before serving whoever connected, exits, and the
+        // listener it owns removes the file on its way out. Without the wake the
+        // thread would hang on a listener whose file is gone (one leaked thread
+        // per test case).
         self.stop.store(true, Ordering::SeqCst);
-        // wakes `accept` with a throwaway connection: without this the socket
-        // thread hangs on a listener whose file is already gone (in the tests
-        // that would leak one thread per case). The `stop` above makes the loop
-        // exit before serving whoever connected.
-        let _ = UnixStream::connect(&self.path);
-        let _ = std::fs::remove_file(&self.path);
+        let path = std::path::Path::new(&self.path);
+        platform::wake(path);
+        platform::remove_socket(path);
     }
 }
 
@@ -116,10 +114,9 @@ pub fn resolve(value: &str) -> String {
     }
 }
 
-/// `$XDG_RUNTIME_DIR` (or `/tmp`) plus the pid.
+/// The runtime directory of the system plus the pid.
 fn auto_path() -> String {
-    let base = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
-    auto_path_in(&base)
+    auto_path_in(&platform::runtime_dir())
 }
 
 /// The name itself, with the base passed in: pure, so the test does not have to
@@ -129,44 +126,7 @@ fn auto_path_in(base: &str) -> String {
     format!("{base}/tortty-{}.sock", std::process::id())
 }
 
-fn clear_stale(path: &str) -> Result<(), String> {
-    use std::os::unix::fs::FileTypeExt as _;
-    let p = Path::new(path);
-    let Ok(meta) = std::fs::metadata(p) else {
-        return Ok(()); // does not exist: nothing to clean
-    };
-    // a file that is **not** a socket is not ours: only the owner deletes it (L12)
-    if !meta.file_type().is_socket() {
-        return Err(format!("path exists and is not a socket: {path}"));
-    }
-    if UnixStream::connect(p).is_ok() {
-        return Err(format!("another process is listening on {path}"));
-    }
-    // orphan socket: nobody listens, the file is garbage
-    std::fs::remove_file(p).map_err(|e| format!("{path}: {e}"))?;
-    Ok(())
-}
-
-/// `SO_PEERCRED`: only the same uid talks to the socket. It is the only `unsafe`
-/// in the project — `getsockopt` is FFI with no stable alternative in Rust.
-#[allow(unsafe_code)]
-fn same_uid(conn: &UnixStream) -> bool {
-    use std::os::unix::io::AsRawFd;
-    let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
-    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-    let rc = unsafe {
-        libc::getsockopt(
-            conn.as_raw_fd(),
-            libc::SOL_SOCKET,
-            libc::SO_PEERCRED,
-            (&raw mut cred).cast::<libc::c_void>(),
-            &raw mut len,
-        )
-    };
-    rc == 0 && cred.uid == unsafe { libc::getuid() }
-}
-
-fn serves(conn: UnixStream, sink: &dyn Sink) {
+fn serves(conn: Conn, sink: &dyn Sink) {
     let Ok(mut out) = conn.try_clone() else {
         return;
     };
@@ -240,13 +200,13 @@ mod checks_socket {
     /// Client of the protocol: writes one line, reads one line. `read_timeout`
     /// turns "the server hung" into a failure, not into a hang.
     struct Cli {
-        inp: UnixStream,
-        out: BufReader<UnixStream>,
+        inp: Conn,
+        out: BufReader<Conn>,
     }
 
     impl Cli {
         fn connect(path: &Path) -> Cli {
-            let inp = UnixStream::connect(path).expect("connect to the socket");
+            let inp = Conn::connect(path).expect("connect to the socket");
             inp.set_read_timeout(Some(Duration::from_secs(10)))
                 .expect("read timeout");
             let out = BufReader::new(inp.try_clone().expect("clone the stream"));
@@ -438,74 +398,20 @@ mod checks_socket {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// The seam is what the socket is built on: a path taken by a file that is not
+    /// a socket has to be refused here too, and the file kept (L12 is decided in
+    /// `platform`, this is the app path).
     #[test]
-    fn socket_file_is_born_0600() {
-        use std::os::unix::fs::PermissionsExt;
-        let path = path("perm");
-        let srv = fake(&path, |_| ok(json!({})));
-        let mode = std::fs::metadata(&path)
-            .expect("socket metadata")
-            .permissions()
-            .mode()
-            & 0o777;
-        assert_eq!(mode, 0o600, "a debug socket has to be owner-only");
-        drop(srv);
-        // `Drop` takes the file with it
-        assert!(!path.exists(), "socket left behind: {}", path.display());
-    }
-
-    #[test]
-    fn clear_stale_does_not_clear_file_that_is_not_a_socket() {
-        // L12: a path taken by a regular file is refused, not deleted
+    fn start_refuses_a_path_that_is_not_a_socket() {
         let path = path("regular");
         std::fs::write(&path, b"not a socket").expect("create regular file");
-
-        let e = clear_stale(path.to_str().unwrap()).expect_err("it had to refuse");
-        assert!(e.contains("not a socket"), "unexpected error: {e}");
-        assert!(path.exists(), "deleted someone else's file");
-
-        // the server refuses for the same reason and does not delete either
         let sink = |_: String, _: Sender<String>| false;
         let Err(e) = DebugServer::start(path.to_str().unwrap(), sink) else {
             panic!("start had to fail");
         };
         assert!(e.contains("not a socket"), "unexpected error: {e}");
         assert_eq!(std::fs::read(&path).unwrap(), b"not a socket");
-
         let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn clear_stale_does_not_steal_an_alive_socket() {
-        let path = path("alive");
-        let listener = UnixListener::bind(&path).expect("bind of the alive socket");
-        let e = clear_stale(path.to_str().unwrap()).expect_err("it had to refuse");
-        assert!(e.contains("listening"), "unexpected error: {e}");
-        assert!(path.exists(), "stole another process's socket");
-
-        // same through `start`, which is the app path
-        let srv = DebugServer::start(path.to_str().unwrap(), |_: String, _: Sender<String>| false);
-        assert!(srv.is_err(), "start had to refuse a taken socket");
-
-        drop(listener);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn clear_stale_removes_orphan_socket() {
-        let path = path("orphan");
-        {
-            // nobody listening after this block: the file becomes garbage
-            let listener = UnixListener::bind(&path).expect("bind of the orphan");
-            drop(listener);
-        }
-        assert!(path.exists(), "the listener took the file with it");
-
-        clear_stale(path.to_str().unwrap()).expect("the orphan had to go");
-        assert!(!path.exists(), "orphan socket left behind");
-
-        // and a path that does not exist is success, not an error
-        clear_stale(path.to_str().unwrap()).expect("missing is not an error");
     }
 
     #[test]
