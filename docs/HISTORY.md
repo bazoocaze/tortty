@@ -1348,3 +1348,11 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 - macOS: `⌘C/V/T/W/N/Q`, `⌘1`…`0` for the tabs, the workspaces on `Ctrl+Shift` (from the base) and the walk on `⌘⌥↑/↓`; Option+digit is left to the child. Windows: no `super` family at all, tabs on `Alt`, walk on `Alt`.
 - Three tests: every system has a chord for every action, a template never repeats a base line nor binds a chord twice, and the four files parse clean; the `state` verb reports `config_os`.
 - Refused on the way: a `mod` modifier (a name whose key changes per system — and on Linux the "main modifier" is `Ctrl+Shift`, so `mod+c` would take SIGINT) and a per-OS overlay for the user.
+
+## 2026-11-15 — the Windows template measured in a guest
+
+- The template rested on "the shell eats Win+1, Win+arrow and Win+letter"; that was convention, not measurement, so it went to a Windows 10 21H2 guest (build 19044) and was driven headless: QEMU's monitor socket for `sendkey` (a hardware-level keystroke, so the hotkey layer sees it) and `screendump`, a WinForms probe logging both a `WH_KEYBOARD_LL` hook and its own `WM_KEYDOWN`/`WM_SYSKEYDOWN`, and an HTTP server on the host (the guest reaches it at `10.0.2.2`) to hand the script in and post the log out.
+- Super: `Win+1`, `Win+↑`, `Win+Shift+S` and `Win+R` were seen by the hook and by **no window at all** — the taskbar, the snap, the snipping overlay and the Run dialog took them, exactly as the template assumed.
+- The chords chosen instead do arrive: `Alt+1`, `Alt+↑`, `Alt+Shift+↑`, `Ctrl+Shift+1` and `Ctrl+Shift+T` came in as `WM_SYSKEYDOWN`/`WM_KEYDOWN` in the focused window.
+- Font: the default became **`Consolas`** — the same run listed 103 families and no Cascadia Mono (that one belongs to Windows 11 and to Windows Terminal, absent on a plain 10), so the template named a family that could only fall back.
+- The macOS template stays unmeasured (`M-Y`); the guest was left as it was (autologin, pt-BR ABNT2) and the probe scripts live beside the VM, outside this repo.

@@ -48,13 +48,17 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
 
 ## Platform
 
-- **The macOS and Windows defaults are written, not exercised.** Their templates
-  (`crates/core/defaults/tortty-macos.conf`, `tortty-windows.conf`) parse, are
-  covered by the test that requires a chord for every action, and follow each
-  platform's convention — ⌘ for the gestures on macOS, no `Super` at all on
-  Windows, where `Win+1`…`0` is the taskbar and `Win` + arrows snap the window.
-  Which chord the system actually eats there is not something we measured: there
-  is no macOS or Windows build yet (`M-X`, `M-Y`).
+- **The Windows defaults are measured; the macOS ones are not.** On a Windows 10
+  21H2 guest (build 19044) driven headless, the Super chords were seen by a
+  low-level keyboard hook and by **no window at all** — `Win+1` went to the
+  taskbar, `Win+↑` snapped, `Win+Shift+S` opened the snipping overlay and `Win+R`
+  the Run dialog — while `Alt+1`, `Alt+↑`, `Alt+Shift+↑`, `Ctrl+Shift+1` and
+  `Ctrl+Shift+T` arrived as `WM_SYSKEYDOWN`/`WM_KEYDOWN` in the focused window.
+  That is why the Windows template has no `super` family and why the walk is on
+  `Alt`. The same run listed the installed monospaced families — `Consolas`,
+  `Courier New`, `Lucida Console` — and **no Cascadia Mono**, so the default is
+  `Consolas`. The macOS template follows the ⌘ conventions and nobody has
+  measured them: there is no macOS host yet (`M-Y`).
 
 - **No rasterizer of our own.** Drawing is `wgpu` and nothing else: there is no
   cell-by-cell CPU painter to fall back on, and writing one is an entire
