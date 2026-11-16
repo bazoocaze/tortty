@@ -1321,3 +1321,22 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   carries `1f468 200d 1f469 200d 1f467`, `1f1e7 1f1f7`, `1f44d 1f3fd`,
   `2764 fe0f`, and the line in the restored window is pixel-identical to the one
   before the restart — family icon, flag, tinted thumb, red heart.
+
+## 2026-11-15 — a resize carries the cluster (`B68`, 1.0.97)
+
+- Found while explaining a report ("the flag did not come back"): restoring a
+  tab whose snapshot had been written **before** 1.0.96 cannot invent the second
+  regional indicator — the byte is not in the file. But a resize of the same
+  session produced the same broken picture, and that one is ours.
+- Measured on the installed 1.0.96: `cat emoji-check.txt` at 101x34, one
+  `resize` to 88x33, and the line on screen became `BR 🇧   PT 🇵 ...`; the
+  snapshot saved on exit had `0x1f1e7` and no `0x1f1f7`.
+- Cause: `reflow()` flattens `row.cells` into paragraphs and rewraps them; the
+  `Row.tail` — the codepoints beside the row, addressed **by column** — was left
+  behind, so every cluster fell back to its base. `B66` declared that as a limit;
+  it was not one, the table is addressed by column and the cut is by column.
+- Fix: the tails travel beside the cells through the flatten, the trimming and
+  the chunks, and are re-attached with `add_tail` on the destination column. The
+  same resize now keeps `BR 🇧🇷 PT 🇵🇹 ...` on screen and `1f1f7` in the file.
+  Test `a_resize_carries_the_cluster` walks 40 → 8 → 40 → 25 → 5 columns and
+  compares the clusters in reading order; it fails without the fix.

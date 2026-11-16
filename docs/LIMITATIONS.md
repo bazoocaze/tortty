@@ -67,13 +67,11 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
 - **An emoji sequence is one cell, and a few things around it stay as they are**
   (`B66`). The cluster lives in `Row.tail`, beside the cells, so the 20-byte cell
   does not grow; the cap there is 16 codepoints (a family of four is seven).
-  Three consequences are accepted: a **reflow (a resize) drops the tail**, as it
-  already dropped combining marks — the row is cut by column and a tail is not
-  addressed, so an emoji loses its joiners and a letter its accents — a tab
-  restored into a **different** width goes through that same reflow; a face
-  **without the ZWJ ligature** draws the base character and its combining marks
-  (the width is still right, the picture is just the first emoji); and a cluster
-  never crosses a row, so a sequence broken across a wrap is two cells.
+  Two consequences are accepted: a face **without the ZWJ ligature** draws the
+  base character and its combining marks (the width is still right, the picture
+  is just the first emoji); and a cluster never crosses a row, so a sequence
+  broken across a wrap is two cells. The reflow carries the tail with its cell
+  (`B68`), so a resize and a restore into another width keep the picture.
 - **Shaping works; three consequences are accepted** (`G8` closed on 2026-11-02
   with `rustybuzz`, see [`HISTORY.md`](HISTORY.md)): a **single-cell** run is not
   shaped (no context, no ligature — this is the doom-fire case, 2400 runs of 1);

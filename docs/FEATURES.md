@@ -43,8 +43,10 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   survives `mc`/`less`/`vim` whole, what they write up there never enters it, and
   a `clear` up there takes neither the history nor the pictures it covers
   (`B63`).
-- Reflow on resize: joins and splits soft lines, keeps the coloured background
-  and carries the selection to the same characters.
+- Reflow on resize: joins and splits soft lines, keeps the coloured background,
+  carries the selection to the same characters and the **grapheme cluster** to the
+  same cell (`B68`: the tail is addressed by column, so a cut remaps it with the
+  cell it belongs to).
 - Scrollback with a configurable cap ([`CONFIG.md`](CONFIG.md)) and an 8 px
   scrollbar on the grid's right edge: it appears only when there is history, the
   thumb is the share of the buffer the view shows, a click jumps and a drag walks

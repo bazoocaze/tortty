@@ -3207,6 +3207,75 @@ fn chunk_at(chunks: &[(usize, usize)], first: usize, off: usize, cols: usize) ->
     (first + ci, off.saturating_sub(a).min(cols - 1))
 }
 
+/// The grid flattened into paragraphs, in reading order: the cells and the tails
+/// that live beside each row, kept in the same order so the rewrap can put a
+/// cluster back on the cell it belongs to (`B68`).
+struct Flat {
+    paragraphs: Vec<Vec<Cell>>,
+    tails: Vec<Vec<Vec<char>>>,
+    /// decoration by paragraph (`Row::chrome`): a paragraph holds several rows
+    decoration: Vec<bool>,
+    /// paragraph and cell offset where the cursor is
+    cur_to: usize,
+    cur_off: usize,
+    /// `(paragraph, cell offset)` of each point, in the order asked
+    pts_at: Vec<(usize, usize)>,
+}
+
+fn flatten(all: Vec<Row>, cur_abs: usize, cur_col: usize, pts: &[(usize, usize)]) -> Flat {
+    let mut paragraphs: Vec<Vec<Cell>> = Vec::new();
+    let mut ptails: Vec<Vec<Vec<char>>> = Vec::new();
+    let mut decoration: Vec<bool> = Vec::new();
+    let mut cur_to = 0usize;
+    let mut cur_off = 0usize;
+    let mut pts_at: Vec<(usize, usize)> = vec![(0, 0); pts.len()];
+    let mut to: Vec<Cell> = Vec::new();
+    let mut to_tails: Vec<Vec<char>> = Vec::new();
+    for (i, mut row) in all.into_iter().enumerate() {
+        if i == cur_abs {
+            cur_to = paragraphs.len();
+            cur_off = to.len() + cur_col.min(row.cells.len().saturating_sub(1));
+        }
+        for (k, (line, col)) in pts.iter().enumerate() {
+            if *line == i {
+                pts_at[k] = (
+                    paragraphs.len(),
+                    to.len() + (*col).min(row.cells.len().saturating_sub(1)),
+                );
+            }
+        }
+        let soft = row.wrapped;
+        let mut tails: Vec<Vec<char>> = (0..row.cells.len())
+            .map(|c| row.tail_at(c).to_vec())
+            .collect();
+        if !soft {
+            while row.cells.last().is_some_and(Cell::is_blank) {
+                row.cells.pop();
+            }
+            tails.truncate(row.cells.len());
+        }
+        to.append(&mut row.cells);
+        to_tails.append(&mut tails);
+        if !soft {
+            decoration.push(row.chrome);
+            paragraphs.push(std::mem::take(&mut to));
+            ptails.push(std::mem::take(&mut to_tails));
+        }
+    }
+    if !to.is_empty() || paragraphs.is_empty() {
+        paragraphs.push(to);
+        ptails.push(to_tails);
+    }
+    Flat {
+        paragraphs,
+        tails: ptails,
+        decoration,
+        cur_to,
+        cur_off,
+        pts_at,
+    }
+}
+
 /// Joins the "soft" (`wrapped`) rows into paragraphs and rewraps everything at
 /// the new width — the `resize` reflow.
 ///
@@ -3226,43 +3295,14 @@ fn reflow(
     pts: &[(usize, usize)],
 ) -> Reflowed {
     let cols = cols.max(1);
-    // -- 1. paragraphs, in reading order
-    let mut paragraphs: Vec<Vec<Cell>> = Vec::new();
-    // decoration by paragraph (`Row::chrome`): a paragraph can hold several rows
-    let mut decoration: Vec<bool> = Vec::new();
-    let mut cur_to = 0usize;
-    let mut cur_off = 0usize;
-    // `(paragraph, cell offset)` of each point, in the order asked
-    let mut pts_at: Vec<(usize, usize)> = vec![(0, 0); pts.len()];
-    let mut to: Vec<Cell> = Vec::new();
-    for (i, mut row) in all.into_iter().enumerate() {
-        if i == cur_abs {
-            cur_to = paragraphs.len();
-            cur_off = to.len() + cur_col.min(row.cells.len().saturating_sub(1));
-        }
-        for (k, (line, col)) in pts.iter().enumerate() {
-            if *line == i {
-                pts_at[k] = (
-                    paragraphs.len(),
-                    to.len() + (*col).min(row.cells.len().saturating_sub(1)),
-                );
-            }
-        }
-        let soft = row.wrapped;
-        if !soft {
-            while row.cells.last().is_some_and(Cell::is_blank) {
-                row.cells.pop();
-            }
-        }
-        to.append(&mut row.cells);
-        if !soft {
-            decoration.push(row.chrome);
-            paragraphs.push(std::mem::take(&mut to));
-        }
-    }
-    if !to.is_empty() || paragraphs.is_empty() {
-        paragraphs.push(to);
-    }
+    let Flat {
+        paragraphs,
+        tails: ptails,
+        decoration,
+        cur_to,
+        cur_off,
+        pts_at,
+    } = flatten(all, cur_abs, cur_col, pts);
 
     // -- 2. rewrap
     let mut rows: Vec<Row> = Vec::new();
@@ -3289,7 +3329,13 @@ fn reflow(
             let mut chunk: Vec<Cell> = cells[*a..*b].to_vec();
             chunk.resize(cols, Cell::BLANK);
             let last = ci + 1 == chunks.len();
-            rows.push(Row::filled(chunk, !last, decoration[pi]));
+            let mut row = Row::filled(chunk, !last, decoration[pi]);
+            for (local, i) in (*a..*b).enumerate() {
+                for ch in ptails[pi].get(i).map_or(&[][..], Vec::as_slice) {
+                    row.add_tail(local, *ch);
+                }
+            }
+            rows.push(row);
         }
         for (k, (para, off)) in pts_at.iter().enumerate() {
             if *para == pi {
@@ -4762,6 +4808,40 @@ mod tests {
             .map(|i| after.find(&format!("line {i:02}")).expect("row vanished"))
             .collect();
         assert!(pos.windows(2).all(|w| w[0] < w[1]), "history out of order");
+    }
+
+    /// Every cluster in reading order: base and the codepoints beside it.
+    fn clusters(t: &Term) -> Vec<(char, Vec<char>)> {
+        let mut v = Vec::new();
+        for row in t.scrollback.iter().chain(t.grid.iter()) {
+            for (x, c) in row.cells.iter().enumerate() {
+                if c.is_cont() {
+                    continue;
+                }
+                if !row.tail_at(x).is_empty() {
+                    v.push((c.ch, row.tail_at(x).to_vec()));
+                }
+            }
+        }
+        v
+    }
+
+    /// The reflow cuts a row by column and the tail is addressed by column, so
+    /// the cut carries it (`B68`). Without that, one window resize turned every
+    /// emoji back into its first codepoint — and the snapshot saved that.
+    #[test]
+    fn a_resize_carries_the_cluster() {
+        let mut t = term();
+        t.feed(
+            "\u{1F1E7}\u{1F1F7} \u{1F44D}\u{1F3FD} \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}"
+                .as_bytes(),
+        );
+        let before = clusters(&t);
+        assert_eq!(before.len(), 3, "three clusters: {before:?}");
+        for cols in [40, 8, 40, 25, 5] {
+            t.resize(cols, 6);
+            assert_eq!(clusters(&t), before, "cols {cols}");
+        }
     }
 
     #[test]
