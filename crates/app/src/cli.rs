@@ -1,8 +1,9 @@
 //! Command line and configuration file.
 //!
-//! Precedence: **CLI > user file > built-in defaults**
-//! (`tortty_core::config::DEFAULT_CONF`). `--config FILE` replaces the path of the
-//! user file; without it `$XDG_CONFIG_HOME/tortty/tortty.conf` applies.
+//! Precedence: **CLI > user file > defaults**
+//! (`tortty_core::config::DEFAULT_CONF` plus the template of the system, see
+//! `Config::base_for`). `--config FILE` replaces the path of the user file;
+//! without it `$XDG_CONFIG_HOME/tortty/tortty.conf` applies.
 
 use std::path::PathBuf;
 

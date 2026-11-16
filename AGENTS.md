@@ -73,6 +73,12 @@ per category, in order).
   bump. It is the single source: both crates
   inherit it (`version.workspace = true`) and `--version` shows it
   (`env!("CARGO_PKG_VERSION")`, compiled at build).
+- The defaults are four files in `crates/core/defaults/`: `tortty.conf` (the
+  common base) and `tortty-{linux,macos,windows}.conf`. A line lives in the base
+  **only if the same chord is correct, primary and free of a system collision on
+  all three**; the rest goes into the OS template, which only adds and never
+  frees a line of the base. A test parses all four and requires every `Action`
+  to be reachable on each system.
 - Comment and message explain **why**; no comment narrates the obvious.
 - When a decision has no precedent in the code, think of what the user of a
   terminal expects.

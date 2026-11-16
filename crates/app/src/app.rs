@@ -3313,6 +3313,9 @@ impl App {
                     "errors": self.cfg_errors,
                     "xid": self.xid(),
                     "config": self.opts.cfg_path.as_ref().map_or_else(String::new, |p| p.display().to_string()),
+                    // which template of the defaults applied: the state verb is how
+                    // a probe answers "why is this chord bound here"
+                    "config_os": tortty_core::config::Os::current().name(),
                     "dpi": self.opts.dpi,
                     "padding": self.opts.cfg.padding,
                     "advance": cw,

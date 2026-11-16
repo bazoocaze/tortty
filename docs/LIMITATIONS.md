@@ -48,6 +48,14 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
 
 ## Platform
 
+- **The macOS and Windows defaults are written, not exercised.** Their templates
+  (`crates/core/defaults/tortty-macos.conf`, `tortty-windows.conf`) parse, are
+  covered by the test that requires a chord for every action, and follow each
+  platform's convention — ⌘ for the gestures on macOS, no `Super` at all on
+  Windows, where `Win+1`…`0` is the taskbar and `Win` + arrows snap the window.
+  Which chord the system actually eats there is not something we measured: there
+  is no macOS or Windows build yet (`M-X`, `M-Y`).
+
 - **No rasterizer of our own.** Drawing is `wgpu` and nothing else: there is no
   cell-by-cell CPU painter to fall back on, and writing one is an entire
   renderer, not a switch. What `wgpu` offers **is** used — `render.rs` prefers a

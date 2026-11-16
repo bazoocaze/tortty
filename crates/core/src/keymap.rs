@@ -325,14 +325,25 @@ mod tests {
         assert_eq!(Chord::parse("T").unwrap().id, Id::Char('t'));
     }
 
-    /// The defaults live in `DEFAULT_CONF`, so the tests read them from there.
+    use crate::config::{Config, Os};
+
+    fn chord(text: &str) -> Chord {
+        Chord::parse(text).expect(text)
+    }
+
+    /// The defaults are `DEFAULT_CONF` plus the system's template, so the tests
+    /// read them from there.
     fn base() -> Bindings {
-        crate::config::Config::base().bindings
+        Config::base().bindings
+    }
+
+    fn base_of(os: Os) -> Bindings {
+        Config::base_for(os).bindings
     }
 
     #[test]
-    fn the_default_table_keeps_every_shortcut_the_app_had() {
-        let b = base();
+    fn the_linux_table_keeps_every_shortcut_the_app_had() {
+        let b = base_of(Os::Linux);
         let cases = [
             ("ctrl+shift+c", Action::Copy),
             ("ctrl+shift+v", Action::Paste),
@@ -361,6 +372,58 @@ mod tests {
         // a key nobody bound reaches the program
         assert_eq!(b.get(Chord::parse("a").unwrap()), None);
         assert_eq!(b.get(Chord::parse("ctrl+l").unwrap()), None);
+    }
+
+    /// A template has to answer for every action: an `Action` that only lands on
+    /// one system is a shortcut missing on the other two.
+    #[test]
+    fn every_system_has_a_chord_for_every_action() {
+        for os in Os::ALL {
+            let bound: Vec<Action> = base_of(os).list().iter().map(|(_, a)| *a).collect();
+            for (name, action) in Action::ALL {
+                assert!(
+                    bound
+                        .iter()
+                        .any(|b| std::mem::discriminant(b) == std::mem::discriminant(action)),
+                    "{}: no chord for {name}",
+                    os.name()
+                );
+            }
+        }
+    }
+
+    /// On macOS `super` IS the Command key, so the tabs are where a mac user's
+    /// hand already is — and Option+digit is left to the child, which composes
+    /// `¡` with it.
+    #[test]
+    fn the_macos_template_puts_the_tabs_on_command() {
+        let b = base_of(Os::Macos);
+        assert_eq!(b.get(chord("super+1")), Some(Action::SelectTab(1)));
+        assert_eq!(b.get(chord("super+t")), Some(Action::NewTab));
+        assert_eq!(b.get(chord("super+v")), Some(Action::Paste));
+        assert_eq!(
+            b.get(chord("ctrl+shift+1")),
+            Some(Action::SelectWorkspace(1))
+        );
+        assert_eq!(b.get(chord("super+alt+up")), Some(Action::WsPrev));
+        assert_eq!(b.get(chord("alt+1")), None, "Option+1 belongs to the child");
+    }
+
+    /// Win+1 launches the taskbar and Win+arrow snaps, so Windows gets no `super`
+    /// family at all: the tabs are on Alt and the walk is on Alt too.
+    #[test]
+    fn the_windows_template_has_no_super_key() {
+        let b = base_of(Os::Windows);
+        assert_eq!(b.get(chord("alt+1")), Some(Action::SelectTab(1)));
+        assert_eq!(b.get(chord("ctrl+shift+t")), Some(Action::NewTab));
+        assert_eq!(
+            b.get(chord("ctrl+shift+0")),
+            Some(Action::SelectWorkspace(10))
+        );
+        assert_eq!(b.get(chord("alt+up")), Some(Action::WsPrev));
+        for text in ["super+1", "super+t", "super+up", "super+shift+up"] {
+            assert_eq!(b.get(chord(text)), None, "{text}");
+        }
     }
 
     #[test]

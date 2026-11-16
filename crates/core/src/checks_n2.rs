@@ -96,8 +96,11 @@ fn config_file() -> Result<(), String> {
         padroes.clone(),
         Config::base(),
     )?;
-    let lines: Vec<&str> = crate::config::DEFAULT_CONF
-        .lines()
+    // every key has to appear in one of the four files: the family of the font,
+    // for one, only exists in the templates
+    let lines: Vec<&str> = crate::config::defaults_text()
+        .iter()
+        .flat_map(|t| t.lines())
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .collect();
@@ -106,7 +109,7 @@ fn config_file() -> Result<(), String> {
             .iter()
             .any(|l| l.split_whitespace().next() == Some(*k))
         {
-            return Err(format!("DEFAULT_CONF does not document the key '{k}'"));
+            return Err(format!("the defaults do not document the key '{k}'"));
         }
     }
     // empty = inherits the environment $SHELL (the pty resolves it; here it is

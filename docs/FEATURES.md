@@ -353,18 +353,20 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   (the snippet is the reader's).
 - Shortcuts are a **table** (`map`/`unmap` in the config, `M-H`): `map
   ctrl+shift+y new_tab` re-binds, `unmap ctrl+shift+w` frees the chord so the
-  program sees the key again. Nineteen actions (copy, paste, tab and workspace
-  open/close, prompt walk, config, the four scroll moves, `select_tab`/
-  `select_workspace` with a number, the workspace walk and carry). **The defaults
-  are `map` lines in the defaults file itself** — fifty of them, one per chord,
-  the same syntax you write: `Ctrl+Shift+C/V/T/W/N/Q`, `Ctrl+Shift+Up/Down/F/F2`,
-  `Shift+PgUp/PgDn/Home/End`, `Alt+1`…`0` (tab), `Ctrl+Shift+1`…`0` and
-  `Super+1`…`0` (workspace), `Super+N/Q`, `Super+Up/Down` and
-  `Super+Shift+Up/Down`. Deleting a line frees the key (no `unmap` needed), and
-  the auto-reload reparses from that base, so an edit takes effect without a
-  restart. **limit:** chord + action only — no sequences, no per-program tables —
-  and a digit under `Ctrl`/`Alt`/`Super` is read from the physical key, so a
-  non-QWERTY layout reaches the same number.
+  program sees the key again. Twenty actions (copy, paste, tab and workspace
+  open/close, prompt walk, config, the four scroll moves, search,
+  `select_tab`/`select_workspace` with a number, the workspace walk and carry).
+  **The defaults are `map` lines in four files**, the same syntax you write: the
+  common base holds the chords that mean the same thing everywhere
+  (`Ctrl+Shift+F`, `Ctrl+Shift+Up/Down`, `Ctrl+Shift+F2`,
+  `Shift+PgUp/PgDn/Home/End`, `Ctrl+Shift+1`…`0` for the workspace), and the
+  template of your system holds the rest — `Ctrl+Shift+C/V/T/W/N/Q` here against
+  `⌘C/V/T/W/N/Q` on macOS, `Alt+1`…`0` against `⌘1`…`0` for the tabs, the walk on
+  `Super+Up/Down`, `Alt+Up/Down` or `⌘⌥↑/↓`, and the font family. Deleting a line
+  frees the key (no `unmap` needed), and the auto-reload reparses from that base,
+  so an edit takes effect without a restart. **limit:** chord + action only — no
+  sequences, no per-program tables — and a digit under `Ctrl`/`Alt`/`Super` is
+  read from the physical key, so a non-QWERTY layout reaches the same number.
 - Geometry: 980×640 without state, size restored, maximized tracked separately
   from the normal size, invalid geometry rejected; the workspaces and tabs of the
   last session come back with the workspace and tab that were in front, each

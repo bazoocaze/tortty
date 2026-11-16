@@ -11,13 +11,28 @@ wins.
 ```
 
 You do not need to create it: **the defaults are built in**, and your file goes
-on top, key by key. They live in
-[`crates/core/defaults/tortty.conf`](../crates/core/defaults/tortty.conf), taken
-into the binary at build time (`include_str!`, so there is still one file to
-install), which makes them readable, diffable and usable as a reset:
-`tortty --config crates/core/defaults/tortty.conf`. A test guarantees the
-defaults parse clean and that every key of them appears on this page — the
-documentation does not age silently.
+on top, key by key. The order is: the common base → the template of this system
+→ your file → the command line.
+
+The base is
+[`crates/core/defaults/tortty.conf`](../crates/core/defaults/tortty.conf), and
+beside it one template per system,
+[`tortty-linux.conf`](../crates/core/defaults/tortty-linux.conf),
+[`tortty-macos.conf`](../crates/core/defaults/tortty-macos.conf) and
+[`tortty-windows.conf`](../crates/core/defaults/tortty-windows.conf). A line is
+in the base only when the same chord is correct, primary and free of a system
+collision on all three — everything else is in the template of the system that
+needs it (the font family, `Ctrl+Shift+C` here against `⌘C` on macOS, `Alt+1`
+against `⌘1` for the tabs, nothing at all under `Super` on Windows). What
+follows is what *your* binary carries; the other two templates are in the repo
+to be read, not loaded here.
+
+They are taken into the binary at build time (`include_str!`, so there is still
+one file to install), which makes them readable, diffable and usable as a reset:
+`tortty --config crates/core/defaults/tortty.conf` (the base alone). A test
+guarantees the four files parse clean, that a template never repeats a line of
+the base, that every system answers for every action, and that every key appears
+on this page — the documentation does not age silently.
 
 The command line options (`--font-size`, `--scrollback`, `--cmd`…) override the
 file.
@@ -27,7 +42,7 @@ file.
 | key | default | what it does |
 |---|---|---|
 | `shell` | empty | initial program of the tabs; empty = `$SHELL` (`--cmd` wins) |
-| `font_family` | `Monospace` | font family; monospaced only (the cell is the advance of "M") |
+| `font_family` | `Monospace` | font family; monospaced only (the cell is the advance of "M"). The default is the template's: `Menlo` on macOS, `Cascadia Mono` on Windows |
 | `font_size` | `12` | size in **points** (4..96); the DPI converts to pixels |
 | `ligatures` | `standard` | font ligatures: `off`, `standard` (`liga`/`calt`: `fi`, `->`, `!=`) or `all` (`standard` + discretionary). Only shows up in a font that has them (Fira Code, JetBrains Mono); it does not merge cells — the cell is still one character |
 | `cursor_shape` | `block` | `block`, `beam` or `underline`; a `CSI 6 q` from an app wins while it lasts |

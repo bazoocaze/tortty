@@ -14,14 +14,82 @@
 
 use crate::color::Color;
 
-/// The defaults, written as the file the user would edit. It is the **only**
-/// source of them: `Config::base()` is the result of parsing this text, and the
-/// test `defaults_parse_clean` guarantees it has no error.
+/// The defaults, written as the file the user would edit. It is the **common
+/// base**: only the lines that mean the same thing on every system.
 ///
 /// It lives in `defaults/tortty.conf`, not in a literal here, so that git sees
 /// the configuration as configuration: no `\"` noise in a colour or a comment,
-/// syntax highlighting, and a file the reader can point `--config` at.
+/// syntax highlighting, and a file the reader can point `--config` at. The keys
+/// where the systems disagree live beside it, one template per system, and they
+/// are parsed on top of this one (`Config::base_for`).
+///
+/// The split has a rule, and it is in `AGENTS.md`: a line is only in the base
+/// when the same chord is correct, primary and free of a system collision on
+/// all three. Nothing else may live here.
 pub const DEFAULT_CONF: &str = include_str!("../defaults/tortty.conf");
+
+/// The Linux template: copy/paste, tab and workspace open/close, the digits
+/// under `alt`/`super` and the workspace walk, which are not the same chord
+/// elsewhere.
+const LINUX_CONF: &str = include_str!("../defaults/tortty-linux.conf");
+
+/// The macOS template: `super` is the Command key there.
+const MACOS_CONF: &str = include_str!("../defaults/tortty-macos.conf");
+
+/// The Windows template: the Super key belongs to the shell there, so the family
+/// does not exist.
+const WINDOWS_CONF: &str = include_str!("../defaults/tortty-windows.conf");
+
+/// The four files of the defaults, the base first — the order they are parsed in.
+#[must_use]
+pub fn defaults_text() -> [&'static str; 4] {
+    [DEFAULT_CONF, LINUX_CONF, MACOS_CONF, WINDOWS_CONF]
+}
+
+/// Which system's template applies on top of the common base.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Os {
+    Linux,
+    Macos,
+    Windows,
+}
+
+impl Os {
+    /// The system we were built for. It is a compile-time choice: the binary
+    /// carries one template and nothing is sniffed at run time.
+    #[must_use]
+    pub const fn current() -> Os {
+        if cfg!(target_os = "macos") {
+            Os::Macos
+        } else if cfg!(target_os = "windows") {
+            Os::Windows
+        } else {
+            Os::Linux
+        }
+    }
+
+    /// The name the debug socket reports.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Os::Linux => "linux",
+            Os::Macos => "macos",
+            Os::Windows => "windows",
+        }
+    }
+
+    /// All three, for the tests that have to read the templates of systems this
+    /// build cannot run on.
+    pub const ALL: [Os; 3] = [Os::Linux, Os::Macos, Os::Windows];
+
+    fn conf(self) -> &'static str {
+        match self {
+            Os::Linux => LINUX_CONF,
+            Os::Macos => MACOS_CONF,
+            Os::Windows => WINDOWS_CONF,
+        }
+    }
+}
 
 /// What comes back on the next run (`B45`).
 ///
@@ -216,12 +284,21 @@ const SCROLLBACK_MAX: usize = 100_000;
 const PADDING_MAX: u32 = 200;
 
 impl Config {
-    /// The defaults (clean parse of `DEFAULT_CONF`; no user file).
+    /// The defaults of `os` (clean parse of `DEFAULT_CONF` and then its template;
+    /// no user file).
     #[must_use]
-    pub fn base() -> Config {
+    pub fn base_for(os: Os) -> Config {
         let (cfg, errs) = Config::parse_text(&Config::fallback(), DEFAULT_CONF);
         debug_assert!(errs.is_empty(), "DEFAULT_CONF has an error: {errs:?}");
+        let (cfg, errs) = Config::parse_text(&cfg, os.conf());
+        debug_assert!(errs.is_empty(), "{} has an error: {errs:?}", os.name());
         cfg
+    }
+
+    /// The defaults of the system this binary was built for.
+    #[must_use]
+    pub fn base() -> Config {
+        Config::base_for(Os::current())
     }
 
     /// Minimum safety values, used only if `DEFAULT_CONF` is broken (it should
@@ -493,20 +570,71 @@ mod tests {
 
     #[test]
     fn defaults_parse_clean() {
-        let (cfg, errs) = Config::parse("");
+        // the values are the base's and are the same everywhere; the font family
+        // is the one line the template owns
+        for (os, family) in [
+            (Os::Linux, "Monospace"),
+            (Os::Macos, "Menlo"),
+            (Os::Windows, "Cascadia Mono"),
+        ] {
+            let cfg = Config::base_for(os);
+            assert_eq!(cfg.font_family, family, "{}", os.name());
+            assert!((cfg.font_size - 12.0).abs() < f32::EPSILON);
+            assert_eq!(cfg.scrollback, 10_000);
+            assert_eq!(cfg.restore_state, RestoreState::Layout);
+            assert_eq!(cfg.bell, Bell::None);
+            assert!(!cfg.copy_on_select);
+            assert_eq!(cfg.debug_log, None);
+            assert_eq!(cfg.shell, None);
+            assert_eq!(cfg.palette.len(), 16);
+            // the classic xterm palette: mc/htop rely on it (see CONFIG.md)
+            assert!(matches!(cfg.palette[1], Color::Rgb(0xcd, 0x00, 0x00)));
+            assert_eq!(cfg.bg, Color::Rgb(0, 0, 0));
+        }
+        let (_, errs) = Config::parse("");
         assert!(errs.is_empty(), "DEFAULT_CONF has an error: {errs:?}");
-        assert_eq!(cfg.font_family, "Monospace");
-        assert!((cfg.font_size - 12.0).abs() < f32::EPSILON);
-        assert_eq!(cfg.scrollback, 10_000);
-        assert_eq!(cfg.restore_state, RestoreState::Layout);
-        assert_eq!(cfg.bell, Bell::None);
-        assert!(!cfg.copy_on_select);
-        assert_eq!(cfg.debug_log, None);
-        assert_eq!(cfg.shell, None);
-        assert_eq!(cfg.palette.len(), 16);
-        // the classic xterm palette: mc/htop rely on it (see CONFIG.md)
-        assert!(matches!(cfg.palette[1], Color::Rgb(0xcd, 0x00, 0x00)));
-        assert_eq!(cfg.bg, Color::Rgb(0, 0, 0));
+    }
+
+    /// The `map` chords of a defaults text, in order, as written.
+    fn chords(text: &str) -> Vec<String> {
+        text.lines()
+            .filter_map(|line| line.trim().strip_prefix("map "))
+            .filter_map(|rest| rest.split_whitespace().next())
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn assert_no_repeat(list: &[String], who: &str) {
+        for (i, chord) in list.iter().enumerate() {
+            assert!(!list[..i].contains(chord), "{who} binds '{chord}' twice");
+        }
+    }
+
+    /// The rule of the four files: a template carries only what the base cannot,
+    /// and no file binds a chord twice (a second `map` silently replaces the
+    /// first, so the shortcut would vanish without a word).
+    #[test]
+    fn a_template_only_adds_what_the_base_cannot_carry() {
+        let base = chords(DEFAULT_CONF);
+        assert_no_repeat(&base, "the base");
+        for os in Os::ALL {
+            let template = chords(os.conf());
+            assert_no_repeat(&template, os.name());
+            for chord in &template {
+                assert!(
+                    !base.contains(chord),
+                    "{} repeats the base's '{chord}'",
+                    os.name()
+                );
+            }
+            // a template that frees a base line would be a `unmap`, and the split
+            // exists so that no template needs one
+            assert!(
+                !os.conf().lines().any(|l| l.trim().starts_with("unmap ")),
+                "{} unmaps a line of the base",
+                os.name()
+            );
+        }
     }
 
     /// `restore_state` is a ladder — none, layout, content — and `layout` is the

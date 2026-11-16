@@ -1340,3 +1340,11 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
   same resize now keeps `BR 🇧🇷 PT 🇵🇹 ...` on screen and `1f1f7` in the file.
   Test `a_resize_carries_the_cluster` walks 40 → 8 → 40 → 25 → 5 columns and
   compares the clusters in reading order; it fails without the fix.
+
+## 2026-11-15 — the defaults split by system
+
+- One defaults file carried the chords of one system, and chords are not portable: `Ctrl+Shift+C` is not the mac gesture, `Alt+1` under Option types `¡`, `Win+1`…`0` launches the taskbar and `Win` + arrows snap the window. `Super` turned out to be *correct* on macOS (`super` = ⌘) and dead on Windows.
+- Split into a common base (`crates/core/defaults/tortty.conf`, only chords that are correct, primary and collision-free on all three) plus `tortty-linux.conf`, `tortty-macos.conf` and `tortty-windows.conf`, parsed on top of it by `Config::base_for(os)`; `Os::current()` is a compile-time choice, so the binary carries one template and nothing is sniffed.
+- macOS: `⌘C/V/T/W/N/Q`, `⌘1`…`0` for the tabs, the workspaces on `Ctrl+Shift` (from the base) and the walk on `⌘⌥↑/↓`; Option+digit is left to the child. Windows: no `super` family at all, tabs on `Alt`, walk on `Alt`.
+- Three tests: every system has a chord for every action, a template never repeats a base line nor binds a chord twice, and the four files parse clean; the `state` verb reports `config_os`.
+- Refused on the way: a `mod` modifier (a name whose key changes per system — and on Linux the "main modifier" is `Ctrl+Shift`, so `mod+c` would take SIGINT) and a per-OS overlay for the user.
