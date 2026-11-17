@@ -39,6 +39,7 @@ jobs:
       # itself. rustup installs what the file asks for on first use.
       - name: toolchain
         run: |
+          rustup install --no-self-update
           rustup show active-toolchain
           rustc -V
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
@@ -64,6 +65,7 @@ jobs:
             fonts-dejavu-core fonts-noto-cjk fonts-noto-color-emoji
       - name: toolchain
         run: |
+          rustup install --no-self-update
           rustup show active-toolchain
           rustc -V
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
@@ -84,6 +86,7 @@ jobs:
             libxi-dev libxcursor-dev libxinerama-dev
       - name: toolchain
         run: |
+          rustup install --no-self-update
           rustup show active-toolchain
           rustc -V
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
@@ -113,11 +116,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
+      # the toolchain plus two std libraries is ~500 MB of download on every run,
+      # and the checks below take four seconds together: cache the rustup home, so
+      # the job measures the seam instead of the network
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+        with:
+          path: ~/.rustup
+          key: rustup-${{ hashFiles('rust-toolchain.toml') }}-${{ runner.os }}
       - name: toolchain and the other targets
         run: |
+          rustup install --no-self-update
+          rustup target add x86_64-pc-windows-gnu x86_64-apple-darwin
           rustup show active-toolchain
           rustc -V
-          rustup target add x86_64-pc-windows-gnu x86_64-apple-darwin
       - name: the core builds for the other systems
         run: |
           cargo check -p tortty-core --target x86_64-pc-windows-gnu

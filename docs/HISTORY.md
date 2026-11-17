@@ -1415,3 +1415,9 @@ em série, com duas cópias da árvore de dependências, viravam os 5m27 do CI.
 Medido depois, no run 44005324723: o run inteiro caiu de **5m27** para **2m51** —
 `lint` 2m46, `build` 2m47, `test` 2m37, `seam` 2m00, os quatro verdes. O relógio
 passou a ser o job mais lento, não a soma deles.
+
+Com o cache quente (run seguinte, só docs): **2m12**, e o perfil mudou de lugar —
+`lint` 38 s, `test` 51 s, `build` 1m41, `seam` 2m08. No `seam` o log é claro:
+`Checking tortty-core … 2.43s` e `1.64s`, contra dois `downloading` do rustup. O
+gargalo não era compilar, era baixar ~500 MB de toolchain e de std por run, então
+o `~/.rustup` passou a ser cacheado nesse job.
