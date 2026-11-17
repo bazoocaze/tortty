@@ -1477,12 +1477,21 @@ impl App {
         }
     }
 
-    /// `OSC 8` URI of the cell under the pointer, in the visible grid.
+    /// URI of the cell under the pointer, in the visible grid: what the child
+    /// declared with `OSC 8`, else the URL the text there spells (`B69`). The
+    /// declared one wins — it is the only one who knows, and a detector reading
+    /// over it would be guessing at its expense.
     fn link_at(&self, row: usize, col: usize) -> Option<String> {
         let tab = &self.tabs[self.active];
         let lines = tab.term.visible_rows(tab.view_off);
         let id = lines.get(row)?.cells.get(col)?.link;
-        tab.term.link_uri(id).map(str::to_string)
+        if let Some(uri) = tab.term.link_uri(id) {
+            return Some(uri.to_string());
+        }
+        tortty_core::links::scan(&lines)
+            .into_iter()
+            .find(|l| l.covers(row, col))
+            .map(|l| l.uri)
     }
 
     /// Hands the URI to the desktop (`xdg-open`): we do not speak portal or
@@ -1490,9 +1499,9 @@ impl App {
     fn open_link(&mut self, uri: &str) {
         // only the schemes a terminal link plausibly carries: the URI comes from
         // the child, and `xdg-open` would happily execute a `.desktop` handler
-        // for anything else
-        const OK: [&str; 5] = ["http://", "https://", "file://", "ftp://", "mailto:"];
-        if !OK.iter().any(|p| uri.starts_with(p)) {
+        // for anything else. The list is the scanner's, so an underline never
+        // offers a click that ends here.
+        if !tortty_core::links::opens(uri) {
             self.toast("Link refused", uri, Severity::Err);
             return;
         }

@@ -158,6 +158,13 @@ pub struct Renderer {
     /// `M-D`: 0 = ordinary cell, 1 = a match, 2 = the current match. Rebuilt with
     /// the frame, indexed `row * cols + col`.
     marks: Vec<u8>,
+    /// `B69`: the plain-text links of the visible window, as `(col, end)` per view
+    /// row. Rebuilt with the frame and only while Ctrl is held — the modifier that
+    /// both underlines and opens them.
+    row_links: Vec<Vec<(u32, u32)>>,
+    /// The runs of the row `draw_cell` is painting (taken from `row_links`), so the
+    /// per-cell test does not carry a sixth parameter like `cur_mark`.
+    link_mask: Vec<(u32, u32)>,
     /// The `cols` the mask was built with (not the signature's: the rows are
     /// painted before the signature is stored).
     marks_cols: usize,
@@ -519,6 +526,8 @@ impl Renderer {
             marks: Vec::new(),
             marks_cols: 0,
             cur_mark: 0,
+            row_links: Vec::new(),
+            link_mask: Vec::new(),
             img_below: 0,
             inst_buf,
             inst_cap,
@@ -1323,6 +1332,43 @@ impl Renderer {
         self.chrome_text(text, x0 as f32 * cw, 0.0, fg, 0.0);
     }
 
+    /// `B69`: the plain-text links of the visible window, into `row_links`.
+    ///
+    /// One scan per frame, over the rows in sight, and only while Ctrl is held.
+    /// Nothing is kept across frames because the text underneath changes without
+    /// telling the renderer — a stale underline over the wrong cells is worse than
+    /// a scan of fifty rows.
+    fn scan_links(&mut self, rows: &[&tortty_core::grid::Row]) {
+        if self.row_links.len() == rows.len() {
+            for slot in &mut self.row_links {
+                slot.clear();
+            }
+        } else {
+            self.row_links.clear();
+            self.row_links.resize(rows.len(), Vec::new());
+        }
+        for link in tortty_core::links::scan(rows) {
+            for run in link.runs {
+                if let Some(slot) = self.row_links.get_mut(run.row) {
+                    let start = u32::try_from(run.col).unwrap_or(u32::MAX);
+                    let end = u32::try_from(run.col.saturating_add(run.len)).unwrap_or(u32::MAX);
+                    slot.push((start, end));
+                }
+            }
+        }
+    }
+
+    /// `true` when column `x` of the row being painted is inside a plain-text
+    /// link (`B69`). The runs of a row are few, so the walk beats a search.
+    fn in_link(&self, x: usize) -> bool {
+        let Ok(x) = u32::try_from(x) else {
+            return false;
+        };
+        self.link_mask
+            .iter()
+            .any(|&(start, end)| start <= x && x < end)
+    }
+
     /// Glyph + decoration of one cell. The order here is the blend order:
     /// everything of the text comes before the cursor.
     /// `glyph` = glyph already resolved by shaping (`face`, `gid`, offset in px).
@@ -1421,10 +1467,11 @@ impl Renderer {
         if cell.flags & OVERLINE != 0 {
             self.push_rect(x as f32 * cw, py + 1.0, cw, 1.0, [c[0], c[1], c[2], 1.0]);
         }
-        // `OSC 8` link: the underline is the only thing that says "this text is a
-        // link", and it is drawn while Ctrl is held — the modifier that opens it.
-        // A cell with an underline of its own keeps its style.
-        if links && cell.link != 0 && cell.ul == tortty_core::cell::UL_NONE {
+        // `OSC 8` link, or the URL the text spells (`B69`): the underline is the
+        // only thing that says "this text is a link", and it is drawn while Ctrl
+        // is held — the modifier that opens it. A cell with an underline of its
+        // own keeps its style.
+        if links && cell.ul == tortty_core::cell::UL_NONE && (cell.link != 0 || self.in_link(x)) {
             self.push_rect(
                 x as f32 * cw,
                 py + ascent + 1.0,
@@ -2029,6 +2076,10 @@ impl Renderer {
         ctx: RowCtx,
         shift: isize,
     ) {
+        // `B69`: the plain-text links are a property of the window, not of a row
+        if ctx.links {
+            self.scan_links(rows);
+        }
         let crate::damage::Damage::Rows(lines) = damage else {
             for (y, row) in rows.iter().enumerate() {
                 self.per_line[y] = self.line(row, y, ctx);
@@ -2075,6 +2126,10 @@ impl Renderer {
         let stored_color = std::mem::take(&mut self.emoji_row);
         self.instances.clear();
         self.emoji_row.clear();
+        self.link_mask.clear();
+        if let Some(spans) = self.row_links.get(y) {
+            self.link_mask.extend_from_slice(spans);
+        }
         self.paint_line(row, y, ctx);
         RowQuads {
             mask: std::mem::replace(&mut self.instances, stored),

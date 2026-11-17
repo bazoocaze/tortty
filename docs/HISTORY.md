@@ -1440,3 +1440,25 @@ nem download. De 5m27 para 1m49 no total. Ficou o
 outro achado do log, que era dívida real: `warn: auto-installation is deprecated`,
 então o install passou a ser `rustup install --no-self-update` explícito em vez de
 implícito atrás do `rustup show`.
+
+## 2026-11-17 — a URL printed as text is a link (B69)
+
+`OSC 8` is the only way a cell *states* a link, and `git log`, `cargo` and `grep`
+do not: what they print is text, so `link: None`, no underline and **Open link**
+disabled. `crates/core/src/links.rs` reads that text — at the moment somebody
+asks (Ctrl held, a click, the menu), over the rows in sight — so nothing is
+stored per cell and `feed` did not change. `Row.wrapped` joins a URL cut by the
+right edge; a hard newline does not.
+- Conservative on purpose: it links exactly the schemes `links::opens` accepts
+  (the app opens through the same function, so an underline never promises a
+  refused click), and refuses a bare `http://` and a single-label host that is not
+  `localhost`. A trailing `.`/`,` or an unbalanced `)` is the sentence's, not the
+  URL's — `…/Foo_(bar)` keeps its bracket.
+- `OSC 8` still wins where both exist: the child is the only one who knows.
+- Measured on Xvfb: Ctrl changed **202 px in a 1-px-tall band**, exactly the 21
+  cells of `https://example.com/x` and nothing else, returning byte-identical when
+  released; the grid menu over that cell came out `Open link` **enabled** and over
+  the word `see` on the same row **disabled**.
+- Cost measured by the scan's shape, not by a benchmark: 13 tests in the module,
+  no per-cell storage, one pass over ~50 rows per frame while Ctrl is held.
+

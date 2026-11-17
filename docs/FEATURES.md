@@ -32,13 +32,17 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - OSC: 0/2 window title, 1 icon title, 4 palette query, 7 shell cwd, 8 hyperlink,
   10/11 default colour query, 52 remote clipboard. **limit:** everything else
   is discarded — OSC 133 (prompt marks) among them (`M-R`).
-- Hyperlinks (`OSC 8`): the cell carries the URI (an index into `Term::links`,
-  repeated URIs share it), Ctrl underlines every link on screen and Ctrl+click
-  hands it to `xdg-open`. **limit:** only what the child sent as `OSC 8` is a
-  link — a URL printed as plain text is not detected (`B69`); and only `http`,
-  `https`, `file`, `ftp` and `mailto` are opened, the rest becomes a toast, since
-  the URI comes from the child and `xdg-open` runs whatever handler the desktop
-  registered.
+- Hyperlinks, two ways. **Declared:** `OSC 8` puts the URI in the cell (an index
+  into `Term::links`, repeated URIs share it). **Detected:** a URL the child only
+  printed is found by `links::scan` when Ctrl is held or the menu opens, never
+  stored per cell (`B69`); a URL cut by the right edge is joined through
+  `Row.wrapped`. Ctrl underlines every link on screen and Ctrl+click hands it to
+  `xdg-open`; `OSC 8` wins where both exist. **limit:** only `http`, `https`,
+  `file`, `ftp` and `mailto` are links, and the scanner and the opener share that
+  one list, so an underline never offers a refused click — the rest of the URI
+  space (`javascript:`, `data:`, an application's SSH handler) is not a terminal's
+  to launch. A scheme alone (`http://`), a single-label host that is not
+  `localhost`, and a URL split by a hard newline are not links.
 - DEC Special Graphics charset (G0).
 - Alt screen: separate grid, swap preserving the cursor, crop/pad on resize (no
   reflow there). The switch lends the screen and takes it back: the history

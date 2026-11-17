@@ -14,6 +14,7 @@ pub mod config;
 pub mod graphics;
 pub mod grid;
 pub mod keymap;
+pub mod links;
 pub mod placeholder;
 pub mod prompt;
 pub mod search;
