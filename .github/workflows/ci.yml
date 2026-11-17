@@ -8,25 +8,32 @@ on:
 permissions:
   contents: read
 
+# two pushes in a row used to leave two five-minute runs fighting over the same
+# cache; the newest commit is the one that matters
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
 jobs:
-  check:
+  # The ruler is `tools/quality-check.sh` in every job below: `--only` picks the
+  # steps, it does not define them. Split into parallel jobs because the phases
+  # are independent compilations — in one job they queue, and the queue was 5m27.
+  lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-      # winit (x11/wayland) and wgpu need the system headers to link, and the glyph
-      # tests are assertions about a real font chain: a runner with no monospace
-      # font and no CJK face fails them for being empty, not for being wrong
-      - name: system deps and fonts
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
+      # winit (x11/wayland) and wgpu need the system headers; clippy compiles the
+      # build scripts even though it never links
+      - name: system deps
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev \
-            libxi-dev libxcursor-dev libxinerama-dev \
-            fonts-dejavu-core fonts-noto-cjk fonts-noto-color-emoji
+            libxi-dev libxcursor-dev libxinerama-dev
       # rust-toolchain.toml decides the compiler, here and on a laptop: a green
       # hook over a red CI (or the other way round) is a ruler that measures
       # itself. rustup installs what the file asks for on first use.
@@ -35,13 +42,57 @@ jobs:
           rustup show active-toolchain
           rustc -V
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
-      # the same script as the pre-commit: hook and CI cannot disagree
-      - name: fmt + clippy + test
-        run: ./tools/quality-check.sh
+        with:
+          key: lint
+      - name: the seam, fmt and clippy
+        run: ./tools/quality-check.sh --only seam,fmt,clippy
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
+      # the glyph tests are assertions about a real font chain: a runner with no
+      # monospace font and no CJK face fails them for being empty, not for being
+      # wrong. They are here and not in the other jobs because only this one runs
+      # `cargo test`.
+      - name: system deps and fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev \
+            libxi-dev libxcursor-dev libxinerama-dev \
+            fonts-dejavu-core fonts-noto-cjk fonts-noto-color-emoji
+      - name: toolchain
+        run: |
+          rustup show active-toolchain
+          rustc -V
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
+        with:
+          key: test
+      - name: cargo test
+        run: ./tools/quality-check.sh --only test
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
+      - name: system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev \
+            libxi-dev libxcursor-dev libxinerama-dev
+      - name: toolchain
+        run: |
+          rustup show active-toolchain
+          rustc -V
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
+        with:
+          key: build
+      - name: release build, selftest and parsebench
+        run: ./tools/quality-check.sh --only build,selftest,parsebench
       # the installer is what the user runs: a step on a temporary prefix catches a
       # broken path, a missing `install` and a `--version` that does not answer
-      - name: selftest (no display)
-        run: ./target/release/tortty --selftest
       - name: installer
         run: |
           ./install.sh --prefix "$RUNNER_TEMP/inst" --no-shortcut \
@@ -61,7 +112,7 @@ jobs:
     # build.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
       - name: toolchain and the other targets
         run: |
           rustup show active-toolchain

@@ -1386,3 +1386,28 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 - A third CI job (`seam`) builds `tortty-core` for `x86_64-pc-windows-gnu` and `x86_64-apple-darwin`, which must pass, and then asserts that the **app** stops on the seam's own `compile_error!` and for no other reason — 35 and 4 errors before the seam, 1 and 1 after. When `M-X`/`M-Y` land, that step becomes a build.
 - `tools/platform-gate.sh` gained the second half: it also fails on `cfg(target_os|target_family|target_arch)` outside the seam, because that compiles everywhere and no cross-target build reports it. It bit at once — `clip.rs` branched on `cfg(target_os = "linux")` for the X11 PRIMARY — which is now `platform::has_primary`/`primary_get`/`primary_set`.
 - Every action is pinned by commit SHA (`checkout`, `rust-cache`, `upload/download-artifact`, `action-gh-release`), and `dtolnay/rust-toolchain` was replaced by plain `rustup`: one less tag to pin. `ci.yml` got `permissions: contents: read` instead of inheriting the default.
+
+## 2026-11-17 — CI verde, e o relógio de 5m27 para ~3m
+
+Três runs vermelhos seguidos, cada um por um motivo diferente, e a causa comum
+era o CI não medir o mesmo compilador que o hook: sem `rust-toolchain.toml`, o
+runner instalava `stable` (1.100.0) enquanto o laptop rodava 1.99.1, e a 1.100
+trouxe lints novos (`map_unwrap_or` em `render.rs` e `app.rs`,
+`needless_range_loop` em `term.rs`). O compilador agora está pinado em
+`rust-toolchain.toml` e o CI só faz `rustup show active-toolchain`.
+
+Os testes que mediam a máquina em vez do código caíram junto: o runner não tem
+fonte monoespaçada nem CJK (`ci.yml` instala `fonts-dejavu-core`,
+`fonts-noto-cjk`, `fonts-noto-color-emoji`), `glyph::font_missing_not_becomes_other`
+perguntava `Family::Monospace` ao fontdb — que exige panose "monoespaçada", coisa
+que um runner pelado não tem — e agora pergunta a cadeia que o app monta, e
+`child_cwd` lia só a folha do `/proc`, o que virou corrida quando o filho morre
+entre a listagem e a leitura; agora responde subindo pela cadeia de ancestrais.
+
+Com isso o CI ficou verde (run 44004430763: `check` 5m27, `seam` 1m52) e o
+relógio virou o problema. `tools/quality-check.sh` ganhou `--only <steps>` e os
+passos (`seam`, `fmt`, `clippy`, `test`, `build`, `selftest`, `parsebench`)
+passaram a rodar em três jobs paralelos (`lint`, `test`, `build`) mais o `seam`,
+com chave de cache por job e `concurrency` cancelando run superado. Medido num
+target vazio: `clippy --release` 46 s, `cargo test` 49 s, `build --release` 60 s —
+em série, com duas cópias da árvore de dependências, viravam os 5m27 do CI.

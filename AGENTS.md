@@ -108,14 +108,17 @@ per category, in order).
 ## Quality: one command only
 
 ```sh
-./tools/quality-check.sh          # fmt --check + clippy -D warnings + test + build
-./tools/quality-check.sh --fast   # without the build (it is the pre-commit)
-./tools/quality-check.sh --fix    # applies `cargo fmt` and `clippy --fix` before checking
+./tools/quality-check.sh              # every step, in order
+./tools/quality-check.sh --fast       # without the build (it is the pre-commit)
+./tools/quality-check.sh --only test  # named steps: CI runs them in parallel jobs
+./tools/quality-check.sh --fix        # applies `cargo fmt` and `clippy --fix` before checking
 ```
 
 The **same** script runs in the git hook (`.githooks/pre-commit`, enabled with
 `git config core.hooksPath .githooks`) and in CI (`.github/workflows/ci.yml`).
-A hook and a CI that disagree are good for nothing.
+A hook and a CI that disagree are good for nothing — and the compiler is part of
+the ruler: `rust-toolchain.toml` pins it, so a newer `stable` cannot turn the hook
+green over a red CI. `--only` picks steps; it never defines them.
 
 - **`cargo fmt`** is the formatting: `rustfmt.toml`, width 100, stable options
   only. Do not argue style in review — `cargo fmt` decides.

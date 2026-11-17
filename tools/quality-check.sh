@@ -4,12 +4,17 @@
 # It is the same command in the pre-commit and in CI, on purpose: if the hook and
 # CI disagree, the hook is worthless.
 #
-#   tools/quality-check.sh          # fmt --check, clippy, tests, release build
-#   tools/quality-check.sh --fast   # without the build (what the pre-commit runs)
-#   tools/quality-check.sh --fix    # applies fmt and clippy --fix before checking
+#   tools/quality-check.sh                    # every step, in order
+#   tools/quality-check.sh --fast             # without the build (the pre-commit)
+#   tools/quality-check.sh --only test,build  # named steps, for parallel jobs
+#   tools/quality-check.sh --fix              # applies fmt and clippy --fix first
 #
-# Exits with 0 only if everything passes. Nothing here runs a GUI: `mc`/`vim` stay
-# manual (docs/DEBUG.md).
+# The steps are `seam`, `fmt`, `clippy`, `test`, `build`, `selftest` and
+# `parsebench`. `--only` exists so CI can run them in parallel instead of in one
+# five-minute queue: the steps and their order stay defined here, one ruler.
+#
+# Exits with 0 only if everything asked for passes. Nothing here runs a GUI:
+# `mc`/`vim` stay manual (docs/DEBUG.md).
 set -eu
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
@@ -17,14 +22,30 @@ cd "$HERE"
 
 FAST=0
 FIX=0
-for arg in "$@"; do
-    case "$arg" in
+ONLY=""
+while [ $# -gt 0 ]; do
+    case "$1" in
         --fast) FAST=1 ;;
         --fix) FIX=1 ;;
-        -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *) echo "unknown option: $arg" >&2; exit 2 ;;
+        --only)
+            shift
+            [ $# -gt 0 ] || {
+                echo "--only needs a list of steps" >&2
+                exit 2
+            }
+            ONLY=$1
+            ;;
+        --only=*) ONLY=${1#--only=} ;;
+        -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
+    shift
 done
+
+# `--fast` is a named subset, not a second mechanism: one way to skip a step
+if [ "$FAST" = 1 ] && [ -z "$ONLY" ]; then
+    ONLY=seam,fmt,clippy,test
+fi
 
 failed=0
 step() {
@@ -40,6 +61,23 @@ step() {
     fi
 }
 
+wanted() {
+    [ -z "$ONLY" ] && return 0
+    case ",$ONLY," in
+        *",$1,"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+run() {
+    key=$1
+    name=$2
+    shift 2
+    if wanted "$key"; then
+        step "$name" "$@"
+    fi
+}
+
 if [ "$FIX" = 1 ]; then
     cargo fmt --all
     # clippy's `--fix` refuses a dirty tree by default; here it is intentional
@@ -49,19 +87,16 @@ fi
 
 # the platform seam first: it is a grep, it costs nothing, and it fails with the
 # offending line instead of a compile error on another target
-step "platform seam" ./tools/platform-gate.sh
-step "cargo fmt --check" cargo fmt --all -- --check
-step "clippy -D warnings" cargo clippy --workspace --all-targets --release -- -D warnings
-step "cargo test" cargo test --workspace --quiet
-
-if [ "$FAST" = 0 ]; then
-    step "build --release" cargo build --release --workspace
-    # parsebench is the display-less benchmark: if it breaks, the number in
-    # docs/BENCHMARKS.md dies with it
-    # `--selftest` is the display-less emulator smoke test: 14 core areas
-    step "selftest" ./target/release/tortty --selftest
-    step "parsebench" ./target/release/parsebench --frames 100 --cols 40 --rows 12
-fi
+run seam "platform seam" ./tools/platform-gate.sh
+run fmt "cargo fmt --check" cargo fmt --all -- --check
+run clippy "clippy -D warnings" cargo clippy --workspace --all-targets --release -- -D warnings
+run test "cargo test" cargo test --workspace --quiet
+run build "build --release" cargo build --release --workspace
+# `--selftest` is the display-less emulator smoke test: 14 core areas
+run selftest "selftest" ./target/release/tortty --selftest
+# parsebench is the display-less benchmark: if it breaks, the number in
+# docs/BENCHMARKS.md dies with it
+run parsebench "parsebench" ./target/release/parsebench --frames 100 --cols 40 --rows 12
 
 if [ "$failed" = 0 ]; then
     echo "all green"

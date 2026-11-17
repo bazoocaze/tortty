@@ -292,8 +292,9 @@ it goes to [`EXTERNALS.md`](EXTERNALS.md), with the proof.
 ## Quality (linter and formatting)
 
 ```sh
-./tools/quality-check.sh          # the full ruler: fmt, clippy, test, build, parsebench
-./tools/quality-check.sh --fix    # fixes what is mechanical (fmt + clippy --fix)
+./tools/quality-check.sh              # the full ruler: fmt, clippy, test, build, parsebench
+./tools/quality-check.sh --only test  # one named step (CI runs the steps in parallel)
+./tools/quality-check.sh --fix        # fixes what is mechanical (fmt + clippy --fix)
 ```
 
 `pre-commit` runs `--fast` on its own (installed with
