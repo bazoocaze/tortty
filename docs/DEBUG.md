@@ -521,7 +521,8 @@ The first field to look at is the pair that separates the two causes:
 | 0 | 0 | `none` | the app did not even get to draw: see the log (`tortty: GPU:`), pty and config |
 
 **`drawn > 0` does not prove the screen drew.** Measured on 2026-11-03 on `sandbox`
-without a GPU: with `WGPU_BACKEND=gl` the counter went up (`drawn 5`, `skips 0`)
+(a bubblewrap wrapper that exists on the author's machine, not shipped here; the
+names below are its profiles) without a GPU: with `WGPU_BACKEND=gl` the counter went up (`drawn 5`, `skips 0`)
 and the window's own pixmap **did not change a byte** — a present that returns
 success and does not paint. The test that does not lie is comparing the window
 with itself:

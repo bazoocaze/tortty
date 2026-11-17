@@ -3,8 +3,8 @@ target/
 .pi/
 docs/NAMING.md
 tools/.sandbox-cargo-scratch/
-*.swp
-*.swo
+*.sw?
+*.sw[a-z]
 __pycache__/
 /.idea/
 /nohup.out

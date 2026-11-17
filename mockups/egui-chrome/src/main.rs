@@ -140,15 +140,15 @@ impl Mock {
         );
         let font = FontId::monospace(ch * 0.78);
         let lines = [
-            "user@sandbox ~/desenv/gh/tortty (main)$ tortty --version",
+            "user@sandbox ~/tortty (main)$ tortty --version",
             "tortty 1.0.56",
-            "user@sandbox ~/desenv/gh/tortty (main)$ ./tools/quality-check.sh",
+            "user@sandbox ~/tortty (main)$ ./tools/quality-check.sh",
             "cargo fmt --check     ok",
             "clippy -D warnings    ok",
             "cargo test            ok",
             "all green",
             "",
-            "user@sandbox ~/desenv/gh/tortty (main)$ ",
+            "user@sandbox ~/tortty (main)$ ",
         ];
         painter.with_clip_rect(grid).text(
             grid.left_top() + Vec2::new(cw * 0.5, ch * 0.5),

@@ -1,7 +1,7 @@
 # TASK — tortty in Rust (feasibility experiment)
 
 Progress document for this experiment. Source analyzed:
-`/home/user/tortty-python` (pure Python, GTK3 + cairo + Pango).
+`tortty-python` (pure Python, GTK3 + cairo + Pango).
 Target here: `rust_term/` (Cargo workspace).
 
 Status: **in progress**. Every section marked `[x]` was measured, not assumed.
@@ -24,7 +24,7 @@ Success condition of the experiment (the "go/no-go"):
 - [ ] works in `vim`, `mc` and console flow (`dmesg`) — a usefulness requirement,
       not a performance one;
 - [ ] debug socket with the same one-JSON-line-per-request protocol (instrumentation/tests);
-- [ ] side-by-side comparison with the Python bzmux on the same machine and display.
+- [ ] side-by-side comparison with the the Python sibling on the same machine and display.
 
 Out of scope for this phase: tabs/workspaces, kitty protocol images, config file,
 clipboard/selection, mouse reporting, reflow, kitty keyboard protocol, real

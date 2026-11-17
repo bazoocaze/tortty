@@ -5,7 +5,7 @@ repo, the reference), **Python** (`tortty-python`) and **Java**
 (`tortty-java`). Each one owns its own docs and its own code; this file owns
 one fact only — **where their configuration agrees and where it does not**.
 
-Audited on **2026-11-12**, against `tortty` `1658c16`, `tortty-python` `68c07a4`,
+Audited on **2026-11-12**, against `tortty`, `tortty-python` `68c07a4`,
 `tortty-java` `2d408da`. This table is an audit, not a gate: nothing fails when
 the three drift, which is why it carries the date.
 

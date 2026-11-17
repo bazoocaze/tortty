@@ -104,8 +104,8 @@ Recommended path, in this order:
    `./install.sh --from-release` downloads. `aarch64` runs under
    `qemu-user-static` in CI so that `--version` counts as verification. When
    M6/M7 close, `windows-latest` and `macos-14`/`macos-13` enter as two more
-   lines of the same matrix — in a public repo it is free; in a private one, a
-   macOS minute counts 10x.
+   lines of the same matrix — free while the repo is public; a macOS minute on a
+   paid runner counts 10x.
 2. **`lipo`** for a universal binary on macOS (arm64 + x86_64) — a simple `.app`
    or a loose binary + `.dmg`/`.zip`.
 3. **Signing**: on Apple Silicon every executable needs a signature, but the

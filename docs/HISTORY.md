@@ -322,7 +322,7 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 - Symbolic name `tortty`, friendly name **TorTTY — Torbie TTY**, headline *Fast, GPU based terminal*, repository `bazoocaze/tortty`; the name research is in the unversioned `docs/NAMING.md`.
 - Directories stopped carrying the project name — `crates/bzmux-core` → `crates/core` (package `tortty-core`) and `crates/bzmux` → `crates/app` (package `tortty`) — which is the vocabulary the architecture already used.
 - 449 occurrences: `tortty_core::`, binary, `BZMUX_*` → `TORTTY_*`, config and state paths, socket/dump paths, `WM_CLASS`, wgpu labels, desktop entry, icon, installer, tools, CI and release packaging.
-- **Not renamed** on purpose: `tortty-python`, `Python bzmux` in prose and the `bzmux/*.py` citations, since renaming them would falsify the history and break the other repo's `arquivo:linha`; and the installer transition was left out by the owner's call (only he had it installed).
+- **Not renamed** on purpose: `tortty-python`, `the Python sibling` in prose and the `bzmux/*.py` citations, since renaming them would falsify the history and break the other repo's `arquivo:linha`; and the installer transition was left out by the owner's call (only he had it installed).
 - Pitfall: the rename script's protection for `bzmux/<file>.py` swallowed the slash (`bzmuxterms.py`) and it rewrote places where `bzmux` was the *subject* — the entry about `tortty-python/shortcut.py` deleting `bzmux.desktop` and the `pkill -x` warning — which only a read of the diff catches.
 
 ## 2026-11-04 — B36: dead key followed by space lost the accent
@@ -1355,7 +1355,7 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 - Super: `Win+1`, `Win+↑`, `Win+Shift+S` and `Win+R` were seen by the hook and by **no window at all** — the taskbar, the snap, the snipping overlay and the Run dialog took them, exactly as the template assumed.
 - The chords chosen instead do arrive: `Alt+1`, `Alt+↑`, `Alt+Shift+↑`, `Ctrl+Shift+1` and `Ctrl+Shift+T` came in as `WM_SYSKEYDOWN`/`WM_KEYDOWN` in the focused window.
 - Font: the default became **`Consolas`** — the same run listed 103 families and no Cascadia Mono (that one belongs to Windows 11 and to Windows Terminal, absent on a plain 10), so the template named a family that could only fall back.
-- The macOS template stays unmeasured (`M-Y`); the guest was left as it was (autologin, pt-BR ABNT2) and the probe scripts live beside the VM, outside this repo.
+- The macOS template stays unmeasured (`M-Y`); the guest was left as it was, and the probe scripts live beside the VM, outside this repo.
 
 ## 2026-11-16 — `font_family` is a list
 
@@ -1372,3 +1372,11 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 - The 4 macOS errors are the reason the implementation is named `linux` and not `unix`: `libc::ucred`, `SO_PEERCRED` and `winit::platform::x11` do not exist there. Being a unix buys nothing.
 - The ruler is `tools/platform-gate.sh`, a step of `tools/quality-check.sh`: it fails when `std::os::unix`, `libc::`, `windows_sys::`, `winapi::` or `winit::platform::` appears outside the seam (proven by adding a bare `libc::getuid()` to `prof.rs`: the gate named the line).
 - Drive-by: the doc comment of `restore_order` had been left orphaned above `shell_quoted` (two doc blocks in a row); it went back onto its function, and the two shell-quoting copies in `app.rs` became one `platform::shell_quote`.
+
+## 2026-11-16 — the tree was cleaned for a public reading
+
+- Audited the repo before opening it: **no credential, key or token was ever committed** (checked by `git log --diff-filter=A`, not only by the tree), so nothing had to be rotated.
+- Three **vim swap files were tracked** (`.swm`, `.swn`, `.swo`): their header reads `user`/`host`/pid, the only place the machine name existed, and invisible to `git grep` for being binary. Removed, and `.gitignore` now has `*.sw?` — it had `*.swp`/`*.swo` and never covered `.swm`/`.swn`.
+- The username left the code and the docs (`shell_quote` test, the `mc [user@host]` title test, the egui mockups' prompt, four absolute paths), and the private sibling got its public name: `tortty-python`.
+- `OUT` (442 KB of stray ImageMagick PostScript) untracked. The `torbie.png` lost its C2PA block (the `caBX` chunk naming the generator model): pixels byte-identical, file 21 KB lighter.
+- What removal at HEAD cannot fix is the history, which carries the same names in 98 old versions of this file, in 20 `.swp` blobs and in `.pi/tasks` logs: that is a history rewrite, done in the same session (`git filter-repo`), with the owner's approval.
