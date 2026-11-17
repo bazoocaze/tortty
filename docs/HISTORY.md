@@ -1432,7 +1432,11 @@ de 17 s e ainda gastava 1m48 para salvar.
 
 Corrigido no cache certo: `Swatinem/rust-cache` no `seam`, com chave própria.
 Medido localmente, com os dois alvos instalados: frio **45 s** sequencial e **48 s**
-em paralelo (nenhum ganho — os dois saturam os cores), quente **2,5 s**. Ficou o
+em paralelo (nenhum ganho — os dois saturam os cores), quente **2,5 s**.
+No runner, o mesmo efeito: `seam` de **2m02** (cache miss) para **36 s** (hit), com
+o passo do app caindo de 1m26 para 5 s. O run inteiro ficou em **1m49**, e o piso
+passou a ser o job `build` — que é uma compilação `--release` de verdade, não fila
+nem download. De 5m27 para 1m49 no total. Ficou o
 outro achado do log, que era dívida real: `warn: auto-installation is deprecated`,
 então o install passou a ser `rustup install --no-self-update` explícito em vez de
 implícito atrás do `rustup show`.
