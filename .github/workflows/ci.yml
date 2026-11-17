@@ -116,13 +116,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
-      # the toolchain plus two std libraries is ~500 MB of download on every run,
-      # and the checks below take four seconds together: cache the rustup home, so
-      # the job measures the seam instead of the network
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
-        with:
-          path: ~/.rustup
-          key: rustup-${{ hashFiles('rust-toolchain.toml') }}-${{ runner.os }}
+      # Measured, and not cached: `~/.rustup` is 479 MB, and restoring it from the
+      # cache took the same ~1m40 as downloading the toolchain and the two std
+      # libraries. The checks below are four seconds; the rest is the price of
+      # proving two foreign targets on every run, and it stays.
       - name: toolchain and the other targets
         run: |
           rustup install --no-self-update

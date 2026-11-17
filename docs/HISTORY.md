@@ -1419,5 +1419,12 @@ passou a ser o job mais lento, não a soma deles.
 Com o cache quente (run seguinte, só docs): **2m12**, e o perfil mudou de lugar —
 `lint` 38 s, `test` 51 s, `build` 1m41, `seam` 2m08. No `seam` o log é claro:
 `Checking tortty-core … 2.43s` e `1.64s`, contra dois `downloading` do rustup. O
-gargalo não era compilar, era baixar ~500 MB de toolchain e de std por run, então
-o `~/.rustup` passou a ser cacheado nesse job.
+gargalo não era compilar, era baixar a toolchain e a std de dois alvos.
+
+Testei cachear `~/.rustup` nesse job e **reverti**: o cache acertou (479 MB
+restaurados, zero downloads) e o job continuou em 2m09 — restaurar o arquivo custa
+o que custava baixá-lo. Ficou o outro achado do log, que era dívida embutida:
+`warn: auto-installation is deprecated`, então o install passou a ser
+`rustup install --no-self-update` explícito em vez de implícito atrás do
+`rustup show`. O piso do run hoje é o job `build` (1m53), não o `seam` (2m09):
+otimizar o seam compraria 16 s.
