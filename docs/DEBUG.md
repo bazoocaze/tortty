@@ -521,9 +521,9 @@ The first field to look at is the pair that separates the two causes:
 | 0 | > 0 | `skipped (timeout/occluded)` | drawing runs, the **surface** refuses: environment (compositor/WM/sandbox), not the app |
 | 0 | 0 | `none` | the app did not even get to draw: see the log (`tortty: GPU:`), pty and config |
 
-**`drawn > 0` does not prove the screen drew.** Measured on 2026-11-03 on `sandbox`
-(a bubblewrap wrapper that exists on the author's machine, not shipped here; the
-names below are its profiles) without a GPU: with `WGPU_BACKEND=gl` the counter went up (`drawn 5`, `skips 0`)
+**`drawn > 0` does not prove the screen drew.** Measured on 2026-11-03 inside a
+bubblewrap container without a GPU: with `WGPU_BACKEND=gl` the counter went up
+(`drawn 5`, `skips 0`)
 and the window's own pixmap **did not change a byte** — a present that returns
 success and does not paint. The test that does not lie is comparing the window
 with itself:
@@ -540,7 +540,8 @@ When the surface refuses the frame, the app writes **once** to stderr:
 ```
 tortty: the surface is not presenting (timeout/occluded) — the app draws, but the
 frame does not reach the screen. A confined environment without a visible GPU
-usually looks like this: check /dev/dri and, on sandbox, use `sandbox @gpu`; see docs/DEBUG.md
+usually looks like this: check /dev/dri, and bind the GPU device into a container;
+see docs/DEBUG.md
 ```
 
 Signals in the log, in this order, when it is the sandbox:
@@ -559,11 +560,11 @@ without depending on the owner's display), plus what does not depend on pixel �
 
 In the same sandbox, the **`cargo` cache has been read-only**
 (`/home/user/.cargo/registry`): a new dependency failed with `Read-only file
-system (os error 30)`. Today the `@dev` profile of the sandbox frees writing in
-that directory (`sandbox @dev -- cargo build`), and without it the workaround is
-`CARGO_HOME=/tmp/cargohome` (a copy of `~/.cargo` on tmpfs).
+system (os error 30)`. Today a bind that allows writing there frees the directory,
+and without it the workaround is `CARGO_HOME=/tmp/cargohome` (a copy of `~/.cargo`
+on tmpfs).
 
-### The three terminals inside `sandbox` (measured on 2026-11-02)
+### The three terminals inside that container (measured on 2026-11-02)
 
 Same sandbox, no `/dev/dri`, everything on llvmpipe. The difference between them
 is error policy, not the capacity of the environment:
@@ -573,13 +574,13 @@ is error policy, not the capacity of the environment:
 | `kitty 0.48.2` | **opens and draws**; it only complains about DBus | `xdotool` finds the window; the log only has `glfw error 65544` (DBus) |
 | `ghostty 1.3.1` | opens the window, but GL degrades: `MESA: error: Failed to attach to x11 shm` in a loop | it does not exit; the window exists and the log repeats the SHM error |
 | `tortty` (Vulkan/lavapipe), up to 1.0.4 | **aborted** (134) in `set_window_title` | winit panic at `x11/window.rs:1028` |
-| `tortty` since 1.0.5 | **does not abort**: the X error that is not ours is recorded and the app goes on (hook below) | `sandbox tortty` alive for 12 s, answering on the socket |
+| `tortty` since 1.0.5 | **does not abort**: the X error that is not ours is recorded and the app goes on (hook below) | the confined run alive for 12 s, answering on the socket |
 | `tortty` with `WGPU_BACKEND=gl` | also does not abort, but **does not paint** (silent no-op present) | `xwd` of the window identical before/after |
-| `sandbox @gpu tortty` | **really paints** (`RADV RENOIR`, pixmap changes) | `xwd` before/after different |
+| `tortty` with `/dev/dri` bound | **really paints** (`RADV RENOIR`, pixmap changes) | `xwd` before/after different |
 
 That is: without `/dev/dri` this X server does not present a GPU surface —
-neither through Vulkan nor through GL. The way out is the sandbox `@gpu`
-profile, not a different backend; the app warns about it in one line on stderr.
+neither through Vulkan nor through GL. The way out is binding `/dev/dri` into the
+container, not a different backend; the app warns about it in one line on stderr.
 
 ### An X error from the WSI must not kill the app
 

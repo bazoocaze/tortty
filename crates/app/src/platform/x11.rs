@@ -8,7 +8,7 @@
 //! next call that flushes (`flush_requests`). An error that is **not ours** — the
 //! Mesa WSI leaves `BadDrawable` pending while creating and destroying pixmaps to
 //! present — kills the process on the next window property (that is how
-//! `sandbox tortty` exited with 134 in `set_window_title`; see `docs/BACKLOG.md`, B5).
+//! a confined `tortty` exited with 134 in `set_window_title`; see `docs/BACKLOG.md`, B5).
 //! GLFW (kitty) records the error and moves on; here the winit public hook does
 //! the same, without touching the X handler from outside.
 //!
@@ -43,7 +43,7 @@ const MIN_EXTENT: u8 = 128;
 
 /// A drawing error coming from the WSI is no reason to shut the terminal down.
 ///
-/// Measured on `sandbox` without a GPU (`docs/DEBUG.md`): the WSI leaves `BadDrawable`
+/// Measured inside a container without a GPU (`docs/DEBUG.md`): the WSI leaves `BadDrawable`
 /// on `Present` **and** `BadAccess` on `DRI3Open` — the second one is what killed
 /// it, because the previous policy only looked at extension requests for the
 /// drawing codes. A drawing code counts on any request (the WSI also frees a
@@ -106,11 +106,11 @@ mod tests {
 
     #[test]
     fn wsi_error_is_swallowed() {
-        // Present (149) and DRI3 (130) are the two WSI doors; measured on sandbox
+        // Present (149) and DRI3 (130) are the two WSI doors; measured in that run
         assert!(swallow(9, 149), "BadDrawable on Present");
         assert!(
             swallow(10, 130),
-            "BadAccess on DRI3Open: the one that killed sandbox"
+            "BadAccess on DRI3Open: the one that killed that run"
         );
         assert!(swallow(3, 149));
         assert!(swallow(8, 130));

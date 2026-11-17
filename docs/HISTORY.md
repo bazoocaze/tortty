@@ -223,7 +223,7 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 
 ## 2026-11-02 — Confinement: what tortty has to withstand
 
-- A whole session inside `sandbox` (bubblewrap) showed three things, the heaviest becoming queue (`M-AA`) instead of a last-minute fix.
+- A whole session inside bubblewrap showed three things, the heaviest becoming queue (`M-AA`) instead of a last-minute fix.
 - **Drawing without GPU**: with `$HOME` read-only and no `/dev/dri` the app comes up, the pty works and `state` answers, but **no frame comes out** (`skipped` on every frame, llvmpipe) — diagnosis and the software fallback go into `M-AA`.
 - **State without writes**: `state::save_to` already failed without blowing up, but **silently**; now a line goes to stderr and there is a test (`save_in_impossible_place_does_not_blow_up`).
 - **Install into a blocked target**: `install.sh` already exited 1 with `sudo`'s dump; now a target inside `$HOME` without write permission does not try to escalate (it says "home read-only? use `--prefix <writable dir>`") and a system target warns that `sudo` needs a password there.
@@ -246,7 +246,7 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 
 ## 2026-11-02 — M5 closed: the GL backend draws with a real GPU
 
-- `M5` was `partial` because GL only initialized and the visual verification had died with the container's `/dev/dri`; under `sandbox @gpu,dev`, `WGPU_BACKEND=gl` comes up on `Gl AMD Radeon Graphics (radeonsi, renoir, ACO)` and draws — `last_frame: drawn`, text, colours, cursor and `mc -V` in the screenshot (the pending X error panic was llvmpipe's, not GL's).
+- `M5` was `partial` because GL only initialized and the visual verification had died with the container's `/dev/dri`; with `/dev/dri` bound and write access, `WGPU_BACKEND=gl` comes up on `Gl AMD Radeon Graphics (radeonsi, renoir, ACO)` and draws — `last_frame: drawn`, text, colours, cursor and `mc -V` in the screenshot (the pending X error panic was llvmpipe's, not GL's).
 - It is recorded in `DEBUG.md` that the first question facing "the window does not paint" is `ls -la /dev/dri`: without the nodes both backends stay on llvmpipe.
 
 ## 2026-11-02 — G8 closed: ligatures (shaping) and the `ligatures` key
@@ -262,7 +262,7 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 - `N1`: `--selftest` only ran the core, leaving `cli.rs`, `keys.rs`, `mouse.rs`, `state.rs` and `debugsock.rs` out of reach (six `checks.py` checks); `crates/app/src/checks_app.rs` has the six, `--selftest` runs **31** (25 + 6) and `cargo test` runs the same list (`app_checks_pass`), so a new check does not stay in the binary only.
 - Two expectations came out wrong, which is why the check exists: `?1005` column 300 is `c5 8d` (U+014D) while the old protocol saturates at 222, and `desktop_shortcut` demands the `install.sh` contract (Exec/TryExec/Icon/Categories/terminal, removal on `--uninstall`) plus the SVG embedded with `include_str!`, so it holds in the installed binary, far from the repository.
 - `N7`: `tools/pixel.py` reads the capture as PPM without `gi` and **compares** (`--diff`, `--max`, `--expect`, `--scan`/`--row`), and `tools/visual.sh` brings up its own Xvfb with a fake `HOME` and fixed theme, waits for the first frame through `state`, captures by the `xid` that **our** `state` reports, and demands four things (new content changes a pixel, SGR 41/42 paints `color1`/`color2`, text falls inside the cell, two captures of the same screen match) — exits 0/1. Searching the window by class was the test's own bug: with two instances it captured the wrong one and came out black, twice.
-- `M-AA`: `state` now separates **`drawn`** from **`skips`** and the app warns **once** on stderr when the surface refuses the frame, pointing at `DEBUG.md`; backend failover was left out on purpose — it cannot be written blind, since `Xvfb` does not even come up inside `sandbox` (segfault in `InitFonts`), so the trigger (`skips > N` with `drawn == 0`) stays written in the backlog.
+- `M-AA`: `state` now separates **`drawn`** from **`skips`** and the app warns **once** on stderr when the surface refuses the frame, pointing at `DEBUG.md`; backend failover was left out on purpose — it cannot be written blind, since `Xvfb` does not even come up inside that container (segfault in `InitFonts`), so the trigger (`skips > N` with `drawn == 0`) stays written in the backlog.
 - Doc debt paid in the same step: `M4` and `G17` left the panel at the owner's request and became `M-AB`/`M-AC` (the panel ended at 203 lines, 200 done / 3 no), `§16.2` stopped listing 27 checks that already existed under another name, and the 1 px seam of box drawing entered as `M-AD`.
 
 ## 2026-11-02 — migration closed (and the closure paperwork)
@@ -296,10 +296,10 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 
 ## 2026-11-03 — B5: an X error from the WSI no longer kills the app
 
-- `sandbox tortty` exited with **134** in `set_window_title`, because `winit` keeps the last X error and `expect()`s it on the next flush; the new `TORTTY_XERR=1` probe showed Mesa's WSI leaving `BadDrawable` (Present) and **`BadAccess` (DRI3Open)** pending without a GPU.
-- `crates/app/src/xguard.rs` registers winit's public hook and swallows `BadDrawable`/`BadWindow`/`BadMatch` in any request and `BadAccess` only in an extension, with everything going to stderr (the first three occurrences, then sparsely); measured, `sandbox tortty` without GPU stays alive 12 s, answers on the socket and keeps drawing.
-- Stage 2 is environment, not code: with `xwd` of the window compared byte by byte, `sandbox @gpu` (RADV) presents, Vulkan lavapipe grows `skips` with a black window, and GL llvmpipe grows `drawn` with `skips 0` and a **pixmap that does not change** — so `drawn > 0` does not prove a drawn screen.
-- The app's message says that in one line with the way out (`/dev/dri`, `sandbox @gpu`), `DEBUG.md` gained the table and the `xwd` method, and `LIMITATIONS.md` records that there is no software backend of our own.
+- A confined `tortty` exited with **134** in `set_window_title`, because `winit` keeps the last X error and `expect()`s it on the next flush; the new `TORTTY_XERR=1` probe showed Mesa's WSI leaving `BadDrawable` (Present) and **`BadAccess` (DRI3Open)** pending without a GPU.
+- `crates/app/src/xguard.rs` registers winit's public hook and swallows `BadDrawable`/`BadWindow`/`BadMatch` in any request and `BadAccess` only in an extension, with everything going to stderr (the first three occurrences, then sparsely); measured, a confined `tortty` without a GPU stays alive 12 s, answers on the socket and keeps drawing.
+- Stage 2 is environment, not code: with `xwd` of the window compared byte by byte, `/dev/dri` bound (RADV) presents, Vulkan lavapipe grows `skips` with a black window, and GL llvmpipe grows `drawn` with `skips 0` and a **pixmap that does not change** — so `drawn > 0` does not prove a drawn screen.
+- The app's message says that in one line with the way out (`/dev/dri`, a GPU bind), `DEBUG.md` gained the table and the `xwd` method, and `LIMITATIONS.md` records that there is no software backend of our own.
 
 ## 2026-11-04 — B4: garbage before the tab title (two bugs, not one)
 

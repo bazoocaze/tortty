@@ -2,7 +2,6 @@ target/
 *.log
 .pi/
 docs/NAMING.md
-tools/.sandbox-cargo-scratch/
 *.sw?
 *.sw[a-z]
 __pycache__/

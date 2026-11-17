@@ -76,7 +76,7 @@ impl Default for Mock {
             ws: vec![
                 Workspace::new("", &["zsh", "vim ~/notas.txt"]),
                 Workspace::new("headless", &["cargo watch"]),
-                Workspace::new("", &["mc", "ssh sandbox"]),
+                Workspace::new("", &["mc", "ssh build"]),
                 Workspace::new("logs", &["tail -f /var/log/syslog"]),
                 Workspace::new("", &["pi"]),
             ],
@@ -140,15 +140,15 @@ impl Mock {
         );
         let font = FontId::monospace(ch * 0.78);
         let lines = [
-            "user@sandbox ~/tortty (main)$ tortty --version",
+            "user@box ~/tortty (main)$ tortty --version",
             "tortty 1.0.56",
-            "user@sandbox ~/tortty (main)$ ./tools/quality-check.sh",
+            "user@box ~/tortty (main)$ ./tools/quality-check.sh",
             "cargo fmt --check     ok",
             "clippy -D warnings    ok",
             "cargo test            ok",
             "all green",
             "",
-            "user@sandbox ~/tortty (main)$ ",
+            "user@box ~/tortty (main)$ ",
         ];
         painter.with_clip_rect(grid).text(
             grid.left_top() + Vec2::new(cw * 0.5, ch * 0.5),

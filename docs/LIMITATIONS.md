@@ -72,7 +72,7 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   under an Xvfb of its own llvmpipe draws (`tools/render-check.sh` passes without
   `/dev/dri`), but in the owner's confined session on 2026-11-03 the window
   received no frame — Vulkan blew the present timeout and GL returned success
-  without painting a pixel. Whoever runs confined uses `sandbox @gpu`, which presents
+  without painting a pixel. Whoever runs confined binds `/dev/dri`, which presents
   for real ([`DEBUG.md`](DEBUG.md)).
 
 ## Emulation

@@ -2303,8 +2303,8 @@ impl Renderer {
             eprintln!(
                 "tortty: the surface is not presenting (timeout/occluded) — the app draws, but \
                  the frame does not reach the screen. A confined environment without a visible \
-                 GPU usually looks like this: check /dev/dri and, on sandbox, use `sandbox @gpu`; see \
-                 docs/DEBUG.md"
+                 GPU usually looks like this: check /dev/dri, and bind the GPU device into a \
+                 container; see docs/DEBUG.md"
             );
         }
         FrameOutcome::Skipped
