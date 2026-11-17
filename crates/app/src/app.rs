@@ -2573,10 +2573,10 @@ impl App {
                 self.toast("Image refused", msg, Severity::Err);
             }
             if let Some(text) = pumped.toast {
-                // a notification is not a warning: it is the program saying
-                // something happened, and it keeps the 8 s the badge floor
-                // assumes (`M-K`)
-                self.toast_for("Notification", &text, Severity::Ok, Some(NOTIF_FLOOR));
+                // it keeps the 8 s the badge floor assumes (`M-K`), and the shade
+                // is the program's own state when it said one (`B47`)
+                let (title, severity) = Self::notif_notice(&self.tabs[i].term);
+                self.toast_for(&title, &text, severity, Some(NOTIF_FLOOR));
             }
             // `OSC 52`: the child set the clipboard (a remote `ssh` copies),
             // parked or front — the drain is per tab
@@ -4217,6 +4217,24 @@ impl App {
         self.new_tab_cmd(Some(&cmd));
     }
 
+    /// The notice a notification becomes: title, text and shade. `OSC 7501`
+    /// brings the state and the `app` that asked, so a `blocked` wears yellow
+    /// and an `error` red — the same three tones as the tab's bar. A plain
+    /// `OSC 9`/`777` notification carries no state and stays the receipt green.
+    fn notif_notice(term: &tortty_core::Term) -> (String, Severity) {
+        use tortty_core::status::State;
+        let severity = match term.notif_state {
+            Some(State::Blocked) => Severity::Warn,
+            Some(State::Error) => Severity::Err,
+            _ => Severity::Ok,
+        };
+        let title = term
+            .notif_title
+            .clone()
+            .unwrap_or_else(|| "Notification".to_string());
+        (title, severity)
+    }
+
     /// Switches tab (Alt+N). Out of range, does nothing.
     /// The tab in front was visited: show what it has to say and acknowledge
     /// the badge (`M-K`). The content comes **now**, not when it arrived (`B8`):
@@ -4226,7 +4244,8 @@ impl App {
         if self.tabs[self.active].notif_pending() {
             let text = self.tabs[self.active].term.notif_text.clone();
             if !text.is_empty() {
-                self.toast_for("Notification", &text, Severity::Ok, Some(NOTIF_FLOOR));
+                let (title, severity) = Self::notif_notice(&self.tabs[self.active].term);
+                self.toast_for(&title, &text, severity, Some(NOTIF_FLOOR));
             }
         }
         self.tabs[self.active].ack_tab();

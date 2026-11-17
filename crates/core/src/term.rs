@@ -313,6 +313,12 @@ pub struct Term {
     /// the app's cursor (as `bells`/`bells_seen`), the text is the last one.
     pub notifs: u32,
     pub notif_text: String,
+    /// Who said it and how loud, when the notification came from `OSC 7501`
+    /// (`B47`): the state that asked for the user, and the line the toast wears
+    /// as its title (`blocked · test`). `None` for `OSC 9`/`777`, which carry no
+    /// state — the app then says "Notification", the way it always did.
+    pub notif_state: Option<crate::status::State>,
+    pub notif_title: Option<String>,
     /// Progress reported by the program (`OSC 9;4`): the tab label draws it.
     /// `None` = nothing to show; state `0` clears it.
     pub progress: Option<Progress>,
@@ -438,6 +444,8 @@ impl Term {
             bells: 0,
             notifs: 0,
             notif_text: String::new(),
+            notif_state: None,
+            notif_title: None,
             progress: None,
             status: crate::status::Status::default(),
             marks: crate::prompt::Marks::default(),
@@ -2044,11 +2052,16 @@ impl Term {
             return;
         };
         if applied.state.wants_you() {
-            let text = match (applied.app.as_deref(), applied.text.as_str()) {
-                (Some(app), text) if app != text => format!("{app}: {text}"),
-                (_, text) => text.to_string(),
+            let text = applied.text.clone();
+            let title = match applied.app.as_deref() {
+                Some(app) if app != text => format!("{} · {app}", applied.state.name()),
+                _ => applied.state.name().to_string(),
             };
             self.osc_notify_text(&text);
+            // after `osc_notify_text`, which resets both: the state is what
+            // separates a `blocked` in yellow from an `error` in red
+            self.notif_state = Some(applied.state);
+            self.notif_title = Some(title);
         }
         self.root_progress();
     }
@@ -2347,6 +2360,8 @@ impl Term {
             return;
         }
         self.notif_text = clean;
+        self.notif_state = None;
+        self.notif_title = None;
         self.notifs = self.notifs.wrapping_add(1);
     }
 
@@ -4904,6 +4919,40 @@ mod tests {
         assert_eq!(t.grid[0].cells[0].ch, '漢');
         assert!(t.grid[0].cells[1].is_cont());
         assert_eq!(t.cx, 2);
+    }
+
+    /// `B47`: a notification that came from `OSC 7501` carries its state, so the
+    /// toast can be yellow or red instead of always the receipt green, and the
+    /// title names the state and the app that asked. `OSC 9` has neither.
+    #[test]
+    fn a_status_notification_says_its_state_and_its_app() {
+        let mut t = term();
+        let msg = "VGVzdCBibG9ja2Vk"; // "Test blocked"
+        t.feed(format!("\x1b]7501;state=blocked:app=test:msg={msg}\x1b\\").as_bytes());
+        assert_eq!(t.notifs, 1);
+        assert_eq!(t.notif_state, Some(crate::status::State::Blocked));
+        assert_eq!(t.notif_text, "Test blocked");
+        assert_eq!(t.notif_title.as_deref(), Some("blocked · test"));
+        // `error` is the same road with another shade
+        let mut e = term();
+        // `msg` is base64 in the spec, and one that does not decode discards the
+        // whole report: "boom" is `Ym9vbQ==`
+        e.feed(b"\x1b]7501;state=error:msg=Ym9vbQ==\x1b\\");
+        assert_eq!(e.notif_state, Some(crate::status::State::Error));
+        // a plain notification says nothing about itself, and a later one clears
+        // whatever the previous report said
+        t.feed(b"\x1b]9;build ok\x1b\\");
+        assert_eq!(t.notif_text, "build ok");
+        assert_eq!(t.notif_state, None);
+        assert_eq!(t.notif_title, None);
+        // `done` asks for the user as well, and still lands here
+        let mut d = term();
+        d.feed(b"\x1b]7501;state=done:app=cargo\x1b\\");
+        assert_eq!(d.notif_state, Some(crate::status::State::Done));
+        // `working`/`idle` do not notify at all
+        let mut w = term();
+        w.feed(b"\x1b]7501;state=working:app=cargo\x1b\\");
+        assert_eq!(w.notifs, 0);
     }
 
     #[test]

@@ -1462,3 +1462,17 @@ right edge; a hard newline does not.
 - Cost measured by the scan's shape, not by a benchmark: 13 tests in the module,
   no per-cell storage, one pass over ~50 rows per frame while Ctrl is held.
 
+## 2026-11-17 — o toast diz o estado e quem pediu (B47)
+
+O caminho da notificação passava `Severity::Ok` fixo, então `blocked` e `error`
+saiam verdes como um recibo, e o estado e o `app` só existiam dentro do texto do
+detalhe. Agora o `OSC 7501` deixa o estado no `Term` (`notif_state`/`notif_title`)
+e o toast colore por ele — `done` verde, `blocked` amarelo, `error` vermelho, os
+mesmos três tons da barra da aba — com o título `estado · app` e a mensagem
+sozinha no detalhe. `OSC 9`/`777` não têm estado e continuam `Notification` verde.
+- Medido no Xvfb: `toast: Warn blocked · test — Test blocked` com borda
+  `(255,255,0)` e `toast: Err error · cargo — boom` com borda `(255,0,0)`.
+- Segue sem aparecer em lugar nenhum depois que o toast sai: com uma aba a barra
+  de abas nem é desenhada, então a única testemunha persistente do estado hoje é a
+  barra de 2 px.
+

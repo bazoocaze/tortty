@@ -340,7 +340,9 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   and everything beneath it. The root record drives the tab's progress bar
   (`working` green, `blocked` yellow, `error` red) and the states that want the
   user (`done`, `blocked`, `error`) raise the same badge, card and toast as `OSC
-  9`. `7501;?` is answered with the states and kinds this terminal accepts, and
+  9`, and the toast keeps the meaning: `done` green, `blocked` yellow, `error`
+  red, with the title naming the state and the `app` that asked (`blocked ·
+  test`). `7501;?` is answered with the states and kinds this terminal accepts, and
   `OSC 9;4` feeds the root record until a real report arrives. A new prompt
   (`OSC 133;A`) or the process leaving drops `working`/`blocked`, never
   `done`/`error`. **limit:** every hard cap of the spec is enforced by discarding
