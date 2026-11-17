@@ -53,6 +53,7 @@ file.
 | `bell` | `none` | BEL: `none`, `visual` (marks the window) or `audible` |
 | `copy_on_select` | `off` | the selection goes to CLIPBOARD as well (PRIMARY is always) |
 | `bold_as_bright` | `off` | SGR 1 on the eight low colours (`0`–`7`) draws the bright half (`8`–`15`) — xterm's `boldColors`; off by default, because the palette is the owner's and a theme may give the low half its own meaning |
+| `status_show` | `chip` | Where the state a program reports about itself (`OSC 7501`) stays visible after the toast leaves. `chip` draws one chip on the last row, right of the grid, in the state's colour (`●`-less: `blocked · test · 40%`); `tab` puts the state word on the tab label and on the workspace card; `none` leaves only the tab's 2 px bar. The chip is the default because the tab bar is not drawn with a single tab — on `tab` there is nothing to write on then, and `working`/`blocked` would show nowhere. All three clear when the state returns to `idle`. |
 | `debug_log` | `off` | diagnostic log; `off` turns it off, a path turns it on |
 | `map` | the table below | `map CHORD ACTION [N]`: binds a chord to an app action (and re-binds one) |
 | `unmap` | — | `unmap CHORD`: frees the chord, so the program sees the key again |

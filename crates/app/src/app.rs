@@ -942,6 +942,7 @@ impl App {
                     ativa: true,
                     alert: self.card_alert,
                     progress: self.tabs[self.active].term.progress,
+                    status: self.status_word(&self.tabs[self.active].term),
                 });
             } else {
                 let slot = if i < self.ws_idx { i } else { i - 1 };
@@ -952,6 +953,7 @@ impl App {
                     ativa: false,
                     alert: w.card_alert,
                     progress: w.tabs[w.active].term.progress,
+                    status: self.status_word(&w.tabs[w.active].term),
                 });
             }
         }
@@ -967,6 +969,17 @@ impl App {
         }
     }
 
+    /// The state word for the tab label and the card, under `status_show tab`;
+    /// `None` in the other modes and when the root record is `idle` — a word for
+    /// "nothing is happening" would never leave the screen.
+    fn status_word(&self, term: &tortty_core::Term) -> Option<String> {
+        if self.opts.cfg.status_show != tortty_core::config::StatusShow::Tab {
+            return None;
+        }
+        let root = term.status.root()?;
+        (root.state != tortty_core::status::State::Idle).then(|| root.state.name().to_string())
+    }
+
     /// What the bar shows: number, title and BEL alert of each tab.
     fn tabinfo(&self) -> Vec<crate::render::TabInfo> {
         let now = std::time::Instant::now();
@@ -977,6 +990,7 @@ impl App {
                 title: t.title(),
                 ativa: i == self.active,
                 progress: t.term.progress,
+                status: self.status_word(&t.term),
                 alert: t
                     .bell_at
                     .is_some_and(|when| now.duration_since(when) < FLASH_DUR)
@@ -1337,6 +1351,7 @@ impl App {
             .map(|t| crate::chrome::Tab {
                 title: &t.title,
                 alert: t.alert,
+                state: t.status.as_deref(),
             })
             .collect();
         crate::chrome::Layout::build(
@@ -3259,6 +3274,13 @@ impl App {
                     // which template of the defaults applied: the state verb is how
                     // a probe answers "why is this chord bound here"
                     "config_os": tortty_core::config::Os::current().name(),
+                    // where the state is written: a probe reads this instead of
+                    // guessing which of the three shapes to look for
+                    "status_show": match self.opts.cfg.status_show {
+                        tortty_core::config::StatusShow::Chip => "chip",
+                        tortty_core::config::StatusShow::Tab => "tab",
+                        tortty_core::config::StatusShow::None => "none",
+                    },
                     "dpi": self.opts.dpi,
                     "padding": self.opts.cfg.padding,
                     "advance": cw,

@@ -342,7 +342,11 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   user (`done`, `blocked`, `error`) raise the same badge, card and toast as `OSC
   9`, and the toast keeps the meaning: `done` green, `blocked` yellow, `error`
   red, with the title naming the state and the `app` that asked (`blocked ·
-  test`). `7501;?` is answered with the states and kinds this terminal accepts, and
+  test`). Where the state stays visible after the toast leaves is
+  `status_show`: `chip` (default) draws `[ blocked · git ]` on the last grid row,
+  right — the only shape that shows with a single tab, since the bar is not drawn
+  then; `tab` writes `● blocked` into the tab label and the card; `none` leaves
+  only the 2 px bar. `7501;?` is answered with the states and kinds this terminal accepts, and
   `OSC 9;4` feeds the root record until a real report arrives. A new prompt
   (`OSC 133;A`) or the process leaving drops `working`/`blocked`, never
   `done`/`error`. **limit:** every hard cap of the spec is enforced by discarding

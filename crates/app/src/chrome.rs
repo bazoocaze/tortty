@@ -28,10 +28,12 @@ pub struct Metrics {
     pub rows: usize,
 }
 
-/// One tab, as the bar needs it: the title and whether it wears the bell.
+/// One tab, as the bar needs it: the title, whether it wears the bell, and the
+/// `OSC 7501` state word when `status_show tab` puts it on the label (`B47`).
 pub struct Tab<'a> {
     pub title: &'a str,
     pub alert: bool,
+    pub state: Option<&'a str>,
 }
 
 /// A rectangle in origin space: `x, y, w, h`.
@@ -52,10 +54,16 @@ pub struct Layout {
     pub cards: Vec<Slot>,
 }
 
-/// The label of a tab: the number and the title, one cell of gutter each side.
+/// The label of a tab: the number and the title, one cell of gutter each side —
+/// and, when `status_show tab` is on, the state in front of the number, where the
+/// bell's two cells also live: drawing and hit-test both read this, so a wider
+/// label cannot disagree with the click (`M-Q`).
 #[must_use]
 pub fn tab_label(i: usize, t: &Tab<'_>) -> String {
-    format!(" {} {} ", i + 1, t.title)
+    match t.state {
+        Some(state) => format!(" ● {state} {} {} ", i + 1, t.title),
+        None => format!(" {} {} ", i + 1, t.title),
+    }
 }
 
 /// How many cells a tab takes: the label, plus the two cells the bell reserves
@@ -368,6 +376,43 @@ impl Menu {
 mod tests {
     use super::*;
 
+    /// `status_show tab`: the state word rides in the label, and the width follows
+    /// it — the bar is laid out from `tab_cells` and hit-tested from the same
+    /// rect, so a label that grew without the count would steal its neighbour's
+    /// clicks (`M-Q`).
+    #[test]
+    fn a_tab_label_can_carry_the_state() {
+        let plain = Tab {
+            title: "zsh",
+            alert: false,
+            state: None,
+        };
+        let marked = Tab {
+            title: "zsh",
+            alert: false,
+            state: Some("blocked"),
+        };
+        assert_eq!(tab_label(1, &plain), " 2 zsh ");
+        assert_eq!(tab_label(1, &marked), " ● blocked 2 zsh ");
+        assert_eq!(
+            tab_cells(1, &marked) - tab_cells(1, &plain),
+            "● blocked ".chars().count(),
+            "the word costs what it occupies"
+        );
+        // the bell's two cells still add up on top of a label that already grew
+        let quiet = Tab {
+            title: "zsh",
+            alert: false,
+            state: Some("error"),
+        };
+        let both = Tab {
+            title: "zsh",
+            alert: true,
+            state: Some("error"),
+        };
+        assert_eq!(tab_cells(1, &both), tab_cells(1, &quiet) + 2);
+    }
+
     /// The grid's menu hangs from the pointer's cell and never leaves the grid: at
     /// the bottom it flips up, and its rows are the ones the pointer can hit.
     #[test]
@@ -444,14 +489,17 @@ mod tests {
             Tab {
                 title: "one",
                 alert: false,
+                state: None,
             },
             Tab {
                 title: "two",
                 alert: true,
+                state: None,
             },
             Tab {
                 title: "three",
                 alert: false,
+                state: None,
             },
         ]
     }

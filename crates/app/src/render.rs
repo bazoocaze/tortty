@@ -111,6 +111,8 @@ pub struct Renderer {
     /// `bold_as_bright`: bold text on the low half of the palette draws the
     /// bright half (`color::bright`).
     bold_as_bright: bool,
+    /// `status_show`: where the `OSC 7501` state stays visible (`B47`).
+    status_show: tortty_core::config::StatusShow,
     instances: Vec<Instance>,
     pub palette: Vec<(u8, u8, u8)>,
     /// Effective theme (config + defaults); `build` resolves cell by cell.
@@ -539,6 +541,7 @@ impl Renderer {
             shaper: crate::shape::Shaper::new(),
             ligatures: tortty_core::config::Ligatures::default(),
             bold_as_bright: cfg.bold_as_bright,
+            status_show: cfg.status_show,
             toast_corner,
             instances: Vec::with_capacity(4096),
             palette: cfg.palette256(),
@@ -854,6 +857,7 @@ impl Renderer {
                 .map(|t| crate::chrome::Tab {
                     title: &t.title,
                     alert: t.alert,
+                    state: t.status.as_deref(),
                 })
                 .collect()
         });
@@ -907,6 +911,7 @@ impl Renderer {
             let spec = crate::chrome::Tab {
                 title: &t.title,
                 alert: t.alert,
+                state: t.status.as_deref(),
             };
             let label = crate::chrome::tab_label(slot.i, &spec);
             let (bg, fg) = if t.ativa {
@@ -976,7 +981,16 @@ impl Renderer {
             } else {
                 fg
             };
-            let (first, second) = card_lines(i + 1, &c.name, &c.title);
+            let (first, mut second) = card_lines(i + 1, &c.name, &c.title);
+            // `status_show tab`: the word goes on the second row, which the card
+            // only draws when it has something to say
+            if let Some(word) = &c.status {
+                second = if second.is_empty() {
+                    word.clone()
+                } else {
+                    format!("{word} · {second}")
+                };
+            }
             if fits(y0 + 3.0) {
                 self.text_line(x0, y0 + 3.0, &first, fg, width);
             }
@@ -1271,6 +1285,90 @@ impl Renderer {
             self.chrome_text(c, x + cell(2), y, edge, 0.0);
             self.chrome_text(" ]", x + cell(2) + cell(c.chars().count()), y, grey, 0.0);
         }
+    }
+
+    /// The bottom row of the grid carries one of two overlays: the search bar
+    /// (`M-D`), which is the transient one and wins, or the state chip (`B47`)
+    /// when `status_show chip` asks for it.
+    fn bottom_row(
+        &mut self,
+        search: Option<&SearchView>,
+        term: &tortty_core::Term,
+        cols: usize,
+        rows: usize,
+    ) {
+        if let Some(sv) = search {
+            self.search_bar(sv, cols, rows);
+        } else if self.status_show == tortty_core::config::StatusShow::Chip {
+            self.status_chip(term, cols, rows);
+        }
+    }
+
+    /// `B47` + `status_show chip`: what the program is doing, right-aligned on
+    /// the grid's last row. It is the only shape that shows with **one** tab — the
+    /// tab bar is not drawn then — and the last row is where the search bar
+    /// already lives, so it yields to it.
+    fn status_chip(&mut self, term: &tortty_core::Term, cols: usize, rows: usize) {
+        use tortty_core::status::State;
+        let Some(root) = term.status.root() else {
+            return;
+        };
+        // `idle` is not news, and a word saying nothing happens would never leave
+        if root.state == State::Idle {
+            return;
+        }
+        let word = root.state.name();
+        let mut detail = String::new();
+        if let Some(app) = root.app.as_deref() {
+            detail.push_str(" · ");
+            detail.push_str(app);
+        }
+        if let Some(pct) = root.progress {
+            detail.push_str(" · ");
+            detail.push_str(&pct.to_string());
+            detail.push('%');
+        }
+        let edge = self.color(
+            match root.state {
+                State::Blocked => Color::Idx(3),
+                State::Error => Color::Idx(1),
+                _ => Color::Idx(2),
+            },
+            self.fg,
+        );
+        let cw = self.fonts.cw;
+        let chh = self.fonts.ch;
+        // `[ ` + word + detail + ` ]`, one cell clear of the right edge
+        let cells = word.chars().count() + detail.chars().count() + 4 + 1;
+        if cells > cols {
+            return;
+        }
+        #[allow(clippy::cast_precision_loss)] // a column count, far below 2^23
+        let x = (cols - cells) as f32 * cw;
+        #[allow(clippy::cast_precision_loss)]
+        let y = rows.saturating_sub(1) as f32 * chh;
+        #[allow(clippy::cast_precision_loss)]
+        let width = (cells - 1) as f32 * cw;
+        let base = self.color(Color::Default, self.bg);
+        let ink = self.color(Color::Default, self.fg);
+        let dim = [
+            ink[0] * 0.78 + base[0] * 0.22,
+            ink[1] * 0.78 + base[1] * 0.22,
+            ink[2] * 0.78 + base[2] * 0.22,
+        ];
+        let grey = self.color(Color::Idx(8), self.fg);
+        self.chip((x, y), (width, chh), edge);
+        #[allow(clippy::cast_precision_loss)]
+        let cell = |n: usize| n as f32 * cw;
+        self.chrome_text("[ ", x, y, grey, 0.0);
+        self.chrome_text(word, x + cell(2), y, edge, 0.0);
+        self.chrome_text(
+            &format!("{detail} ]"),
+            x + cell(2 + word.chars().count()),
+            y,
+            dim,
+            0.0,
+        );
     }
 
     /// A chip: the search bar's surface — a hair of ink over the grid's
@@ -1985,10 +2083,8 @@ impl Renderer {
         // 3) cursor (on top; instance order is blend order)
         self.build_cursor(f);
 
-        // 3b) search bar (`M-D`): over the grid's bottom row, under the toast
-        if let Some(sv) = search {
-            self.search_bar(sv, cols, rows.len());
-        }
+        // 3b) the grid's bottom row, shared by two overlays (`M-D`, `B47`)
+        self.bottom_row(search, term, cols, rows.len());
 
         // 4) history indicator (D8): "↑N" — without it, scrolling back is
         // indistinguishable from the app having stopped writing
@@ -2826,6 +2922,9 @@ pub struct TabInfo {
     /// Progress the program reports about itself (`OSC 9;4`): a bar on the
     /// bottom edge of the tab.
     pub progress: Option<Progress>,
+    /// The `OSC 7501` state word, when `status_show tab` asks for it on the
+    /// label (`B47`). `None` in the other modes — the chip and the bar say it.
+    pub status: Option<String>,
 }
 
 /// Height of that bar. Two pixels on the bottom edge: thin enough not to eat the
@@ -2973,6 +3072,9 @@ pub struct WsCard {
     /// Progress of the selected tab (`OSC 9;4`), on the bottom edge of the card:
     /// the same report the tab label shows, so a parked workspace is not blind.
     pub progress: Option<Progress>,
+    /// The `OSC 7501` state word of the selected tab, under `status_show tab`
+    /// (`B47`): the tab bar of a parked workspace is not on screen.
+    pub status: Option<String>,
 }
 
 pub enum FrameOutcome {

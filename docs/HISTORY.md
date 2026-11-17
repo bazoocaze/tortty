@@ -1476,3 +1476,18 @@ sozinha no detalhe. `OSC 9`/`777` não têm estado e continuam `Notification` ve
   de abas nem é desenhada, então a única testemunha persistente do estado hoje é a
   barra de 2 px.
 
+## 2026-11-17 — onde o estado fica na tela: `status_show`
+
+O estado do `OSC 7501` só aparecia no toast, e num tema de uma aba nem a barra de
+abas existe: passados os 8 s, nada testemunhava `working`/`blocked`. A chave
+`status_show` escolhe a forma — `chip` (novo default) desenha
+`[ blocked · git ]` na última linha da grade, à direita, na cor do estado;
+`tab` escreve `● blocked` no rótulo da aba e no card; `none` deixa só a barra de
+2 px. As três somem quando o estado raiz volta a `idle`. O chip cede o lugar à
+barra de busca, que divide a última linha.
+- Medido no Xvfb com duas abas e o toast já fora: `chip` → 480 px amarelos na
+  última linha e 192 px na barra; `tab` → 386 px na barra (o rótulo `● blocked 1
+  tortty`) e 0 na última linha; `none` → 192 px, só a barra.
+- `tab` custa o que ocupa: o rótulo é contado por `chrome::tab_label`, então a
+  largura da aba e o clique continuam sendo o mesmo número (`M-Q`).
+
