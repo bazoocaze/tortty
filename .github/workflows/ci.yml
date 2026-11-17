@@ -17,13 +17,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-      # winit (x11/wayland) and wgpu need the system headers to link
-      - name: system deps
+      # winit (x11/wayland) and wgpu need the system headers to link, and the glyph
+      # tests are assertions about a real font chain: a runner with no monospace
+      # font and no CJK face fails them for being empty, not for being wrong
+      - name: system deps and fonts
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev \
-            libxi-dev libxcursor-dev libxinerama-dev
+            libxi-dev libxcursor-dev libxinerama-dev \
+            fonts-dejavu-core fonts-noto-cjk fonts-noto-color-emoji
       # rustup itself, not a third-party action: one less tag to pin
       - name: toolchain
         run: |

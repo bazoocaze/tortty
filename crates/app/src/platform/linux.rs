@@ -253,24 +253,31 @@ pub fn hangup(pid: u32) {
 /// a script leaves it. `None` once the child is gone.
 #[must_use]
 pub fn child_cwd(pid: u32) -> Option<PathBuf> {
-    std::fs::read_link(format!("/proc/{}/cwd", descendant(pid))).ok()
+    // The leaf first — the front program — and then back up: a process can die
+    // between being listed and being read (`/proc` is live, and anything can be
+    // spawning shells meanwhile), and the shell's own cwd is still a better
+    // answer than "I do not know".
+    self::chain(pid)
+        .iter()
+        .rev()
+        .find_map(|p| std::fs::read_link(format!("/proc/{p}/cwd")).ok())
 }
 
-/// The last descendant, up to eight levels: the shell spawns `mc`, which spawns
-/// its own shell, and the front program is the leaf.
-fn descendant(pid: u32) -> u32 {
-    let mut cur = pid;
+/// The pid and its descendants, up to eight levels: the shell spawns `mc`, which
+/// spawns its own shell, and the front program is the leaf.
+fn chain(pid: u32) -> Vec<u32> {
+    let mut pids = vec![pid];
     for _ in 0..8 {
-        let path = format!("/proc/{cur}/task/{cur}/children");
-        let Ok(txt) = std::fs::read_to_string(path) else {
+        let cur = *pids.last().expect("the chain starts with the pid");
+        let Ok(txt) = std::fs::read_to_string(format!("/proc/{cur}/task/{cur}/children")) else {
             break;
         };
         let Some(child) = txt.split_whitespace().next().and_then(|s| s.parse().ok()) else {
             break;
         };
-        cur = child;
+        pids.push(child);
     }
-    cur
+    pids
 }
 
 /// `SIGUSR1` asked for a dump; `SIGTERM` asked for a clean exit (dump + close).
@@ -538,10 +545,24 @@ mod checks_platform {
 
     #[test]
     fn the_child_cwd_is_the_process_it_reached() {
-        // our own pid: `/proc/self/cwd` is this process's directory
-        let cwd = child_cwd(std::process::id()).expect("a cwd for our own pid");
-        assert!(cwd.is_absolute(), "{cwd:?}");
-        // a pid that does not exist has no directory to give
+        // A child of our own, in a directory we chose: the answer is a fact, not a
+        // race against whatever else the test harness spawned in the same instant.
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .current_dir("/tmp")
+            .spawn()
+            .expect("spawn sleep in /tmp");
+        let cwd = child_cwd(child.id());
+        let _ = child.kill();
+        let _ = child.wait();
+        assert_eq!(
+            cwd.as_deref(),
+            Some(std::path::Path::new("/tmp")),
+            "a program answers with the directory it is in"
+        );
+        // a pid with no descendant is a chain of one, and one that does not exist
+        // has no directory to give
+        assert_eq!(chain(u32::MAX - 1), vec![u32::MAX - 1]);
         assert!(child_cwd(u32::MAX - 1).is_none());
     }
 
