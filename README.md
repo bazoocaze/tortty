@@ -1,5 +1,9 @@
 # TorTTY — Torbie TTY 🐈
 
+[![ci](https://github.com/bazoocaze/tortty/actions/workflows/ci.yml/badge.svg)](https://github.com/bazoocaze/tortty/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![platform](https://img.shields.io/badge/platform-Linux-blueviolet)](#requirements)
+
 ### A fast, GPU-accelerated terminal emulator.
 
 ![Torbie, the cat: a grey and orange tabby sitting](assets/torbie-readme.png)
