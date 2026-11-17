@@ -840,16 +840,14 @@ impl Renderer {
         cols: usize,
         rows: usize,
     ) {
-        let specs: Vec<crate::chrome::Tab<'_>> = tabs
-            .map(|list| {
-                list.iter()
-                    .map(|t| crate::chrome::Tab {
-                        title: &t.title,
-                        alert: t.alert,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let specs: Vec<crate::chrome::Tab<'_>> = tabs.map_or_default(|list| {
+            list.iter()
+                .map(|t| crate::chrome::Tab {
+                    title: &t.title,
+                    alert: t.alert,
+                })
+                .collect()
+        });
         let ws = sidebar.map_or(0, <[WsCard]>::len);
         let layout =
             crate::chrome::Layout::build(self.chrome_metrics(cols, rows), &specs, ws, cards_off);

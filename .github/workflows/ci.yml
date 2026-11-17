@@ -27,12 +27,13 @@ jobs:
             libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev \
             libxi-dev libxcursor-dev libxinerama-dev \
             fonts-dejavu-core fonts-noto-cjk fonts-noto-color-emoji
-      # rustup itself, not a third-party action: one less tag to pin
+      # rust-toolchain.toml decides the compiler, here and on a laptop: a green
+      # hook over a red CI (or the other way round) is a ruler that measures
+      # itself. rustup installs what the file asks for on first use.
       - name: toolchain
         run: |
-          rustup toolchain install stable --profile minimal \
-            --component rustfmt,clippy
-          rustup default stable
+          rustup show active-toolchain
+          rustc -V
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
       # the same script as the pre-commit: hook and CI cannot disagree
       - name: fmt + clippy + test
@@ -63,8 +64,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: toolchain and the other targets
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          rustup show active-toolchain
+          rustc -V
           rustup target add x86_64-pc-windows-gnu x86_64-apple-darwin
       - name: the core builds for the other systems
         run: |

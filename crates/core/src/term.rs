@@ -4781,9 +4781,9 @@ mod tests {
             t.feed("漢".as_bytes());
         }
         t.resize(5, 6);
-        for y in 0..6 {
+        for (y, row) in t.grid.iter().enumerate().take(6) {
             assert!(
-                !t.grid[y].cells[0].is_cont(),
+                !row.cells[0].is_cont(),
                 "row {y} starts with half a wide pair"
             );
         }

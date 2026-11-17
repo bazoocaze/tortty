@@ -4589,8 +4589,7 @@ impl ApplicationHandler<UserEvent> for App {
             self.renderer.as_ref().map_or(0.0, |r| r.fonts.ch),
             self.renderer
                 .as_ref()
-                .map(|r| r.fonts.family.clone())
-                .unwrap_or_default(),
+                .map_or_default(|r| r.fonts.family.clone()),
             self.renderer.as_ref().map_or(0.0, |r| r.fonts.px),
         ));
         window.request_redraw();

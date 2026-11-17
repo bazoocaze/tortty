@@ -553,8 +553,16 @@ mod tests {
             fontdb::Style::Normal
         )
         .is_none());
-        // the generic one still works
-        assert!(query(&db, "monospace", 400, fontdb::Style::Normal).is_some());
+        // The generic name still reaches a font — through the chain the app
+        // builds, not through fontdb's own `Family::Monospace`: that one needs a
+        // face whose panose says "monospaced", and a bare runner has none, which
+        // made this assertion a claim about the machine and not about the code.
+        let generic = Fonts::new("monospace", 17.0).expect("a generic name reaches the chain");
+        assert!(
+            generic.family.contains("Mono"),
+            "the chain answered with {}",
+            generic.family
+        );
     }
 
     /// Every index of the table has to reach **its own** font. The chain used
