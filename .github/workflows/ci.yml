@@ -116,10 +116,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
-      # Measured, and not cached: `~/.rustup` is 479 MB, and restoring it from the
-      # cache took the same ~1m40 as downloading the toolchain and the two std
-      # libraries. The checks below are four seconds; the rest is the price of
-      # proving two foreign targets on every run, and it stays.
+      # Measured on the runner: the rustup downloads are 17 s, and the 1m30 of this
+      # job is `cargo check --target` compiling the app's dependency tree twice
+      # (winit, wgpu, windows-sys). So the cache that matters here is `target/`,
+      # not `~/.rustup` — caching the latter saved 17 s and cost 1m48 to save.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
+        with:
+          key: seam
       - name: toolchain and the other targets
         run: |
           rustup install --no-self-update

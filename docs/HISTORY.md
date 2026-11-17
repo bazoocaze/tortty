@@ -1421,10 +1421,18 @@ Com o cache quente (run seguinte, só docs): **2m12**, e o perfil mudou de lugar
 `Checking tortty-core … 2.43s` e `1.64s`, contra dois `downloading` do rustup. O
 gargalo não era compilar, era baixar a toolchain e a std de dois alvos.
 
-Testei cachear `~/.rustup` nesse job e **reverti**: o cache acertou (479 MB
-restaurados, zero downloads) e o job continuou em 2m09 — restaurar o arquivo custa
-o que custava baixá-lo. Ficou o outro achado do log, que era dívida embutida:
-`warn: auto-installation is deprecated`, então o install passou a ser
-`rustup install --no-self-update` explícito em vez de implícito atrás do
-`rustup show`. O piso do run hoje é o job `build` (1m53), não o `seam` (2m09):
-otimizar o seam compraria 16 s.
+O primeiro palpite esteve errado, e os timestamps por passo mostraram: cachear
+`~/.rustup` não mudou nada (o cache acertou — `Cache restored successfully`, zero
+downloads — e o job ficou em 2m09). A leitura por passo do attempt explica: os
+downloads do rustup são **17 s**, e o que custa **1m30** é o passo seguinte,
+`cargo check -p tortty --target …`, compilando a árvore de dependências do app
+(winit, wgpu, windows-sys) para dois alvos — trabalho que o job `seam` refazia a
+cada run porque era o único sem `rust-cache`. Cachear `~/.rustup` cobria a parte
+de 17 s e ainda gastava 1m48 para salvar.
+
+Corrigido no cache certo: `Swatinem/rust-cache` no `seam`, com chave própria.
+Medido localmente, com os dois alvos instalados: frio **45 s** sequencial e **48 s**
+em paralelo (nenhum ganho — os dois saturam os cores), quente **2,5 s**. Ficou o
+outro achado do log, que era dívida real: `warn: auto-installation is deprecated`,
+então o install passou a ser `rustup install --no-self-update` explícito em vez de
+implícito atrás do `rustup show`.
