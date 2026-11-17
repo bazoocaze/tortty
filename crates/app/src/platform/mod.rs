@@ -23,9 +23,11 @@
 //! template files, chosen by `config::Os`).
 //!
 //! `tools/platform-gate.sh` (a step of `tools/quality-check.sh`, so hook and CI
-//! agree) fails as soon as `std::os::unix`, `std::os::linux`, `libc::`,
-//! `windows_sys::`, `winapi::` or `winit::platform::` appears outside this
-//! directory — which is what keeps the seam from rotting.
+//! agree) fails on both ways of naming a system outside this directory: the
+//! syscall or system crate (`std::os::unix`, `libc::`, `windows_sys::`,
+//! `winapi::`, `winit::platform::`) and the `cfg` that branches on the target
+//! (`cfg(target_os = "linux")`), which compiles everywhere and therefore no
+//! cross-target build would ever report.
 //!
 //! Linux is the measured target: it is where the app is developed and where every
 //! number in `docs/BENCHMARKS.md` was taken. Windows is `M-X` and macOS is `M-Y`

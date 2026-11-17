@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
@@ -13,7 +16,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       # winit (x11/wayland) and wgpu need the system headers to link
       - name: system deps
         run: |
@@ -21,10 +24,13 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev \
             libxi-dev libxcursor-dev libxinerama-dev
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      # rustup itself, not a third-party action: one less tag to pin
+      - name: toolchain
+        run: |
+          rustup toolchain install stable --profile minimal \
+            --component rustfmt,clippy
+          rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
       # the same script as the pre-commit: hook and CI cannot disagree
       - name: fmt + clippy + test
         run: ./tools/quality-check.sh
@@ -40,3 +46,38 @@ jobs:
           ./install.sh --prefix "$RUNNER_TEMP/inst" --check
           ./install.sh --prefix "$RUNNER_TEMP/inst" --uninstall
           test ! -e "$RUNNER_TEMP/inst/bin/tortty"
+
+  seam:
+    # The `platform` seam is one module (AGENTS.md), and the proof that it holds is
+    # these two targets. `tortty-core` must build for them — it knows no window,
+    # pty, GPU or clock, so a system call reaching the core breaks here. The app
+    # must stop on the seam's own `compile_error!` and on nothing else: before the
+    # seam it was 35 errors on Windows and 4 on macOS, and a green build would mean
+    # somebody went around it. When `M-X`/`M-Y` land, the second step becomes a
+    # build.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - name: toolchain and the other targets
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add x86_64-pc-windows-gnu x86_64-apple-darwin
+      - name: the core builds for the other systems
+        run: |
+          cargo check -p tortty-core --target x86_64-pc-windows-gnu
+          cargo check -p tortty-core --target x86_64-apple-darwin
+      - name: the app stops at the seam, and only there
+        run: |
+          for target in x86_64-pc-windows-gnu x86_64-apple-darwin; do
+            if out=$(cargo check -p tortty --target "$target" 2>&1); then
+              echo "::error::$target built: the seam is gone (M-X/M-Y closed?)"
+              exit 1
+            fi
+            if ! printf '%s' "$out" | grep -q 'has no .platform. implementation'; then
+              echo "::error::$target failed for a reason other than the seam:"
+              printf '%s\n' "$out"
+              exit 1
+            fi
+            echo "$target: stopped at the seam, as designed"
+          done

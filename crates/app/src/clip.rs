@@ -9,6 +9,8 @@
 //! session without a display (or with the server down) the app still opens, and
 //! copy/paste only fails when it is actually called.
 
+use crate::platform;
+
 pub struct Clip {
     board: Option<arboard::Clipboard>,
 }
@@ -30,21 +32,13 @@ impl Clip {
         self.board()?.get_text().ok()
     }
 
-    /// PRIMARY text (the X11 selection). Outside Linux there is none.
+    /// PRIMARY text (the X11 selection). Where the system has no second
+    /// selection, this is CLIPBOARD: the seam answers, not a `#[cfg]` here.
     pub fn primary_text(&mut self) -> Option<String> {
-        #[cfg(target_os = "linux")]
-        {
-            use arboard::{GetExtLinux, LinuxClipboardKind};
-            self.board()?
-                .get()
-                .clipboard(LinuxClipboardKind::Primary)
-                .text()
-                .ok()
+        if !platform::has_primary() {
+            return self.text();
         }
-        #[cfg(not(target_os = "linux"))]
-        {
-            self.text()
-        }
+        platform::primary_get(self.board()?)
     }
 
     pub fn set(&mut self, text: &str) {
@@ -53,21 +47,15 @@ impl Clip {
         }
     }
 
-    /// Puts it in PRIMARY (X11) — Linux' "paste with the middle button".
+    /// Puts it in PRIMARY (X11) — the "paste with the middle button" — or in
+    /// CLIPBOARD where there is no second selection.
     pub fn set_primary(&mut self, text: &str) {
-        #[cfg(target_os = "linux")]
-        {
-            use arboard::{LinuxClipboardKind, SetExtLinux};
-            if let Some(b) = self.board() {
-                // no `wait()`: the app stays the selection owner until the
-                // next one, which is the normal terminal behaviour
-                let _ = b
-                    .set()
-                    .clipboard(LinuxClipboardKind::Primary)
-                    .text(text.to_string());
-            }
+        if !platform::has_primary() {
+            self.set(text);
+            return;
         }
-        #[cfg(not(target_os = "linux"))]
-        self.set(text);
+        if let Some(b) = self.board() {
+            platform::primary_set(b, text);
+        }
     }
 }

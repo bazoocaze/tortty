@@ -375,6 +375,37 @@ pub fn editor() -> String {
         .unwrap_or_else(|_| "vim".to_string())
 }
 
+/// Does this system have a second selection besides `CLIPBOARD`? Linux has, and
+/// it is the X11 PRIMARY — the "paste with the middle button". Windows and macOS
+/// have one clipboard only, and the app must not ask which system it is on.
+#[must_use]
+pub fn has_primary() -> bool {
+    true
+}
+
+/// Reads the PRIMARY selection. Only called where `has_primary()` answered, and
+/// it lives here because the *type* of that selection is system knowledge: the
+/// `GetExtLinux` trait exists for Linux only, so a feature file naming it could
+/// not be built anywhere else.
+pub fn primary_get(board: &mut arboard::Clipboard) -> Option<String> {
+    use arboard::{GetExtLinux, LinuxClipboardKind};
+    board
+        .get()
+        .clipboard(LinuxClipboardKind::Primary)
+        .text()
+        .ok()
+}
+
+/// Writes the PRIMARY selection. Not `wait()`ing: the app stays the selection
+/// owner until the next one, which is what a terminal does.
+pub fn primary_set(board: &mut arboard::Clipboard, text: &str) {
+    use arboard::{LinuxClipboardKind, SetExtLinux};
+    let _ = board
+        .set()
+        .clipboard(LinuxClipboardKind::Primary)
+        .text(text.to_string());
+}
+
 /// A path quoted for the shell the child runs, which is what a dropped file
 /// becomes.
 ///

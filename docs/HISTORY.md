@@ -1380,3 +1380,9 @@ Question: does rewriting in Rust solve distribution and performance? The abort c
 - The username left the code and the docs (`shell_quote` test, the `mc [user@host]` title test, the egui mockups' prompt, four absolute paths), and the private sibling got its public name: `tortty-python`.
 - `OUT` (442 KB of stray ImageMagick PostScript) untracked. The `torbie.png` lost its C2PA block (the `caBX` chunk naming the generator model): pixels byte-identical, file 21 KB lighter.
 - What removal at HEAD cannot fix is the history, which carries the same names in 98 old versions of this file, in 20 `.swp` blobs and in `.pi/tasks` logs: that is a history rewrite, done in the same session (`git filter-repo`), with the owner's approval.
+
+## 2026-11-16 — CI watches the seam, and the actions are pinned
+
+- A third CI job (`seam`) builds `tortty-core` for `x86_64-pc-windows-gnu` and `x86_64-apple-darwin`, which must pass, and then asserts that the **app** stops on the seam's own `compile_error!` and for no other reason — 35 and 4 errors before the seam, 1 and 1 after. When `M-X`/`M-Y` land, that step becomes a build.
+- `tools/platform-gate.sh` gained the second half: it also fails on `cfg(target_os|target_family|target_arch)` outside the seam, because that compiles everywhere and no cross-target build reports it. It bit at once — `clip.rs` branched on `cfg(target_os = "linux")` for the X11 PRIMARY — which is now `platform::has_primary`/`primary_get`/`primary_set`.
+- Every action is pinned by commit SHA (`checkout`, `rust-cache`, `upload/download-artifact`, `action-gh-release`), and `dtolnay/rust-toolchain` was replaced by plain `rustup`: one less tag to pin. `ci.yml` got `permissions: contents: read` instead of inheriting the default.
