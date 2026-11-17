@@ -1411,3 +1411,7 @@ passaram a rodar em três jobs paralelos (`lint`, `test`, `build`) mais o `seam`
 com chave de cache por job e `concurrency` cancelando run superado. Medido num
 target vazio: `clippy --release` 46 s, `cargo test` 49 s, `build --release` 60 s —
 em série, com duas cópias da árvore de dependências, viravam os 5m27 do CI.
+
+Medido depois, no run 44005324723: o run inteiro caiu de **5m27** para **2m51** —
+`lint` 2m46, `build` 2m47, `test` 2m37, `seam` 2m00, os quatro verdes. O relógio
+passou a ser o job mais lento, não a soma deles.
