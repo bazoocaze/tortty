@@ -34,9 +34,11 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   is discarded — OSC 133 (prompt marks) among them (`M-R`).
 - Hyperlinks (`OSC 8`): the cell carries the URI (an index into `Term::links`,
   repeated URIs share it), Ctrl underlines every link on screen and Ctrl+click
-  hands it to `xdg-open`. **limit:** only `http`, `https`, `file`, `ftp` and
-  `mailto` are opened; the rest becomes a toast, since the URI comes from the
-  child and `xdg-open` runs whatever handler the desktop registered.
+  hands it to `xdg-open`. **limit:** only what the child sent as `OSC 8` is a
+  link — a URL printed as plain text is not detected (`B69`); and only `http`,
+  `https`, `file`, `ftp` and `mailto` are opened, the rest becomes a toast, since
+  the URI comes from the child and `xdg-open` runs whatever handler the desktop
+  registered.
 - DEC Special Graphics charset (G0).
 - Alt screen: separate grid, swap preserving the cursor, crop/pad on resize (no
   reflow there). The switch lends the screen and takes it back: the history
