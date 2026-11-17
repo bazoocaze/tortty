@@ -112,6 +112,11 @@ pub struct Renderer {
     /// bright half (`color::bright`).
     bold_as_bright: bool,
     /// `status_show`: where the `OSC 7501` state stays visible (`B47`).
+    ///
+    /// A field here that comes from the config has **two** readers: this
+    /// constructor and `apply_layout`, which is what a reload runs. Missing the
+    /// second is invisible — the app's copy of the config already changed, so the
+    /// `state` verb reports the new value while the screen keeps the old one.
     status_show: tortty_core::config::StatusShow,
     instances: Vec<Instance>,
     pub palette: Vec<(u8, u8, u8)>,
@@ -601,6 +606,14 @@ impl Renderer {
     pub fn apply_layout(&mut self, cfg: &Config) {
         self.cursor_shape = cfg.cursor_shape;
         self.pad = cfg.padding as f32;
+        // `status_show` is drawn with the chrome, which every frame rebuilds, so
+        // it takes effect on the next frame; `bold_as_bright` changes the ink of
+        // the cells already cached, and those have to be painted again
+        self.status_show = cfg.status_show;
+        if self.bold_as_bright != cfg.bold_as_bright {
+            self.bold_as_bright = cfg.bold_as_bright;
+            self.theme_gen = self.theme_gen.wrapping_add(1);
+        }
         if self.ligatures != cfg.ligatures {
             // a shaped run is per mode: changing the mode invalidates the cache
             self.ligatures = cfg.ligatures;

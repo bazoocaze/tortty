@@ -1491,3 +1491,16 @@ barra de busca, que divide a última linha.
 - `tab` custa o que ocupa: o rótulo é contado por `chrome::tab_label`, então a
   largura da aba e o clique continuam sendo o mesmo número (`M-Q`).
 
+## 2026-11-17 — `status_show` trocado com o app rodando
+
+O renderer guarda `status_show` num campo, e o recarregamento da config chamava
+`apply_layout`, que não o conhecia: salvar `status_show tab` deixava o chip na
+tela com o rótulo da aba já marcado — a config viva e a tela discordando. O mesmo
+buraco valia para `bold_as_bright`, que desde o início só era lido na construção
+do renderer. Agora `apply_layout` leva os dois, e a mudança de tinta de
+`bold_as_bright` invalida as linhas já cacheadas (`theme_gen`).
+- Medido no Xvfb, com o app rodando: antes do salvamento o `state` dizia `chip` e
+  a última linha tinha 480 px amarelos; depois de acrescentar `status_show tab` ao
+  arquivo, `state` diz `tab`, a última linha tem 0 e a barra passou de 192 para
+  386 px (o rótulo `● blocked 1 tortty`).
+
