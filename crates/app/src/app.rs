@@ -1066,6 +1066,34 @@ impl App {
         self.chrome_layout().card_at(px, py)
     }
 
+    /// The chrome of this frame as the pointer sees it (`M-Q`).
+    ///
+    /// Built on demand from the same functions that draw, so it cannot go stale,
+    /// and `chrome::Scene::hit` writes the order **once** — the order the drawing
+    /// stacks things in. The price is one `Toast::build` per press, which is a
+    /// wrap of two short strings.
+    fn chrome_hit(&self) -> crate::chrome::Hit {
+        let metrics = self.chrome_metrics();
+        let layout = self.chrome_layout();
+        let menu = self.menu_layout();
+        let toast = self
+            .toast_text()
+            .and_then(|t| crate::chrome::Toast::build(metrics, &t.title, &t.detail));
+        let chip = self.chip_shape();
+        let scrollbar = self.scrollbar();
+        let scene = crate::chrome::Scene {
+            metrics,
+            window_w: self.window_w(),
+            at: self.cursor_px,
+            layout: &layout,
+            menu: menu.as_ref(),
+            toast: toast.as_ref(),
+            chip: chip.as_ref(),
+            scrollbar: scrollbar.as_ref(),
+        };
+        scene.hit()
+    }
+
     /// Opens the context menu the pointer is standing on (`M-V`, `B64`): a card's
     /// on the sidebar, a tab's on the bar, the bar's own strip right of the last
     /// tab, and the grid's over the screen — which is the child's, when the child
@@ -1077,39 +1105,41 @@ impl App {
     /// pointer, which card or tab) and the rows that were usable at that moment —
     /// they belong to the click, not to the frame. Answers whether it opened, so
     /// the caller knows whether the press is ours.
-    fn open_menu(&mut self) -> bool {
+    fn open_menu(&mut self, hit: crate::chrome::Hit) -> bool {
+        use crate::chrome::Hit;
         let (px, py) = self.cursor_px;
-        let (me, layout) = (self.chrome_metrics(), self.chrome_layout());
-        let (items, anchor, subject) = if let Some(i) = layout.card_at(px, py) {
-            (
+        let (items, anchor, subject) = match hit {
+            Hit::Card(i) => (
                 &crate::chrome::CARD_MENU[..],
                 crate::chrome::Anchor::Pointer,
                 Some(i),
-            )
-        } else if let Some(i) = layout.tab_at(px, py) {
-            (
+            ),
+            Hit::Tab(i) => (
                 &crate::chrome::TAB_MENU[..],
                 crate::chrome::Anchor::Pointer,
                 Some(i),
-            )
-        } else if py < f64::from(me.pad + me.bar) {
-            (
+            ),
+            Hit::Bar => (
                 &crate::chrome::BAR_MENU[..],
                 crate::chrome::Anchor::Pointer,
                 None,
-            )
-        } else if self.in_grid(px, py) {
-            if !(self.mods.shift_key() || self.tabs[self.active].term.mouse_mode == 0) {
-                return false;
-            }
-            (
-                &crate::chrome::GRID_MENU[..],
-                crate::chrome::Anchor::Cell,
-                None,
-            )
-        } else {
-            // the sidebar's free row and the window's margin act on nothing
-            return false;
+            ),
+            // the chip and the strip are drawn on the grid: the menu they get is
+            // the grid's, and it needs the same `Shift` the rest of the grid does
+            Hit::Grid | Hit::Chip | Hit::Scrollbar => {
+                if !self.in_grid(px, py)
+                    || !(self.mods.shift_key() || self.tabs[self.active].term.mouse_mode == 0)
+                {
+                    return false;
+                }
+                (
+                    &crate::chrome::GRID_MENU[..],
+                    crate::chrome::Anchor::Cell,
+                    None,
+                )
+            },
+            // the notice dismisses itself, and an open menu is not a context
+            Hit::Toast | Hit::Menu | Hit::MenuRow(_) => return false,
         };
         // a link can only be under the pointer where there are cells to hold it
         let link = match anchor {
@@ -1766,49 +1796,50 @@ impl App {
             self.blink_reset();
             self.press_ours = false;
         }
-        // `M-V`: the menu is drawn **after** the toast, so it is the topmost thing
-        // on screen and the press goes to it first — the reverse of this order
-        // would dismiss a notice the pointer was not over. Both buttons stop here:
-        // a release must not reach a child whose press it never saw.
-        if self.menu_open.is_some() {
-            if state == ElementState::Pressed && btn == crate::mouse::LEFT {
-                match self.menu_layout().and_then(|m| {
-                    m.row_at(self.chrome_metrics(), self.cursor_px.0, self.cursor_px.1)
-                }) {
-                    Some(i) => self.menu_action(i),
-                    None => self.close_menu(),
+        // what the pointer is standing on, in the order the drawing stacks it
+        // (`chrome::Scene::hit`, the one place that order is written)
+        let hit = self.chrome_hit();
+        // `M-V`: an open menu is modal — it is the last thing drawn, so it takes
+        // the press wherever it lands, and the release that ends that press goes
+        // with it. A press off its rows closes it.
+        if matches!(
+            hit,
+            crate::chrome::Hit::Menu | crate::chrome::Hit::MenuRow(_)
+        ) {
+            if state == ElementState::Pressed {
+                match hit {
+                    crate::chrome::Hit::MenuRow(i) => self.menu_action(i),
+                    _ => self.close_menu(),
                 }
-            } else if state == ElementState::Pressed {
-                self.close_menu();
             }
             return;
         }
         if state == ElementState::Pressed {
-            // the toast is drawn under the menu and over the chrome and the grid: a
-            // press on it dismisses it and goes no further, with or without the
-            // child asking for the mouse
-            if self.toast_clicked(self.cursor_px.0, self.cursor_px.1) {
-                self.press_ours = true;
-                return;
+            match hit {
+                // the notice is over the chrome and the grid and under the menu:
+                // any button dismisses it and nothing behind it hears the press
+                crate::chrome::Hit::Toast => {
+                    self.drop_toast();
+                    self.press_ours = true;
+                    return;
+                },
+                // `status_show chip`: a left press on the chip ends the state
+                // (`B47`) — `done` and `error` have no lifetime of their own, so
+                // without this the chip would stay until the tab closed. It is
+                // chrome drawn over the last row, so it takes the press even when
+                // the child holds the mouse, the same rule as the notice.
+                crate::chrome::Hit::Chip if btn == crate::mouse::LEFT => {
+                    self.dismiss_chip();
+                    self.press_ours = true;
+                    return;
+                },
+                _ => {},
             }
-        }
-        // `status_show chip`: a left press on the chip dismisses it (`B47`).
-        // `done` and `error` have no lifetime of their own, so without this the
-        // chip would stay until the tab closed. It is chrome drawn over the last
-        // row, so it takes the press even when the child holds the mouse — the
-        // same rule the toast follows, and the reason the box only exists where
-        // the renderer drew it.
-        if btn == crate::mouse::LEFT
-            && state == ElementState::Pressed
-            && self.chip_clicked(self.cursor_px.0, self.cursor_px.1)
-        {
-            self.press_ours = true;
-            return;
         }
         // a context menu: right button. Which one, and whether the press is even
         // ours, is the pointer's business (`open_menu`): over the grid the child
         // may have asked for the mouse, over the sidebar and the bar it never did
-        if btn == crate::mouse::RIGHT && state == ElementState::Pressed && self.open_menu() {
+        if btn == crate::mouse::RIGHT && state == ElementState::Pressed && self.open_menu(hit) {
             return;
         }
         // Alt+Left drags a local block selection instead of reporting to the
@@ -1819,28 +1850,33 @@ impl App {
             && ((state == ElementState::Pressed && self.mods.alt_key() && self.held.is_none())
                 || (state == ElementState::Released && self.tabs[self.active].dragging))
         {
-            self.select_input(state, button);
+            self.select_input(state, button, hit);
             return;
         }
         if self.tabs[self.active].term.mouse_mode == 0 {
-            self.select_input(state, button);
+            self.select_input(state, button, hit);
             return;
         }
         match state {
             ElementState::Pressed => {
-                // a click on a workspace card or on the bar does not go to the
+                // a click on a workspace card or on a tab does not go to the
                 // child either: it is chrome, and it behaves exactly as it does
                 // without the mouse reported (`mc` is where the missing rename
-                // showed up)
-                if let Some(i) = self.card_at(self.cursor_px.0, self.cursor_px.1) {
-                    self.press_card(i);
-                    self.held = None;
-                    return;
-                }
-                if let Some(i) = self.tab_at(self.cursor_px.0, self.cursor_px.1) {
-                    self.press_tab(i);
-                    self.held = None;
-                    return;
+                // showed up). The scrollbar is the one exception: with the child
+                // reporting the mouse the last column is its own, so the strip is
+                // not claimed here.
+                match hit {
+                    crate::chrome::Hit::Card(i) => {
+                        self.press_card(i);
+                        self.held = None;
+                        return;
+                    },
+                    crate::chrome::Hit::Tab(i) => {
+                        self.press_tab(i);
+                        self.held = None;
+                        return;
+                    },
+                    _ => {},
                 }
                 // F19: the app draws live; a click on the history only makes
                 // sense after going back to it
@@ -2042,34 +2078,41 @@ impl App {
 
     /// Terminal mouse: press sets the anchor, drag becomes selection, release
     /// copies. A single click paints no cell and does not touch PRIMARY.
-    fn select_input(&mut self, state: ElementState, button: winit::event::MouseButton) {
+    fn select_input(
+        &mut self,
+        state: ElementState,
+        button: winit::event::MouseButton,
+        hit: crate::chrome::Hit,
+    ) {
+        use crate::chrome::Hit;
         use winit::event::MouseButton::{Left, Middle};
         match (state, button) {
             (ElementState::Pressed, Left) => {
-                // the sidebar and the bar are chrome: they answer first, with
-                // or without the child asking for the mouse
-                if let Some(i) = self.card_at(self.cursor_px.0, self.cursor_px.1) {
-                    self.press_card(i);
-                    return;
-                }
-                if let Some(i) = self.tab_at(self.cursor_px.0, self.cursor_px.1) {
-                    self.press_tab(i);
-                    return;
+                // the sidebar, the bar and the scrollbar are chrome: they answer
+                // first, with or without the child asking for the mouse, and in
+                // the order `chrome::Scene::hit` answers
+                match hit {
+                    Hit::Card(i) => {
+                        self.press_card(i);
+                        return;
+                    },
+                    Hit::Tab(i) => {
+                        self.press_tab(i);
+                        return;
+                    },
+                    // a press on the scrollbar drags the view, not the text
+                    Hit::Scrollbar => {
+                        self.scroll_drag = true;
+                        self.scroll_to_y(self.cursor_px.1);
+                        return;
+                    },
+                    _ => {},
                 }
                 self.bar_press = None;
                 // clicking the history does NOT go back to live: the drag is
                 // exactly to copy from there
                 let px = self.cursor_px;
                 let (col, row) = self.cell_at(px.0, px.1);
-                // a press on the scrollbar drags the view, not the text
-                if let Some(sb) = self.scrollbar() {
-                    let window_w = self.window_w();
-                    if sb.hit(self.chrome_metrics(), window_w, px.0, px.1) {
-                        self.scroll_drag = true;
-                        self.scroll_to_y(px.1);
-                        return;
-                    }
-                }
                 // Ctrl+click opens the `OSC 8` link under the pointer (and does
                 // not select): it is the same modifier that underlines them
                 if self.mods.control_key() {
@@ -2132,17 +2175,19 @@ impl App {
                 self.redraw();
             },
             (ElementState::Pressed, Middle) => {
-                // middle button on the CARD closes the workspace (I9)
-                if let Some(i) = self.card_at(self.cursor_px.0, self.cursor_px.1) {
-                    self.close_workspace(i);
-                    return;
-                }
-                // middle button ON THE TAB closes it (I9); on the grid it pastes
-                // PRIMARY
-                if let Some(i) = self.tab_at(self.cursor_px.0, self.cursor_px.1) {
-                    self.bar_press = None;
-                    self.close_tab_at(i);
-                    return;
+                // middle button on the CARD closes the workspace (I9); on the TAB
+                // it closes the tab; on the grid it pastes PRIMARY
+                match hit {
+                    Hit::Card(i) => {
+                        self.close_workspace(i);
+                        return;
+                    },
+                    Hit::Tab(i) => {
+                        self.bar_press = None;
+                        self.close_tab_at(i);
+                        return;
+                    },
+                    _ => {},
                 }
                 // pasting talks to the app, so the view goes back to live
                 self.tabs[self.active].view_off = 0;
@@ -2763,51 +2808,28 @@ impl App {
         self.next_toast();
     }
 
-    /// A press on the `status_show chip` box dismisses it (`B47`).
+    /// The `status_show chip` box, when it is on screen (`B47`).
     ///
-    /// Three conditions decide whether there is a box to press, and they are the
-    /// renderer's: `status_show chip` is on, the search bar is not holding the
-    /// last row (`M-D` wins it), and the root record is not `idle`. The box itself
-    /// is `chrome::StateChip` — the same one the drawing used, so what is seen is
-    /// what is pressed.
-    fn chip_clicked(&mut self, px: f64, py: f64) -> bool {
+    /// Three conditions decide it, and they are the renderer's: `status_show chip`
+    /// is on, the search bar is not holding the last row (`M-D` wins it), and the
+    /// root record is not `idle`. The box itself is `chrome::StateChip` — the same
+    /// one the drawing used, so what is seen is what is pressed.
+    fn chip_shape(&self) -> Option<crate::chrome::StateChip> {
         if self.opts.cfg.status_show != tortty_core::config::StatusShow::Chip
             || self.search.is_some()
         {
-            return false;
+            return None;
         }
-        let Some((_, word, detail)) = self.tabs[self.active].term.status_chip() else {
-            return false;
-        };
-        let chip = crate::chrome::StateChip { word, detail };
-        if !chip.hit(self.chrome_metrics(), px, py) {
-            return false;
-        }
+        let (_, word, detail) = self.tabs.get(self.active)?.term.status_chip()?;
+        Some(crate::chrome::StateChip { word, detail })
+    }
+
+    /// A press on the chip ends the state it shows and the bar that came with it.
+    fn dismiss_chip(&mut self) {
         self.tabs[self.active].term.dismiss_status();
         if let Some(w) = self.window.as_ref() {
             w.request_redraw();
         }
-        true
-    }
-
-    /// A click inside the box dismisses it. The box floats over the grid, above
-    /// the chrome and under the menu, so the press does not start a selection and
-    /// does not reach the child. The box is derived from the same notice the
-    /// renderer drew it from (`chrome::Toast`), so there is no stale rectangle to
-    /// click on after it has expired.
-    fn toast_clicked(&mut self, px: f64, py: f64) -> bool {
-        let Some(t) = self.toast_text() else {
-            return false;
-        };
-        let m = self.chrome_metrics();
-        let Some(notice) = crate::chrome::Toast::build(m, &t.title, &t.detail) else {
-            return false;
-        };
-        if !notice.hit(m, px, py) {
-            return false;
-        }
-        self.drop_toast();
-        true
     }
 
     /// Toast for the renderer, with the count when there was a repeat.

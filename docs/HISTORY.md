@@ -1546,3 +1546,27 @@ para o pintor. Concordavam por aritmética.
   **depois** do toast e era testado **antes** dele. Um clique sobre um toast que
   estivesse sob o menu apagava o aviso em vez de escolher a linha. Agora o menu é
   o primeiro dos dois, como manda o que está na frente.
+
+## 2026-11-17 — um só lugar decide o que o ponteiro acertou
+
+A geometria do chrome já era uma só; a **ordem** não. O desenho (`render::build`)
+chamava as coisas numa sequência e o `on_mouse_input` testava numa outra, escrita à
+mão: toast, chip, menu, carta, aba… Duas ordens para as mesmas caixas, mantidas em
+dia por leitura. E a cadeia tinha o cartão e a aba escritos duas vezes — uma para o
+modo sem mouse, outra para o modo com mouse — com a barra de rolagem só na
+primeira.
+- `chrome::Scene` + `chrome::Hit`: um valor por pressão, montado sob demanda com as
+  mesmas funções que desenham, que responde `MenuRow(i)`, `Menu`, `Toast`, `Chip`,
+  `Card(i)`, `Tab(i)`, `Bar`, `Scrollbar` ou `Grid` **na ordem do desenho ao
+  contrário** — o menu, pintado por último, é o primeiro a ser perguntado. O app
+  virou um `match` sobre isso; `open_menu` e `select_input` recebem o `Hit` em vez
+  de recalcular o contexto.
+- Três testes novos, e nenhum deles precisa de mouse: o menu ganha do toast que
+  cobre, o chip ganha da própria caixa, e carta/aba/barra respondem onde são
+  desenhadas.
+- Medido no Xvfb, tudo por `state`: com um menu aberto, o clique no toast fecha o
+  menu e **o toast fica** (antes era o contrário); sem menu, o clique no toast o
+  apaga, com qualquer botão; o chip apaga o estado; o trilho vai a 196 no topo, 0
+  no pé e 97 no meio; com a criança segurando o mouse (`?1000`), carta, aba e chip
+  continuam nossos e a barra de rolagem continua sendo dela. Os quatro menus:
+  carta 5 itens (Move up desligado na primeira), aba 2, faixa da barra 1, grade 4.

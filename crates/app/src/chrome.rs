@@ -356,6 +356,93 @@ fn wrap(text: &str, n: usize, max: usize) -> Vec<String> {
     out
 }
 
+/// What the pointer is standing on, as the chrome sees it.
+///
+/// The order of the variants is the order the drawing puts things on screen, from
+/// the last painted to the first, and `Scene::hit` answers in it.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Hit {
+    /// A usable row of the open context menu.
+    MenuRow(usize),
+    /// The menu is open and the pointer is not on a row: the press closes it.
+    Menu,
+    /// The notice box (`I12`/`K13`).
+    Toast,
+    /// The `status_show chip` box (`B47`).
+    Chip,
+    /// A workspace card (`I9`).
+    Card(usize),
+    /// A tab of the bar (`I9`).
+    Tab(usize),
+    /// The bar's own strip, right of the last tab — and, with a single tab there
+    /// is no bar, the margin above the grid. It holds no content: a right press
+    /// there only has the bar's menu (`M-V`).
+    Bar,
+    /// The scrollbar (`M-M`), over the grid's last column.
+    Scrollbar,
+    /// Nothing of the chrome: the grid, and the child behind it.
+    Grid,
+}
+
+/// The chrome of one frame, as the pointer sees it.
+///
+/// One value per press, built on demand from the same functions that draw: it
+/// cannot go stale, and there is no second ordering to keep in step with the
+/// drawing.
+pub struct Scene<'a> {
+    pub metrics: Metrics,
+    /// Window width in px: the scrollbar's target reaches its right edge.
+    pub window_w: f64,
+    /// Pointer, in window px.
+    pub at: (f64, f64),
+    pub layout: &'a Layout,
+    pub menu: Option<&'a Menu>,
+    pub toast: Option<&'a Toast>,
+    pub chip: Option<&'a StateChip>,
+    pub scrollbar: Option<&'a Scrollbar>,
+}
+
+impl Scene<'_> {
+    /// What claims the press at `at`.
+    ///
+    /// The order is the drawing's, backwards: `render::Renderer::build` paints
+    /// the bar and the cards, then the scrollbar, then the bottom row (the search
+    /// or the chip), then the toast, and last the menu — so a press is offered to
+    /// them in exactly that reverse order. The one on top wins and the one under
+    /// it does not hear about the click: before this, the chain in `app.rs` was a
+    /// second ordering written by hand, and a menu drawn over a toast was pressed
+    /// after it — the click dismissed the notice instead of choosing the row.
+    #[must_use]
+    pub fn hit(&self) -> Hit {
+        let (x, y) = self.at;
+        if let Some(m) = self.menu {
+            return m.row_at(self.metrics, x, y).map_or(Hit::Menu, Hit::MenuRow);
+        }
+        if self.toast.is_some_and(|t| t.hit(self.metrics, x, y)) {
+            return Hit::Toast;
+        }
+        if self.chip.is_some_and(|c| c.hit(self.metrics, x, y)) {
+            return Hit::Chip;
+        }
+        if let Some(i) = self.layout.card_at(x, y) {
+            return Hit::Card(i);
+        }
+        if let Some(i) = self.layout.tab_at(x, y) {
+            return Hit::Tab(i);
+        }
+        if y < f64::from(self.metrics.pad + self.metrics.bar) {
+            return Hit::Bar;
+        }
+        if self
+            .scrollbar
+            .is_some_and(|s| s.hit(self.metrics, self.window_w, x, y))
+        {
+            return Hit::Scrollbar;
+        }
+        Hit::Grid
+    }
+}
+
 impl Metrics {
     #[must_use]
     pub fn card_h(&self) -> f32 {
@@ -973,6 +1060,162 @@ mod tests {
         // a title wider than the grid is cut, never a box wider than the grid
         let long = Toast::build(m, &"x".repeat(200), "").expect("one line");
         assert!(long.rect[2] <= m.cols as f32 * m.cw);
+    }
+
+    // ---- the chrome scene ----
+
+    /// The scene of `metrics()` with nothing open: the bar of `tabs()`, one card
+    /// column, history behind the view and the pointer where the caller says.
+    fn scene_at<'a>(at: (f64, f64), layout: &'a Layout, parts: Parts<'a>) -> Scene<'a> {
+        Scene {
+            metrics: metrics(),
+            window_w: 184.0 + 400.0,
+            at,
+            layout,
+            menu: parts.menu,
+            toast: parts.toast,
+            chip: parts.chip,
+            scrollbar: parts.scrollbar,
+        }
+    }
+
+    #[derive(Default, Clone, Copy)]
+    struct Parts<'a> {
+        menu: Option<&'a Menu>,
+        toast: Option<&'a Toast>,
+        chip: Option<&'a StateChip>,
+        scrollbar: Option<&'a Scrollbar>,
+    }
+
+    /// The menu is the last thing drawn, so it is the first to be pressed — even
+    /// where a notice is drawn under it, and even where the pointer is not on a
+    /// usable row (then the press closes it).
+    #[test]
+    fn the_menu_claims_the_press_before_the_notice_under_it() {
+        let m = metrics();
+        let layout = Layout::build(m, &tabs(), 1, 0);
+        let toast = Toast::build(m, "boom", "the disk is full").expect("text");
+        // the pointer on the middle of the notice
+        let at = (
+            f64::from(m.pad + m.side) + f64::from(toast.rect[0] + toast.rect[2] / 2.0),
+            f64::from(m.pad + m.bar) + f64::from(toast.rect[1] + toast.rect[3] / 2.0),
+        );
+        // without a menu, the notice wins
+        let s = scene_at(
+            at,
+            &layout,
+            Parts {
+                toast: Some(&toast),
+                ..Parts::default()
+            },
+        );
+        assert_eq!(s.hit(), Hit::Toast);
+        // with one hanging from the pointer, the menu's row wins over the notice
+        let menu = Menu::build(m, &GRID_MENU, Anchor::Pointer, at);
+        let s = scene_at(
+            at,
+            &layout,
+            Parts {
+                menu: Some(&menu),
+                toast: Some(&toast),
+                ..Parts::default()
+            },
+        );
+        assert!(matches!(s.hit(), Hit::MenuRow(_)), "{:?}", s.hit());
+        // and the pointer off its rows is still the menu's: the press closes it
+        let away = Menu::build(m, &GRID_MENU, Anchor::Pointer, (10.0, 30.0));
+        let s = scene_at(
+            at,
+            &layout,
+            Parts {
+                menu: Some(&away),
+                toast: Some(&toast),
+                ..Parts::default()
+            },
+        );
+        assert_eq!(s.hit(), Hit::Menu);
+    }
+
+    /// The chip is drawn on the grid's last row, over the strip and the text:
+    /// where it stands, it is the chip that is pressed.
+    #[test]
+    fn the_chip_claims_its_box_and_the_strip_is_the_strips() {
+        let m = metrics();
+        let layout = Layout::build(m, &tabs(), 1, 0);
+        let chip = StateChip {
+            word: "done".to_string(),
+            detail: String::new(),
+        };
+        let sb = Scrollbar::new(90, m.rows, 0);
+        let rect = chip.rect(m).expect("it fits");
+        // inside the box: the chip, not the grid under it
+        let at = (
+            f64::from(m.pad + m.side + rect[0] + 2.0),
+            f64::from(m.pad + m.bar + rect[1] + 2.0),
+        );
+        let s = scene_at(
+            at,
+            &layout,
+            Parts {
+                chip: Some(&chip),
+                scrollbar: sb.as_ref(),
+                ..Parts::default()
+            },
+        );
+        assert_eq!(s.hit(), Hit::Chip);
+        // on the strip, one row up: the scrollbar, not the grid
+        let strip_x = 184.0 + f64::from(m.cols as f32 * m.cw) - 2.0;
+        let s = scene_at(
+            (strip_x, 100.0),
+            &layout,
+            Parts {
+                chip: Some(&chip),
+                scrollbar: sb.as_ref(),
+                ..Parts::default()
+            },
+        );
+        assert_eq!(s.hit(), Hit::Scrollbar);
+        // with nothing to scroll the strip is not there, and the same pixel is
+        // the grid's again
+        let s = scene_at(
+            (strip_x, 100.0),
+            &layout,
+            Parts {
+                chip: Some(&chip),
+                ..Parts::default()
+            },
+        );
+        assert_eq!(s.hit(), Hit::Grid);
+    }
+
+    /// The rest of the chrome answers where it is drawn: a card, a tab, the bar's
+    /// strip, and the grid for everything else.
+    #[test]
+    fn the_card_the_tab_and_the_bar_answer_where_they_are_drawn() {
+        let m = metrics();
+        let layout = Layout::build(m, &tabs(), 1, 0);
+        // the first card: the test layout puts it under the bar, on the sidebar
+        assert_eq!(
+            scene_at((14.0, 34.0), &layout, Parts::default()).hit(),
+            Hit::Card(0)
+        );
+        // the first tab: the bar's row, right of the sidebar
+        assert_eq!(
+            scene_at((190.0, 10.0), &layout, Parts::default()).hit(),
+            Hit::Tab(0)
+        );
+        // the bar's own strip, right of the last tab
+        let last = layout.tabs.last().expect("three tabs");
+        let strip = 184.0 + f64::from(last.rect[0] + last.rect[2]) + 2.0;
+        assert_eq!(
+            scene_at((strip, 10.0), &layout, Parts::default()).hit(),
+            Hit::Bar
+        );
+        // and the screen itself, which is the child's
+        assert_eq!(
+            scene_at((300.0, 100.0), &layout, Parts::default()).hit(),
+            Hit::Grid
+        );
     }
 
     // ---- scrollbar ----
