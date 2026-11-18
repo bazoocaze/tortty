@@ -1,8 +1,9 @@
 //! The app: window, pty, keyboard, drawing and the introspection socket.
 
+use std::fmt::Write as _;
 use std::io::{Read as _, Write as _};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use tortty_core::config::{Bell, RestoreState};
@@ -20,6 +21,7 @@ use crate::clip::Clip;
 use crate::debugsock::{self, DebugServer};
 use crate::glyph::Fonts;
 use crate::keys;
+use crate::log;
 use crate::platform;
 use crate::prof;
 use crate::pty::Pty;
@@ -205,39 +207,6 @@ fn hex(bytes: &[u8]) -> String {
         })
 }
 
-static LOG: Mutex<Option<std::fs::File>> = Mutex::new(None);
-
-pub fn set_log(path: &str) {
-    let mut slot = LOG.lock().unwrap();
-    if path.is_empty() || path == "off" {
-        *slot = None;
-        return;
-    }
-    *slot = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .ok();
-}
-
-pub fn logln(msg: &str) {
-    if let Ok(mut slot) = LOG.lock() {
-        if let Some(f) = slot.as_mut() {
-            use std::io::Write as _;
-            let _ = writeln!(f, "{msg}");
-        }
-    }
-}
-
-/// When this process started: the `+ms` stamps of the debug log are relative to
-/// it, and the log says the epoch once so they can be turned into wall clock.
-static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-
-fn log_stamp() -> String {
-    let start = START.get_or_init(std::time::Instant::now);
-    format!("+{:.1}ms", start.elapsed().as_secs_f64() * 1000.0)
-}
-
 /// One `?2026` transaction in the debug log: when it opened, how long it held
 /// the screen, and what it cleared/reset while holding it (`SyncTrace`).
 ///
@@ -251,14 +220,17 @@ fn log_sync(tab: &mut Tab, who: &str, view_before: usize, now: std::time::Instan
     if let Some(t) = tab.term.sync_open() {
         if tab.sync_at.is_none() {
             tab.sync_at = Some(now);
-            logln(&format!(
-                "{who} sync open {} — feeds {}, {} B, view {view_before}, hist {}{}",
-                log_stamp(),
-                t.feeds,
-                t.bytes,
-                tab.term.scrollback.len(),
-                tally(t),
-            ));
+            log::line(
+                log::Level::Info,
+                "sync",
+                &format!(
+                    "{who} open — feeds {}, {} B, view {view_before}, hist {}{}",
+                    t.feeds,
+                    t.bytes,
+                    tab.term.scrollback.len(),
+                    tally(t),
+                ),
+            );
         }
     }
     for t in tab.term.take_sync_closed() {
@@ -266,24 +238,58 @@ fn log_sync(tab: &mut Tab, who: &str, view_before: usize, now: std::time::Instan
             .sync_at
             .take()
             .map_or(0.0, |at| now.duration_since(at).as_secs_f64() * 1000.0);
-        logln(&format!(
-            "{who} sync closed {} after {held:.1} ms — feeds {}, {} B, view {view_before}→{view_now}, \
-             hist {}{}",
-            log_stamp(),
-            t.feeds,
-            t.bytes,
-            tab.term.scrollback.len(),
-            tally(&t),
-        ));
+        log::line(
+            log::Level::Info,
+            "sync",
+            &format!(
+                "{who} closed after {held:.1} ms — feeds {}, {} B, view {view_before}→{view_now}, \
+                 hist {}{}",
+                t.feeds,
+                t.bytes,
+                tab.term.scrollback.len(),
+                tally(&t),
+            ),
+        );
     }
 }
 
 /// The counters of one window, in a fixed order so two lines can be diffed.
+///
+/// Only what the window actually carried is printed: eleven `×0` in every line
+/// is longer than the datum and hides the one counter that is not zero. An empty
+/// tally appends nothing at all, so a line that says `hist 12` and stops is a
+/// window that carried no clears.
 fn tally(t: &tortty_core::term::SyncTrace) -> String {
-    format!(
-        " — ed0×{} ed1×{} ed2×{} ed3×{} el×{} home×{} stbm×{} alt×{} ris×{} decstr×{} hist+{}",
-        t.ed[0], t.ed[1], t.ed[2], t.ed[3], t.el, t.home, t.stbm, t.alt, t.ris, t.decstr, t.hist
-    )
+    let mut out = String::new();
+    for (name, n) in [
+        ("ed0", t.ed[0]),
+        ("ed1", t.ed[1]),
+        ("ed2", t.ed[2]),
+        ("ed3", t.ed[3]),
+        ("el", t.el),
+        ("home", t.home),
+        ("stbm", t.stbm),
+        ("alt", t.alt),
+        ("ris", t.ris),
+        ("decstr", t.decstr),
+    ] {
+        if n > 0 {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            let _ = write!(out, "{name}×{n}");
+        }
+    }
+    if t.hist > 0 {
+        if !out.is_empty() {
+            out.push(',');
+        }
+        let _ = write!(out, " pushed {}", t.hist);
+    }
+    if out.is_empty() {
+        return out;
+    }
+    format!(" — {out}")
 }
 
 /// A context menu open at the pointer (`M-V`): which rows it lists, what it
@@ -856,7 +862,7 @@ impl App {
         match std::fs::write(&path, self.dump_text()) {
             Ok(()) => {
                 self.dumped = true;
-                logln(&format!("dump: {}", path.display()));
+                log::line(log::Level::Info, "dump", &path.display().to_string());
             },
             Err(e) => eprintln!("dump failed: {}: {e}", path.display()),
         }
@@ -2664,19 +2670,23 @@ impl App {
                     // a program that scrolls *between* frames leaves no trace
                     // there, and that is exactly the case under investigation.
                     let t = &self.tabs[i].term;
-                    logln(&format!(
-                        "{who} view {off}→{after} — scrolled {}→{} (sync {}→{}), gen {}→{}, \
-                         hist {}→{}, open {}",
-                        mark.scrolled(),
-                        t.scrolled,
-                        mark.redraw(),
-                        t.scrolled_sync,
-                        mark.generation(),
-                        t.hist_gen,
-                        mark.history(),
-                        t.scrollback.len(),
-                        t.sync_open().is_some(),
-                    ));
+                    log::line(
+                        log::Level::Info,
+                        "view",
+                        &format!(
+                            "{who} {off}→{after} — scrolled {}→{} (sync {}→{}), gen {}→{}, \
+                             hist {}→{}, open {}",
+                            mark.scrolled(),
+                            t.scrolled,
+                            mark.redraw(),
+                            t.scrolled_sync,
+                            mark.generation(),
+                            t.hist_gen,
+                            mark.history(),
+                            t.scrollback.len(),
+                            t.sync_open().is_some(),
+                        ),
+                    );
                 }
                 self.tabs[i].view_off = after;
             }
@@ -2765,10 +2775,16 @@ impl App {
         if let Some(life) = life {
             t.life = life;
         }
-        logln(&format!(
-            "toast: {severity:?} {title}{} {detail}",
-            if detail.is_empty() { "" } else { " —" }
-        ));
+        // the level of the line is the severity of the box: a warning on screen is
+        // a warning in the file, and the area says it was a toast
+        log::line(
+            severity.level(),
+            "toast",
+            &format!(
+                "{title}{}{detail}",
+                if detail.is_empty() { "" } else { " — " }
+            ),
+        );
         // The same words again — on screen or already waiting — only raise the
         // count; anything else waits behind whatever is being read. A repeat must
         // not restart the clock, or a program that repeats itself pins the box to
@@ -2913,12 +2929,16 @@ impl App {
         let (new, errs) = crate::cli::Options::build(self.over.clone());
         self.cfg_errors = errs.iter().map(std::string::ToString::to_string).collect();
         if !errs.is_empty() {
-            logln(&format!(
-                "config: {} kept; {} error(s), the first at {}",
-                path.display(),
-                errs.len(),
-                errs[0]
-            ));
+            log::line(
+                log::Level::Warn,
+                "config",
+                &format!(
+                    "{} kept; {} error(s), the first at {}",
+                    path.display(),
+                    errs.len(),
+                    errs[0]
+                ),
+            );
             // K13: the file is edited in an editor, which does not show our log
             // — the notice has to appear on screen with the first line, the
             // count, and the fact that what is running did not change.
@@ -2929,7 +2949,11 @@ impl App {
             );
             return;
         }
-        logln(&format!("config: {} reloaded", path.display()));
+        log::line(
+            log::Level::Info,
+            "config",
+            &format!("{} reloaded", path.display()),
+        );
         // The file is saved while the terminal runs, and the owner needs to know
         // it took effect — not only when the previous save was refused. The
         // family and the size are the proof that this is the file in force (the
@@ -2958,9 +2982,6 @@ impl App {
             r.apply_theme(&self.tabs[self.active].term.theme);
             r.apply_layout(&new.cfg);
         }
-        if let Some(path) = new.debug_log.as_deref() {
-            set_log(path);
-        }
         let _ = text;
         if font_changed {
             self.opts.font_family = new.font_family;
@@ -2968,8 +2989,18 @@ impl App {
             self.opts.dpi = new.dpi;
             self.rebuild_renderer();
         }
-        if log_changed && new.debug_log.is_none() {
-            set_log("");
+        if log_changed {
+            match new.debug_log.as_deref() {
+                Some(path) => log::set(path),
+                None => log::set(""),
+            }
+            // the reload is the moment the file changes, so the old path must go:
+            // without it every later reload would reopen the same file and print
+            // the prologue again
+            self.opts.debug_log = new.debug_log;
+            if log::on() {
+                self.log_prologue();
+            }
         }
         // the padding changed: the grid is another one, so ask for the size again
         if let (Some(win), Some(r)) = (self.window.as_ref(), self.renderer.as_ref()) {
@@ -2993,7 +3024,7 @@ impl App {
         let fonts = match Fonts::new(&self.opts.font_family, self.font_px(scale)) {
             Ok(f) => f,
             Err(e) => {
-                logln(&format!("font: {e}"));
+                log::line(log::Level::Err, "font", &e);
                 self.renderer = Some(old);
                 return;
             },
@@ -3001,7 +3032,11 @@ impl App {
         drop(old);
         match Renderer::new(&window, fonts, self.opts.vsync, &self.opts.cfg) {
             Ok(r) => self.renderer = Some(r),
-            Err(e) => logln(&format!("GPU while switching the font: {e}")),
+            Err(e) => log::line(
+                log::Level::Err,
+                "gpu",
+                &format!("while switching the font: {e}"),
+            ),
         }
         let size = window.inner_size();
         self.apply_size(size.width, size.height);
@@ -3514,12 +3549,15 @@ impl App {
             "log" => {
                 // turns on/off/changes the path at runtime; `off` turns it off
                 let value = req.get("value").and_then(|v| v.as_str()).unwrap_or("off");
-                set_log(value);
+                log::set(value);
                 self.opts.debug_log = if value.is_empty() || value == "off" {
                     None
                 } else {
                     Some(value.to_string())
                 };
+                if log::on() {
+                    self.log_prologue();
+                }
                 debugsock::ok(serde_json::json!({ "path": value }))
             },
             "quit" => {
@@ -4586,6 +4624,12 @@ impl ApplicationHandler<UserEvent> for App {
         if self.window.is_some() {
             return;
         }
+        // the log opens before the GPU does: a window that does not come up is
+        // exactly the case the file has to explain, and a line written before the
+        // file exists is lost
+        if let Some(path) = self.opts.debug_log.clone() {
+            log::set(&path);
+        }
         let scale = event_loop
             .primary_monitor()
             .map_or(1.0, |m| m.scale_factor());
@@ -4593,6 +4637,8 @@ impl ApplicationHandler<UserEvent> for App {
             Ok(f) => f,
             Err(e) => {
                 eprintln!("tortty: {e}");
+                self.log_prologue();
+                log::line(log::Level::Err, "font", &e);
                 event_loop.exit();
                 return;
             },
@@ -4634,6 +4680,8 @@ impl ApplicationHandler<UserEvent> for App {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("tortty: GPU: {e}");
+                self.log_prologue();
+                log::line(log::Level::Err, "gpu", &e);
                 event_loop.exit();
                 return;
             },
@@ -4649,29 +4697,14 @@ impl ApplicationHandler<UserEvent> for App {
         // born earlier, the first KB come out at the requested width and the
         // first WM resize shuffles what was already on screen
         self.apply_size(size.width, size.height);
-        let (cols, rows) = (
-            self.tabs[self.active].term.cols,
-            self.tabs[self.active].term.rows,
-        );
 
-        // the log first: everything below it is something the log is supposed to
-        // record, and a socket line written before the file exists is lost
-        if let Some(path) = self.opts.debug_log.clone() {
-            set_log(&path);
-            // the epoch is what turns the `+ms` stamps into wall clock
-            let epoch = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default();
-            logln(&format!(
-                "log start: {} epoch {} ms",
-                log_stamp(),
-                epoch.as_millis()
-            ));
+        if log::on() {
+            self.log_prologue();
         }
         if let Some(path) = self.opts.debug_socket.clone() {
             match DebugServer::start(&path, self.proxy.clone()) {
                 Ok(s) => {
-                    logln(&format!("debug socket: {}", s.path()));
+                    log::line(log::Level::Info, "socket", s.path());
                     // whoever opened the surface has to know it is standing, and
                     // standing is a warning: anything on the machine can drive
                     // this window through it
@@ -4684,24 +4717,13 @@ impl ApplicationHandler<UserEvent> for App {
                 },
                 Err(e) => {
                     // whoever opened the debug surface has to know it is not up,
-                    // on stderr and in the toast
+                    // on stderr, in the log and in the toast
                     eprintln!("tortty: debug socket: {e}");
+                    log::line(log::Level::Err, "socket", &e);
                     self.toast("Debug socket", &e, Severity::Err);
                 },
             }
         }
-        logln(&format!(
-            "tortty {} — {}x{} cells, cell {}x{}, font {} {}px",
-            env!("CARGO_PKG_VERSION"),
-            cols,
-            rows,
-            self.renderer.as_ref().map_or(0.0, |r| r.fonts.cw),
-            self.renderer.as_ref().map_or(0.0, |r| r.fonts.ch),
-            self.renderer
-                .as_ref()
-                .map_or_default(|r| r.fonts.family.clone()),
-            self.renderer.as_ref().map_or(0.0, |r| r.fonts.px),
-        ));
         window.request_redraw();
     }
 
@@ -4944,7 +4966,7 @@ impl ApplicationHandler<UserEvent> for App {
         if prof::enabled() || self.opts.prof {
             let summary = prof::summary();
             eprintln!("prof: {summary}");
-            logln(&format!("prof: {summary}"));
+            log::line(log::Level::Info, "prof", &summary);
         }
         // the tab may be gone already: closing the app by the shell exiting is
         // exactly that case (B38)
@@ -4959,6 +4981,36 @@ impl ApplicationHandler<UserEvent> for App {
 const FAREWELL_MS: u64 = 250;
 
 impl App {
+    /// The line that says who wrote the file and where in time: version, grid,
+    /// cell, font, and the two numbers that turn the local stamps back into an
+    /// instant. Written whenever a log is opened, so they are never far from the
+    /// stamps they explain.
+    fn log_prologue(&self) {
+        let (cols, rows) = self
+            .tabs
+            .get(self.active)
+            .map_or((0, 0), |t| (t.term.cols, t.term.rows));
+        let (cw, ch) = self
+            .renderer
+            .as_ref()
+            .map_or((0.0, 0.0), |r| (r.fonts.cw, r.fonts.ch));
+        let family = self
+            .renderer
+            .as_ref()
+            .map_or_default(|r| r.fonts.family.clone());
+        let px = self.renderer.as_ref().map_or(0.0, |r| r.fonts.px);
+        log::line(
+            log::Level::Info,
+            "app",
+            &format!(
+                "tortty {} — {cols}x{rows} cells, cell {cw:.4}x{ch:.4}, font {family} {px:.2}px, \
+                 epoch {} ms, tz {}",
+                env!("CARGO_PKG_VERSION"),
+                log::epoch_ms(),
+                log::tz(),
+            ),
+        );
+    }
     /// Closing the window is a hangup, and the last words of the child belong to
     /// the picture (`B48`): `pi` leaves the alt screen and prints
     /// `To resume this session: pi --session …`, `cargo` prints its last line.

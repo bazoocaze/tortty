@@ -2903,6 +2903,16 @@ impl Severity {
             Severity::Err => Color::Idx(1),
         }
     }
+
+    /// The same shade in the event log: a warning on screen is a warning in the
+    /// file, and a receipt is not one.
+    pub fn level(self) -> crate::log::Level {
+        match self {
+            Severity::Ok => crate::log::Level::Info,
+            Severity::Warn => crate::log::Level::Warn,
+            Severity::Err => crate::log::Level::Err,
+        }
+    }
 }
 
 /// The notice as the renderer needs it: own text, like `TabInfo`/`WsCard`, so the

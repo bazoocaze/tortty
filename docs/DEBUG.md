@@ -40,46 +40,103 @@ probe wants a clean start.
 | `--no-vsync` | draws as fast as possible (measure throughput) |
 | `--prof` | turns on the `draw`/`parse`/`pty` counters (queried by `prof`) |
 | `--debug-socket PATH\|auto` | JSON introspection socket (`auto` = `$XDG_RUNTIME_DIR/tortty-<pid>.sock`) |
-| `--debug-log FILE` | event log (`logln`): startup, toasts, config reloads and every `?2026` transaction |
+| `--debug-log FILE` | the event log — one line per event, four columns ([`The event log`](#the-event-log)) |
 | `WGPU_BACKEND=gl\|vulkan` | forces the `wgpu` backend (escape valve for a problematic GPU) |
 | `WGPU_ADAPTER_NAME=…` | picks the adapter (useful to test llvmpipe) |
 | `SHELL=…` | default shell when there is no `--cmd` |
 
-### The `?2026` log: what a synchronized update did
+## The event log
 
-`--debug-log` records every `?2026` (synchronized output) window the child
-opens, one line per window, with the counters of what happened inside it:
+`--debug-log FILE` (or the socket's `log` verb) writes one line per event. Every
+line is the same four columns, so `cut`, `awk` and `grep` work without a parser:
 
 ```
-log start: +0.0ms epoch 1794081658402 ms
-tab 1 sync closed +4865.4ms after 0.0 ms — feeds 1, 0 B, view 0→0, hist 0 — ed0×0 ... el×18 home×0 stbm×0 alt×0 ris×0 decstr×0 hist+0
+2026-11-17 22:48:08.608  info  sync     tab 2 closed after 7.1 ms — feeds 3, 193 B, view 0→0, hist 20 — ed2×1 home×1, pushed 20
+│                       │     │       └ the message, free text
+│                       │     └ the area: one word, never carrying a space
+│                       └ err | warn | info
+└ local time, ISO 8601 date + HH:MM:SS.mmm — 23 columns, sortable as text
 ```
 
-- `feeds 1, 0 B` — the window opened **and** closed inside one pty read, so the
-  parser never held the screen and the duration is `0.0 ms`. `feeds > 1` means
-  the app took several reads to finish the frame, and then the duration is the
-  time it kept us waiting.
+- **`err`** cost the owner a feature (the window did not come up, the font did
+  not switch); **`warn`** went on with a wound (the config was kept with errors,
+  the socket is open to the machine); **`info`** is everything that happened.
+  There is no filter: the file only exists when someone asked for it, and hiding
+  lines from it would hide them from that person. A `toast` line takes the level
+  of the box it describes — a warning on screen is a warning in the file.
+- **The area** is one word: `app`, `socket`, `config`, `font`, `gpu`, `toast`,
+  `sync`, `view`, `dump`, `prof`. A tab-scoped event says its tab in the message
+  (`sync  tab 2 open …`), because the tab is a subject and not a kind of event.
+- **Only what happened** is printed: a window with no clears says nothing about
+  clears, instead of eleven `×0` that hide the one counter that is not zero.
+- **The prologue** is written every time a file is opened — at startup and on the
+  `log` verb — and it is the line that makes the rest readable:
+
+```
+2026-11-17 22:48:05.825  info  app      tortty 1.0.114 — 50x12 cells, cell 9.6328x18.6250, font DejaVu Sans Mono 16.00px, epoch 1794966485825 ms, tz -03:00
+2026-11-17 22:48:05.825  info  socket   /tmp/cc/tt.sock
+```
+
+The hour is **local**, because the reader compares the line with their own clock.
+`epoch` and `tz` are what turn that local time back into an instant when two logs
+have to be matched: `epoch` is the millisecond of the prologue's own stamp and
+`tz` the offset of the column from UTC. The file is opened *before* the GPU and
+before the socket, so a window that does not come up still says which build and
+when — and why:
+
+```
+2026-11-17 22:50:57.806  info  app      tortty 1.0.115 — 50x12 cells, cell 0.0000x0.0000, font  0.00px, epoch 1794966657806 ms, tz -03:00
+2026-11-17 22:50:57.806  err   gpu      surface: Failed to create surface for any enabled backend: {}
+```
+
+`cell 0.0000x0.0000` is the honest reading: there was no renderer to ask.
+
+`platform::utc_offset_secs` is the only part of this that knows a system: the
+core has no clock and the rest of the app has no timezone.
+
+### A `?2026` window
+
+One line when the window opens and one when it closes, with the counters of what
+it carried:
+
+```
+2026-11-17 22:48:08.601  info  sync     tab 2 open — feeds 1, 0 B, view 0, hist 0 — ed2×1 home×1
+2026-11-17 22:48:08.608  info  sync     tab 2 closed after 7.1 ms — feeds 3, 193 B, view 0→0, hist 20 — ed2×1 home×1, pushed 20
+```
+
+- `feeds 1, 0 B` on a **closed** line — the window opened **and** closed inside
+  one pty read, so the parser never held the screen and the duration is `0.0 ms`.
+  There is no `open` line in that case: there was no moment at which it was open.
+  `feeds > 1` means the app took several reads to finish the frame, and then the
+  duration is the time it kept us waiting.
 - `ed0..3`, `el`, `home`, `stbm`, `alt`, `ris`, `decstr` — the clears and resets
   the window carried: `ed2` erases the screen, `ed3` erases the scrollback too,
   `el` is the per-line erase a repaint uses, `home` is `CSI H` to `1;1`, `stbm`
   is a scroll region, `alt` an alt-screen switch, `ris`/`decstr` the two resets.
-- `hist+N` — lines the window pushed into the scrollback. Whether they move a
-  scrolled-up view depends on what the window is: a window that erased the screen
-  or sent the cursor home is **drawing again** what is already there, and its rows
-  are ignored (`B41`); a window that only writes is appending new output, and its
-  rows count like any other (`B53`). `ed2`/`ed3`/`home`/`ris` are the marks that
-  tell the two apart — `el` is not, because a line-by-line append clears lines too.
+- `hist N` is how long the scrollback is; `pushed N` is how many lines this
+  window pushed into it. Whether they move a scrolled-up view depends on what the
+  window is: a window that erased the screen or sent the cursor home is **drawing
+  again** what is already there, and its rows are ignored (`B41`); a window that
+  only writes is appending new output, and its rows count like any other
+  (`B53`). `ed2`/`ed3`/`home`/`ris` are the marks that tell the two apart — `el`
+  is not, because a line-by-line append clears lines too.
 - `view A→B` — our view offset before and after the read.
+
+A window that never closes is logged once as `open` and then only at `state`
+(`"sync": true`); a `RIS` inside it closes the trace with `ris×1` because a full
+reset ends the DEC modes. The core counts and the app times: `SyncTrace`
+(`crates/core/src/term.rs`) has no clock, and the app stamps the window when it
+first sees it open.
 
 ### The view line: who moved the reader
 
 A window line says what the frame did, not what moved the reader *between*
 frames — and a program that scrolls outside the `?2026` windows leaves no trace
 there (that is how `B53` hid). So every read that **changes** the reading
-position writes one extra line:
+position writes one extra line, with the area `view`:
 
 ```
-tab 1 view 103→104 — scrolled 1204→1205 (sync 1180→1180), gen 0→0, hist 1205→1206, open false
+2026-11-17 22:48:09.417  info  view     tab 1 103→104 — scrolled 1204→1205 (sync 1180→1180), gen 0→0, hist 1205→1206, open false
 ```
 
 - `scrolled` and `sync` are the two counters of `view_after_output`: the
@@ -89,12 +146,6 @@ tab 1 view 103→104 — scrolled 1204→1205 (sync 1180→1180), gen 0→0, his
   the view is clamped to what was visible, never carried to the top.
 - `open true` means the line was written while a `?2026` window was still open —
   rows of a frame being counted as output would be the bug.
-
-The core counts and the app times: `SyncTrace` (`crates/core/src/term.rs`) has no
-clock, and the app stamps the window when it first sees it open. A window that
-never closes is logged once as `sync open` and then only at `state` (`"sync":
-true`); a `RIS` inside it closes the trace with `ris×1` because a full reset ends
-the DEC modes.
 
 ## Visual verification without stealing the owner's screen
 

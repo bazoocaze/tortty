@@ -13,6 +13,7 @@ mod debugsock;
 mod frame;
 mod glyph;
 mod keys;
+mod log;
 mod mouse;
 mod platform;
 mod prof;

@@ -1570,3 +1570,11 @@ primeira.
   no pé e 97 no meio; com a criança segurando o mouse (`?1000`), carta, aba e chip
   continuam nossos e a barra de rolagem continua sendo dela. Os quatro menus:
   carta 5 itens (Move up desligado na primeira), aba 2, faixa da barra 1, grade 4.
+
+## 2026-11-17 — o log fala uma língua só
+
+- `crates/app/src/log.rs` (`log::line(nível, área, mensagem)`): quatro colunas de largura fixa — hora local com ms, `err|warn|info`, área de uma palavra — no lugar de doze `logln` com gramáticas próprias.
+- A hora local pede o fuso: `platform::utc_offset_secs()` (`localtime_r`, o terceiro `unsafe` do projeto); `epoch` e `tz` no prólogo, reescrito a cada arquivo aberto, devolvem o instante sem adivinhar.
+- Só o que aconteceu: `ed2×1 home×1` no lugar de onze `×0`, `hist N` e `pushed N` separados; a linha `toast` herda a severidade da caixa, sem filtro de nível.
+- O log abre antes da GPU e do socket e o prólogo vem primeiro: antes o `debug socket:` caía no vazio e o cabeçalho vinha depois dos toasts.
+- `docs/DEBUG.md` ganhou a gramática e o catálogo com linhas reais; `log::tests` cobre a data civil, o byte 40 da mensagem e o fuso.

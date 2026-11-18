@@ -231,6 +231,33 @@ pub fn try_lock(file: &File) -> bool {
     unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) == 0 }
 }
 
+// ---------------------------------------------------------------- the clock
+
+/// How far the machine's civil time is from UTC, in seconds: the half of the log
+/// stamp the standard library does not give (it hands out UTC only, and reading
+/// the timezone database ourselves would be a dependency for one field). `None`
+/// when libc refuses, and then the log says UTC.
+///
+/// `unsafe`: `localtime_r(3)` fills a `tm` that we own and that is initialized
+/// only on success — the same shape as the `flock` and `signal` calls above.
+#[must_use]
+#[allow(unsafe_code)]
+pub fn utc_offset_secs() -> Option<i32> {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    let when = libc::time_t::try_from(secs).ok()?;
+    let mut tm = std::mem::MaybeUninit::<libc::tm>::uninit();
+    // SAFETY: `when` is a valid `time_t` and `tm` is valid for the write.
+    if unsafe { libc::localtime_r(&raw const when, tm.as_mut_ptr()) }.is_null() {
+        return None;
+    }
+    // SAFETY: `localtime_r` returned non-null, so it filled `tm`.
+    let tm = unsafe { tm.assume_init() };
+    i32::try_from(tm.tm_gmtoff).ok()
+}
+
 // ---------------------------------------------------------------- processes
 
 /// Says goodbye with `SIGHUP` and returns without waiting: what closing a
