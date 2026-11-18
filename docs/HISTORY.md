@@ -1578,3 +1578,10 @@ primeira.
 - Só o que aconteceu: `ed2×1 home×1` no lugar de onze `×0`, `hist N` e `pushed N` separados; a linha `toast` herda a severidade da caixa, sem filtro de nível.
 - O log abre antes da GPU e do socket e o prólogo vem primeiro: antes o `debug socket:` caía no vazio e o cabeçalho vinha depois dos toasts.
 - `docs/DEBUG.md` ganhou a gramática e o catálogo com linhas reais; `log::tests` cobre a data civil, o byte 40 da mensagem e o fuso.
+
+## 2026-11-17 — as fontes dos testes viajam com o código
+
+- A run de CI levou 18 min porque `fonts-noto-cjk` (61,2 MB) chegou a 59 kB/s do espelho: os outros três jobs levaram 28-77 s cada. O gargalo era um download, não compilação.
+- `crates/app/test-assets/` passa a ter quatro subconjuntos (52 KB no total) — DejaVu Sans Mono, DejaVu Sans, Noto Sans CJK SC e Noto Color Emoji — e `Fonts::from_db` deixa o teste montar o próprio banco em vez de ler o sistema.
+- Prova: com `/usr/share/fonts` vazio (namespace), os 151 testes do app passam; o job `test` do CI não instala mais nenhum pacote de fonte.
+- Licenças em `test-assets/LICENSE`: Bitstream Vera (DejaVu) e SIL OFL 1.1 sem Reserved Font Name (Noto), então o subconjunto pode manter o nome.

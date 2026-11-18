@@ -71,7 +71,13 @@ impl Fonts {
     pub fn new(family: &str, px: f32) -> Result<Fonts, String> {
         let mut db = fontdb::Database::new();
         db.load_system_fonts();
+        Fonts::from_db(&db, family, px)
+    }
 
+    /// The same chain, over a database the caller built. `new` is the system's;
+    /// the tests hand it their own fonts (`test-assets/`), so what they measure
+    /// is this code and not what the machine has installed.
+    pub fn from_db(db: &fontdb::Database, family: &str, px: f32) -> Result<Fonts, String> {
         // `font_family` is a list and the first **installed** name wins, so a
         // single template covers the versions of a system: `Cascadia Mono,
         // Consolas` is Cascadia on Windows 11 and Consolas on Windows 10. A
@@ -82,16 +88,16 @@ impl Fonts {
         let mut chosen: Option<(Face, String)> = None;
         for name in family.split(',').map(str::trim).filter(|n| !n.is_empty()) {
             chosen = if generic_name(name) {
-                prefer_chain(&db)
+                prefer_chain(db)
             } else {
-                query(&db, name, 400, fontdb::Style::Normal)
+                query(db, name, 400, fontdb::Style::Normal)
             };
             if chosen.is_some() {
                 break;
             }
         }
         let (primary, real_family) = chosen
-            .or_else(|| prefer_chain(&db))
+            .or_else(|| prefer_chain(db))
             .ok_or_else(|| format!("no monospaced font found ({family})"))?;
         // The styles are asked of the family that was really found. The old code
         // kept the configured name here, so a name that was absent from the
@@ -99,10 +105,10 @@ impl Fonts {
         // weight and slant instead of falling back.
         let family: &str = real_family.as_str();
 
-        let styled = query(&db, family, 700, fontdb::Style::Normal).map(|(f, _)| f);
-        let italic = query(&db, family, 400, fontdb::Style::Italic).map(|(f, _)| f);
-        let bold_italic = query(&db, family, 700, fontdb::Style::Italic).map(|(f, _)| f);
-        let fallbacks = fallback_chain(&db, &primary, real_family.as_str());
+        let styled = query(db, family, 700, fontdb::Style::Normal).map(|(f, _)| f);
+        let italic = query(db, family, 400, fontdb::Style::Italic).map(|(f, _)| f);
+        let bold_italic = query(db, family, 700, fontdb::Style::Italic).map(|(f, _)| f);
+        let fallbacks = fallback_chain(db, &primary, real_family.as_str());
 
         let font = primary
             .font()
@@ -453,12 +459,39 @@ pub fn rasterize(ctx: &mut ScaleContext, face: &Face, px: f32, glyph: u16) -> Op
     })
 }
 
+/// The fonts the tests measure with travel with the code (`test-assets/`): what
+/// is under test is the fallback chain, not what the machine has installed. The
+/// real ones cost a 61 MB CJK download, and the mirror once served it at 59 kB/s
+/// — 18 minutes of CI for four assertions.
+#[cfg(test)]
+pub(crate) mod testfonts {
+    use super::Fonts;
+
+    pub(crate) fn db() -> fontdb::Database {
+        let mut db = fontdb::Database::new();
+        for subset in [
+            include_bytes!("../test-assets/DejaVuSansMono-subset.ttf").to_vec(),
+            include_bytes!("../test-assets/DejaVuSans-subset.ttf").to_vec(),
+            include_bytes!("../test-assets/NotoSansCJKsc-subset.otf").to_vec(),
+            include_bytes!("../test-assets/NotoColorEmoji-subset.ttf").to_vec(),
+        ] {
+            db.load_font_data(subset);
+        }
+        db
+    }
+
+    /// The chain over the fixtures, with `family` standing in for the config.
+    pub(crate) fn fonts(family: &str) -> Fonts {
+        Fonts::from_db(&db(), family, 17.0).expect("font")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn fonts() -> Fonts {
-        Fonts::new("DejaVu Sans Mono", 17.0).expect("font")
+        testfonts::fonts("DejaVu Sans Mono")
     }
 
     /// Box drawing (DEC/Unicode) has to come from the primary: coming from a
@@ -511,8 +544,7 @@ mod tests {
     /// Consolas` is Cascadia where it exists and Consolas where it does not.
     #[test]
     fn a_family_list_takes_the_first_name_that_is_installed() {
-        let f =
-            Fonts::new("Tortty Font That Does Not Exist, DejaVu Sans Mono", 17.0).expect("font");
+        let f = testfonts::fonts("Tortty Font That Does Not Exist, DejaVu Sans Mono");
         assert_eq!(f.family, "DejaVu Sans Mono");
         // and the styles follow the family that was found: the old code asked
         // for bold and italic by the configured name and got `None`.
@@ -522,21 +554,21 @@ mod tests {
     /// A generic name in the list ends the walk on the built-in chain.
     #[test]
     fn a_generic_name_in_the_list_uses_the_preference_chain() {
-        let f = Fonts::new("Tortty Font That Does Not Exist, monospace", 17.0).expect("font");
+        let f = testfonts::fonts("Tortty Font That Does Not Exist, monospace");
         assert_eq!(f.family, "DejaVu Sans Mono");
     }
 
     /// No comma is the old single-name value, spaces around it included.
     #[test]
     fn one_name_without_a_comma_is_still_one_name() {
-        let f = Fonts::new("  DejaVu Sans Mono  ", 17.0).expect("font");
+        let f = testfonts::fonts("  DejaVu Sans Mono  ");
         assert_eq!(f.family, "DejaVu Sans Mono");
     }
 
     /// A list of empty entries names nothing: the chain answers.
     #[test]
     fn a_list_of_empty_names_falls_back_to_the_chain() {
-        let f = Fonts::new(" , , ", 17.0).expect("font");
+        let f = testfonts::fonts(" , , ");
         assert_eq!(f.family, "DejaVu Sans Mono");
     }
 
@@ -544,8 +576,7 @@ mod tests {
     /// "Noto Sans Symbols 2" turned into FreeMono and drew emoji as a slash.
     #[test]
     fn font_missing_not_becomes_other() {
-        let mut db = fontdb::Database::new();
-        db.load_system_fonts();
+        let db = testfonts::db();
         assert!(query(
             &db,
             "Tortty Font That Does Not Exist",
@@ -557,7 +588,7 @@ mod tests {
         // builds, not through fontdb's own `Family::Monospace`: that one needs a
         // face whose panose says "monospaced", and a bare runner has none, which
         // made this assertion a claim about the machine and not about the code.
-        let generic = Fonts::new("monospace", 17.0).expect("a generic name reaches the chain");
+        let generic = testfonts::fonts("monospace");
         assert!(
             generic.family.contains("Mono"),
             "the chain answered with {}",
@@ -632,7 +663,7 @@ mod metrics_probe {
     /// cell, which is what decides whether the frame closes.
     #[test]
     fn print_box_metric() {
-        let f = Fonts::new("DejaVu Sans Mono", 17.0).expect("font");
+        let f = testfonts::fonts("DejaVu Sans Mono");
         let mut ctx = ScaleContext::new();
         println!(
             "cell: cw={} ch={} ascent={} px={}",

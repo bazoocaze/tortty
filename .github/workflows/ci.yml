@@ -52,17 +52,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
-      # the glyph tests are assertions about a real font chain: a runner with no
-      # monospace font and no CJK face fails them for being empty, not for being
-      # wrong. They are here and not in the other jobs because only this one runs
-      # `cargo test`.
-      - name: system deps and fonts
+      # No font package here: the glyph tests load their own fonts from
+      # `crates/app/test-assets/` (52 KB, four subsets) because what they assert
+      # is the fallback chain, not the machine. The real ones cost
+      # `fonts-noto-cjk` = 61.2 MB, and the mirror served it at 59 kB/s — 18
+      # minutes of this job, on a run whose other three jobs took 28-77 s.
+      - name: system deps
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev \
-            libxi-dev libxcursor-dev libxinerama-dev \
-            fonts-dejavu-core fonts-noto-cjk fonts-noto-color-emoji
+            libxi-dev libxcursor-dev libxinerama-dev
       - name: toolchain
         run: |
           rustup install --no-self-update
