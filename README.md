@@ -116,6 +116,7 @@ See [Configuration Reference](docs/CONFIG.md) for all available options.
 - [Configuration Reference](docs/CONFIG.md)
 - [Installation Guide](docs/INSTALL.md)
 - [Known Limitations](docs/LIMITATIONS.md)
+- [VT Reference](docs/VT.md) — the escape sequences it understands
 
 ## 🗺️ Roadmap
 

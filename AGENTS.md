@@ -22,6 +22,10 @@ reading; only README.md is for humans.
 - `docs/BENCHMARKS.md` — **the only place with numbers** for throughput, parse,
   drawing and footprint (with date, governor and condition). The other docs cite
   the fact in one sentence and link.
+- `docs/VT.md` — the user's reference of the **wire**: every `CSI`, `OSC`,
+  mode, `OSC 9;4` and `OSC 7501` the parser implements, with the limit of each.
+  It restates the parser on purpose, for a reader who is not going to read
+  `crates/core`.
 - `docs/CONFIG.md` — the configuration file, key by key. A test enforces that
   every key of `DEFAULT_CONF` appears there (the doc does not age).
 - `docs/INSTALL.md` — install/uninstall the `tortty` command (and what lands in
