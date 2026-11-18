@@ -1491,6 +1491,21 @@ barra de busca, que divide a última linha.
 - `tab` custa o que ocupa: o rótulo é contado por `chrome::tab_label`, então a
   largura da aba e o clique continuam sendo o mesmo número (`M-Q`).
 
+## 2026-11-17 — o chip do estado se apaga no clique (B47)
+
+`done` e `error` não têm prazo: o spec manda guardá-los para o usuário achar. Na
+forma `chip` isso virava um chip eterno na última linha, sem nada que o
+encerrasse. Agora um clique nele apaga o registro (e a barra que o acompanha), e
+um novo relatório do programa traz o chip de volta.
+- A caixa do chip saiu do renderer para `chrome::StateChip`, então o desenho e o
+  clique leem os mesmos números (`M-Q`). Medido no Xvfb: o retângulo que muda na
+  tela quando o chip sai é `414,242 154x19` — exatamente a caixa que o clique usa.
+- O clique à esquerda da caixa não apaga nada; o clique dentro apaga o registro, e
+  ele vale também com a criança segurando o mouse (`?1000`), porque o chip é
+  desenhado em cima da célula — a mesma regra do toast.
+- O `seen` do status sobrevive à dispensa: o terminal já ouviu um `7501` e um
+  `9;4` posterior não pode voltar a mapear o registro raiz.
+
 ## 2026-11-17 — `status_show` trocado com o app rodando
 
 O renderer guarda `status_show` num campo, e o recarregamento da config chamava

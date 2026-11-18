@@ -1320,48 +1320,25 @@ impl Renderer {
     /// `B47` + `status_show chip`: what the program is doing, right-aligned on
     /// the grid's last row. It is the only shape that shows with **one** tab — the
     /// tab bar is not drawn then — and the last row is where the search bar
-    /// already lives, so it yields to it.
+    /// already lives, so it yields to it. The box comes from `chrome::StateChip`,
+    /// which the press that dismisses it reads too (`M-Q`).
     fn status_chip(&mut self, term: &tortty_core::Term, cols: usize, rows: usize) {
-        use tortty_core::status::State;
-        let Some(root) = term.status.root() else {
+        let Some((state, word, detail)) = term.status_chip() else {
             return;
         };
-        // `idle` is not news, and a word saying nothing happens would never leave
-        if root.state == State::Idle {
+        let chip = crate::chrome::StateChip { word, detail };
+        let Some([x, y, width, height]) = chip.rect(self.chrome_metrics(cols, rows)) else {
             return;
-        }
-        let word = root.state.name();
-        let mut detail = String::new();
-        if let Some(app) = root.app.as_deref() {
-            detail.push_str(" · ");
-            detail.push_str(app);
-        }
-        if let Some(pct) = root.progress {
-            detail.push_str(" · ");
-            detail.push_str(&pct.to_string());
-            detail.push('%');
-        }
+        };
+        let (word, detail) = (chip.word.as_str(), chip.detail.as_str());
         let edge = self.color(
-            match root.state {
-                State::Blocked => Color::Idx(3),
-                State::Error => Color::Idx(1),
+            match state {
+                tortty_core::status::State::Blocked => Color::Idx(3),
+                tortty_core::status::State::Error => Color::Idx(1),
                 _ => Color::Idx(2),
             },
             self.fg,
         );
-        let cw = self.fonts.cw;
-        let chh = self.fonts.ch;
-        // `[ ` + word + detail + ` ]`, one cell clear of the right edge
-        let cells = word.chars().count() + detail.chars().count() + 4 + 1;
-        if cells > cols {
-            return;
-        }
-        #[allow(clippy::cast_precision_loss)] // a column count, far below 2^23
-        let x = (cols - cells) as f32 * cw;
-        #[allow(clippy::cast_precision_loss)]
-        let y = rows.saturating_sub(1) as f32 * chh;
-        #[allow(clippy::cast_precision_loss)]
-        let width = (cells - 1) as f32 * cw;
         let base = self.color(Color::Default, self.bg);
         let ink = self.color(Color::Default, self.fg);
         let dim = [
@@ -1370,8 +1347,9 @@ impl Renderer {
             ink[2] * 0.78 + base[2] * 0.22,
         ];
         let grey = self.color(Color::Idx(8), self.fg);
-        self.chip((x, y), (width, chh), edge);
-        #[allow(clippy::cast_precision_loss)]
+        self.chip((x, y), (width, height), edge);
+        let cw = self.fonts.cw;
+        #[allow(clippy::cast_precision_loss)] // a column count, far below 2^23
         let cell = |n: usize| n as f32 * cw;
         self.chrome_text("[ ", x, y, grey, 0.0);
         self.chrome_text(word, x + cell(2), y, edge, 0.0);

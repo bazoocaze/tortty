@@ -2067,6 +2067,42 @@ impl Term {
     }
 
     /// The root record as the tab's progress bar (`B47` → `OSC 9;4`'s colours).
+    /// `status_show chip` (`B47`): the state, its word and the detail the chip
+    /// draws — the app that wrote the record and how far it got.
+    ///
+    /// `None` for an `idle` record: it is not news, and a chip saying that nothing
+    /// happens would never leave the screen. The chip and the click that dismisses
+    /// it read this same builder, so they cannot disagree about whether it is there.
+    #[must_use]
+    pub fn status_chip(&self) -> Option<(crate::status::State, String, String)> {
+        let root = self.status.root()?;
+        if root.state == crate::status::State::Idle {
+            return None;
+        }
+        let mut detail = String::new();
+        if let Some(app) = root.app.as_deref() {
+            detail.push_str(" · ");
+            detail.push_str(app);
+        }
+        if let Some(pct) = root.progress {
+            detail.push_str(" · ");
+            detail.push_str(&pct.to_string());
+            detail.push('%');
+        }
+        Some((root.state, root.state.name().to_string(), detail))
+    }
+
+    /// The user dismissed the state: the root record and everything under it go,
+    /// and the bar with them (`B47`).
+    ///
+    /// `done` and `error` have no lifetime of their own — the spec keeps them for
+    /// the user to find — so a click on the chip is what ends them. A program that
+    /// is still working reports again and the chip comes back.
+    pub fn dismiss_status(&mut self) {
+        self.status.dismiss();
+        self.root_progress();
+    }
+
     fn root_progress(&mut self) {
         use crate::status::State;
         let bar = match self.status.root() {
@@ -4953,6 +4989,56 @@ mod tests {
         let mut w = term();
         w.feed(b"\x1b]7501;state=working:app=cargo\x1b\\");
         assert_eq!(w.notifs, 0);
+    }
+
+    /// A `done` chip would be there forever — `done` and `error` have no lifetime
+    /// of their own — so the click that dismisses it clears the records and the
+    /// bar, and leaves the terminal knowing the program speaks `7501` (`B47`).
+    #[test]
+    fn dismissing_the_chip_takes_the_state_and_the_bar() {
+        let mut t = term();
+        t.feed(b"\x1b]7501;state=done:app=cargo\x1b\\");
+        assert_eq!(
+            t.status_chip(),
+            Some((
+                crate::status::State::Done,
+                "done".to_string(),
+                " · cargo".to_string()
+            ))
+        );
+        // a record under the root goes with it: the chip says one thing, and
+        // dismissing it is the whole tab being read
+        t.feed(b"\x1b]7501;state=blocked:id=sub/task:app=git\x1b\\");
+        assert_eq!(t.status.len(), 2);
+        t.dismiss_status();
+        assert_eq!(t.status.len(), 0);
+        assert_eq!(t.status_chip(), None);
+        assert_eq!(t.progress, None, "the bar goes with the record");
+        // what the dismissal must **not** take: the program still speaks `7501`,
+        // so a later `9;4` is not allowed to map itself onto the root again
+        t.feed(b"\x1b]9;4;1;40\x1b\\");
+        assert_eq!(t.status_chip(), None);
+        // ...and the program reporting again brings it back, by design
+        t.feed(b"\x1b]7501;state=working:app=cargo:progress=40\x1b\\");
+        assert_eq!(
+            t.status_chip(),
+            Some((
+                crate::status::State::Working,
+                "working".to_string(),
+                " · cargo · 40%".to_string()
+            ))
+        );
+        assert_eq!(t.progress.map(|p| (p.state, p.pct)), Some((1, Some(40))));
+    }
+
+    /// `idle` is not news: the chip is not built at all, so nothing draws and the
+    /// click has nothing to hit.
+    #[test]
+    fn an_idle_record_has_no_chip() {
+        let mut t = term();
+        t.feed(b"\x1b]7501;state=idle:app=cargo\x1b\\");
+        assert_eq!(t.status_chip(), None);
+        assert_eq!(t.progress, None);
     }
 
     #[test]

@@ -200,6 +200,15 @@ impl Status {
         self.seen = false;
     }
 
+    /// The user said they read it (`status_show chip`, click): every record goes.
+    ///
+    /// `seen` survives on purpose — it says this terminal has *heard* a `7501`
+    /// report, which stays true after the record is dismissed; forgetting it
+    /// would let a later `9;4` take the root back.
+    pub fn dismiss(&mut self) {
+        self.map.clear();
+    }
+
     /// A new shell prompt (`OSC 133;A`) or the process leaving: `working` and
     /// `blocked` are about the command that is gone; `done` and `error` stay for
     /// the user to find (the spec's lifetime rules).

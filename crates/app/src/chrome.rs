@@ -73,6 +73,55 @@ pub fn tab_cells(i: usize, t: &Tab<'_>) -> usize {
     tab_label(i, t).chars().count() + if t.alert { 2 } else { 0 }
 }
 
+/// The `status_show chip` box (`B47`): what it says, and where it lands.
+///
+/// It is the one surface that shows with a **single** tab — the bar is not drawn
+/// then — and the one the user clicks away, because `done` and `error` have no
+/// lifetime of their own. Drawing and the press read this same box, so a chip
+/// drawn one cell off cannot become a chip that is dismissed somewhere else
+/// (`M-Q`).
+pub struct StateChip {
+    pub word: String,
+    pub detail: String,
+}
+
+impl StateChip {
+    /// The cells the box takes: `[ ` + word + detail + ` ]`, plus the clear cell
+    /// that keeps it off the window edge.
+    #[must_use]
+    pub fn cells(&self) -> usize {
+        self.word.chars().count() + self.detail.chars().count() + 5
+    }
+
+    /// Where the box lands: the grid's last row, right-aligned, one cell clear of
+    /// the edge. `None` when it does not fit the grid's width.
+    #[must_use]
+    pub fn rect(&self, m: Metrics) -> Option<Rect> {
+        let cells = self.cells();
+        if cells > m.cols || m.rows == 0 {
+            return None;
+        }
+        #[allow(clippy::cast_precision_loss)] // a grid size, far below 2^23
+        let x = (m.cols - cells) as f32 * m.cw;
+        #[allow(clippy::cast_precision_loss)]
+        let y = (m.rows - 1) as f32 * m.ch;
+        #[allow(clippy::cast_precision_loss)]
+        let w = (cells - 1) as f32 * m.cw;
+        Some([x, y, w, m.ch])
+    }
+
+    /// Is the pointer on the box? Window px, tested against the numbers the
+    /// drawing used — the same rule as a tab and a card.
+    #[must_use]
+    pub fn hit(&self, m: Metrics, px: f64, py: f64) -> bool {
+        let Some([left, top, width, height]) = self.rect(m) else {
+            return false;
+        };
+        let (x, y) = m.in_origin(px, py);
+        x >= left && x < left + width && y >= top && y < top + height
+    }
+}
+
 impl Metrics {
     #[must_use]
     pub fn card_h(&self) -> f32 {
@@ -411,6 +460,53 @@ mod tests {
             state: Some("error"),
         };
         assert_eq!(tab_cells(1, &both), tab_cells(1, &quiet) + 2);
+    }
+
+    /// The chip is right-aligned on the grid's last row, one cell clear of the
+    /// edge — and the box that is drawn is the box that is pressed (`M-Q`). A
+    /// click a pixel left of it, or one row below, has to miss: the chip sits on
+    /// the grid, and the child's own clicks are behind it.
+    #[test]
+    fn the_chip_box_is_where_the_chip_is_drawn() {
+        let m = Metrics {
+            cw: 10.0,
+            ch: 20.0,
+            pad: 4.0,
+            bar: 30.0,
+            side: 180.0,
+            cols: 40,
+            rows: 5,
+        };
+        let chip = StateChip {
+            word: "blocked".to_string(),
+            detail: " · git · 40%".to_string(),
+        };
+        // `[ ` + word + detail + ` ]`, plus the clear cell — counted in cells,
+        // not bytes: the `·` is two of them
+        let expect = 2 + "blocked".chars().count() + " · git · 40%".chars().count() + 2 + 1;
+        assert_eq!(chip.cells(), expect);
+        let [left, top, width, height] = chip.rect(m).expect("it fits");
+        assert_eq!(top, 4.0 * m.ch, "the grid's last row");
+        assert_eq!(height, m.ch, "one row tall");
+        #[allow(clippy::cast_precision_loss)]
+        let edge = (m.cols - 1) as f32 * m.cw;
+        assert_eq!(left + width, edge, "one cell clear of the window edge");
+        // window px: the grid starts below the bar and right of the sidebar
+        let px = |origin: f32| f64::from(origin + m.pad + m.side);
+        let py = |origin: f32| f64::from(origin + m.pad + m.bar);
+        assert!(chip.hit(m, px(left) + 1.0, py(top) + 1.0), "inside the box");
+        assert!(
+            !chip.hit(m, px(left) - 1.0, py(top) + 1.0),
+            "a pixel to the left"
+        );
+        assert!(
+            !chip.hit(m, px(left) + 1.0, py(top + height)),
+            "the row below"
+        );
+        // a grid narrower than the box: nothing drawn, so nothing to press
+        let narrow = Metrics { cols: 5, ..m };
+        assert_eq!(chip.rect(narrow), None);
+        assert!(!chip.hit(narrow, px(0.0), py(top) + 1.0));
     }
 
     /// The grid's menu hangs from the pointer's cell and never leaves the grid: at

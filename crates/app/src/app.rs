@@ -664,6 +664,12 @@ pub struct App {
     cursor_px: (f64, f64),
     /// Button currently held, to report release/motion with it.
     held: Option<u8>,
+    /// The press was consumed by chrome drawn over the grid — the toast or the
+    /// status chip (`B47`) — so the release that ends that same gesture is not
+    /// reported to the child. Without it a child holding the mouse (`?1000`)
+    /// receives a release it never saw a press for, which lands in its input as
+    /// a stray `CSI < … m`.
+    press_ours: bool,
     clip: Clip,
     /// The grid's context menu (`M-V`), when it is open.
     menu_open: Option<MenuState>,
@@ -773,6 +779,7 @@ impl App {
             mods: ModifiersState::empty(),
             cursor_px: (0.0, 0.0),
             held: None,
+            press_ours: false,
             clip: Clip::new(),
             menu_open: None,
             wake: None,
@@ -1758,12 +1765,19 @@ impl App {
         let Some(btn) = crate::mouse::from_winit(button) else {
             return;
         };
+        // a press we consumed takes its own release with it: the child must not
+        // see the end of a gesture it never saw the start of
+        if state == ElementState::Released && std::mem::take(&mut self.press_ours) {
+            return;
+        }
         if state == ElementState::Pressed {
             self.blink_reset();
+            self.press_ours = false;
             // the toast is drawn last, so it is above the chrome and the grid: a
             // press on it dismisses it and goes no further, with or without the
             // child asking for the mouse
             if self.toast_clicked(self.cursor_px.0, self.cursor_px.1) {
+                self.press_ours = true;
                 return;
             }
         }
@@ -1780,6 +1794,19 @@ impl App {
             } else if state == ElementState::Pressed {
                 self.close_menu();
             }
+            return;
+        }
+        // `status_show chip`: a left press on the chip dismisses it (`B47`).
+        // `done` and `error` have no lifetime of their own, so without this the
+        // chip would stay until the tab closed. It is chrome drawn over the last
+        // row, so it takes the press even when the child holds the mouse — the
+        // same rule the toast follows, and the reason the box only exists where
+        // the renderer drew it.
+        if btn == crate::mouse::LEFT
+            && state == ElementState::Pressed
+            && self.chip_clicked(self.cursor_px.0, self.cursor_px.1)
+        {
+            self.press_ours = true;
             return;
         }
         // a context menu: right button. Which one, and whether the press is even
@@ -2759,6 +2786,33 @@ impl App {
             return;
         }
         self.next_toast();
+    }
+
+    /// A press on the `status_show chip` box dismisses it (`B47`).
+    ///
+    /// Three conditions decide whether there is a box to press, and they are the
+    /// renderer's: `status_show chip` is on, the search bar is not holding the
+    /// last row (`M-D` wins it), and the root record is not `idle`. The box itself
+    /// is `chrome::StateChip` — the same one the drawing used, so what is seen is
+    /// what is pressed.
+    fn chip_clicked(&mut self, px: f64, py: f64) -> bool {
+        if self.opts.cfg.status_show != tortty_core::config::StatusShow::Chip
+            || self.search.is_some()
+        {
+            return false;
+        }
+        let Some((_, word, detail)) = self.tabs[self.active].term.status_chip() else {
+            return false;
+        };
+        let chip = crate::chrome::StateChip { word, detail };
+        if !chip.hit(self.chrome_metrics(), px, py) {
+            return false;
+        }
+        self.tabs[self.active].term.dismiss_status();
+        if let Some(w) = self.window.as_ref() {
+            w.request_redraw();
+        }
+        true
     }
 
     /// A click inside the box dismisses it. The box floats over the grid and is
