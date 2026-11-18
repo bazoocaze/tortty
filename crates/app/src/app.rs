@@ -25,14 +25,6 @@ use crate::prof;
 use crate::pty::Pty;
 use crate::render::{Renderer, Severity, ToastText};
 
-/// Is the pointer inside the box the renderer drew? Half-open on the right and
-/// on the bottom, like a cell: the press that lands exactly on the border
-/// belongs to the neighbour, and to the grid.
-fn inside_box(rect: [f32; 4], px: f64, py: f64) -> bool {
-    let [x, y, w, h] = rect.map(f64::from);
-    px >= x && px < x + w && py >= y && py < y + h
-}
-
 /// Digit of the **physical** key (0..=9), ignoring layout and Shift.
 ///
 /// `Ctrl+Shift+1` arrives as `!` and on ABNT2 each digit shifts to something
@@ -1773,16 +1765,11 @@ impl App {
         if state == ElementState::Pressed {
             self.blink_reset();
             self.press_ours = false;
-            // the toast is drawn last, so it is above the chrome and the grid: a
-            // press on it dismisses it and goes no further, with or without the
-            // child asking for the mouse
-            if self.toast_clicked(self.cursor_px.0, self.cursor_px.1) {
-                self.press_ours = true;
-                return;
-            }
         }
-        // `M-V`: the menu is above everything it covers, for both buttons — a
-        // release must not reach a child whose press it never saw
+        // `M-V`: the menu is drawn **after** the toast, so it is the topmost thing
+        // on screen and the press goes to it first — the reverse of this order
+        // would dismiss a notice the pointer was not over. Both buttons stop here:
+        // a release must not reach a child whose press it never saw.
         if self.menu_open.is_some() {
             if state == ElementState::Pressed && btn == crate::mouse::LEFT {
                 match self.menu_layout().and_then(|m| {
@@ -1795,6 +1782,15 @@ impl App {
                 self.close_menu();
             }
             return;
+        }
+        if state == ElementState::Pressed {
+            // the toast is drawn under the menu and over the chrome and the grid: a
+            // press on it dismisses it and goes no further, with or without the
+            // child asking for the mouse
+            if self.toast_clicked(self.cursor_px.0, self.cursor_px.1) {
+                self.press_ours = true;
+                return;
+            }
         }
         // `status_show chip`: a left press on the chip dismisses it (`B47`).
         // `done` and `error` have no lifetime of their own, so without this the
@@ -2066,8 +2062,9 @@ impl App {
                 let px = self.cursor_px;
                 let (col, row) = self.cell_at(px.0, px.1);
                 // a press on the scrollbar drags the view, not the text
-                if let Some((x0, x1, y0, y1, _)) = self.scrollbar_rect() {
-                    if px.0 >= x0 && px.0 < x1 && px.1 >= y0 && px.1 < y0 + y1 {
+                if let Some(sb) = self.scrollbar() {
+                    let window_w = self.window_w();
+                    if sb.hit(self.chrome_metrics(), window_w, px.0, px.1) {
                         self.scroll_drag = true;
                         self.scroll_to_y(px.1);
                         return;
@@ -2376,58 +2373,36 @@ impl App {
         self.redraw();
     }
 
-    /// Geometry of the scrollbar in window pixels: `(x0, x1, top, height,
-    /// history)`. The strip is drawn on the grid's right edge, but the target
-    /// runs all the way to the window's edge: `cols * cw` is rounded down, so
-    /// the last column does not reach the border and a click there would fall
-    /// through to the text (`cell_at` clamps) and start a selection.
-    /// `None` when there is nothing to scroll — the same condition
-    /// `Renderer::scrollbar` draws with.
-    fn scrollbar_rect(&self) -> Option<(f64, f64, f64, f64, usize)> {
-        let hist = self.tabs[self.active].term.scrollback.len();
-        let rows = self.tabs[self.active].term.rows;
-        if hist == 0 || rows == 0 {
-            return None;
-        }
-        let (cw, ch, pad) = self.cell_metrics();
-        let cols = self.tabs[self.active].term.cols;
-        let grid_w = cols as f32 * cw;
-        let left = f64::from(pad) + f64::from(self.side_w(cw)) + f64::from(grid_w);
-        let top = f64::from(pad) + f64::from(self.bar_h(ch));
-        let w = f64::from(self.scrollbar_w());
-        let right = self
-            .window
-            .as_ref()
-            .map_or(left, |w| f64::from(w.inner_size().width));
-        // the target is the last `w` px of the window: with the grid rounded down
-        // that is the strip plus the sliver to its right, and it stays inside the
-        // window even when a window manager hands back a narrower one
-        let x0 = (left - w).min(right - w).max(0.0);
-        Some((x0, right, top, rows as f64 * f64::from(ch), hist))
+    /// The scrollbar of the active tab, when there is history behind the view.
+    /// `None` is the same `None` the renderer leaves the strip undrawn with, so a
+    /// click cannot land on a bar that is not on screen.
+    fn scrollbar(&self) -> Option<crate::chrome::Scrollbar> {
+        let t = self.tabs.get(self.active)?;
+        crate::chrome::Scrollbar::new(t.term.scrollback.len(), t.term.rows, t.view_off)
     }
 
-    /// Width of the scrollbar in px. It sits over the last column, so it is
-    /// capped by the cell: a wider strip would hide the column it overlaps.
-    fn scrollbar_w(&self) -> f32 {
-        let (cw, _, _) = self.cell_metrics();
-        f32::min(crate::render::SCROLLBAR_W, cw)
+    /// Width of the window in px. Before the first frame there is no window, and
+    /// then the grid's own right edge is the target — a press must not invent a
+    /// wider strip than the one that will be drawn.
+    fn window_w(&self) -> f64 {
+        if let Some(w) = self.window.as_ref() {
+            return f64::from(w.inner_size().width);
+        }
+        let (cw, _, pad) = self.cell_metrics();
+        let cols = self.tabs.get(self.active).map_or(0, |t| t.term.cols);
+        f64::from(pad + self.side_w(cw) + cols as f32 * cw)
     }
 
     /// Puts the view where the pointer is on the bar: the thumb sits at the
     /// bottom when the view follows the output and at the top when it is at the
     /// oldest line.
     fn scroll_to_y(&mut self, py: f64) {
-        let Some((_, _, top, h, hist)) = self.scrollbar_rect() else {
+        let Some(sb) = self.scrollbar() else {
             return;
         };
-        let rows = self.tabs[self.active].term.rows;
-        let thumb = (h * rows as f64 / (rows + hist) as f64).max(12.0).min(h);
-        let travel = h - thumb;
-        if travel <= 0.0 {
+        let Some(off) = sb.offset_at(self.chrome_metrics(), py) else {
             return;
-        }
-        let y = ((py - top) - thumb / 2.0).clamp(0.0, travel);
-        let off = ((1.0 - y / travel) * hist as f64).round() as i64;
+        };
         let cur = self.tabs[self.active].view_off as i64;
         self.scroll_view(off - cur);
     }
@@ -2815,14 +2790,20 @@ impl App {
         true
     }
 
-    /// A click inside the box dismisses it. The box floats over the grid and is
-    /// drawn last, so it is above everything: the press does not start a
-    /// selection and does not reach the child.
+    /// A click inside the box dismisses it. The box floats over the grid, above
+    /// the chrome and under the menu, so the press does not start a selection and
+    /// does not reach the child. The box is derived from the same notice the
+    /// renderer drew it from (`chrome::Toast`), so there is no stale rectangle to
+    /// click on after it has expired.
     fn toast_clicked(&mut self, px: f64, py: f64) -> bool {
-        let Some(rect) = self.renderer.as_ref().and_then(|r| r.toast_rect) else {
+        let Some(t) = self.toast_text() else {
             return false;
         };
-        if !inside_box(rect, px, py) {
+        let m = self.chrome_metrics();
+        let Some(notice) = crate::chrome::Toast::build(m, &t.title, &t.detail) else {
+            return false;
+        };
+        if !notice.hit(m, px, py) {
             return false;
         }
         self.drop_toast();
@@ -3038,6 +3019,7 @@ impl App {
         let menu = self.menu_view();
         let frame = crate::render::Frame {
             tab: self.tabs[self.active].id,
+            metrics: self.chrome_metrics(),
             term: &self.tabs[self.active].term,
             view_off: self.tabs[self.active].view_off,
             sel: self.tabs[self.active].sel,
@@ -5112,18 +5094,6 @@ mod tests {
         assert!(t.same("Link refused", "http://a"));
         assert!(!t.same("Link refused", "http://b"), "another link");
         assert!(!t.same("Link failed", "http://a"), "another title");
-    }
-
-    /// The click lands inside the box the renderer reported and nowhere else: the
-    /// right and bottom edges belong to the grid, so a press there still selects.
-    #[test]
-    fn a_click_lands_only_inside_the_box() {
-        let toast = [100.0, 40.0, 200.0, 30.0];
-        assert!(inside_box(toast, 100.0, 40.0), "the top-left corner");
-        assert!(inside_box(toast, 150.0, 55.0), "the middle");
-        assert!(!inside_box(toast, 99.0, 55.0), "one pixel to the left");
-        assert!(!inside_box(toast, 300.0, 55.0), "the right edge");
-        assert!(!inside_box(toast, 150.0, 70.0), "the bottom edge");
     }
 
     #[test]

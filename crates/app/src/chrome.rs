@@ -16,6 +16,32 @@
 /// Height of a workspace card, in rows of text (`B42`/`B43`).
 pub const CARD_ROWS: f32 = 2.4;
 
+/// Width of the scrollbar strip, in px. It sits over the grid's last column, so
+/// the cell width is its ceiling: a wider strip would hide the column it
+/// overlaps.
+pub const SCROLLBAR_W: f32 = 8.0;
+
+/// The thinnest the scrollbar's thumb may get, in px: below this it stops
+/// reading as something one can grab.
+const SCROLLBAR_MIN_THUMB: f32 = 12.0;
+
+/// Gutter on both sides of the toast's text, in cells, so the box lines up with
+/// the grid instead of with the glyphs.
+const TOAST_PAD_X: f32 = 1.5;
+/// The toast's vertical respiro, in px: independent of the line height of the
+/// theme.
+const TOAST_PAD_Y: f32 = 8.0;
+/// Room left clear on each side of the toast, in cells.
+const TOAST_MARGIN_X: f32 = 1.0;
+/// Room left under the toast, in px.
+const TOAST_MARGIN_Y: f32 = 28.0;
+/// The accent strip on the toast's left edge: wide enough to read as a strip and
+/// not as a crack in the border.
+pub const TOAST_BAR: f32 = 4.0;
+/// Detail lines beyond this are cut: a notification carrying a whole page must
+/// not cover the grid it is telling you about.
+const TOAST_DETAIL_LINES: usize = 4;
+
 /// Everything that decides where the chrome lands.
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct Metrics {
@@ -120,6 +146,214 @@ impl StateChip {
         let (x, y) = m.in_origin(px, py);
         x >= left && x < left + width && y >= top && y < top + height
     }
+}
+
+/// The scrollbar (`M-M`): the strip on the grid's right edge, the thumb that
+/// says where in the history the view is, and the press that moves it.
+///
+/// All three inputs are the ones the frame shows — how much is behind the view,
+/// how tall the grid is, and where the view sits — so both sides build the same
+/// value (`M-Q`). Before, the strip's `x` and the thumb's height were written
+/// twice, once in window px for the click and once in origin space for the
+/// painter, and the two agreed only by arithmetic.
+pub struct Scrollbar {
+    /// Lines of history behind the view.
+    hist: usize,
+    /// Rows of the grid, which is the track's height in cells.
+    rows: usize,
+    /// `0` follows the output; `hist` is the oldest line.
+    at: usize,
+}
+
+impl Scrollbar {
+    /// `None` when there is nothing to scroll — the same condition that leaves
+    /// the strip undrawn, so a click cannot land on a bar that is not there.
+    #[must_use]
+    pub fn new(hist: usize, rows: usize, at: usize) -> Option<Scrollbar> {
+        (hist > 0 && rows > 0).then_some(Scrollbar {
+            hist,
+            rows,
+            at: at.min(hist),
+        })
+    }
+
+    /// Width of the strip in px, capped by the cell.
+    fn width(m: Metrics) -> f32 {
+        SCROLLBAR_W.min(m.cw)
+    }
+
+    /// The track and the thumb, in origin space: the background the strip is
+    /// painted on, and the solid part that marks the view.
+    #[must_use]
+    pub fn parts(&self, m: Metrics) -> (Rect, Rect) {
+        let strip = Self::width(m);
+        #[allow(clippy::cast_precision_loss)] // grid sizes and line counts
+        let (rows, hist) = (self.rows as f32, self.hist as f32);
+        #[allow(clippy::cast_precision_loss)]
+        let x = m.cols as f32 * m.cw - strip;
+        let track_h = rows * m.ch;
+        let thumb_h = (track_h * rows / (rows + hist))
+            .max(SCROLLBAR_MIN_THUMB)
+            .min(track_h);
+        #[allow(clippy::cast_precision_loss)]
+        let off = self.at as f32 / hist;
+        let y = (track_h - thumb_h) * (1.0 - off);
+        ([x, 0.0, strip, track_h], [x, y, strip, thumb_h])
+    }
+
+    /// The pixel target of a press, in window px: the strip **plus the sliver
+    /// between the grid's right edge and the window's**. `cols * cw` is rounded
+    /// down, so the last column does not reach the border and a press there would
+    /// fall through to the text and start a selection. `window_w` is the window's
+    /// width in px.
+    #[must_use]
+    pub fn hit(&self, m: Metrics, window_w: f64, px: f64, py: f64) -> bool {
+        let strip = Self::width(m);
+        #[allow(clippy::cast_precision_loss)]
+        let grid_right = m.pad + m.side + m.cols as f32 * m.cw;
+        #[allow(clippy::cast_precision_loss)]
+        let right = window_w as f32;
+        let left = f64::from((grid_right - strip).min(right - strip).max(0.0));
+        let top = f64::from(m.pad + m.bar);
+        #[allow(clippy::cast_precision_loss)]
+        let height = self.rows as f64 * f64::from(m.ch);
+        px >= left && px < window_w && py >= top && py < top + height
+    }
+
+    /// The view offset a press at `py` asks for: the thumb follows the pointer,
+    /// so a press on its middle does not jump. `None` when the thumb fills the
+    /// track and there is nowhere to go.
+    #[must_use]
+    pub fn offset_at(&self, m: Metrics, py: f64) -> Option<i64> {
+        let (track, thumb) = self.parts(m);
+        let (height, thumb_h) = (f64::from(track[3]), f64::from(thumb[3]));
+        let travel = height - thumb_h;
+        if travel <= 0.0 {
+            return None;
+        }
+        let top = f64::from(m.pad + m.bar + track[1]);
+        let y = ((py - top) - thumb_h / 2.0).clamp(0.0, travel);
+        #[allow(clippy::cast_precision_loss)]
+        let hist = self.hist as f64;
+        Some(((1.0 - y / travel) * hist).round() as i64)
+    }
+}
+
+/// The toast box (`I12`/`K13`): the notice's text wrapped to the grid, and the
+/// box it lands in.
+///
+/// It floats over everything and is drawn last, so a press on it is the box's and
+/// never the grid's. The wrapping lives here and not in the painter because the
+/// box's width **is** the wrapped text: a painter that wrapped on its own would
+/// size the box from one measure and fill it from another.
+pub struct Toast {
+    pub rect: Rect,
+    pub title: String,
+    pub detail: Vec<String>,
+}
+
+impl Toast {
+    /// Wrap the notice to the grid and place the box. `None` when both lines are
+    /// empty: an empty box is a hole in the screen, not a notice.
+    #[must_use]
+    pub fn build(m: Metrics, title: &str, detail: &str) -> Option<Toast> {
+        // title and detail wrap at the same column, so the box has straight sides
+        #[allow(clippy::cast_precision_loss)] // a grid width, far below 2^23
+        let n = (m.cols as f32 - 2.0 * TOAST_MARGIN_X - 2.0 * TOAST_PAD_X)
+            .floor()
+            .max(1.0) as usize;
+        let title: String = title.chars().take(n).collect();
+        let room = m.rows.saturating_sub(2).max(1);
+        let detail = wrap(detail, n, TOAST_DETAIL_LINES.min(room));
+        let widest = detail
+            .iter()
+            .map(|l| l.chars().count())
+            .chain(std::iter::once(title.chars().count()))
+            .max()
+            .unwrap_or(0);
+        if widest == 0 {
+            return None;
+        }
+        #[allow(clippy::cast_precision_loss)] // counts of cells and lines
+        let (widest, lines) = (widest as f32, (1 + detail.len()) as f32);
+        #[allow(clippy::cast_precision_loss)]
+        let (cols, rows) = (m.cols as f32, m.rows as f32);
+        let bw = widest * m.cw + 2.0 * TOAST_PAD_X * m.cw + TOAST_BAR;
+        let bh = lines * m.ch + 2.0 * TOAST_PAD_Y;
+        // centred: a notice is read where the eye lands, not in a corner. The text
+        // was cut at `n` above, so the box always fits the grid.
+        let x = ((cols * m.cw - bw) / 2.0).max(0.0);
+        let y = (rows * m.ch - TOAST_MARGIN_Y - bh).max(0.0);
+        Some(Toast {
+            rect: [x, y, bw, bh],
+            title,
+            detail,
+        })
+    }
+
+    /// Is the pointer on the box? Window px, tested against the numbers the
+    /// drawing used — the same rule as a tab, a card and the chip.
+    #[must_use]
+    pub fn hit(&self, m: Metrics, px: f64, py: f64) -> bool {
+        let [left, top, width, height] = self.rect;
+        let (x, y) = m.in_origin(px, py);
+        x >= left && x < left + width && y >= top && y < top + height
+    }
+
+    /// Where the title starts, in origin space: inside the padding and right of
+    /// the accent strip.
+    #[must_use]
+    pub fn title_at(&self, m: Metrics) -> (f32, f32) {
+        (
+            self.rect[0] + TOAST_BAR + TOAST_PAD_X * m.cw,
+            self.rect[1] + TOAST_PAD_Y,
+        )
+    }
+
+    /// The top of detail line `i`, in origin space.
+    #[must_use]
+    pub fn line_at(&self, m: Metrics, i: usize) -> (f32, f32) {
+        #[allow(clippy::cast_precision_loss)] // a line index
+        let y = self.rect[1] + TOAST_PAD_Y + (i + 1) as f32 * m.ch;
+        (self.title_at(m).0, y)
+    }
+}
+
+/// Greedy word wrap at `n` cells, at most `max` lines. A word longer than the
+/// line is cut, because a box that grew to fit it would leave the grid.
+fn wrap(text: &str, n: usize, max: usize) -> Vec<String> {
+    let n = n.max(1);
+    let mut words: Vec<&str> = Vec::new();
+    for word in text.split_whitespace() {
+        let mut rest = word;
+        while rest.chars().count() > n {
+            let cut = rest.char_indices().nth(n).map_or(rest.len(), |(i, _)| i);
+            words.push(&rest[..cut]);
+            rest = &rest[cut..];
+        }
+        if !rest.is_empty() {
+            words.push(rest);
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for word in words {
+        let sep = usize::from(!line.is_empty());
+        if !line.is_empty() && line.chars().count() + sep + word.chars().count() > n {
+            out.push(std::mem::take(&mut line));
+            if out.len() == max {
+                return out;
+            }
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if !line.is_empty() && out.len() < max {
+        out.push(line);
+    }
+    out
 }
 
 impl Metrics {
@@ -655,5 +889,144 @@ mod tests {
         assert_eq!(l.cards.len(), 4);
         assert_eq!(l.cards[0].i, 3);
         assert_eq!(l.card_at(4.0 + 10.0, 4.0 + 20.0 + 10.0), Some(3));
+    }
+
+    // ---- toast ----
+
+    /// The detail of a notice fills the box up to the margin, breaks at the space
+    /// and never leaves a line wider than the box.
+    #[test]
+    fn a_notice_detail_wraps_at_the_space() {
+        assert_eq!(
+            wrap("alpha beta gamma delta", 11, 4),
+            vec!["alpha beta", "gamma delta"]
+        );
+    }
+
+    /// A word with no space in it — a path, a URL — is cut where it reaches the
+    /// margin instead of overflowing the box.
+    #[test]
+    fn a_word_longer_than_the_line_is_cut() {
+        assert_eq!(
+            wrap("/usr/local/share/very/long/path", 10, 4),
+            vec!["/usr/local", "/share/ver", "y/long/pat", "h"]
+        );
+    }
+
+    /// The cap is lines: a notice that would be taller than the grid keeps the
+    /// first lines and drops the rest instead of covering the whole screen.
+    #[test]
+    fn the_detail_stops_at_the_line_cap() {
+        assert_eq!(wrap("a b c d e f g", 1, 2), vec!["a", "b"]);
+    }
+
+    /// The box is as wide as the text it will hold, centred, and lifted off the
+    /// bottom by the margin — and the box the press tests is that box (`M-Q`).
+    /// The right and bottom edges belong to the grid, so a press there still
+    /// selects.
+    #[test]
+    fn the_toast_box_is_where_the_toast_is_drawn() {
+        let m = metrics();
+        let t = Toast::build(m, "boom", "the disk is full").expect("it has text");
+        assert_eq!(t.title, "boom");
+        assert_eq!(t.detail, vec!["the disk is full"]);
+        // two lines of 16 cells (the detail is the widest) with the gutter of 1.5
+        // cell on each side and the accent strip
+        let widest = "the disk is full".chars().count() as f32;
+        assert_eq!(t.rect[2], widest * m.cw + 3.0 * m.cw + TOAST_BAR);
+        assert_eq!(t.rect[3], 2.0 * m.ch + 2.0 * TOAST_PAD_Y);
+        // centred on the grid, and the margin holds it off the bottom
+        let centred = (m.cols as f32 * m.cw - t.rect[2]) / 2.0;
+        assert_eq!(t.rect[0], centred);
+        assert_eq!(t.rect[1] + t.rect[3], m.rows as f32 * m.ch - TOAST_MARGIN_Y);
+        // the text starts inside the padding and right of the strip
+        assert_eq!(
+            t.title_at(m),
+            (
+                t.rect[0] + TOAST_BAR + TOAST_PAD_X * m.cw,
+                t.rect[1] + TOAST_PAD_Y
+            )
+        );
+        assert_eq!(t.line_at(m, 0).1, t.rect[1] + TOAST_PAD_Y + m.ch);
+        // window px: the grid starts below the bar and right of the sidebar
+        let px = f64::from(t.rect[0] + m.pad + m.side + 1.0);
+        let py = f64::from(t.rect[1] + m.pad + m.bar + 1.0);
+        assert!(t.hit(m, px, py), "inside the box");
+        assert!(
+            !t.hit(
+                m,
+                f64::from(m.pad + m.side) + f64::from(t.rect[0]) - 1.0,
+                py
+            ),
+            "one pixel to the left"
+        );
+        assert!(
+            !t.hit(
+                m,
+                px,
+                f64::from(m.pad + m.bar) + f64::from(t.rect[1] + t.rect[3])
+            ),
+            "the bottom edge belongs to the grid"
+        );
+        // nothing to say, nothing drawn: an empty box is a hole in the screen
+        assert!(Toast::build(m, "", "").is_none());
+        // a title wider than the grid is cut, never a box wider than the grid
+        let long = Toast::build(m, &"x".repeat(200), "").expect("one line");
+        assert!(long.rect[2] <= m.cols as f32 * m.cw);
+    }
+
+    // ---- scrollbar ----
+
+    /// The strip is the grid's last `SCROLLBAR_W` px and the thumb its full height
+    /// when the view follows the output. The numbers are the ones the painter
+    /// gets, and the press target is wider than the strip only by the sliver to
+    /// the window's edge.
+    #[test]
+    fn the_scrollbar_says_the_same_thing_to_the_painter_and_to_the_press() {
+        let m = metrics();
+        let sb = Scrollbar::new(90, m.rows, 0).expect("there is history");
+        let (track, thumb) = sb.parts(m);
+        let strip = SCROLLBAR_W.min(m.cw);
+        assert_eq!(track, [m.cols as f32 * m.cw - strip, 0.0, strip, 200.0]);
+        // live: the thumb sits at the bottom (offset 0)
+        assert_eq!(thumb[1] + thumb[3], track[3]);
+        // one track height is 10 rows over 100 lines of history
+        assert!((thumb[3] - 20.0).abs() < 0.01);
+        // the press: the strip, plus the sliver between the grid and the window
+        let window_w = f64::from(m.pad + m.side) + 400.0; // 40 cols * 10 = 400
+        let strip_left = f64::from(m.pad + m.side) + f64::from(track[0]);
+        let mid_y = f64::from(m.pad + m.bar) + 100.0;
+        assert!(sb.hit(m, window_w, strip_left, mid_y), "on the strip");
+        assert!(sb.hit(m, window_w, window_w - 1.0, mid_y), "the sliver");
+        assert!(
+            !sb.hit(m, window_w, strip_left - 1.0, mid_y),
+            "one pixel left of the strip is text"
+        );
+        assert!(
+            !sb.hit(m, window_w, strip_left, f64::from(m.pad + m.bar) - 1.0),
+            "above the grid is the bar"
+        );
+        // nothing to scroll, no strip: the same `None` the drawing leaves
+        assert!(Scrollbar::new(0, m.rows, 0).is_none());
+        assert!(Scrollbar::new(90, 0, 0).is_none());
+    }
+
+    /// A press moves the view where the thumb goes, and the top of the track is
+    /// the oldest line — dragging past the end clamps instead of running away.
+    #[test]
+    fn a_press_puts_the_thumb_where_the_pointer_is() {
+        let m = metrics();
+        let sb = Scrollbar::new(90, m.rows, 0).expect("there is history");
+        let top = f64::from(m.pad + m.bar);
+        // the top of the track is the oldest line
+        assert_eq!(sb.offset_at(m, top).unwrap_or(0), 90);
+        // the bottom is the live view
+        assert_eq!(sb.offset_at(m, top + 199.0).unwrap_or(0), 0);
+        // in the middle the thumb's middle is under the pointer: half the history
+        let mid = sb.offset_at(m, top + 100.0).unwrap_or(0);
+        assert!((44..=46).contains(&mid), "the middle is half, got {mid}");
+        // above and below the track clamp, so a wild drag cannot pass the ends
+        assert_eq!(sb.offset_at(m, top - 50.0).unwrap_or(0), 90);
+        assert_eq!(sb.offset_at(m, top + 500.0).unwrap_or(0), 0);
     }
 }

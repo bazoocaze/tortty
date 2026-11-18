@@ -25,8 +25,6 @@ use crate::prof;
 /// Background and foreground used when the configuration says nothing.
 pub const BG: (u8, u8, u8) = (0, 0, 0);
 pub const FG: (u8, u8, u8) = (214, 214, 214);
-/// Width of the scrollbar strip in px (the app hit-tests the same number).
-pub const SCROLLBAR_W: f32 = 8.0;
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -133,12 +131,6 @@ pub struct Renderer {
     /// grid right: `origin` becomes `pad + side`.
     side: f32,
     pub cursor_shape: CursorShape,
-    /// Where the toast was drawn in the last frame, in **window** pixels
-    /// (`(x, y, w, h)`), or `None` when there was none. The app reads it to
-    /// answer a click: the box floats over the grid and swallows the press, so
-    /// the geometry cannot live only here (the duplication that `M-Q` exists to
-    /// kill).
-    pub toast_rect: Option<[f32; 4]>,
     /// Where text ends and images come in (images sit above text and below the
     /// cursor/chrome, as in kitty).
     img_split: usize,
@@ -557,7 +549,6 @@ impl Renderer {
             bar: 0.0,
             side: 0.0,
             cursor_shape: cfg.cursor_shape,
-            toast_rect: None,
             img_split: 0,
             emoji_split: 0,
             img_pipeline,
@@ -862,8 +853,7 @@ impl Renderer {
         tabs: Option<&[TabInfo]>,
         sidebar: Option<&[WsCard]>,
         cards_off: usize,
-        cols: usize,
-        rows: usize,
+        m: crate::chrome::Metrics,
     ) {
         let specs: Vec<crate::chrome::Tab<'_>> = tabs.map_or_default(|list| {
             list.iter()
@@ -875,27 +865,12 @@ impl Renderer {
                 .collect()
         });
         let ws = sidebar.map_or(0, <[WsCard]>::len);
-        let layout =
-            crate::chrome::Layout::build(self.chrome_metrics(cols, rows), &specs, ws, cards_off);
+        let layout = crate::chrome::Layout::build(m, &specs, ws, cards_off);
         if let Some(tabs) = tabs {
             self.tabbar(tabs, &layout);
         }
         if let Some(cards) = sidebar {
             self.sidebar(cards, &layout);
-        }
-    }
-
-    /// The metrics the chrome is laid out with — the app builds the same ones
-    /// from its own state, and both sides ask `chrome::Layout` (`M-Q`).
-    fn chrome_metrics(&self, cols: usize, rows: usize) -> crate::chrome::Metrics {
-        crate::chrome::Metrics {
-            cw: self.fonts.cw,
-            ch: self.fonts.ch,
-            pad: self.pad,
-            bar: self.bar,
-            side: self.side,
-            cols,
-            rows,
         }
     }
 
@@ -1058,47 +1033,15 @@ impl Renderer {
     /// No rounded corner and no shadow for now: the pipeline paints everything
     /// through one texture, so a corner would need a mask of its own baked into
     /// the atlas (nine patch) — an idea kept for later, not a limit.
-    fn toast(&mut self, t: &ToastText, cols: usize, rows: usize) {
-        // gutter on both sides of the text, in cells, so the box lines up with
-        // the grid; the vertical respiro is in px, independent of the line
-        // height of the theme
-        const PAD_X: f32 = 1.5;
-        const PAD_Y: f32 = 8.0;
-        const MARGIN_X: f32 = 1.0;
-        const MARGIN_Y: f32 = 28.0;
-        // the accent bar on the left: wide enough to read as a strip and not as
-        // a crack in the border
-        const BAR: f32 = 4.0;
+    fn toast(&mut self, t: &ToastText, m: crate::chrome::Metrics) {
+        // how far the surface is pulled away from the grid's own colour
         const VEIL: f32 = 0.14;
-        // Detail lines beyond this are cut: a notification carrying a whole page
-        // must not cover the grid it is telling you about.
-        const DETAIL_LINES: usize = 4;
-        let cw = self.fonts.cw;
-        let chh = self.fonts.ch;
-        // title and detail wrap at the same column, so the box has straight
-        // sides (the old one cut every notice at the grid width)
-        let n = (cols as f32 - 2.0 * MARGIN_X - 2.0 * PAD_X)
-            .floor()
-            .max(1.0) as usize;
-        let title: String = t.title.chars().take(n).collect();
-        let room = (rows.saturating_sub(2)).max(1);
-        let detail = wrap(&t.detail, n, DETAIL_LINES.min(room));
-        let widest = detail
-            .iter()
-            .map(|l| l.chars().count())
-            .chain(std::iter::once(title.chars().count()))
-            .max()
-            .unwrap_or(0);
-        if widest == 0 {
+        // the box's wrap, its width and its place are `chrome::Toast`'s: what is
+        // drawn here is what a press tests (`M-Q`)
+        let Some(box_) = crate::chrome::Toast::build(m, &t.title, &t.detail) else {
             return;
-        }
-        let lines = 1 + detail.len();
-        let bw = widest as f32 * cw + 2.0 * PAD_X * cw + BAR;
-        let bh = lines as f32 * chh + 2.0 * PAD_Y;
-        // centred: a notice is read where the eye lands, not in a corner. The
-        // text was cut at `n` above, so the box always fits the grid.
-        let x1 = ((cols as f32 * cw - bw) / 2.0).max(0.0);
-        let y1 = (rows as f32 * chh - MARGIN_Y - bh).max(0.0);
+        };
+        let [x1, y1, bw, bh] = box_.rect;
         let base = self.color(Color::Default, self.bg);
         let ink = self.color(Color::Default, self.fg);
         let accent = self.color(t.severity.color(), self.fg);
@@ -1148,17 +1091,13 @@ impl Renderer {
             r - 1.0,
             [ink[0], ink[1], ink[2], VEIL],
         );
-        self.push_rect(x1 + 1.0, y1 + 2.0, BAR, bh - 4.0, edge);
-        let tx = x1 + BAR + PAD_X * cw;
-        self.chrome_text(&title, tx, y1 + PAD_Y, ink, 0.0);
-        for (i, line) in detail.iter().enumerate() {
-            #[allow(clippy::cast_precision_loss)] // one line index, far below 2^23
-            let y = y1 + PAD_Y + (i + 1) as f32 * chh;
-            self.chrome_text(line, tx, y, dim, 0.0);
+        self.push_rect(x1 + 1.0, y1 + 2.0, crate::chrome::TOAST_BAR, bh - 4.0, edge);
+        let (tx, ty) = box_.title_at(m);
+        self.chrome_text(&box_.title, tx, ty, ink, 0.0);
+        for (i, line) in box_.detail.iter().enumerate() {
+            let (lx, ly) = box_.line_at(m, i);
+            self.chrome_text(line, lx, ly, dim, 0.0);
         }
-        // window pixels, so the app answers a click without repeating the
-        // arithmetic that built the box
-        self.toast_rect = Some([x1 + self.pad + self.side, y1 + self.pad + self.bar, bw, bh]);
     }
 
     /// The glyph colour of a cell. `M-D`: on the bright amber of the current match
@@ -1239,7 +1178,8 @@ impl Renderer {
     /// query_ ]` and `[ 1/3 ]`. The brackets are text, so the shape reads the same
     /// at any cell width; the surface is opaque and one step off the grid's, which
     /// is what keeps it from blending into the background behind it.
-    fn search_bar(&mut self, sv: &SearchView, cols: usize, rows: usize) {
+    fn search_bar(&mut self, sv: &SearchView, m: crate::chrome::Metrics) {
+        let (cols, rows) = (m.cols, m.rows);
         let cw = self.fonts.cw;
         let chh = self.fonts.ch;
         let base = self.color(Color::Default, self.bg);
@@ -1307,13 +1247,12 @@ impl Renderer {
         &mut self,
         search: Option<&SearchView>,
         term: &tortty_core::Term,
-        cols: usize,
-        rows: usize,
+        m: crate::chrome::Metrics,
     ) {
         if let Some(sv) = search {
-            self.search_bar(sv, cols, rows);
+            self.search_bar(sv, m);
         } else if self.status_show == tortty_core::config::StatusShow::Chip {
-            self.status_chip(term, cols, rows);
+            self.status_chip(term, m);
         }
     }
 
@@ -1322,12 +1261,12 @@ impl Renderer {
     /// tab bar is not drawn then — and the last row is where the search bar
     /// already lives, so it yields to it. The box comes from `chrome::StateChip`,
     /// which the press that dismisses it reads too (`M-Q`).
-    fn status_chip(&mut self, term: &tortty_core::Term, cols: usize, rows: usize) {
+    fn status_chip(&mut self, term: &tortty_core::Term, m: crate::chrome::Metrics) {
         let Some((state, word, detail)) = term.status_chip() else {
             return;
         };
         let chip = crate::chrome::StateChip { word, detail };
-        let Some([x, y, width, height]) = chip.rect(self.chrome_metrics(cols, rows)) else {
+        let Some([x, y, width, height]) = chip.rect(m) else {
             return;
         };
         let (word, detail) = (chip.word.as_str(), chip.detail.as_str());
@@ -1942,24 +1881,29 @@ impl Renderer {
     /// **over** the last column, and a solid one would eat the text under it.
     /// Width lives in `SCROLLBAR_W` because the app hit-tests the same strip.
     fn scrollbar(&mut self, f: &Frame<'_>) {
-        let hist = f.term.scrollback.len();
-        let rows = f.term.rows;
-        if hist == 0 || rows == 0 {
+        // the strip and the thumb are `chrome::Scrollbar`'s numbers, the same ones
+        // the press that drags it reads (`M-Q`)
+        let Some(sb) =
+            crate::chrome::Scrollbar::new(f.term.scrollback.len(), f.term.rows, f.view_off)
+        else {
             return;
-        }
-        let cell_w = self.fonts.cw;
-        let cell_h = self.fonts.ch;
-        let strip = SCROLLBAR_W.min(cell_w);
-        let x = f.term.cols as f32 * cell_w - strip;
-        let track_h = rows as f32 * cell_h;
-        let thumb_h = (track_h * rows as f32 / (rows + hist) as f32)
-            .max(12.0)
-            .min(track_h);
-        let off = f.view_off.min(hist) as f32 / hist as f32;
-        let y = (track_h - thumb_h) * (1.0 - off);
+        };
+        let (track, thumb) = sb.parts(f.metrics);
         let ink = self.color(Color::Default, self.fg);
-        self.push_rect(x, 0.0, strip, track_h, [ink[0], ink[1], ink[2], 0.10]);
-        self.push_rect(x, y, strip, thumb_h, [ink[0], ink[1], ink[2], 0.55]);
+        self.push_rect(
+            track[0],
+            track[1],
+            track[2],
+            track[3],
+            [ink[0], ink[1], ink[2], 0.10],
+        );
+        self.push_rect(
+            thumb[0],
+            thumb[1],
+            thumb[2],
+            thumb[3],
+            [ink[0], ink[1], ink[2], 0.55],
+        );
     }
 
     pub fn build(&mut self, f: &Frame<'_>) {
@@ -1976,6 +1920,7 @@ impl Renderer {
             links,
             search,
             menu,
+            metrics,
         } = *f;
         let cols = term.cols;
         // selection rectangle in the view (stuck to the screen); outside it
@@ -2066,7 +2011,7 @@ impl Renderer {
         self.build_images(f);
 
         // 2b) the chrome of this frame, laid out once (`M-Q`)
-        self.build_chrome(tabs, sidebar, cards_off, cols, rows.len());
+        self.build_chrome(tabs, sidebar, cards_off, metrics);
 
         // 2d) scrollbar: over the grid's right edge, under the cursor/toast
         self.scrollbar(f);
@@ -2075,7 +2020,7 @@ impl Renderer {
         self.build_cursor(f);
 
         // 3b) the grid's bottom row, shared by two overlays (`M-D`, `B47`)
-        self.bottom_row(search, term, cols, rows.len());
+        self.bottom_row(search, term, metrics);
 
         // 4) history indicator (D8): "↑N" — without it, scrolling back is
         // indistinguishable from the app having stopped writing
@@ -2084,13 +2029,12 @@ impl Renderer {
             self.badge(&txt, cols);
         }
 
-        // 5) toast (I12/K13): notice from the terminal itself, on top of
-        // everything. It goes away on its own, or with a click; the app controls
-        // the timing, and the rect of the last frame dies with the box — a click
-        // must not land on a notice that is gone.
-        self.toast_rect = None;
+        // 5) toast (I12/K13): notice from the terminal itself, over the chrome and
+        // the grid and under the menu. It goes away on its own, or with a click;
+        // the app controls the timing and derives the same box from the same
+        // notice, so a click never lands on a notice that is gone.
         if let Some(t) = toast {
-            self.toast(t, cols, rows.len());
+            self.toast(t, metrics);
         }
 
         // 6) the grid's context menu (`M-V`): it is opened *by* a click on what
@@ -2970,51 +2914,15 @@ pub struct ToastText {
     pub severity: Severity,
 }
 
-/// Breaks `text` into lines of at most `n` characters, preferring the space
-/// (a word is not cut while it fits) and cutting a word longer than the whole
-/// line, which has nowhere to break — a path or a URL must still fit the box.
-/// At most `max` lines: the rest is dropped, never drawn under the margin.
-fn wrap(text: &str, n: usize, max: usize) -> Vec<String> {
-    let n = n.max(1);
-    let mut words: Vec<&str> = Vec::new();
-    for word in text.split_whitespace() {
-        let mut rest = word;
-        while rest.chars().count() > n {
-            let cut = rest.char_indices().nth(n).map_or(rest.len(), |(i, _)| i);
-            words.push(&rest[..cut]);
-            rest = &rest[cut..];
-        }
-        if !rest.is_empty() {
-            words.push(rest);
-        }
-    }
-    let mut out: Vec<String> = Vec::new();
-    let mut line = String::new();
-    for word in words {
-        let sep = usize::from(!line.is_empty());
-        if !line.is_empty() && line.chars().count() + sep + word.chars().count() > n {
-            out.push(std::mem::take(&mut line));
-            if out.len() == max {
-                return out;
-            }
-        }
-        if !line.is_empty() {
-            line.push(' ');
-        }
-        line.push_str(word);
-    }
-    if !line.is_empty() && out.len() < max {
-        out.push(line);
-    }
-    out
-}
-
 /// Everything a frame needs, in one package: the signature of `build`/`render`
 /// grew one parameter per slice (tabs, sidebar, toast...).
 pub struct Frame<'a> {
     /// Identity of the drawn tab (see `damage`).
     pub tab: u64,
     pub term: &'a Term,
+    /// Where the chrome lands, built by the app — the only place that knows the
+    /// bar and the sidebar height of this frame (`M-Q`).
+    pub metrics: crate::chrome::Metrics,
     pub view_off: usize,
     pub sel: Option<Span>,
     pub blink: Blink,
@@ -3122,38 +3030,11 @@ fn card_lines(n: usize, name: &str, title: &str) -> (String, String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{card_lines, is_swap, progress_ink, wrap};
+    use super::{card_lines, is_swap, progress_ink};
     use tortty_core::cell::Cell;
     use tortty_core::select::Rect;
     use tortty_core::term::Progress;
     use tortty_core::Color;
-
-    /// The detail of a notice fills the box up to the margin, breaks at the space
-    /// and never leaves a line wider than the box.
-    #[test]
-    fn a_notice_detail_wraps_at_the_space() {
-        assert_eq!(
-            wrap("alpha beta gamma delta", 11, 4),
-            vec!["alpha beta", "gamma delta"]
-        );
-    }
-
-    /// A word with no space in it — a path, a URL — is cut where it reaches the
-    /// margin instead of overflowing the box.
-    #[test]
-    fn a_word_longer_than_the_line_is_cut() {
-        assert_eq!(
-            wrap("/usr/local/share/very/long/path", 10, 4),
-            vec!["/usr/local", "/share/ver", "y/long/pat", "h"]
-        );
-    }
-
-    /// The cap is lines: a notice that would be taller than the grid keeps the
-    /// first lines and drops the rest instead of covering the whole screen.
-    #[test]
-    fn the_detail_stops_at_the_line_cap() {
-        assert_eq!(wrap("a b c d e f g", 1, 2), vec!["a", "b"]);
-    }
 
     /// `B5`: the rectangle inverts the same columns on every one of its rows,
     /// while a flow selection only cuts the first and the last.

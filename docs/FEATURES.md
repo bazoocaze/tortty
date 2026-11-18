@@ -56,7 +56,7 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - Scrollback with a configurable cap ([`CONFIG.md`](CONFIG.md)) and an 8 px
   scrollbar on the grid's right edge: it appears only when there is history, the
   thumb is the share of the buffer the view shows, a click jumps and a drag walks
-  it. Output moves the view so the line being read stays put — inside a `?2026`
+  it — strip, thumb and the press target are one geometry (`chrome::Scrollbar`). Output moves the view so the line being read stays put — inside a `?2026`
   window too, when all the window does is write; a window that redraws the
   screen (`ED 2`/`ED 3`/cursor home) and a `clear` (`ED 3`) do not drag the
   reader. **limit:** no search (`M-D`).
@@ -292,7 +292,8 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - Chrome: toast as a floating box over the bottom of the grid, centred — two
   levels (title in the foreground colour, detail pulled towards the surface and
   wrapped in up to four lines), an accent bar and border in the shade of the
-  notice, **rounded corners** (one anti-aliased tile in the mask atlas, mirrored
+  notice — the wrap and the box are `chrome::Toast`, so the box a click tests is
+  the box that was drawn, **rounded corners** (one anti-aliased tile in the mask atlas, mirrored
   into the four) with a **shadow** of two veils, theme background veiled 14%
   towards the foreground, 1.5-cell gutter.
   Three shades: a receipt lives 3 s, a warning and an error 10 s, a notification

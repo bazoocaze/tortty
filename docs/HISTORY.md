@@ -1519,3 +1519,30 @@ do renderer. Agora `apply_layout` leva os dois, e a mudança de tinta de
   arquivo, `state` diz `tab`, a última linha tem 0 e a barra passou de 192 para
   386 px (o rótulo `● blocked 1 tortty`).
 
+
+## 2026-11-17 — o toast e a barra de rolagem entram na cena do chrome
+
+O `chrome.rs` dizia que "todo elemento de sobreposição é disposto uma vez", e não
+era verdade para dois deles. O toast calculava a caixa **dentro do desenho** e
+deixava o retângulo num campo do renderer para o app ler depois; a barra de
+rolagem tinha a geometria escrita duas vezes — `x`, altura do thumb (`max(12)`),
+fração e lugar — uma em px de janela para o clique, outra em espaço de origem
+para o pintor. Concordavam por aritmética.
+- `chrome::Toast` passou a ser dono do texto quebrado, da largura (que **é** o
+  texto quebrado), da caixa e de onde cada linha entra; `chrome::Scrollbar`, do
+  trilho, do thumb, do alvo do clique (o strip **mais** a fresta até a borda da
+  janela) e do offset que um clique pede. O campo `toast_rect` do renderer
+  deixou de existir: o app deriva a mesma caixa da mesma notícia, então não há
+  retângulo velho para clicar quando ela expira.
+- `Frame` leva `chrome::Metrics` construída pelo app — antes eram duas
+  construções, uma de cada lado. Testes novos de geometria (toast, barra), que
+  antes não existiam, e o `wrap` mudou de arquivo com os seus.
+- Medido no Xvfb: a caixa desenhada do toast sai em `147.31,142.25 187.02x53.25`,
+  o mesmo retângulo que o clique usa; um pixel fora à esquerda, acima, à direita
+  e abaixo não apaga; no meio apaga. A barra: pressa no topo do trilho leva a
+  266 (o mais antigo), no pé a 0 (ao vivo), a fresta à direita do strip também
+  (`x=480`), e arrastar dá 266 → 198 → 123 → 47 → 0.
+- A ordem do desenho e a do clique discordavam num ponto: o menu é pintado
+  **depois** do toast e era testado **antes** dele. Um clique sobre um toast que
+  estivesse sob o menu apagava o aviso em vez de escolher a linha. Agora o menu é
+  o primeiro dos dois, como manda o que está na frente.
