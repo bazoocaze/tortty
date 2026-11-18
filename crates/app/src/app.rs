@@ -4654,6 +4654,20 @@ impl ApplicationHandler<UserEvent> for App {
             self.tabs[self.active].term.rows,
         );
 
+        // the log first: everything below it is something the log is supposed to
+        // record, and a socket line written before the file exists is lost
+        if let Some(path) = self.opts.debug_log.clone() {
+            set_log(&path);
+            // the epoch is what turns the `+ms` stamps into wall clock
+            let epoch = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default();
+            logln(&format!(
+                "log start: {} epoch {} ms",
+                log_stamp(),
+                epoch.as_millis()
+            ));
+        }
         if let Some(path) = self.opts.debug_socket.clone() {
             match DebugServer::start(&path, self.proxy.clone()) {
                 Ok(s) => {
@@ -4675,18 +4689,6 @@ impl ApplicationHandler<UserEvent> for App {
                     self.toast("Debug socket", &e, Severity::Err);
                 },
             }
-        }
-        if let Some(path) = self.opts.debug_log.clone() {
-            set_log(&path);
-            // the epoch is what turns the `+ms` stamps into wall clock
-            let epoch = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default();
-            logln(&format!(
-                "log start: {} epoch {} ms",
-                log_stamp(),
-                epoch.as_millis()
-            ));
         }
         logln(&format!(
             "tortty {} — {}x{} cells, cell {}x{}, font {} {}px",

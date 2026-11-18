@@ -40,7 +40,7 @@ probe wants a clean start.
 | `--no-vsync` | draws as fast as possible (measure throughput) |
 | `--prof` | turns on the `draw`/`parse`/`pty` counters (queried by `prof`) |
 | `--debug-socket PATH\|auto` | JSON introspection socket (`auto` = `$XDG_RUNTIME_DIR/tortty-<pid>.sock`) |
-| `--debug-log FILE` | event log (`logln!`): state dumps, toasts, config reloads and every `?2026` transaction |
+| `--debug-log FILE` | event log (`logln`): startup, toasts, config reloads and every `?2026` transaction |
 | `WGPU_BACKEND=gl\|vulkan` | forces the `wgpu` backend (escape valve for a problematic GPU) |
 | `WGPU_ADAPTER_NAME=…` | picks the adapter (useful to test llvmpipe) |
 | `SHELL=…` | default shell when there is no `--cmd` |
@@ -169,7 +169,7 @@ or `ok: false` with `err`. The protocol is stable on purpose:
 | `prof` | `on` (bool, optional) | counters: `draw_ms_call`, `draw_calls`, `parse_*`, `pty_*` |
 | `osc` | `tab` (optional, default the active one) | the last 8 OSC the parser saw, newest to oldest: `hex`, `text` (lossy), `truncated`, `title` (the resulting one). It is the probe for "why is the tab title full of garbage" |
 | `sel` | — | `text` (what `Ctrl+Shift+C` would copy) and `block` (the selection is a rectangle, `B5`) |
-| `log` | `data` | writes to the debug log |
+| `log` | `value` (a path, or `off`) | starts the event log, moves it to another file, or turns it off — the same file `--debug-log` writes |
 | `quit` | — | closes the window |
 
 `state` is the source of truth for the harness: the response has the grid
