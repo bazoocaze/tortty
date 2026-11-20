@@ -19,15 +19,27 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
-  # The ruler is `tools/quality-check.sh` in every job below: `--only` picks the
-  # steps, it does not define them. Split into parallel jobs because the phases
-  # are independent compilations — in one job they queue, and the queue was 5m27.
-  lint:
+  # One job, weighed against four on 2026-11-20. The four-job run spent 410 s of
+  # runner time and 540 s of *billed* time (9 minutes): GitHub rounds every job up
+  # to the whole minute and charges a one-minute floor, so `seam` cost a minute for
+  # 26 s of work, and setup, checkout, toolchain and apt were paid four times — the
+  # same 2.1 MB of system deps downloaded three times (151 s) while the Azure mirror
+  # served them at 33 kB/s. The split bought wall clock (3m04 against ~4m30) and
+  # nothing else, and wall clock is not what is being paid for.
+  #
+  # What it costs: a red `fmt` now waits behind the release build. `quality-check.sh`
+  # still prints one line per step with its own time, so a slow or broken step is
+  # still named, and `--only` stays available for a local run of a single step.
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
       # winit (x11/wayland) and wgpu need the system headers; clippy compiles the
-      # build scripts even though it never links
+      # build scripts even though it never links. No font package: the glyph tests
+      # load their own fonts from `crates/app/test-assets/` (52 KB, four subsets),
+      # because what they assert is the fallback chain, not the machine. The real
+      # ones cost `fonts-noto-cjk` = 61.2 MB, and the mirror served it at 59 kB/s —
+      # 18 minutes of one job, on a run whose other three took 28-77 s.
       - name: system deps
         run: |
           sudo apt-get update
@@ -42,58 +54,15 @@ jobs:
           rustup install --no-self-update
           rustup show active-toolchain
           rustc -V
+      # one key, because there is one workspace and one `target/`: the seam's cross
+      # builds land here too, and the measured 1m30 of them is compiling the app's
+      # dependency tree twice (winit, wgpu, windows-sys), so `target/` is the cache
+      # that matters — caching `~/.rustup` instead saved 17 s and cost 1m48 to save.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
         with:
-          key: lint
-      - name: the seam, the package name, fmt and clippy
-        run: ./tools/quality-check.sh --only seam,targets,fmt,clippy
-
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
-      # No font package here: the glyph tests load their own fonts from
-      # `crates/app/test-assets/` (52 KB, four subsets) because what they assert
-      # is the fallback chain, not the machine. The real ones cost
-      # `fonts-noto-cjk` = 61.2 MB, and the mirror served it at 59 kB/s — 18
-      # minutes of this job, on a run whose other three jobs took 28-77 s.
-      - name: system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev \
-            libxi-dev libxcursor-dev libxinerama-dev
-      - name: toolchain
-        run: |
-          rustup install --no-self-update
-          rustup show active-toolchain
-          rustc -V
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
-        with:
-          key: test
-      - name: cargo test
-        run: ./tools/quality-check.sh --only test
-
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
-      - name: system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev \
-            libxi-dev libxcursor-dev libxinerama-dev
-      - name: toolchain
-        run: |
-          rustup install --no-self-update
-          rustup show active-toolchain
-          rustc -V
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
-        with:
-          key: build
-      - name: release build, selftest and parsebench
-        run: ./tools/quality-check.sh --only build,selftest,parsebench
+          key: all
+      - name: the ruler
+        run: ./tools/quality-check.sh
       # the installer is what the user runs: a step on a temporary prefix catches a
       # broken path, a missing `install` and a `--version` that does not answer
       - name: installer
@@ -104,37 +73,18 @@ jobs:
           ./install.sh --prefix "$RUNNER_TEMP/inst" --check
           ./install.sh --prefix "$RUNNER_TEMP/inst" --uninstall
           test ! -e "$RUNNER_TEMP/inst/bin/tortty"
-
-  seam:
-    # The `platform` seam is one module (AGENTS.md), and the proof that it holds is
-    # these two targets. `tortty-core` must build for them — it knows no window,
-    # pty, GPU or clock, so a system call reaching the core breaks here. The app
-    # must stop on the seam's own `compile_error!` and on nothing else: before the
-    # seam it was 35 errors on Windows and 4 on macOS, and a green build would mean
-    # somebody went around it. When `M-X`/`M-Y` land, the second step becomes a
-    # build.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
-      # Measured on the runner: the rustup downloads are 17 s, and the 1m30 of this
-      # job is `cargo check --target` compiling the app's dependency tree twice
-      # (winit, wgpu, windows-sys). So the cache that matters here is `target/`,
-      # not `~/.rustup` — caching the latter saved 17 s and cost 1m48 to save.
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
-        with:
-          key: seam
-      - name: toolchain and the other targets
+      # The `platform` seam is one module (AGENTS.md), and the proof that it holds is
+      # these two targets. `tortty-core` must build for them — it knows no window,
+      # pty, GPU or clock, so a system call reaching the core breaks here. The app
+      # must stop on the seam's own `compile_error!` and on nothing else: before the
+      # seam it was 35 errors on Windows and 4 on macOS, and a green build would mean
+      # somebody went around it. When `M-X`/`M-Y` land, the loop becomes a build.
+      # Last because it is the slowest step and the least likely to fail.
+      - name: the other targets
         run: |
-          rustup install --no-self-update
           rustup target add x86_64-pc-windows-gnu x86_64-apple-darwin
-          rustup show active-toolchain
-          rustc -V
-      - name: the core builds for the other systems
-        run: |
           cargo check -p tortty-core --target x86_64-pc-windows-gnu
           cargo check -p tortty-core --target x86_64-apple-darwin
-      - name: the app stops at the seam, and only there
-        run: |
           for target in x86_64-pc-windows-gnu x86_64-apple-darwin; do
             if out=$(cargo check -p tortty --target "$target" 2>&1); then
               echo "::error::$target built: the seam is gone (M-X/M-Y closed?)"

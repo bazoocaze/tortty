@@ -52,10 +52,12 @@ step() {
     name=$1
     shift
     printf '%-22s' "$name"
+    # seconds per step, so "CI is slow" has a name and a number instead of a mood
+    t0=$(date +%s)
     if output=$("$@" 2>&1); then
-        echo "ok"
+        printf 'ok      %ss\n' "$(( $(date +%s) - t0 ))"
     else
-        echo "FAILED"
+        printf 'FAILED  %ss\n' "$(( $(date +%s) - t0 ))"
         echo "$output" | tail -30 | sed 's/^/    /'
         failed=1
     fi
