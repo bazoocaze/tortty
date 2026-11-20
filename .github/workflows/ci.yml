@@ -40,12 +40,28 @@ jobs:
       # because what they assert is the fallback chain, not the machine. The real
       # ones cost `fonts-noto-cjk` = 61.2 MB, and the mirror served it at 59 kB/s —
       # 18 minutes of one job, on a run whose other three took 28-77 s.
+      #
+      # The mirror is the same one: the runner ships with azure.archive.ubuntu.com,
+      # which collapses often enough that the two attempts of run 44664863154 paid
+      # 55 s and 114 s for these 2.1 MB — 30 kB/s, 1/4 of the job, for seven headers
+      # that never change. `.github/apt-mirror.sh` probes Ubuntu's own mirror list plus
+      # the mirror the runner has, and points apt at the fastest, so the cost is a
+      # few seconds instead of whatever the mirror feels like today. It lives here
+      # because it is CI-only, and it is ours because the step needs sudo and
+      # rewrites apt's sources: the trust surface should be a file in this repo,
+      # reviewed in the diff, not a third-party action we would have to re-audit on
+      # every bump. Verbose under Actions, so a slow run says which URL answered what.
+      - name: fast apt mirror
+        run: ./.github/apt-mirror.sh
       - name: system deps
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev \
-            libxi-dev libxcursor-dev libxinerama-dev
+          pkgs="libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev
+                libxi-dev libxcursor-dev libxinerama-dev"
+          # the list above is the one the step before refreshed; the retry answers a
+          # runner image whose lists are older than these packages, which apt calls 404
+          sudo apt-get install -y --no-install-recommends $pkgs \
+            || { sudo apt-get update &&
+                 sudo apt-get install -y --no-install-recommends $pkgs; }
       # rust-toolchain.toml decides the compiler, here and on a laptop: a green
       # hook over a red CI (or the other way round) is a ruler that measures
       # itself. rustup installs what the file asks for on first use.
