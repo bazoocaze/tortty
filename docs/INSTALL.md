@@ -12,6 +12,7 @@ interpreter and no bindings to install.
 ./install.sh --prefix DIR    # another prefix: the command lands in DIR/bin/tortty
 ./install.sh --binary FILE   # installs an already built binary (does not build)
 ./install.sh --from-release  # downloads the binary from GitHub Releases (no cargo)
+./install.sh --no-verify     # does not check the download against SHA256SUMS
 ./install.sh --local         # command becomes a link to target/release/tortty (dev)
 ./install.sh --no-shortcut   # without an entry in the system menu
 ./install.sh --check         # checks the existing installation
@@ -33,14 +34,19 @@ curl -fsSL …/install.sh | bash -s -- --prefix /usr/local   # flags after -s --
 What it does, in order:
 
 1. obtains the binary (builds, copies `--binary` or downloads `--from-release`);
-2. warns if `tortty` already exists in `PATH` and is not the one from this
+2. with `--from-release`, takes the `SHA256SUMS` published beside the package and
+   refuses a package that does not match it (`--no-verify` skips this). A release
+   with no `SHA256SUMS`, a mirror that drops it, or a system with no `sha256sum`
+   says so and installs: the check exists to stop a *wrong* download, not to
+   break the ones it cannot judge;
+3. warns if `tortty` already exists in `PATH` and is not the one from this
    installation;
-3. installs to `$PREFIX/bin/tortty` (`install`, copying — swapping the binary in
+4. installs to `$PREFIX/bin/tortty` (`install`, copying — swapping the binary in
    `target/` does not leave the installation pointing at nothing);
-4. without `--no-shortcut`, writes `$PREFIX/share/applications/tortty.desktop`
+5. without `--no-shortcut`, writes `$PREFIX/share/applications/tortty.desktop`
    and `$PREFIX/share/icons/hicolor/scalable/apps/tortty.svg`;
-5. verifies: runs `tortty --version` and fails if `ldd` shows a missing library;
-6. warns if `$PREFIX/bin` is outside `PATH`.
+6. verifies: runs `tortty --version` and fails if `ldd` shows a missing library;
+7. warns if `$PREFIX/bin` is outside `PATH`.
 
 `sudo` only comes in when the prefix is not writable (e.g. `--prefix /usr/local`).
 
@@ -93,6 +99,10 @@ tortty-<version>-linux-x86_64.tar.gz     (tortty + tortty.svg + LICENSE + README
 tortty-<version>-linux-aarch64.tar.gz
 SHA256SUMS
 ```
+
+The entry for a package needs a line of its own in `SHA256SUMS` for `install.sh`
+to verify the download: one file per release, not one per package, because a user
+who downloads by hand wants the list of everything at once.
 
 The icon travels **inside** the package, beside the binary: `install.sh` looks for
 it there (or in `assets/`, in a checkout) instead of downloading it from `main`,

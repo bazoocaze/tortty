@@ -10,6 +10,7 @@
 #   ./install.sh --prefix DIR    another prefix (the command lands in DIR/bin/tortty)
 #   ./install.sh --binary FILE   installs an already built binary (does not build)
 #   ./install.sh --from-release  downloads the binary from GitHub Releases (no cargo)
+#   ./install.sh --no-verify     does not check the download against SHA256SUMS
 #   ./install.sh --local         command points at target/release/tortty (dev)
 #   ./install.sh --no-shortcut   does not create the system menu entry
 #   ./install.sh --check         checks the existing installation
@@ -28,7 +29,7 @@ say()  { printf '%s\n' "$*"; }
 warn() { printf '%s\n' "$*" >&2; }
 die()  { warn "tortty: $*"; exit 1; }
 
-DRY=0; SHORTCUT=1; MODE=install; LOCAL=0; FROM_RELEASE=0; BINARY=""
+DRY=0; SHORTCUT=1; MODE=install; LOCAL=0; FROM_RELEASE=0; BINARY=""; VERIFY=1
 while [ $# -gt 0 ]; do
     case "$1" in
         --prefix)      PREFIX=${2:?--prefix needs a directory}; shift 2 ;;
@@ -41,6 +42,7 @@ while [ $# -gt 0 ]; do
         --no-shortcut) SHORTCUT=0; shift ;;
         --uninstall)   MODE=uninstall; shift ;;
         --check)       MODE=check; shift ;;
+        --no-verify)   VERIFY=0; shift ;;
         --dry-run)     DRY=1; shift ;;
         -h|--help)     awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
         *) die "invalid option: $1 (use -h)" ;;
@@ -152,17 +154,48 @@ release_url() {
 }
 
 fetch_release() {
-    local url tmp bin
+    local url tmp bin pkg
     command -v curl >/dev/null 2>&1 || die "--from-release needs curl"
     url=$(release_url) || die "no release to download: https://github.com/$REPO/releases has none (use --binary, or build from a clone)"
+    pkg=${url##*/}
     tmp=$(mktemp -d)
     printf '== downloading %s\n' "$url" >&2
-    curl -fsSL "$url" -o "$tmp/pkg.tgz" \
+    curl -fsSL "$url" -o "$tmp/$pkg" \
         || die "no package at $url (use --binary, or build from a clone)"
-    tar -xzf "$tmp/pkg.tgz" -C "$tmp"
+    verify_release "$tmp/$pkg" "$pkg" "${url%/*}"
+    tar -xzf "$tmp/$pkg" -C "$tmp"
     bin=$(find "$tmp" -type f -name "$APP" -perm -u+x | head -1)
     [ -n "$bin" ] || die "the downloaded package has no '$APP' binary"
     printf '%s' "$bin"
+}
+
+# A download crosses a CDN, a proxy or a mirror; the checksum turns "the bytes arrived"
+# into "these are the bytes the release published". A release that carries no SHA256SUMS
+# (or a system without sha256sum) warns and installs — refusing there would break mirrors
+# and older releases; a *mismatch*, which is the case that matters, stops the install.
+verify_release() {
+    local file=$1 pkg=$2 base=$3 sums line
+    [ "$VERIFY" = 1 ] || return 0
+    if ! command -v sha256sum >/dev/null 2>&1; then
+        warn "== no sha256sum here: the download is not verified"
+        return 0
+    fi
+    sums=$(mktemp)
+    if ! curl -fsSL "$base/SHA256SUMS" -o "$sums" 2>/dev/null; then
+        warn "== the release publishes no SHA256SUMS: the download is not verified"
+        rm -f "$sums"
+        return 0
+    fi
+    line=$(awk -v p="$pkg" '$2 == p' "$sums")
+    rm -f "$sums"
+    if [ -z "$line" ]; then
+        warn "== SHA256SUMS has no line for $pkg: the download is not verified"
+        return 0
+    fi
+    printf '%s\n' "$line" | ( cd "$(dirname "$file")" && sha256sum -c --quiet - ) \
+        || die "$pkg does not match the published checksum (use --no-verify to install anyway)"
+    # stderr: this function's caller reads stdout as the binary path
+    warn "== checksum ok: $pkg"
 }
 
 # -- installation --------------------------------------------------------

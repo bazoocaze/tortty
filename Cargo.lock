@@ -2079,7 +2079,7 @@ dependencies = [
 
 [[package]]
 name = "tortty"
-version = "1.0.121"
+version = "1.0.122"
 dependencies = [
  "arboard",
  "bytemuck",
@@ -2098,7 +2098,7 @@ dependencies = [
 
 [[package]]
 name = "tortty-core"
-version = "1.0.121"
+version = "1.0.122"
 dependencies = [
  "base64",
  "flate2",
