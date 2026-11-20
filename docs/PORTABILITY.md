@@ -100,7 +100,7 @@ Recommended path, in this order:
 1. **GitHub Actions with a matrix** — **it already exists for Linux**
    (`.github/workflows/release.yml`, tag `v*`): `x86_64` and `aarch64`, using
    `tools/build-release.sh` (the same command as locally) and publishing
-   `tortty-<version>-<triple>.tar.gz` + `SHA256SUMS`, which is exactly what
+   `tortty-<version>-<system>-<machine>.tar.gz` + `SHA256SUMS`, which is exactly what
    `./install.sh --from-release` downloads. `aarch64` runs under
    `qemu-user-static` in CI so that `--version` counts as verification. When
    M6/M7 close, `windows-latest` and `macos-14`/`macos-13` enter as two more

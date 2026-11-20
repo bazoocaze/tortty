@@ -19,6 +19,17 @@ interpreter and no bindings to install.
 ./install.sh --dry-run       # shows every command, runs nothing
 ```
 
+Without a clone, the same script works from a pipe — it downloads the release
+instead of building, and takes the version from the repository because there is
+no `Cargo.toml` in a pipe to read:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/bazoocaze/tortty/main/install.sh | bash
+curl -fsSL …/install.sh | bash -s -- --prefix /usr/local   # flags after -s --
+```
+
+`TORTTY_REPO` (default `bazoocaze/tortty`) is the repository both forms ask.
+
 What it does, in order:
 
 1. obtains the binary (builds, copies `--binary` or downloads `--from-release`);
@@ -78,10 +89,26 @@ the real size.
 `--from-release` expects, in the GitHub Releases of tag `v<version>`:
 
 ```
-tortty-<version>-x86_64-unknown-linux-gnu.tar.gz    (binary `tortty` + LICENSE + README)
-tortty-<version>-aarch64-unknown-linux-gnu.tar.gz
+tortty-<version>-linux-x86_64.tar.gz     (tortty + tortty.svg + LICENSE + README.md)
+tortty-<version>-linux-aarch64.tar.gz
 SHA256SUMS
 ```
+
+The icon travels **inside** the package, beside the binary: `install.sh` looks for
+it there (or in `assets/`, in a checkout) instead of downloading it from `main`,
+which would put an unversioned file into a versioned install. Whoever extracts the
+package by hand gets the binary, the icon, the license and the README — and the one
+step left is putting `tortty` on the `PATH`.
+
+The name says the system and the machine, because that is the question whoever
+installs has. It is **not** the rustc target: `x86_64-unknown-linux-gnu` puts
+`unknown` (the vendor slot of a machine with no vendor to declare) and `gnu` (the
+C library) in front of the reader, and neither answers "does this run here?". The
+target still names **what to build** (`--target` takes it verbatim, CI included);
+only the package name is written for the reader. The table lives in
+`tools/targets.sh`, `install.sh` carries a copy to fetch with, and
+`tools/targets-check.sh` (a `quality-check.sh` step) fails when the two disagree —
+a drifted copy would only show up as a 404 at install time.
 
 What generates that is `.github/workflows/release.yml`, which only calls
 `tools/build-release.sh` — the **same** command that is run on the machine:
@@ -96,8 +123,14 @@ The script checks the `Cargo.toml` version against the tag, runs
 `tortty --version` on the packaged binary (under `qemu-user-static` when it is a
 cross build) and leaves the `.tar.gz` + `.sha256` in `dist/`.
 
-Publishing is creating the tag:
-`git tag -a v0.1.0 -m ... && git push origin v0.1.0`. The download repository
-comes from `TORTTY_REPO` (default `bazoocaze/tortty`). macOS and Windows are
+Publishing is one command, `./tools/make-release.sh` (with `--dry-run` to see the
+checks without tagging): it refuses a dirty tree, an unpushed `HEAD`, a red CI run
+for that commit and a tag that already exists, then pushes `v<version>`. The
+download repository comes from `TORTTY_REPO` (default `bazoocaze/tortty`).
+
+A checkout asks for the version of its own `Cargo.toml`; a piped script cannot,
+so it takes the tag from the redirect of `/releases/latest` and installs the
+newest release. That is the one difference between the two forms — everything
+after the download is the same code. macOS and Windows are
 not in the matrix yet: they are new targets (`M-X`/`M-Y` of
 `docs/BACKLOG.md`, with signing in `M-Z`): a target nobody has exercised yet.

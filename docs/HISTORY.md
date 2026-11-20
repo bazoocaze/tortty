@@ -1579,9 +1579,24 @@ primeira.
 - O log abre antes da GPU e do socket e o prólogo vem primeiro: antes o `debug socket:` caía no vazio e o cabeçalho vinha depois dos toasts.
 - `docs/DEBUG.md` ganhou a gramática e o catálogo com linhas reais; `log::tests` cobre a data civil, o byte 40 da mensagem e o fuso.
 
-## 2026-11-17 — as fontes dos testes viajam com o código
+## 2026-11-17 — the tests' fonts travel with the code
 
-- A run de CI levou 18 min porque `fonts-noto-cjk` (61,2 MB) chegou a 59 kB/s do espelho: os outros três jobs levaram 28-77 s cada. O gargalo era um download, não compilação.
-- `crates/app/test-assets/` passa a ter quatro subconjuntos (52 KB no total) — DejaVu Sans Mono, DejaVu Sans, Noto Sans CJK SC e Noto Color Emoji — e `Fonts::from_db` deixa o teste montar o próprio banco em vez de ler o sistema.
-- Prova: com `/usr/share/fonts` vazio (namespace), os 151 testes do app passam; o job `test` do CI não instala mais nenhum pacote de fonte.
-- Licenças em `test-assets/LICENSE`: Bitstream Vera (DejaVu) e SIL OFL 1.1 sem Reserved Font Name (Noto), então o subconjunto pode manter o nome.
+- One CI run took 18 min because `fonts-noto-cjk` (61.2 MB) arrived at 59 kB/s from the mirror, while the other three jobs took 28-77 s each: the bottleneck was a download, not compilation.
+- `crates/app/test-assets/` holds four subsets from now on (52 KB together) — DejaVu Sans Mono, DejaVu Sans, Noto Sans CJK SC and Noto Color Emoji — and `Fonts::from_db` lets the test build its own database instead of reading the system.
+- Proof: with `/usr/share/fonts` empty (namespace), all 151 app tests pass, and the CI `test` job installs no font package at all.
+- Licenses in `test-assets/LICENSE`: Bitstream Vera (DejaVu) and SIL OFL 1.1 with no Reserved Font Name (Noto), so a subset may keep its name.
+
+## 2026-11-19 — the installer through `curl | bash` (B71)
+
+- `install.sh --from-release` had been dead since 2026-11-04: the rename in `3360ed1` left `tag="v$ver"` pointing at a variable nobody assigned, and `set -u` killed the script before it reached the network — nobody saw it because there was never a release.
+- A pipe has no `Cargo.toml`: `version()` answered the sentinel `0.0.0` and the script would ask GitHub for a `v0.0.0` release. Now `latest_tag()` reads the `Location` of `/releases/latest` when there is no checkout, and the checkout keeps deciding.
+- Honest limit: `--dry-run` used to still download, because `fetch_release` called `curl` outside the `run` wrapper — it now stops at the URL, before the network.
+- Measured: `cat install.sh | bash` asks for `v1.0.117` (or the latest tag), `latest_tag()` was proven against `cli/cli` (`v2.105.0`), and the `--binary`/`--check`/`--uninstall` round-trip stays green.
+
+## 2026-11-19 — the package name speaks to whoever installs
+
+- `tortty-<version>-x86_64-unknown-linux-gnu.tar.gz` was compiler output in a place a person reads: `unknown` is the vendor slot of a machine with no vendor to declare, `gnu` is the C library. Users reported they would not install something named like that.
+- The name now says the system and the machine — `tortty-<version>-linux-x86_64.tar.gz` — from a table in `tools/targets.sh`. `--target` keeps the rustc spelling, because that is what `cargo build` takes; only the artifact name changed.
+- `install.sh` carries the same table on purpose (run from a pipe there is no checkout to source), so `tools/targets-check.sh` compares the two machine by machine and is a `quality-check.sh` step: a drifted copy used to surface only as a 404 at install time.
+- The icon now travels inside the package (`tortty.svg`, 901 B): `install.sh` used to fetch it from `raw.githubusercontent.com/.../main/`, which put an unversioned file into a versioned install and broke if `main` was renamed.
+- Measured: `build-release.sh --skip-build` writes `tortty-1.0.117-linux-x86_64.tar.gz` and `install.sh --from-release` asks for that exact URL; typing `linux-arm64` into one side makes the check exit 1.
