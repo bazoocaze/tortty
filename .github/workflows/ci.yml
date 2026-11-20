@@ -30,7 +30,8 @@ jobs:
   # What it costs: a red `fmt` now waits behind the release build. `quality-check.sh`
   # still prints one line per step with its own time, so a slow or broken step is
   # still named, and `--only` stays available for a local run of a single step.
-  check:
+  quality-check:
+    name: quality-check
     runs-on: ubuntu-latest
     env:
       # One list for two steps: the mirror step resolves the biggest .deb of it to
@@ -41,7 +42,8 @@ jobs:
         libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev
         libxi-dev libxcursor-dev libxinerama-dev
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
+      - name: checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
       # winit (x11/wayland) and wgpu need the system headers; clippy compiles the
       # build scripts even though it never links. No font package: the glyph tests
       # load their own fonts from `crates/app/test-assets/` (52 KB, four subsets),
@@ -59,9 +61,9 @@ jobs:
       # rewrites apt's sources: the trust surface should be a file in this repo,
       # reviewed in the diff, not a third-party action we would have to re-audit on
       # every bump. Verbose under Actions, so a slow run says which URL answered what.
-      - name: fast apt mirror
+      - name: .github/apt-mirror.sh
         run: ./.github/apt-mirror.sh
-      - name: system deps
+      - name: apt-get install (build deps)
         run: |
           # the mirror step refreshed the lists; the retry answers a runner image
           # whose lists are older than these packages, which apt reports as 404
@@ -71,7 +73,7 @@ jobs:
       # rust-toolchain.toml decides the compiler, here and on a laptop: a green
       # hook over a red CI (or the other way round) is a ruler that measures
       # itself. rustup installs what the file asks for on first use.
-      - name: toolchain
+      - name: rustup install (rust-toolchain.toml)
         run: |
           rustup install --no-self-update
           rustup show active-toolchain
@@ -80,14 +82,15 @@ jobs:
       # builds land here too, and the measured 1m30 of them is compiling the app's
       # dependency tree twice (winit, wgpu, windows-sys), so `target/` is the cache
       # that matters — caching `~/.rustup` instead saved 17 s and cost 1m48 to save.
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
+      - name: cargo cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
         with:
           key: all
-      - name: the ruler
+      - name: tools/quality-check.sh
         run: ./tools/quality-check.sh
       # the installer is what the user runs: a step on a temporary prefix catches a
       # broken path, a missing `install` and a `--version` that does not answer
-      - name: installer
+      - name: install.sh (install, --check, --uninstall)
         run: |
           ./install.sh --prefix "$RUNNER_TEMP/inst" --no-shortcut \
             --binary target/release/tortty
@@ -102,7 +105,7 @@ jobs:
       # seam it was 35 errors on Windows and 4 on macOS, and a green build would mean
       # somebody went around it. When `M-X`/`M-Y` land, the loop becomes a build.
       # Last because it is the slowest step and the least likely to fail.
-      - name: the other targets
+      - name: cargo check (windows + macos seam)
         run: |
           rustup target add x86_64-pc-windows-gnu x86_64-apple-darwin
           cargo check -p tortty-core --target x86_64-pc-windows-gnu
