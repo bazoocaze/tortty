@@ -73,6 +73,17 @@ BIN=$ROOT/target/release/$APP
 [ "$TARGET" != "$HOST" ] && BIN=$ROOT/target/$TARGET/release/$APP
 [ -x "$BIN" ] || die "binary not found: $BIN (did it build?)"
 
+# A package is only as portable as the libc it linked against, and that is decided by
+# *where it was built*: the 26.04 runner produced a binary demanding glibc 2.43, which
+# no 24.04 LTS user has — found in a container, after publishing. Print the floor in
+# every build, so the log answers "who can run this?" without an ldd session.
+if command -v objdump >/dev/null 2>&1; then
+    need=$(objdump -T "$BIN" 2>/dev/null | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -uV | tail -1)
+    built_on=$(. /etc/os-release 2>/dev/null && printf '%s' "${PRETTY_NAME:-}") || built_on=""
+    [ -n "$built_on" ] || built_on=$(uname -srm)
+    [ -n "$need" ] && say "== needs glibc ${need#GLIBC_} (linked on: $built_on)"
+fi
+
 # Sanity: the binary has to answer. A native build runs it directly; a cross build runs
 # it under qemu when qemu exists, and without qemu warns and continues — packaging
 # without executing is better than not packaging, but the warning stays in the log so

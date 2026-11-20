@@ -22,22 +22,31 @@ env:
 jobs:
   linux:
     name: linux (${{ matrix.target }})
-    # Each machine builds for itself. The aarch64 leg used to cross-compile on an
-    # amd64 runner, which needed `gcc-aarch64-linux-gnu` plus `qemu-user-static` — and
-    # that package became *virtual* on the 26.04 image ("provided by qemu-user-binfmt
-    # / qemu-user-binfmt-hwe"), so the first release ever attempted died in `apt-get
-    # install` before compiling anything. An arm64 hosted runner removes the cross
-    # linker, the emulator and the class of failures both bring: the package builds
-    # against native headers and the sanity check runs it, instead of trusting qemu.
+    # Each machine builds for itself, and on the *oldest* image we intend to support.
+    #
+    # Why native: the aarch64 leg used to cross-compile on an amd64 runner, which needed
+    # `gcc-aarch64-linux-gnu` plus `qemu-user-static` — and that package became *virtual*
+    # on the 26.04 image ("provided by qemu-user-binfmt / qemu-user-binfmt-hwe"), so the
+    # first release ever attempted died in `apt-get install` before compiling anything.
+    # An arm64 hosted runner removes the cross linker, the emulator and that class of
+    # failure: the package builds against native headers and the sanity check runs it.
+    #
+    # Why 22.04 and not `ubuntu-latest`: a package is only as portable as the libc it
+    # linked against, and that is decided by the build machine. `ubuntu-latest` moved to
+    # 26.04 (glibc 2.43) and the published binary refused to start on 24.04 LTS with
+    # "version `GLIBC_2.43' not found" — caught in a container, after the release went
+    # out. 22.04 (glibc 2.35) runs on 22.04, 24.04, 26.04 and Debian 12+; the cost is
+    # that this label ages, so the day it is retired the failure is loud and the next
+    # oldest image is the right answer, not the newest.
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-latest
+            runner: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-22.04-arm
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
 
