@@ -162,25 +162,25 @@ else
 fi
 
 # What the mirrors are actually asked for: the biggest .deb of the packages the job
-# installs, as a path relative to the mirror root. `--print-uris` resolves versions
-# and pockets from those lists, so nothing about a suite or a version is guessed here.
+# installs, as a path relative to the mirror root. The path comes from the lists on
+# disk (`apt-cache show`), not from `apt-get --print-uris`: under apt's own
+# `mirror+file:` method there is no concrete URI to print until fetch time, so
+# --print-uris answers nothing at all — measured on the runner, twice, with the
+# probe falling back to an index while the pool was the thing to measure.
 probe_path=""
 if [ -n "$PACKAGES" ]; then
   # shellcheck disable=SC2086  # the package list is word-split on purpose
-  probe_path=$(apt-get --print-uris -y install $PACKAGES 2>&1 \
-    | awk -F"'" '/^.(http|https)/ { n = split($3, f, " "); print f[2], $2 }' \
-    | sort -rn | head -1 | cut -d' ' -f2- \
-    | sed 's|.*\(pool/.*\)|\1|' || true)
+  probe_path=$(apt-cache show $PACKAGES 2>/dev/null \
+    | awk '/^$/ { if (f != "") print s, f; f = ""; s = 0 }
+           /^Filename:/ { f = $2 }
+           /^Size:/ { s = $2 }' \
+    | sort -rn | head -1 | cut -d' ' -f2-)
   if [ -n "$probe_path" ]; then
     log "probe file: /$probe_path (biggest .deb of: $PACKAGES)"
   else
     # Never silent: a probe that quietly measures the index is how the pool defect
     # got through once already.
-    say "could not resolve a .deb for [$PACKAGES] — apt-get --print-uris said:"
-    # shellcheck disable=SC2086
-    apt-get --print-uris -y install $PACKAGES 2>&1 >/dev/null | head -3 | while IFS= read -r l; do
-      say "  $l"
-    done
+    say "apt cannot name a .deb for [$PACKAGES] — the lists are missing or stale"
   fi
 else
   say "no package list given (--packages or APT_PACKAGES), so the pool cannot be probed"
