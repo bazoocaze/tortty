@@ -51,6 +51,13 @@ MAX_MIRRORS=10
 SAMPLE_KB=128
 TIMEOUT=4        # a 30 kB/s mirror is cut at ~120 kB and still measured correctly
 MIN_GAIN=1.5     # only rewrite the sources when the winner is clearly better
+# An absolute floor, in MB/s, below which a ratio means nothing: the job installs
+# about 2 MB of packages, so at 1 MB/s they land in two seconds and moving is only a
+# change of ranking. A switch is not free either — apt keys its list files by URI, so
+# a new URI re-downloads every index (measured: 30.4 MB, ~3 s). Measured on a runner
+# that sat on us-east-2.ec2 (1.67 MB/s) while archive did 4.62 MB/s: that switch
+# bought nothing and cost 10 s.
+MIN_USEFUL=1
 DRY_RUN=0
 VERBOSE=${VERBOSE:-}
 [ "${GITHUB_ACTIONS:-}" = true ] && VERBOSE=1
@@ -65,10 +72,11 @@ while [ $# -gt 0 ]; do
     --packages) PACKAGES=$2; shift ;;
     --max-mirrors) MAX_MIRRORS=$2; shift ;;
     --min-gain) MIN_GAIN=$2; shift ;;
+    --min-useful) MIN_USEFUL=$2; shift ;;
     --sources) FILES+=("$2"); shift ;;     # a fixture instead of /etc, for testing
     *) echo "usage: $0 [--dry-run] [-v|--verbose] [-q|--quiet] [--country CC]" >&2
        echo "          [--packages \"pkg ...\"] [--max-mirrors N] [--min-gain R]" >&2
-       echo "          [--sources FILE]" >&2
+       echo "          [--min-useful MB/s] [--sources FILE]" >&2
        exit 2 ;;
   esac
   shift
@@ -350,17 +358,32 @@ apply() {  # $1 the URL to write in place of `current`
   done
 }
 
+# A switch only pays for itself when the baseline is actually slow, and "slow" has to
+# be absolute: bytes per second this job would wait for, not a ratio against another
+# fast mirror.
+worth_moving() {
+  awk -v a="${best_speed:-0}" -v b="${baseline_speed:-0}" \
+      -v g="$MIN_GAIN" -v u="$MIN_USEFUL" \
+    'BEGIN {
+       if ((a + 0) <= 0) exit 1                   # nothing better to move to
+       if ((b + 0) >= (u + 0) * 1048576) exit 1    # already fast enough
+       if ((b + 0) == 0) exit 0                   # baseline does not answer at all
+       exit !((a + 0) > (b + 0) * (g + 0))        # and clearly better, by the ratio
+     }'
+}
+
 if [ -z "$best" ]; then
   say "no mirror answered, leaving apt alone"
 elif [ "$best" = "$baseline" ]; then
   say "keeping $current (nothing beat it)"
 elif [ -n "$mirror_method_file" ] && [ "$best" = "$current" ]; then
   say "keeping $current (nothing beat apt's own list)"
+elif awk -v b="${baseline_speed:-0}" -v u="$MIN_USEFUL" 'BEGIN { exit !((b + 0) >= (u + 0) * 1048576) }'; then
+  say "keeping $current ($(mb "$baseline_speed") MB/s is fast enough for this payload)"
 elif [ -n "$mirror_method_file" ]; then
   # Replacing apt's method with a concrete URL gives up its failover, so it only
   # happens on a measured gain over the entry apt would have used.
-  if awk -v a="${best_speed:-0}" -v b="${baseline_speed:-0}" -v g="$MIN_GAIN" \
-       'BEGIN { exit !((a + 0) > 0 && ((b + 0) == 0 || (a + 0) > (b + 0) * (g + 0))) }'; then
+  if worth_moving; then
     say "overriding apt's list: $best is over ${MIN_GAIN}x its first working entry ($baseline)"
     apply "$best"
   else
@@ -371,8 +394,7 @@ elif [ "${best#https://}" = "${current#http://}" ]; then
   # so the gain rule does not apply — the probe already proved the TLS listener works.
   say "upgrading $current to https (same host, no churn)"
   apply "$best"
-elif awk -v a="${best_speed:-0}" -v b="${baseline_speed:-0}" -v g="$MIN_GAIN" \
-     'BEGIN { exit !((a + 0) > 0 && ((b + 0) == 0 || (a + 0) > (b + 0) * (g + 0))) }'; then
+elif worth_moving; then
   say "switching to $best"
   apply "$best"
 else
