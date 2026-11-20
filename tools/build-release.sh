@@ -73,24 +73,23 @@ BIN=$ROOT/target/release/$APP
 [ "$TARGET" != "$HOST" ] && BIN=$ROOT/target/$TARGET/release/$APP
 [ -x "$BIN" ] || die "binary not found: $BIN (did it build?)"
 
-# Sanity: the binary has to answer. Cross builds use qemu when it exists (that is what
-# CI does); without qemu, warn and continue — packaging without executing is better than
-# not packaging, but the warning stays in the log so nobody mistakes it for verification.
-RUN=""
-if [ "$TARGET" != "$HOST" ]; then
+# Sanity: the binary has to answer. A native build runs it directly; a cross build runs
+# it under qemu when qemu exists, and without qemu warns and continues — packaging
+# without executing is better than not packaging, but the warning stays in the log so
+# nobody mistakes it for verification.
+if [ "$TARGET" = "$HOST" ]; then
+    "$BIN" --version || die "$BIN does not even run on this machine"
+else
     case "$TARGET" in
         aarch64-*) QEMU=qemu-aarch64-static ;;
         x86_64-*)  QEMU=qemu-x86_64-static ;;
         *)         QEMU="" ;;
     esac
     if [ -n "$QEMU" ] && command -v "$QEMU" >/dev/null 2>&1; then
-        RUN=$QEMU
+        "$QEMU" "$BIN" --version || die "$BIN does not even run under $QEMU"
     else
         say "== warning: no ${QEMU:-qemu} — cannot run the $TARGET binary here"
     fi
-fi
-if [ -n "$RUN" ]; then
-    "$RUN" "$BIN" --version || die "$BIN does not even run under qemu"
 fi
 
 SUFFIX=$(pkg_suffix "$TARGET") || die "no package name for $TARGET (see tools/targets.sh)"

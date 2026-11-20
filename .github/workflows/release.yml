@@ -22,15 +22,22 @@ env:
 jobs:
   linux:
     name: linux (${{ matrix.target }})
-    runs-on: ubuntu-latest
+    # Each machine builds for itself. The aarch64 leg used to cross-compile on an
+    # amd64 runner, which needed `gcc-aarch64-linux-gnu` plus `qemu-user-static` — and
+    # that package became *virtual* on the 26.04 image ("provided by qemu-user-binfmt
+    # / qemu-user-binfmt-hwe"), so the first release ever attempted died in `apt-get
+    # install` before compiling anything. An arm64 hosted runner removes the cross
+    # linker, the emulator and the class of failures both bring: the package builds
+    # against native headers and the sanity check runs it, instead of trusting qemu.
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            arch: amd64
+            runner: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
-            arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
 
@@ -40,10 +47,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev \
             libxi-dev libxcursor-dev libxinerama-dev
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
-            sudo apt-get install -y --no-install-recommends \
-              gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user-static
-          fi
 
       # rustup itself, not a third-party action: one less tag to pin
       - name: toolchain and the target
@@ -57,10 +60,6 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: package
-        env:
-          # the cross linker that cargo does not guess
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
         run: ./tools/build-release.sh --target "${{ matrix.target }}" --check-version "$GITHUB_REF_NAME"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
