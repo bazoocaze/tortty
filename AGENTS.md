@@ -134,6 +134,27 @@ green over a red CI. `--only` picks steps; it never defines them.
   and says why.
 - A commit only passes with the ruler green.
 
+## Release
+
+When the owner asks for "make release", the process is `./tools/make-release.sh` — the
+only thing that creates a tag. Never `git tag` by hand, never `gh release create`. Run
+it, read the checks, then report the run URL and the asset names to the owner.
+
+```sh
+./tools/make-release.sh              # checks, tags v<version>, pushes
+./tools/make-release.sh --dry-run    # every check, stops before the tag
+```
+
+It refuses instead of guessing, and the list of what it refuses lives in the script —
+not here, where it would age the day a check is added. Read the header before running it:
+every check there is a way a release goes wrong quietly, written next to the code that
+makes it.
+
+A release does **not** bump the version (the bump rides in the commit that changed the
+code) and does **not** install anything. What ships is whatever the tag names, under
+the package name built by `tools/targets.sh` — the contract is in
+[`docs/INSTALL.md`](docs/INSTALL.md).
+
 ## Tools
 
 - `./tools/devrun.sh --cmd 'mc' --debug-socket /tmp/tt.sock` — starts in
