@@ -32,6 +32,14 @@ jobs:
   # still named, and `--only` stays available for a local run of a single step.
   check:
     runs-on: ubuntu-latest
+    env:
+      # One list for two steps: the mirror step resolves the biggest .deb of it to
+      # probe the *pool* (an index probe calls a pool-slow mirror healthy, which is
+      # how 2.1 MB took 1m47s at 20 kB/s while the index ran at 11 MB/s), and the
+      # install step installs exactly it.
+      APT_PACKAGES: >-
+        libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev
+        libxi-dev libxcursor-dev libxinerama-dev
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
       # winit (x11/wayland) and wgpu need the system headers; clippy compiles the
@@ -55,13 +63,11 @@ jobs:
         run: ./.github/apt-mirror.sh
       - name: system deps
         run: |
-          pkgs="libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev
-                libxi-dev libxcursor-dev libxinerama-dev"
-          # the list above is the one the step before refreshed; the retry answers a
-          # runner image whose lists are older than these packages, which apt calls 404
-          sudo apt-get install -y --no-install-recommends $pkgs \
+          # the mirror step refreshed the lists; the retry answers a runner image
+          # whose lists are older than these packages, which apt reports as 404
+          sudo apt-get install -y --no-install-recommends $APT_PACKAGES \
             || { sudo apt-get update &&
-                 sudo apt-get install -y --no-install-recommends $pkgs; }
+                 sudo apt-get install -y --no-install-recommends $APT_PACKAGES; }
       # rust-toolchain.toml decides the compiler, here and on a laptop: a green
       # hook over a red CI (or the other way round) is a ruler that measures
       # itself. rustup installs what the file asks for on first use.
