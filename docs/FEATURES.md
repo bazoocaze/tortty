@@ -286,9 +286,11 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   card is always a drop and the strip is always a scroll, so the walk up takes
   the first card's top row, and the wheel over the column keeps working with the
   button held.
-- Title: OSC 0/2, else `basename(cwd)`, else `tortty`; the window title mirrors
-  the active tab. **limit:** an app that sets a title without pushing it (`CSI
-  22/23 t`) keeps the tab on it after leaving ([`EXTERNALS.md`](EXTERNALS.md)).
+- Title: OSC 0/2 as it arrives, else the cwd — `~` when the shell is at the home
+  directory, `/` at the root, the last component anywhere else — else `tortty`;
+  the window title mirrors the active tab. **limit:** an app that sets a title
+  without pushing it (`CSI 22/23 t`) keeps the tab on it after leaving
+  ([`EXTERNALS.md`](EXTERNALS.md)).
 - Chrome: toast as a floating box over the bottom of the grid, centred — two
   levels (title in the foreground colour, detail pulled towards the surface and
   wrapped in up to four lines), an accent bar and border in the shade of the

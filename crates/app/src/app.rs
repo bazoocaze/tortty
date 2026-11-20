@@ -462,15 +462,11 @@ impl Tab {
         }
     }
 
-    /// `basename` of the child process cwd (`/proc/<pid>/cwd`); nothing without it.
+    /// `basename` of the child process cwd (`/proc/<pid>/cwd`) — `~` at home and
+    /// `/` at the root; nothing without a directory.
     fn cwd_name(&self) -> Option<String> {
         let cwd = self.cwd()?;
-        let name = tortty_core::term::sanitize_title(&cwd.file_name()?.to_string_lossy());
-        if name.is_empty() {
-            None
-        } else {
-            Some(name)
-        }
+        dir_title(&cwd, platform::home().as_deref())
     }
 
     /// cwd of what is running **in front** of the pty: the shell may have
@@ -2609,20 +2605,8 @@ impl App {
                     r.apply_theme(&theme);
                 }
             }
-            // I4: title via OSC 0/2 (the shell puts "~/project" and `vim` the
-            // file name); `tortty` is the default and does not count as a request
-            let title = self.tabs[i].term.title.clone();
-            if title != self.tabs[i].osc_title {
-                let was = i == self.active;
-                self.tabs[i].osc_title = if title == "tortty" {
-                    String::new()
-                } else {
-                    title
-                };
-                if was {
-                    self.sync_title();
-                }
-            }
+            // I4: the title the child asked for via OSC 0/2
+            self.take_osc_title(i);
             let mut pumped = PumpOut::default();
             let bell = self.opts.cfg.bell;
             self.tabs[i].pump(bell, i == self.active, &mut pumped);
@@ -4381,6 +4365,25 @@ impl App {
         }
     }
 
+    /// The title the child asked for via OSC 0/2 (the shell puts "~/project" and
+    /// `vim` the file name) becoming the tab's title. `tortty` is the default and
+    /// does not count as a request. A program's title is taken as it arrives — the
+    /// `~`/`/` rule below belongs to the cwd fallback, which tortty makes up.
+    fn take_osc_title(&mut self, i: usize) {
+        let title = self.tabs[i].term.title.clone();
+        if title != self.tabs[i].osc_title {
+            let was = i == self.active;
+            self.tabs[i].osc_title = if title == "tortty" {
+                String::new()
+            } else {
+                title
+            };
+            if was {
+                self.sync_title();
+            }
+        }
+    }
+
     /// Window title = title of the active tab (I17), for the WM and the taskbar.
     fn sync_title(&mut self) {
         let title = self.tabs[self.active].title();
@@ -5121,6 +5124,25 @@ fn prefer_cwd(
     path.is_dir().then_some(path)
 }
 
+/// The title a directory earns: `~` at home — the username says nothing about
+/// where you are — `/` at the root, and the last component anywhere else. The home
+/// is compared as a `Path`, so a trailing slash does not hide it, and a sibling
+/// whose name starts with the same letters (`/home/user2`) is a different directory.
+fn dir_title(cwd: &std::path::Path, home: Option<&std::path::Path>) -> Option<String> {
+    if home.is_some_and(|h| cwd == h) {
+        return Some("~".to_string());
+    }
+    if cwd.parent().is_none() {
+        return Some("/".to_string());
+    }
+    let name = tortty_core::term::sanitize_title(&cwd.file_name()?.to_string_lossy());
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
 /// The order in which a saved layout is rebuilt: the workspaces that are not in
 /// front, in the file's order, and the one in front **last** (it is the one that
 /// lives in `tabs`/`active`; the others go to `parked`). The second value is the
@@ -5352,6 +5374,41 @@ mod tests {
         // and a path that no longer exists does not become a cwd
         assert_eq!(prefer_cwd(None, Some("/nope/nope/nope")), None);
         assert_eq!(prefer_cwd(None, None), None);
+    }
+
+    /// The title tortty invents for a directory: `~` at home, `/` at the root, the
+    /// last component anywhere else. The comparison is by `Path`, so a sibling whose
+    /// name merely starts with the same letters (`/home/user2`) is a different
+    /// directory — and the username, which says nothing about where you are, never
+    /// becomes the title of your own home.
+    #[test]
+    fn a_directory_in_the_title_says_where_it_is() {
+        let home = std::path::Path::new("/home/user");
+        let t = |p: &str| dir_title(std::path::Path::new(p), Some(home));
+        assert_eq!(t("/home/user"), Some("~".to_string()));
+        // a trailing slash is the same directory, not a different one
+        assert_eq!(
+            dir_title(
+                std::path::Path::new("/home/user/"),
+                Some(std::path::Path::new("/home/user"))
+            ),
+            Some("~".to_string())
+        );
+        // everything else keeps the basename it always had
+        assert_eq!(t("/home/user/project"), Some("project".to_string()));
+        assert_eq!(
+            t("/home/user/dados/desenv/gh/tortty"),
+            Some("tortty".to_string())
+        );
+        assert_eq!(t("/home/user2/project"), Some("project".to_string()));
+        assert_eq!(t("/tmp/x"), Some("x".to_string()));
+        // the root has no last component, and it says so
+        assert_eq!(t("/"), Some("/".to_string()));
+        // without a home there is nothing to call `~`
+        assert_eq!(
+            dir_title(std::path::Path::new("/home/user"), None),
+            Some("user".to_string())
+        );
     }
 
     /// `t=t` deletes what the protocol allows: a temp dir plus the marker.

@@ -1600,3 +1600,11 @@ primeira.
 - `install.sh` carries the same table on purpose (run from a pipe there is no checkout to source), so `tools/targets-check.sh` compares the two machine by machine and is a `quality-check.sh` step: a drifted copy used to surface only as a 404 at install time.
 - The icon now travels inside the package (`tortty.svg`, 901 B): `install.sh` used to fetch it from `raw.githubusercontent.com/.../main/`, which put an unversioned file into a versioned install and broke if `main` was renamed.
 - Measured: `build-release.sh --skip-build` writes `tortty-1.0.117-linux-x86_64.tar.gz` and `install.sh --from-release` asks for that exact URL; typing `linux-arm64` into one side makes the check exit 1.
+
+## 2026-11-20 — a tab at home says `~`
+
+- The title tortty invents for a directory had one blind spot: at the home folder it read `jose`, the username, which says nothing about where you are. It reads `~` now.
+- Only the artificial title changed. `basename` stays the answer everywhere else (`/home/user/project` is still `project`), and the root says `/` instead of falling back to `tortty` — a path with no last component is still a directory with a name.
+- A title the program sends through `OSC 0/2` is taken exactly as it arrives: tortty does not rewrite what somebody else wrote.
+- `dir_title()` in `crates/app/src/app.rs` compares the home as a `Path`, so a trailing slash does not hide it and `/home/user2` is a different directory (test `a_directory_in_the_title_says_where_it_is`).
+- Measured on Xvfb with `xdotool getwindowname`: `~ — tortty` from the home, `tortty — tortty` from the repo, `/ — tortty` from the root.
