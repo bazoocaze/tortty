@@ -100,6 +100,15 @@ which would put an unversioned file into a versioned install. Whoever extracts t
 package by hand gets the binary, the icon, the license and the README — and the one
 step left is putting `tortty` on the `PATH`.
 
+Both are glibc builds, and a glibc build only runs where the C library is at least
+as new as the one it was linked against. The release is linked on Ubuntu 22.04, so a
+package needs **glibc 2.35** and runs on 22.04 and newer (24.04, 26.04, Debian 12+) —
+measured, not assumed: the first release was linked on the 26.04 runner, demanded
+`GLIBC_2.43` and refused to start on 24.04 LTS. `tools/build-release.sh` prints the
+floor of every package it makes (`== needs glibc 2.35 (linked on: Ubuntu 22.04.5 LTS)`),
+which is the one line that answers "does this run here?". Alpine and other musl
+systems are not covered by these packages.
+
 The name says the system and the machine, because that is the question whoever
 installs has. It is **not** the rustc target: `x86_64-unknown-linux-gnu` puts
 `unknown` (the vendor slot of a machine with no vendor to declare) and `gnu` (the
@@ -119,9 +128,11 @@ What generates that is `.github/workflows/release.yml`, which only calls
 ./tools/build-release.sh --check-version v0.1.0   # CI uses it: the tag has to match
 ```
 
-The script checks the `Cargo.toml` version against the tag, runs
-`tortty --version` on the packaged binary (under `qemu-user-static` when it is a
-cross build) and leaves the `.tar.gz` + `.sha256` in `dist/`.
+The script checks the `Cargo.toml` version against the tag, runs the packaged
+`tortty --version` — directly when the target is the machine it runs on, under
+`qemu-<arch>-static` when it is a cross build, and it says so in the log when that
+emulator does not exist instead of skipping the check silently — and leaves the
+`.tar.gz` + `.sha256` in `dist/`.
 
 Publishing is one command, `./tools/make-release.sh` (with `--dry-run` to see the
 checks without tagging): it refuses a dirty tree, an unpushed `HEAD`, a red CI run
