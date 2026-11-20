@@ -9,7 +9,7 @@
 #   tools/quality-check.sh --only test,build  # named steps, for parallel jobs
 #   tools/quality-check.sh --fix              # applies fmt and clippy --fix first
 #
-# The steps are `seam`, `fmt`, `clippy`, `test`, `build`, `selftest` and
+# The steps are `seam`, `targets`, `fmt`, `clippy`, `test`, `build`, `selftest` and
 # `parsebench`. `--only` exists so CI can run them in parallel instead of in one
 # five-minute queue: the steps and their order stay defined here, one ruler.
 #
@@ -44,7 +44,7 @@ done
 
 # `--fast` is a named subset, not a second mechanism: one way to skip a step
 if [ "$FAST" = 1 ] && [ -z "$ONLY" ]; then
-    ONLY=seam,fmt,clippy,test
+    ONLY=seam,targets,fmt,clippy,test
 fi
 
 failed=0
@@ -88,6 +88,9 @@ fi
 # the platform seam first: it is a grep, it costs nothing, and it fails with the
 # offending line instead of a compile error on another target
 run seam "platform seam" ./tools/platform-gate.sh
+# the package name has two authors (tools/targets.sh and install.sh); a copy that
+# drifts fails at install time as a 404, so it is compared here, before that
+run targets "package name table" ./tools/targets-check.sh
 run fmt "cargo fmt --check" cargo fmt --all -- --check
 run clippy "clippy -D warnings" cargo clippy --workspace --all-targets --release -- -D warnings
 run test "cargo test" cargo test --workspace --quiet

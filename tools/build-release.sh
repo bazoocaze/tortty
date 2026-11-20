@@ -4,7 +4,11 @@
 # Same script locally and in CI: here it builds the `.tar.gz` that
 # `install.sh --from-release` knows how to download, with a predictable name:
 #
-#   tortty-<version>-<triple>.tar.gz   (contains `tortty`, LICENSE and README.md)
+#   tortty-<version>-<system>-<machine>.tar.gz   (`tortty`, tortty.svg, LICENSE, README.md)
+#
+# The suffix comes from `tools/targets.sh`, shared with install.sh: the rustc
+# target decides *what to build* (`--target` still takes it verbatim), but the
+# name says what the reader needs — `linux-x86_64`, not `x86_64-unknown-linux-gnu`.
 #
 # Usage:
 #   ./tools/build-release.sh              builds and packages for the host
@@ -25,6 +29,8 @@ CHECK=""
 
 say()  { printf '%s\n' "$*"; }
 die()  { printf '%s\n' "$*" >&2; exit 1; }
+
+. "$ROOT/tools/targets.sh"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -87,13 +93,17 @@ if [ -n "$RUN" ]; then
     "$RUN" "$BIN" --version || die "$BIN does not even run under qemu"
 fi
 
+SUFFIX=$(pkg_suffix "$TARGET") || die "no package name for $TARGET (see tools/targets.sh)"
+[ -f "$ROOT/assets/$APP.svg" ] || die "missing icon: assets/$APP.svg"
+
 mkdir -p "$OUT"
 STAGE=$(mktemp -d)
 cp "$BIN" "$STAGE/$APP"
 cp "$ROOT/LICENSE" "$STAGE/LICENSE"
 cp "$ROOT/README.md" "$STAGE/README.md"
-PKG="$OUT/$APP-$VERSION-$TARGET.tar.gz"
-tar -czf "$PKG" -C "$STAGE" "$APP" LICENSE README.md
+cp "$ROOT/assets/$APP.svg" "$STAGE/$APP.svg"
+PKG="$OUT/$APP-$VERSION-$SUFFIX.tar.gz"
+tar -czf "$PKG" -C "$STAGE" "$APP" LICENSE README.md "$APP.svg"
 rm -rf "$STAGE"
 
 say "== $PKG ($(du -h "$PKG" | cut -f1))"

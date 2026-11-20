@@ -45,8 +45,8 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
         with:
           key: lint
-      - name: the seam, fmt and clippy
-        run: ./tools/quality-check.sh --only seam,fmt,clippy
+      - name: the seam, the package name, fmt and clippy
+        run: ./tools/quality-check.sh --only seam,targets,fmt,clippy
 
   test:
     runs-on: ubuntu-latest

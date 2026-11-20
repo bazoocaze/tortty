@@ -20,7 +20,7 @@
 set -euo pipefail
 
 APP=tortty
-# Repository the --from-release mode downloads from; change it when the repo goes public.
+# Repository --from-release downloads from; TORTTY_REPO overrides it (forks, mirrors).
 REPO=${TORTTY_REPO:-bazoocaze/tortty}
 PREFIX=${TORTTY_PREFIX:-$HOME/.local}
 
@@ -85,21 +85,24 @@ need_sudo() {
 
 here() { cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd; }
 
+# Empty when there is no checkout: `0.0.0` used to be answered here as a
+# placeholder, and a piped install then asked GitHub for a `v0.0.0` release.
 version() {
     if [ -f "$ROOT/Cargo.toml" ]; then
         sed -n 's/^version = "\(.*\)"$/\1/p' "$ROOT/Cargo.toml" | head -1
-    else
-        printf '0.0.0'
     fi
 }
 
-target_triple() {
-    local m
-    m=$(uname -m)
+# The name a release ships under, from what the machine calls itself. It is a copy
+# of `tools/targets.sh` on purpose: a piped install has no checkout to source, and
+# `tools/targets-check.sh` fails when the two drift apart. `--target` and rustc
+# spellings (`x86_64-unknown-linux-gnu`) stay out of the name on purpose — see there.
+pkg_suffix() {
+    local m=${1:-$(uname -m)}
     case "$m" in
-        x86_64|amd64)   printf 'x86_64-unknown-linux-gnu' ;;
-        aarch64|arm64)  printf 'aarch64-unknown-linux-gnu' ;;
-        *) die "architecture with no published binary: $m (build with --binary)" ;;
+        x86_64|amd64)   printf 'linux-x86_64' ;;
+        aarch64|arm64)  printf 'linux-aarch64' ;;
+        *) die "no published package for this machine: $m (use --binary, or build from a clone)" ;;
     esac
 }
 
@@ -116,18 +119,47 @@ check_conflict() {
 }
 
 # -- release download ----------------------------------------------------
+# The tag to ask for. A clone answers with the version in `Cargo.toml`; a script
+# in a pipe (`curl … | bash`) has no file to read, so the only version it can
+# know is the one the repository publishes. `/releases/latest` answers with a
+# redirect to `…/releases/tag/v<version>`, which is the tag — no API call, no
+# token, and it keeps working when the project changes its name.
+latest_tag() {
+    local url="https://github.com/$REPO/releases/latest" final
+    final=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$url" 2>/dev/null) || return 1
+    case "$final" in
+        */releases/tag/v*) printf '%s' "${final##*/releases/tag/}" ;;
+        *) return 1 ;;
+    esac
+}
+
+release_tag() {
+    local v
+    v=$(version)
+    case "$v" in
+        ""|0.0.0) latest_tag ;;
+        *) printf 'v%s' "$v" ;;
+    esac
+}
+
+# The URL `--from-release` would fetch. Kept apart from `fetch_release` because the
+# dry run has to name it without touching the network — and because a function's
+# stdout *is* its return value, so anything written for the reader goes to stderr.
+release_url() {
+    local tag
+    tag=$(release_tag) || return 1
+    printf '%s' "https://github.com/$REPO/releases/download/$tag/tortty-${tag#v}-$(pkg_suffix).tar.gz"
+}
+
 fetch_release() {
-    local look tag file url tmp
-    look=$(version); tag="v$ver"
-    file="tortty-$ver-$(target_triple).tar.gz"
-    url="https://github.com/$REPO/releases/download/$tag/$file"
+    local url tmp bin
     command -v curl >/dev/null 2>&1 || die "--from-release needs curl"
+    url=$(release_url) || die "no release to download: https://github.com/$REPO/releases has none (use --binary, or build from a clone)"
     tmp=$(mktemp -d)
-    say "== downloading $url"
+    printf '== downloading %s\n' "$url" >&2
     curl -fsSL "$url" -o "$tmp/pkg.tgz" \
-        || die "no release at $url (private repo or missing tag: use --binary or build)"
+        || die "no package at $url (use --binary, or build from a clone)"
     tar -xzf "$tmp/pkg.tgz" -C "$tmp"
-    local bin
     bin=$(find "$tmp" -type f -name "$APP" -perm -u+x | head -1)
     [ -n "$bin" ] || die "the downloaded package has no '$APP' binary"
     printf '%s' "$bin"
@@ -135,7 +167,7 @@ fetch_release() {
 
 # -- installation --------------------------------------------------------
 do_install() {
-    local src=""
+    local src="" url=""
     if [ "$LOCAL" = 1 ] && [ "$FROM_RELEASE" = 1 ]; then
         die "--local and --from-release do not combine"
     fi
@@ -145,6 +177,12 @@ do_install() {
         src=$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")
         say "== using binary: $src"
     elif [ "$FROM_RELEASE" = 1 ]; then
+        if [ "$DRY" = 1 ]; then
+            url=$(release_url) || die "no release to download: https://github.com/$REPO/releases has none (use --binary, or build from a clone)"
+            say "== dry run: would download $url"
+            say "== dry run: nothing downloaded, nothing installed (the plan continues once the package is unpacked)"
+            return 0
+        fi
         src=$(fetch_release)
     elif [ "$LOCAL" = 1 ]; then
         command -v cargo >/dev/null 2>&1 || die "--local needs cargo"
@@ -174,7 +212,13 @@ do_install() {
     fi
 
     if [ "$SHORTCUT" = 1 ]; then
-        local icon_src="$ROOT/assets/tortty.svg"
+        # The icon travels inside the package, beside the binary; in a checkout it
+        # is in assets/. Taking it from `main` over the network used to be the third
+        # option, and it mixed an unversioned file into a versioned install.
+        local icon_src="$ROOT/assets/$APP.svg"
+        [ -f "$icon_src" ] || icon_src="$(dirname "$src")/$APP.svg"
+        [ -f "$icon_src" ] ||
+            warn "== warning: no $APP.svg beside the binary; the menu entry keeps the generic icon"
         if [ -f "$icon_src" ]; then
             run $SUDO mkdir -p "$(dirname "$ICON")"
             run $SUDO command install -m 644 "$icon_src" "$ICON"
