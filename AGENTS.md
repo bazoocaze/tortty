@@ -78,13 +78,12 @@ per category, in order).
   the feature code. Policy per system (chords, default font, shell name as data) is
   **not** there: it lives in `crates/core/defaults/`. The ruler is
   `tools/platform-gate.sh`, a step of `tools/quality-check.sh`.
-
-- Version: bump the patch in `Cargo.toml` (root, `workspace.package`) in **every
-  commit that changes code** (`crates/`, `tools/`, `install.sh`) — closing an item
-  of `docs/BACKLOG.md` is one of those cases, not a separate one. The bump rides
-  in the commit that earns it. A commit that only touches docs or tests does not
-  bump. It is the single source: both crates
-  inherit it (`version.workspace = true`) and `--version` shows it
+- Version: bump the patch in `Cargo.toml` (root, `workspace.package`) **at release
+  time**, in the commit the tag names. A bump is part of the artifact identity hash,
+  so bumping on every code commit makes cargo keep a new copy of everything instead
+  of overwriting the old one. `make-release.sh` refuses a tag that already exists, so
+  a forgotten bump stops there. Both crates inherit the version
+  (`version.workspace = true`) and `--version` shows it
   (`env!("CARGO_PKG_VERSION")`, compiled at build).
 - The defaults are four files in `crates/core/defaults/`: `tortty.conf` (the
   common base) and `tortty-{linux,macos,windows}.conf`. A line lives in the base
