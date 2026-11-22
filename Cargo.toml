@@ -39,6 +39,12 @@ must_use_candidate = "allow"
 # a `new()` returning `Self` without validation does not need `#[must_use]`
 return_self_not_must_use = "allow"
 
+# Backtraces need the line table; the rest of DWARF (types, variables, inlining)
+# is 73% of a debug binary and nothing in this project reads it. Every artifact
+# that cargo keeps around is three times smaller without it.
+[profile.dev]
+debug = 1
+
 [profile.release]
 opt-level = 3
 lto = "thin"

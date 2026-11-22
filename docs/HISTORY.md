@@ -1619,3 +1619,10 @@ primeira.
   (`strace` shows `rustlib/…/bin/rust-lld`), so a `mold` put in front of the `PATH` never runs — 0.09 s per
   trivial link with and without it, and the early 2m22 → 1m48 reading was cold-cache noise.
 - What an edit loop needs is `cargo check -p tortty`: 2 s, without codegen or link.
+
+## 2026-11-22 — the debug profile keeps the line table only
+
+- `target/` reached 52 GB because cargo never overwrites an artifact whose identity hash changed, and the version bump changes it: every commit with code left a new 230 MB copy of the binary behind.
+- `[profile.dev] debug = 1`: the debug binary goes from 241.5 MB to 142.7 MB (`.debug_info` 69.2 → 11.1 MB) and a cold build of the whole tree from ~2 min to 35.6 s; backtraces still print `file:line`, the debugger loses types and variables.
+- Measured on the commit that bumps the patch: +225 MB and +4.8 s, against +370 MB and +17.5 s with the full DWARF.
+- The surgical prune is `cargo clean -p tortty` — 3.4 s to rebuild, the dependencies stay — against 36 s for a full `cargo clean`.
