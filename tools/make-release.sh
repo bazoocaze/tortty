@@ -22,7 +22,8 @@
 #   ./tools/make-release.sh --skip-ci  trusts the commit without asking GitHub
 #
 # What it does not do, on purpose: it does not bump the version (that rides in the
-# commit that changes the code — AGENTS.md) and it does not install anything.
+# release commit, the one this script tags — AGENTS.md) and it does not install
+# anything.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)
@@ -139,3 +140,8 @@ fi
 say "== pushed: release.yml is building x86_64 and aarch64"
 say "   watch:  gh run list --workflow=release.yml --limit 1"
 say "   verify: gh release view $TAG --json assets --jq '.assets[].name'"
+
+# The bump is what leaves the previous version's artifact copies behind, and nothing
+# in cargo collects them. Housekeeping, so it never fails a release that is already
+# published.
+"$ROOT/tools/target-prune.sh" || say "warn: target-prune.sh did not finish; target/ was left alone"

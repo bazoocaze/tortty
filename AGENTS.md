@@ -176,3 +176,9 @@ the package name built by `tools/targets.sh` — the contract is in
 - `./tools/bench.sh` — the ladder in both grids, against the reference build.
 - `cargo run --release -p tortty-core --bin parsebench -- --file /tmp/dmesg.txt`
   — real-load parsing, no display.
+- `./tools/target-prune.sh` — housekeeping for `target/`: the version is part of the
+  artifact identity, so every release bump leaves the previous copy behind and
+  nothing in cargo collects it. It runs `cargo clean -p` on the crates under
+  `crates/` (never on the dependencies, whose identity `Cargo.lock` pins) once
+  `target/` passes 4 GB. `make-release.sh` calls it at the end; it is not a step of
+  `quality-check.sh`.

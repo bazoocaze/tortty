@@ -1626,3 +1626,10 @@ primeira.
 - `[profile.dev] debug = 1`: the debug binary goes from 241.5 MB to 142.7 MB (`.debug_info` 69.2 → 11.1 MB) and a cold build of the whole tree from ~2 min to 35.6 s; backtraces still print `file:line`, the debugger loses types and variables.
 - Measured on the commit that bumps the patch: +225 MB and +4.8 s, against +370 MB and +17.5 s with the full DWARF.
 - The surgical prune is `cargo clean -p tortty` — 3.4 s to rebuild, the dependencies stay — against 36 s for a full `cargo clean`.
+
+## 2026-11-22 — the version bump is part of the artifact identity
+
+- Cargo never overwrites an artifact whose identity hash changed, and the version is in that hash: with a patch bump in every code commit, `target/` reached 52 GB, one full copy of the binary per version (measured: +225 MB and +4.8 s per bump, +370 MB and +17.5 s before `debug = 1`).
+- The version is bumped at release time now, in the commit the tag names (`make-release.sh` already refuses a tag that exists), so a code commit overwrites the same paths: measured 0 MB.
+- `tools/target-prune.sh` handles what is left at each release: `cargo clean -p` on the crates read from `crates/*/Cargo.toml`, never on the dependencies, whose identity `Cargo.lock` pins and which are what a cold build pays for.
+- Measured on a two-version tree: 635 MiB back, 4.9 s to rebuild; above the ceiling with only the dependency tree left, it says so instead of pretending.

@@ -444,6 +444,24 @@ text `~`, which is why a child that records its stdin (`--cmd 'cat > file'`) and
 a `Return` at the end is the probe that shows the bytes and not just the screen
 (B36).
 
+## The ruler never deletes anything
+
+```sh
+./tools/target-prune.sh              # cleans our crates when target/ passes 4 GB
+./tools/target-prune.sh --dry-run    # says what it would do
+```
+
+`target/` grows on its own. The version is part of the artifact identity hash, so the
+build that follows a release bump writes to a new path and the previous copy stays —
+nothing in cargo collects it (124 bumps reached 52 GB). The dependencies do not grow:
+`Cargo.lock` pins their identity, so their path never changes, and they are what a
+cold build pays for. `target-prune.sh` therefore cleans `-p` our crates only, read
+from the manifests under `crates/`, and leaves the dependency tree alone.
+
+It is housekeeping, not a check: it is not a step of `quality-check.sh`. It runs by
+hand, or at the end of `make-release.sh`, which is where the bump happens. Measured:
+635 MiB back from a two-version tree, 4.9 s to rebuild.
+
 ## Measurement
 
 See [`BENCHMARKS.md`](BENCHMARKS.md) — it is the only place with numbers. Flow
