@@ -11,7 +11,10 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 ## Terminal core
 
 - VT parser: C0/C1, CSI, OSC, and DCS/APC/PM/SOS routing, incremental UTF-8 with a
-  buffered partial and invalid input as U+FFFD.
+  buffered partial and invalid input as U+FFFD. **limit:** a DCS is routed so
+  that sixel reaches the decoder and every other kind is dropped — `DECRQSS` and
+  `XTGETTCAP`, the two that have a standard "not supported" to give, among them
+  (`B73`).
 - Combining marks (`M-U`) compose into the character before them — up to three
   per cell, drawn over it at the font's own bearing — so `e` + `U+0301` is one
   cell with an accent and not two cells. **limit:** more than three are dropped,
