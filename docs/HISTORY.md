@@ -1615,4 +1615,7 @@ primeira.
 - The origin travels as an `id`, not an index: the removal that ends the tab moves every index to its right, and a tab closed meanwhile moves the rest.
 - A tab the user has already looked away from pulls nobody — the view stays where it was left. Measured on Xvfb: 5 tabs, editor from tab 1, `active` 2; on exit `active` back to 1; with the user on tab 4 when it exited, `active` stayed on that tab.
 - `new_tab_cmd(Option<&str>)` became `new_tab(NewTab)`, one struct with `cmd` and `return_to` — the placement follows the origin, so there is no pair of flags to spell wrong.
-- `tools/build.sh` added: the debug build with `mold` when it exists, wired by an `ld` on the `PATH` so `RUSTFLAGS` stays untouched (2m22 → 1m48 per rebuild).
+- The slow debug build is not the linker: `rustc` 1.100 links this target with its bundled `rust-lld`
+  (`strace` shows `rustlib/…/bin/rust-lld`), so a `mold` put in front of the `PATH` never runs — 0.09 s per
+  trivial link with and without it, and the early 2m22 → 1m48 reading was cold-cache noise.
+- What an edit loop needs is `cargo check -p tortty`: 2 s, without codegen or link.
