@@ -63,6 +63,15 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
   metacharacters (`%`, `^`, `&`, `|`) — a filename carrying one is out of reach.
   None of this is a regression on Linux; it is the honest size of the port so far.
 
+- **On Windows the executable is console-subsystem, so a console window opens with
+  the terminal.** The attribute is chosen at compile time and only one of the two
+  answers everything: `windows` hides the console and takes `--selftest`,
+  `--version` and the `GPU:` line with it — the very output used to validate the
+  port — while `console` (today) leaves a second window that covers part of the
+  grid (`start /min "" tortty.exe` minimizes it; the shortcut on a test desktop
+  does that). Choosing per-run instead of per-build is the open question, and it is
+  in `M-X`.
+
 - **The Windows defaults are measured; the macOS ones are not.** On a Windows 10
   21H2 guest (build 19044) driven headless, the Super chords were seen by a
   low-level keyboard hook and by **no window at all** — `Win+1` went to the
