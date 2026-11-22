@@ -316,7 +316,8 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   toast is the one above, with its 8 s floor; the badges ignore keys for 8 s
   (whoever types must not lose them), and after that the first key or the visit
   acknowledges. The window always asks for urgency. **limit:** inside the window
-  + urgency only — no desktop notification daemon.
+  + urgency only — no desktop notification daemon; `OSC 99`, the identified and
+  updatable notification, is not implemented (`B72`).
 - Progress (`OSC 9;4;state[;pct]`, the mintty/ConEmu form): a 2 px bar on the
   bottom edge of the tab label and of the workspace card, in the shade of the
   state — green normal, red error, yellow warning/paused, and the indeterminate
