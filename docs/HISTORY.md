@@ -1608,3 +1608,11 @@ primeira.
 - A title the program sends through `OSC 0/2` is taken exactly as it arrives: tortty does not rewrite what somebody else wrote.
 - `dir_title()` in `crates/app/src/app.rs` compares the home as a `Path`, so a trailing slash does not hide it and `/home/user2` is a different directory (test `a_directory_in_the_title_says_where_it_is`).
 - Measured on Xvfb with `xdotool getwindowname`: `~ — tortty` from the home, `tortty — tortty` from the repo, `/ — tortty` from the root.
+
+## 2026-11-22 — the config editor opens beside the tab it came from
+
+- Ctrl+Shift+F2 opened the config in a tab at the end of the bar, so editing from the second of five tabs left it far away. It opens right after the current tab now, and the view comes back to that tab when the editor exits.
+- The origin travels as an `id`, not an index: the removal that ends the tab moves every index to its right, and a tab closed meanwhile moves the rest.
+- A tab the user has already looked away from pulls nobody — the view stays where it was left. Measured on Xvfb: 5 tabs, editor from tab 1, `active` 2; on exit `active` back to 1; with the user on tab 4 when it exited, `active` stayed on that tab.
+- `new_tab_cmd(Option<&str>)` became `new_tab(NewTab)`, one struct with `cmd` and `return_to` — the placement follows the origin, so there is no pair of flags to spell wrong.
+- `tools/build.sh` added: the debug build with `mold` when it exists, wired by an `ld` on the `PATH` so `RUSTFLAGS` stays untouched (2m22 → 1m48 per rebuild).

@@ -75,7 +75,7 @@ right f1`…`f24`.
 | `new_tab` / `close_tab` | tab |
 | `new_workspace` / `close_workspace` | workspace |
 | `prev_prompt` / `next_prompt` | walk the `OSC 133` marks (`M-R`) |
-| `open_config` | the config file in `$EDITOR`, in a new tab |
+| `open_config` | the config file in `$EDITOR`: a tab next to the current one, which gives the view back when the editor exits |
 | `scroll_page_up` / `scroll_page_down` / `scroll_top` / `scroll_bottom` | the history |
 | `search` | the search bar over the scrollback (`M-D`), `Ctrl+Shift+F` |
 | `select_tab N` / `select_workspace N` | `N` is 1..10, where 10 is key `0` |

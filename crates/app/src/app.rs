@@ -314,6 +314,20 @@ struct MenuState {
     hover: Option<usize>,
 }
 
+/// What a new tab is opened with. The defaults are the tab the user asked for:
+/// the shell from the config, at the end of the bar. `return_to` is the config
+/// editor's shape — it says **where the view goes back to**, and the place in the
+/// bar follows from it: right after the tab it belongs to.
+#[derive(Default)]
+struct NewTab<'a> {
+    /// Run this instead of the shell, through `sh -c`.
+    cmd: Option<&'a str>,
+    /// Born right after this tab, and it gives the view back to it when it ends
+    /// (`Tab::return_to`). One field for both effects: a tab that returns to an
+    /// origin also belongs next to it, so there is no pair to spell wrong.
+    return_to: Option<u64>,
+}
+
 /// One tab: a terminal and the pty feeding it, plus the state that only makes
 /// sense while it is in front (view, selection, mouse drag).
 ///
@@ -329,6 +343,13 @@ pub struct Tab {
     pub term: Term,
     pub pty: Option<Pty>,
     pub rx: Option<Receiver<Vec<u8>>>,
+    /// The tab that opened this one, when this one is a visit (the config editor):
+    /// closing it hands the view back to that tab instead of to the right
+    /// neighbour.
+    ///
+    /// The origin is its `id`, not its index: the removal that ends a visit moves
+    /// every index to the right of it, and a tab closed meanwhile moves the rest.
+    return_to: Option<u64>,
     /// Lines scrolled into the history (0 = following the output).
     pub view_off: usize,
     /// Text selection, in absolute anchors.
@@ -384,6 +405,7 @@ impl Tab {
             term: Term::new(cols, rows),
             pty: None,
             rx: None,
+            return_to: None,
             view_off: 0,
             sel: None,
             sel_block: false,
@@ -1229,7 +1251,7 @@ impl App {
                     self.open_link(&uri);
                 }
             },
-            Item::NewTab => self.new_tab(),
+            Item::NewTab => self.new_tab(&NewTab::default()),
             Item::CloseTab => {
                 if let Some(i) = subject {
                     self.close_tab_at(i);
@@ -1707,7 +1729,7 @@ impl App {
         match action {
             Action::Copy => self.copy(),
             Action::Paste => self.paste(),
-            Action::NewTab => self.new_tab(),
+            Action::NewTab => self.new_tab(&NewTab::default()),
             Action::CloseTab => self.close_tab(),
             Action::NewWorkspace => self.new_workspace(),
             Action::CloseWorkspace => {
@@ -3439,7 +3461,7 @@ impl App {
             "tab" => {
                 let op = req.get("op").and_then(|v| v.as_str()).unwrap_or("state");
                 match op {
-                    "new" => self.new_tab(),
+                    "new" => self.new_tab(&NewTab::default()),
                     "close" => self.close_tab(),
                     "select" => {
                         let n = req
@@ -3591,16 +3613,8 @@ impl App {
     }
 
     /// New tab (I1): inherits the cwd of the current tab (I2) and becomes the
-    /// active one.
-    ///
-    /// `--cmd` only counts for the first: opening another tab with the debug
-    /// command would repeat the test, not open a shell.
-    fn new_tab(&mut self) {
-        self.new_tab_cmd(None);
-    }
-
-    /// New tab, optionally running `cmd` (the config editor uses this).
-    fn new_tab_cmd(&mut self, cmd: Option<&str>) {
+    /// active one. `NewTab` says whether it runs a command and where it belongs.
+    fn new_tab(&mut self, what: &NewTab<'_>) {
         let Some(wake) = self.wake.clone() else {
             return;
         };
@@ -3609,11 +3623,17 @@ impl App {
             self.tabs[self.active].term.rows,
         );
         let cwd = self.tabs[self.active].cwd();
+        // the place in the bar follows from the origin: next to it, or the end
+        let at = what
+            .return_to
+            .and_then(|id| self.tabs.iter().position(|t| t.id == id))
+            .map_or(self.tabs.len(), |i| i + 1);
         let mut tab = Tab::new(cols, rows);
         tab.term.scrollback_limit = self.opts.scrollback;
         tab.term.theme = self.tabs[self.active].term.theme.clone();
-        self.tabs.push(tab);
-        self.active = self.tabs.len() - 1;
+        tab.return_to = what.return_to;
+        self.tabs.insert(at, tab);
+        self.active = at;
         // the bar may have appeared now: the grid of every tab shrinks one row
         if let Some(w) = self.window.as_ref() {
             let s = w.inner_size();
@@ -3623,9 +3643,7 @@ impl App {
             self.tabs[self.active].term.cols,
             self.tabs[self.active].term.rows,
         );
-        // `--cmd` only counts for the first tab: repeating the debug command on
-        // the second would open no shell at all
-        self.spawn_tab(self.active, cols, rows, wake, cwd.as_deref(), cmd);
+        self.spawn_tab(self.active, cols, rows, wake, cwd.as_deref(), what.cmd);
         self.sync_title();
         self.redraw();
     }
@@ -3641,12 +3659,28 @@ impl App {
         if let Some(pty) = self.tabs[i].pty.as_mut() {
             pty.kill();
         }
+        let return_to = self.tabs[i].return_to;
+        let was_active = i == self.active;
         self.tabs.remove(i);
         if self.tabs.is_empty() {
             // last tab of the workspace: the workspace goes with it (I20), and
             // only the last workspace closes the app
             self.drop_empty_workspace();
             return;
+        }
+        // Where the eye lands: closing a tab to the left of the active one only
+        // shifts its index, and closing the active one shows its right neighbour
+        // (the index stays) — except for a tab that came from another one, which
+        // hands the view back to its origin. That origin is an `id`, so it still
+        // means the same tab after every index the removal moved. A tab the user
+        // has already looked away from pulls nobody: the view is where they left it.
+        if i < self.active {
+            self.active -= 1;
+        }
+        if was_active {
+            if let Some(j) = return_to.and_then(|id| self.tabs.iter().position(|t| t.id == id)) {
+                self.active = j;
+            }
         }
         self.active = self.active.min(self.tabs.len() - 1);
         if let Some(w) = self.window.as_ref() {
@@ -4316,7 +4350,12 @@ impl App {
             editor,
             platform::shell_quote(&path.to_string_lossy())
         );
-        self.new_tab_cmd(Some(&cmd));
+        // the origin is read before the call: `new_tab` makes the new one active
+        let origin = self.tabs[self.active].id;
+        self.new_tab(&NewTab {
+            cmd: Some(&cmd),
+            return_to: Some(origin),
+        });
     }
 
     /// The notice a notification becomes: title, text and shade. `OSC 7501`

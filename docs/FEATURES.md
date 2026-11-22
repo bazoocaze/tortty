@@ -437,10 +437,11 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   that are in force — proof that this file is the one being read, not only when
   the previous save was refused. At startup there is nothing to keep, so the
   detail is the error alone.
-- Ctrl+Shift+F2 opens that file in the editor, in a new tab: `VISUAL`, then
-  `EDITOR`, then `vim`. The directory is created first, because the editor only
-  writes the file on save; a session with no path (no `HOME`) answers with a
-  toast instead of a tab.
+- Ctrl+Shift+F2 opens that file in the editor, in a tab **next to the current
+  one**, which comes back to it when the editor exits: `VISUAL`, then `EDITOR`,
+  then `vim`. The directory is created first, because the editor only writes the
+  file on save; a session with no path (no `HOME`) answers with a toast instead
+  of a tab.
 - CLI: `-c/--config`, `--cmd`, `--cols`/`--rows`, `--font-family`, `--font-size`,
   `--scrollback`, `--dpi`, `--no-vsync`, `--debug-socket`, `--debug-log`, `--prof`,
   `--quit-after`, `--dump-to`, `--selftest`, `--version`.
