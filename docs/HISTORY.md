@@ -1633,3 +1633,11 @@ primeira.
 - The version is bumped at release time now, in the commit the tag names (`make-release.sh` already refuses a tag that exists), so a code commit overwrites the same paths: measured 0 MB.
 - `tools/target-prune.sh` handles what is left at each release: `cargo clean -p` on the crates read from `crates/*/Cargo.toml`, never on the dependencies, whose identity `Cargo.lock` pins and which are what a cold build pays for.
 - Measured on a two-version tree: 635 MiB back, 4.9 s to rebuild; above the ceiling with only the dependency tree left, it says so instead of pretending.
+
+## 2026-11-22 — tortty runs on Windows (minimal)
+
+- `platform/windows.rs` written and measured the same day: from this Linux host with `gcc-mingw-w64-x86-64`, into the Windows 10 21H2 guest (build 19044) driven headless. The seam was the whole obstacle — with it in place the feature code compiled unchanged, so the old "35 errors" were syscalls it had already absorbed.
+- Measured in the guest: `--selftest` **33/33**, the grid drawing the `cmd.exe` banner and prompt through ConPTY, `ver` and `dir C:\` answered, title `C:\Windows\system32\cmd.exe — tortty`, adapter `Dx12 Microsoft Basic Render Driver` (WARP, software, and it presents), font `Consolas 16.00px` from the fallback list, log stamp `tz +00:00`.
+- Two checks failed first and were wrong about the system, not about Windows: `config_file` and `config_options` compared `font_family` against the literal `Monospace`, which only the Linux template declares; they compare against the factory parse now.
+- The seam gained one capability, `has_debug_socket()`, so the self test asks before checking the permissions of a socket that cannot exist, and `backend_x11()` became `window_accepts_position()` — Windows honours a position, Wayland refuses it.
+- What it refuses with a reason: the debug socket (named pipe), `SIGHUP`/last words, the child cwd behind the title, the signals, the X11 window id and `WM_CLASS`, the civil time zone. Limits in `LIMITATIONS.md`, the measurement in `PORTABILITY.md`, what is left in `M-X`.

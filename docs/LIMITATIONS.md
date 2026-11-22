@@ -48,6 +48,21 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
 
 ## Platform
 
+- **On Windows the port is minimal: the window, the GPU and ConPTY, nothing else.**
+  Measured on 2026-11-22 in the Windows 10 21H2 guest: `--selftest` 33/33, the
+  grid drawing the `cmd.exe` prompt through ConPTY, WARP (`Dx12 Microsoft Basic
+  Render Driver`) presenting the frame. What it does **not** have, each answered
+  by the seam with the reason: the debug socket (a named pipe is the real answer,
+  so `--debug-socket` refuses to bind), `SIGHUP` and a program's last words
+  (`B48`) — closing the pty is `ClosePseudoConsole`, and a Unix signal has no
+  equivalent; the cwd of the program in front of the pty (no `/proc`), so the tab
+  title falls back to the program name; `SIGUSR1`/`SIGTERM` triggers; the X11
+  window id and `WM_CLASS`. The log stamps `tz +00:00` there: the standard library
+  hands out UTC only and the civil offset would cost `windows-sys` for one field.
+  `shell_quote` wraps a path for `CreateProcess` but does **not** escape `cmd.exe`
+  metacharacters (`%`, `^`, `&`, `|`) — a filename carrying one is out of reach.
+  None of this is a regression on Linux; it is the honest size of the port so far.
+
 - **The Windows defaults are measured; the macOS ones are not.** On a Windows 10
   21H2 guest (build 19044) driven headless, the Super chords were seen by a
   low-level keyboard hook and by **no window at all** — `Win+1` went to the

@@ -30,20 +30,29 @@
 //! cross-target build would ever report.
 //!
 //! Linux is the measured target: it is where the app is developed and where every
-//! number in `docs/BENCHMARKS.md` was taken. Windows is `M-X` and macOS is `M-Y`
-//! in `docs/BACKLOG.md`; the analysis of each is in `docs/PORTABILITY.md`.
+//! number in `docs/BENCHMARKS.md` was taken. Windows has a minimal implementation
+//! (`windows.rs`, enough to open the window, draw and run the shell through
+//! ConPTY) whose facts are unmeasured until it runs in the Windows VM — the debug
+//! socket as a named pipe, `SIGHUP` and the child cwd are the capabilities it does
+//! not answer yet. macOS stays `M-Y` in `docs/BACKLOG.md`; the analysis of each is
+//! in `docs/PORTABILITY.md`.
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "windows")]
+mod windows;
 #[cfg(target_os = "linux")]
 mod x11;
 
 #[cfg(target_os = "linux")]
 pub use linux::*;
+#[cfg(target_os = "windows")]
+pub use windows::*;
+
 #[cfg(target_os = "linux")]
 pub use x11::install as install_error_guard;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 compile_error!(
-    "tortty has no `platform` implementation for this target: only Linux is measured (M-X Windows, M-Y macOS in docs/BACKLOG.md, analysis in docs/PORTABILITY.md)"
+    "tortty has no `platform` implementation for this target: Linux is measured, Windows is minimal and unmeasured (M-X), macOS is M-Y in docs/BACKLOG.md (analysis in docs/PORTABILITY.md)"
 );

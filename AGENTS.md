@@ -75,9 +75,11 @@ per category, in order).
   system — syscalls, paths, signals, shell quoting, windowing details — and the app
   asks it for `try_lock`, `hangup`, `shell_quote`. What the implementation does not
   have comes back as `Option`/`Err` with the reason, never as a silent `#[cfg]` in
-  the feature code. Policy per system (chords, default font, shell name as data) is
-  **not** there: it lives in `crates/core/defaults/`. The ruler is
-  `tools/platform-gate.sh`, a step of `tools/quality-check.sh`.
+  the feature code. Linux has the full implementation and Windows a minimal one
+  (`platform/windows.rs`: window, GPU, ConPTY — measured, the refusals are listed
+  in `PORTABILITY.md`); macOS has none. Policy per system (chords, default font,
+  shell name as data) is **not** there: it lives in `crates/core/defaults/`. The
+  ruler is `tools/platform-gate.sh`, a step of `tools/quality-check.sh`.
 - Version: bump the patch in `Cargo.toml` (root, `workspace.package`) **at release
   time**, in the commit the tag names. A bump is part of the artifact identity hash,
   so bumping on every code commit makes cargo keep a new copy of everything instead

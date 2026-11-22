@@ -186,6 +186,13 @@ pub fn same_user(conn: &Conn) -> bool {
     rc == 0 && cred.uid == unsafe { libc::getuid() }
 }
 
+/// The debug socket exists on this system (a unix socket bound at a path). The
+/// self test asks before checking the permissions of a socket that may not exist.
+#[must_use]
+pub fn has_debug_socket() -> bool {
+    true
+}
+
 /// Is the socket at `path` owner-only? The fact `bind` establishes, asked again
 /// by the self test (a socket another user can read is a screen another user can
 /// read).
@@ -358,12 +365,12 @@ pub fn default_sigpipe() {
 
 // ---------------------------------------------------------------- window and desktop
 
-/// Is the window manager X11? It is the one that accepts a window position; on
-/// Wayland that does not exist (J6). `winit` does not expose which backend it
-/// picked, so the reading comes from the environment — the same choice it makes:
+/// Does the window manager accept a window position? X11 does, Wayland does not
+/// (J6), Windows does. `winit` does not expose which backend it picked, so on
+/// Linux the reading comes from the environment — the same choice it makes:
 /// Wayland when `WAYLAND_DISPLAY` exists.
 #[must_use]
-pub fn backend_x11() -> bool {
+pub fn window_accepts_position() -> bool {
     std::env::var_os("WAYLAND_DISPLAY").is_none_or(|v| v.is_empty())
         && std::env::var_os("DISPLAY").is_some_and(|v| !v.is_empty())
 }

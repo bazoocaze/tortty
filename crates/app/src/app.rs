@@ -3778,8 +3778,11 @@ impl App {
             })
             .unwrap_or_default();
         self.geom_normal = (geom.w.max(1), geom.h.max(1));
-        // J6: only X11 accepts a window position; on Wayland it does not exist
-        let pos = geom.x.zip(geom.y).filter(|_| platform::backend_x11());
+        // J6: a position exists where the window manager accepts one; Wayland refuses
+        let pos = geom
+            .x
+            .zip(geom.y)
+            .filter(|_| platform::window_accepts_position());
         (geom.w.max(1), geom.h.max(1), pos, maximized)
     }
 
@@ -3801,7 +3804,10 @@ impl App {
             return;
         }
         let maximized = self.window.as_ref().is_some_and(|w| w.is_maximized());
-        let (x, y) = match self.geom_pos.filter(|_| platform::backend_x11()) {
+        let (x, y) = match self
+            .geom_pos
+            .filter(|_| platform::window_accepts_position())
+        {
             Some((x, y)) => (Some(x), Some(y)),
             None => (None, None), // Wayland: no position to remember (J6)
         };

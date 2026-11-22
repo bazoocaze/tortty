@@ -404,6 +404,12 @@ fn test_sink(line: String, response: mpsc::Sender<String>) -> bool {
 }
 
 fn debug_socket() -> Result<(), String> {
+    // The capability answers first: on a system whose seam has no socket (Windows,
+    // until the named pipe exists) there is no permission to check, and failing
+    // here would report a missing feature as a broken one.
+    if !crate::platform::has_debug_socket() {
+        return Ok(());
+    }
     let path = std::env::temp_dir()
         .join(format!("tortty-check-sock-{}.sock", std::process::id()))
         .to_string_lossy()

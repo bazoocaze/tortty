@@ -37,7 +37,7 @@ that is what the CI matrix below does for free).
 | Linux Wayland | should work (`winit` native) | ● | **no** — still needs exercising |
 | Linux + GL (`WGPU_BACKEND=gl`) | should work | ● | **no** — valve for an old GPU |
 | Linux + llvmpipe (software) | should work, slow | ● | **no** — next portability test |
-| Windows 10/11 | D3D12 (or Vulkan) | ConPTY | **no** — needs a Windows runner |
+| Windows 10/11 | D3D12 (WARP when no driver) | ConPTY | **minimal**, measured 2026-11-22 (below) |
 | macOS Apple Silicon | Metal | POSIX pty | **no** — needs a macOS runner |
 | macOS Intel | Metal | POSIX pty | **no** — `macos-13` runner |
 
@@ -48,8 +48,9 @@ gate are in `AGENTS.md` (`tools/platform-gate.sh` fails if `std::os::unix`,
 `libc::`, `windows_sys::`, `winapi::` or `winit::platform::` appears anywhere else
 in `crates/`). The app asks for a capability — `platform::try_lock`,
 `platform::hangup`, `platform::shell_quote`, `platform::open_uri` — and the name of
-a system exists only there. Only the Linux implementation was written, and it is
-the measured one.
+a system exists only there. Linux has the full implementation and it is the measured
+one; Windows has a minimal one (`platform/windows.rs`), written on 2026-11-22 and
+measured in the same day, which is what the next section records. macOS has none.
 
 Measured on 2026-11-16, with the seam in place: a build for Windows stops with
 **one** error instead of 35, and for macOS with **one** instead of 4. That error is
@@ -57,6 +58,38 @@ the `compile_error!` naming `M-X`/`M-Y`. Note what the 4 macOS errors were — t
 are the reason the implementation is named `linux` and not `unix`: `libc::ucred`
 and `SO_PEERCRED` do not exist there, and `winit::platform::x11` is not compiled
 either. **macOS is not a free ride for being a unix.**
+
+## Windows: what was measured, and what it refuses
+
+The first Windows build was made on 2026-11-22 from this Linux host with
+`gcc-mingw-w64-x86-64` (`cargo build --target x86_64-pc-windows-gnu`) and run in
+the Windows 10 21H2 guest (build 19044) driven headless. The seam was the only
+thing standing in the way: with it in place the app compiled with **zero** changes
+to the feature code, so the earlier "35 errors" were all syscalls the seam had
+already absorbed.
+
+Measured in the guest, `tortty.exe` 1.0.124:
+
+- `--selftest`: **33/33 ok**. Two checks failed first — `config_file` and
+  `config_options` compared `font_family` against the literal `Monospace`, which
+  only the Linux template declares; they compare against the factory parse now, so
+  each system's template is the expectation.
+- The window opened and drew: the grid showed the `cmd.exe` banner and prompt from
+  ConPTY, `ver` and `dir C:\` answered, and the title bar read
+  `C:\Windows\system32\cmd.exe — tortty`.
+- Adapter: `Dx12 Microsoft Basic Render Driver (driver 10.0.19041.546)` — WARP,
+  the software D3D12 device, because the guest has no GPU driver. It presents.
+- Font: `Consolas 16.00px`, the fallback list resolving exactly as measured in
+  2026-11-16 (no Cascadia Mono on a plain Windows 10).
+- Log stamp: `tz +00:00`, because `utc_offset_secs()` answers `None` there.
+
+What the minimal port answers with a reason instead of a stub: the debug socket
+(`Listener::bind` refuses — a named pipe is the real answer), `SIGHUP` and the
+last words (`B48`), the child cwd behind the title, `SIGUSR1`/`SIGTERM` triggers,
+the X11 window id and `WM_CLASS`. What it does have: paths from `%APPDATA%` /
+`%LOCALAPPDATA%` / `%USERPROFILE%`, the session lock over `LockFileEx`, `cmd.exe`
+as default shell, Windows quoting, `notepad` as editor, one clipboard (no PRIMARY),
+and a window position that Windows honours.
 
 What follows is the list a second implementation has to answer, ordered by
 severity. None of them is architectural.

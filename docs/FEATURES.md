@@ -454,7 +454,9 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - `--debug-socket auto` opens `$XDG_RUNTIME_DIR/tortty-<pid>.sock`; the socket is
   `0600` and checks `SO_PEERCRED`, and it never deletes a file that is not its
   own. The socket itself is the `platform` seam (one capability, not a `#[cfg]`
-  in the protocol code); **limit:** only the Linux implementation exists.
+  in the protocol code); **limit:** only the Linux implementation exists (a named
+  pipe is `M-X`), and the self test asks the seam before checking a socket's
+  permissions, so a system without one reports no failure.
 - `--dump-to` and `SIGUSR1` give the same view with no socket.
 - One instance per PID file: `tools/devkill.sh` kills that PID, checking
   `/proc/<pid>/exe`.
@@ -462,8 +464,12 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 ## Platform and distribution
 
 - Linux X11 with Vulkan or GL, plus the CPU adapter fallback.
-  **limit:** Wayland compiles and is not exercised (`M-AB`); Windows and macOS
-  are not targets yet (`M-X`, `M-Y`), so "it works there" is not a fact.
+  **limit:** Wayland compiles and is not exercised (`M-AB`).
+- Windows 10/11 opens a window, draws and runs ConPTY, measured on 2026-11-22 in
+  the Windows 10 21H2 guest (`M-X`). **limit:** the port is minimal — no debug
+  socket, no last words on close, no child cwd for the title, no macOS build
+  (`M-Y`), and nothing ships for Windows yet: no package, no runner, no signing
+  (`M-Z`). Details in [`PORTABILITY.md`](PORTABILITY.md).
 - Installer: the `tortty` command, menu entry, icon, `--prefix`, `--check`,
   `--uninstall`. **limit:** `--from-release` needs an asset published in GitHub
   Releases; there is none yet, so `./install.sh` is the path today.

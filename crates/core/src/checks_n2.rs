@@ -129,10 +129,15 @@ fn config_file() -> Result<(), String> {
     // merge key by key: the user only overrides what they wrote
     let (cfg, errs) = Config::parse("shell /bin/sh\n");
     expected("user shell", cfg.shell.as_deref(), Some("/bin/sh"))?;
+    // "the factory one" is what this system's template says: the value lives in
+    // `crates/core/defaults/tortty-<os>.conf`, not in this check (Linux reads
+    // Monospace, Windows reads its own list), so the comparison is against the
+    // factory parse, not against a literal that only Linux satisfies.
+    let factory = Config::parse("").0;
     expected(
         "font still the factory one",
         cfg.font_family.as_str(),
-        "Monospace",
+        factory.font_family.as_str(),
     )?;
     expected("no file, no error", errs.len(), 0)?;
     // unknown key is an error, but the rest of the file HOLDS (initial load)
@@ -170,7 +175,12 @@ fn config_options() -> Result<(), String> {
     if !errs.is_empty() {
         return Err(format!("defaults with error: {errs:?}"));
     }
-    expected("font_family", cfg.font_family.as_str(), "Monospace")?;
+    // the per-system template owns the value (see `config_file` above)
+    expected(
+        "font_family",
+        cfg.font_family.as_str(),
+        Config::parse("").0.font_family.as_str(),
+    )?;
     expected("font_size", cfg.font_size, 12.0)?;
     expected("cursor_shape", cfg.cursor_shape, CursorShape::Block)?;
     expected("cursor_blink", cfg.cursor_blink, false)?;
