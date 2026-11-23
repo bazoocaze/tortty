@@ -54,5 +54,5 @@ pub use x11::install as install_error_guard;
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
 compile_error!(
-    "tortty has no `platform` implementation for this target: Linux is measured, Windows is minimal and unmeasured (M-X), macOS is M-Y in docs/BACKLOG.md (analysis in docs/PORTABILITY.md)"
+    "tortty has no `platform` implementation for this target: Linux and Windows have one (Windows minimal, measured on 2026-11-22), macOS is M-Y in docs/BACKLOG.md (analysis in docs/PORTABILITY.md)"
 );
