@@ -28,9 +28,6 @@ const MAX_OSC_IMAGE: usize = 16 * 1024 * 1024;
 const ITERM_PREFIX: &[u8] = b"1337;File=";
 /// How many distinct `OSC 8` URIs are kept (a span reuses its index).
 pub const LINK_MAX: usize = 4096;
-/// How many chars of an `OSC 9`/`777` notification are kept: it is shown in one
-/// toast line, and a child that notifies in a loop must not grow it.
-pub const NOTIF_MAX: usize = 512;
 /// How many OSC the probe keeps, and how much of each (the socket's `osc` verb).
 const OSC_SEEN: usize = 8;
 const OSC_SEEN_MAX: usize = 256;
@@ -309,16 +306,13 @@ pub struct Term {
     pub theme_dirty: bool,
     pub cell_size: (u32, u32),
     pub bells: u32,
-    /// `OSC 9`/`777` notifications waiting for the app (`M-K`): the count is
-    /// the app's cursor (as `bells`/`bells_seen`), the text is the last one.
+    /// How many notifications arrived (the app's cursor, as `bells`).
+    ///
+    /// The content is `notifications`, not a slot: a tab that says two things
+    /// keeps both, and the same `(source, id)` replaces its own entry.
     pub notifs: u32,
-    pub notif_text: String,
-    /// Who said it and how loud, when the notification came from `OSC 7501`
-    /// (`B47`): the state that asked for the user, and the line the toast wears
-    /// as its title (`blocked · test`). `None` for `OSC 9`/`777`, which carry no
-    /// state — the app then says "Notification", the way it always did.
-    pub notif_state: Option<crate::status::State>,
-    pub notif_title: Option<String>,
+    /// What the child asked the user to look at, newest first.
+    pub notifications: crate::notif::List,
     /// Progress reported by the program (`OSC 9;4`): the tab label draws it.
     /// `None` = nothing to show; state `0` clears it.
     pub progress: Option<Progress>,
@@ -443,9 +437,7 @@ impl Term {
             cell_size: (10, 19),
             bells: 0,
             notifs: 0,
-            notif_text: String::new(),
-            notif_state: None,
-            notif_title: None,
+            notifications: crate::notif::List::default(),
             progress: None,
             status: crate::status::Status::default(),
             marks: crate::prompt::Marks::default(),
@@ -2006,13 +1998,36 @@ impl Term {
             // digit state we do not know is still this form — swallowed, never a
             // toast (a 1 Hz repeater would pin it forever)
             9 => match Self::osc_progress(arg) {
-                Some((0, _)) => self.progress = None,
                 Some((state, pct)) if state < 5 => {
                     // the spec's mapping: the progress form feeds the root record
                     // until a real `7501` report arrives, and it is why the form
                     // is swallowed instead of toasted
-                    self.status.from_progress(state, pct);
-                    self.progress = Some(Progress { state, pct });
+                    let changed = self.status.from_progress(state, pct);
+                    // the bar is always re-derived from the record (`state=0`
+                    // removes it): one truth, not two
+                    self.root_progress();
+                    // a final state is news, exactly like the same state reported
+                    // by `7501` — the form carries no text, so the state's word is
+                    // the text. A repeater changes nothing and says nothing.
+                    let word = self
+                        .status
+                        .root()
+                        .filter(|r| r.state.notifies())
+                        .map(|r| r.state.name().to_string());
+                    if changed {
+                        if let Some(word) = word {
+                            let shade = self.status.root().map_or(crate::notif::Shade::Info, |r| {
+                                crate::notif::Shade::of(r.state)
+                            });
+                            self.notify(&crate::notif::Notif {
+                                source: crate::notif::Source::Progress,
+                                id: None,
+                                title: None,
+                                body: Some(word),
+                                shade,
+                            });
+                        }
+                    }
                 },
                 Some(_) => {},
                 None => self.osc_notify(arg),
@@ -2051,79 +2066,65 @@ impl Term {
             self.root_progress();
             return;
         };
-        if applied.state.wants_you() {
-            let text = applied.text.clone();
+        if applied.state.notifies() {
+            // the title says *who and why* (`blocked · test`), the body is the
+            // message the program wrote; the shade is the state's own, so a
+            // `blocked` wears yellow and an `error` red
             let title = match applied.app.as_deref() {
-                Some(app) if app != text => format!("{} · {app}", applied.state.name()),
+                Some(app) if app != applied.text => {
+                    format!("{} · {app}", applied.state.name())
+                },
                 _ => applied.state.name().to_string(),
             };
-            self.osc_notify_text(&text);
-            // after `osc_notify_text`, which resets both: the state is what
-            // separates a `blocked` in yellow from an `error` in red
-            self.notif_state = Some(applied.state);
-            self.notif_title = Some(title);
+            self.notify(&crate::notif::Notif {
+                source: crate::notif::Source::Osc7501,
+                // the root record has no name: an unnamed report is not an
+                // identity, so each one is its own entry
+                id: (!applied.id.is_empty()).then(|| applied.id.clone()),
+                title: Some(title),
+                body: Some(applied.text.clone()),
+                shade: crate::notif::Shade::of(applied.state),
+            });
         }
         self.root_progress();
     }
 
-    /// The root record as the tab's progress bar (`B47` → `OSC 9;4`'s colours).
-    /// `status_show chip` (`B47`): the state, its word and the detail the chip
-    /// draws — the app that wrote the record and how far it got.
-    ///
-    /// `None` for an `idle` record: it is not news, and a chip saying that nothing
-    /// happens would never leave the screen. The chip and the click that dismisses
-    /// it read this same builder, so they cannot disagree about whether it is there.
+    /// The text of the newest notification, which is what a surface with one line
+    /// shows. Empty when there is none.
     #[must_use]
-    pub fn status_chip(&self) -> Option<(crate::status::State, String, String)> {
-        let root = self.status.root()?;
-        if root.state == crate::status::State::Idle {
-            return None;
-        }
-        let mut detail = String::new();
-        if let Some(app) = root.app.as_deref() {
-            detail.push_str(" · ");
-            detail.push_str(app);
-        }
-        if let Some(pct) = root.progress {
-            detail.push_str(" · ");
-            detail.push_str(&pct.to_string());
-            detail.push('%');
-        }
-        Some((root.state, root.state.name().to_string(), detail))
+    pub fn last_notification(&self) -> String {
+        self.notifications
+            .entries()
+            .next()
+            .map_or_else(String::new, crate::notif::Notif::label)
     }
 
-    /// The user dismissed the state: the root record and everything under it go,
-    /// and the bar with them (`B47`).
-    ///
-    /// `done` and `error` have no lifetime of their own — the spec keeps them for
-    /// the user to find — so a click on the chip is what ends them. A program that
-    /// is still working reports again and the chip comes back.
-    pub fn dismiss_status(&mut self) {
-        self.status.dismiss();
-        self.root_progress();
+    /// The app's own notification (`bell = visual`): the **list** belongs to the
+    /// emulation's tab, but the policy that decides whether a BEL is a
+    /// notification belongs to the app, so the app pushes it here instead of the
+    /// parser doing it. The count does not move: the app already follows `bells`
+    /// and would otherwise see the same event twice.
+    pub fn push_notification(&mut self, source: crate::notif::Source) {
+        self.notifications
+            .push(source, None, None, None, crate::notif::Shade::Info);
     }
 
     fn root_progress(&mut self) {
         use crate::status::State;
+        // a state is a row: `in_flight` is the only question the bar asks
         let bar = match self.status.root() {
-            None => None,
-            Some(r) => match r.state {
-                State::Working => Some(Progress {
-                    state: 1,
-                    pct: r.progress,
-                }),
-                // waiting on the user: the warning shade, filling when the
-                // program said how far it got
-                State::Blocked => Some(Progress {
-                    state: 4,
-                    pct: r.progress,
-                }),
-                State::Error => Some(Progress {
-                    state: 2,
-                    pct: Some(100),
-                }),
-                State::Done | State::Idle => None,
-            },
+            Some(r) if r.state.in_flight() => Some(Progress {
+                // `9;4`'s shades: no percentage is indeterminate (cyan), a wait
+                // for the user is the warning one, the rest is the normal one.
+                // The shade is derived, never stored as a second meaning.
+                state: match r.state {
+                    State::Working if r.progress.is_none() => 3,
+                    State::Working => 1,
+                    _ => 4,
+                },
+                pct: r.progress,
+            }),
+            _ => None,
         };
         self.progress = bar;
     }
@@ -2154,10 +2155,12 @@ impl Term {
             None
         };
         if kind == MarkKind::PromptStart {
-            // a new prompt: the command that was running is gone, so `working`
-            // and `blocked` records go with it — `done`/`error` stay for the
-            // user to find (the spec's lifetime rules, `B47`)
-            self.status.forget_transient();
+            // a new prompt: the command that produced every record is gone, so
+            // the whole record goes with it. What survives is the notification
+            // (the tab's list and its mark), which is where "the user has not
+            // seen it" lives now (`B47` kept it in the record, which nothing
+            // draws any more)
+            self.status.dismiss();
             self.root_progress();
         }
         let line = self.scrolled as i64 + self.cy as i64;
@@ -2382,29 +2385,31 @@ impl Term {
         Some((num(rest[0]), rest.get(1).map(|p| num(p).min(100))))
     }
 
-    /// A notification the child wants seen (`M-K`): the text lands in
-    /// `notif_text` and the count moves, exactly like `bells` — the app
-    /// decides toast, badge and urgency. Capped: a child that notifies in a
-    /// loop must not grow this without a limit.
-    fn osc_notify_text(&mut self, text: &str) {
-        let clean: String = text
-            .chars()
-            .filter(|c| !c.is_control())
-            .take(NOTIF_MAX)
-            .collect();
-        if clean.is_empty() {
-            return;
+    /// A notification the child wants seen (`M-K`): one entry in the tab's list
+    /// and the count moves, exactly like `bells` — what the app does about it
+    /// (mark, urgency, beep) is the app's business.
+    fn notify(&mut self, notif: &crate::notif::Notif) {
+        if self.notifications.push(
+            notif.source,
+            notif.id.as_deref(),
+            notif.title.as_deref(),
+            notif.body.as_deref(),
+            notif.shade,
+        ) {
+            self.notifs = self.notifs.wrapping_add(1);
         }
-        self.notif_text = clean;
-        self.notif_state = None;
-        self.notif_title = None;
-        self.notifs = self.notifs.wrapping_add(1);
     }
 
     /// `OSC 9;message` (iTerm2): the whole payload is the message.
     fn osc_notify(&mut self, arg: &[u8]) {
         let text = String::from_utf8_lossy(arg).into_owned();
-        self.osc_notify_text(&text);
+        self.notify(&crate::notif::Notif {
+            source: crate::notif::Source::Osc9,
+            id: None,
+            title: None,
+            body: Some(text),
+            shade: crate::notif::Shade::Info,
+        });
     }
 
     /// `OSC 777;notify;title;body` (urxvt): only `notify` is a notification,
@@ -2415,15 +2420,17 @@ impl Term {
         if it.next() != Some("notify") {
             return;
         }
+        // the two parts are a title and a body, not one string: the list keeps
+        // them apart and flattens only when it has one line to fill
         let title = it.next().unwrap_or_default();
         let body = it.next().unwrap_or_default();
-        if title.is_empty() {
-            self.osc_notify_text(body);
-        } else if !body.is_empty() {
-            self.osc_notify_text(&format!("{title}: {body}"));
-        } else {
-            self.osc_notify_text(title);
-        }
+        self.notify(&crate::notif::Notif {
+            source: crate::notif::Source::Osc777,
+            id: None,
+            title: (!title.is_empty()).then(|| title.to_string()),
+            body: (!body.is_empty()).then(|| body.to_string()),
+            shade: crate::notif::Shade::Info,
+        });
     }
 
     fn osc_link(&mut self, arg: &[u8]) {
@@ -3866,11 +3873,11 @@ mod tests {
             t.feed(body.as_bytes());
         }
         assert_eq!(t.notifs, 0, "progress never notifies");
-        assert_eq!(t.notif_text, "");
+        assert!(t.notifications.is_empty());
         // but a message that merely starts with a digit still does
         t.feed(b"\x1b]9;4;3 done\x07");
         assert_eq!(t.notifs, 1);
-        assert_eq!(t.notif_text, "4;3 done");
+        assert_eq!(t.last_notification(), "4;3 done");
     }
 
     #[test]
@@ -4966,79 +4973,115 @@ mod tests {
         let msg = "VGVzdCBibG9ja2Vk"; // "Test blocked"
         t.feed(format!("\x1b]7501;state=blocked:app=test:msg={msg}\x1b\\").as_bytes());
         assert_eq!(t.notifs, 1);
-        assert_eq!(t.notif_state, Some(crate::status::State::Blocked));
-        assert_eq!(t.notif_text, "Test blocked");
-        assert_eq!(t.notif_title.as_deref(), Some("blocked · test"));
+        {
+            let n = t.notifications.entries().next().expect("one entry");
+            assert_eq!(n.source, crate::notif::Source::Osc7501);
+            assert_eq!(n.title.as_deref(), Some("blocked · test"));
+            assert_eq!(n.body.as_deref(), Some("Test blocked"));
+            assert_eq!(n.shade, crate::notif::Shade::Warn);
+        }
         // `error` is the same road with another shade
         let mut e = term();
         // `msg` is base64 in the spec, and one that does not decode discards the
         // whole report: "boom" is `Ym9vbQ==`
         e.feed(b"\x1b]7501;state=error:msg=Ym9vbQ==\x1b\\");
-        assert_eq!(e.notif_state, Some(crate::status::State::Error));
-        // a plain notification says nothing about itself, and a later one clears
-        // whatever the previous report said
+        assert_eq!(
+            e.notifications.entries().next().map(|n| n.shade),
+            Some(crate::notif::Shade::Err)
+        );
+        // a plain notification says nothing about itself and is its own entry:
+        // the `7501` one is still there
         t.feed(b"\x1b]9;build ok\x1b\\");
-        assert_eq!(t.notif_text, "build ok");
-        assert_eq!(t.notif_state, None);
-        assert_eq!(t.notif_title, None);
+        assert_eq!(t.notifications.len(), 2);
+        assert_eq!(t.last_notification(), "build ok");
         // `done` asks for the user as well, and still lands here
         let mut d = term();
         d.feed(b"\x1b]7501;state=done:app=cargo\x1b\\");
-        assert_eq!(d.notif_state, Some(crate::status::State::Done));
+        assert_eq!(
+            d.notifications.entries().next().map(|n| n.title.as_deref()),
+            // `app == text` here, so the title is only the word
+            Some(Some("done"))
+        );
         // `working`/`idle` do not notify at all
         let mut w = term();
         w.feed(b"\x1b]7501;state=working:app=cargo\x1b\\");
         assert_eq!(w.notifs, 0);
     }
 
-    /// A `done` chip would be there forever — `done` and `error` have no lifetime
-    /// of their own — so the click that dismisses it clears the records and the
-    /// bar, and leaves the terminal knowing the program speaks `7501` (`B47`).
+    /// A new prompt takes the records and the bar, and it must **not** hand the
+    /// root back to `9;4`: the terminal already heard a `7501` report.
     #[test]
-    fn dismissing_the_chip_takes_the_state_and_the_bar() {
+    fn a_new_prompt_takes_the_state_and_the_bar() {
         let mut t = term();
         t.feed(b"\x1b]7501;state=done:app=cargo\x1b\\");
-        assert_eq!(
-            t.status_chip(),
-            Some((
-                crate::status::State::Done,
-                "done".to_string(),
-                " · cargo".to_string()
-            ))
-        );
-        // a record under the root goes with it: the chip says one thing, and
-        // dismissing it is the whole tab being read
+        // a record under the root goes with it: the whole tab was read
         t.feed(b"\x1b]7501;state=blocked:id=sub/task:app=git\x1b\\");
         assert_eq!(t.status.len(), 2);
-        t.dismiss_status();
+        t.feed(b"\x1b]133;A\x07");
         assert_eq!(t.status.len(), 0);
-        assert_eq!(t.status_chip(), None);
         assert_eq!(t.progress, None, "the bar goes with the record");
-        // what the dismissal must **not** take: the program still speaks `7501`,
+        // what the prompt must **not** take: the program still speaks `7501`,
         // so a later `9;4` is not allowed to map itself onto the root again
         t.feed(b"\x1b]9;4;1;40\x1b\\");
-        assert_eq!(t.status_chip(), None);
-        // ...and the program reporting again brings it back, by design
+        assert!(t.status.is_empty());
+        assert_eq!(t.progress, None);
+        // ...and the program reporting again brings the bar back, by design
         t.feed(b"\x1b]7501;state=working:app=cargo:progress=40\x1b\\");
-        assert_eq!(
-            t.status_chip(),
-            Some((
-                crate::status::State::Working,
-                "working".to_string(),
-                " · cargo · 40%".to_string()
-            ))
-        );
         assert_eq!(t.progress.map(|p| (p.state, p.pct)), Some((1, Some(40))));
     }
 
-    /// `idle` is not news: the chip is not built at all, so nothing draws and the
-    /// click has nothing to hit.
+    /// `idle` is not in flight: nothing draws it, and the bar is gone.
     #[test]
-    fn an_idle_record_has_no_chip() {
+    fn an_idle_record_has_nothing_to_draw() {
         let mut t = term();
         t.feed(b"\x1b]7501;state=idle:app=cargo\x1b\\");
-        assert_eq!(t.status_chip(), None);
+        assert_eq!(
+            t.status.root().map(|r| r.state),
+            Some(crate::status::State::Idle)
+        );
         assert_eq!(t.progress, None);
+    }
+
+    /// `9;4;0` ends the **record**, not only the bar: the old path cleared
+    /// `progress` and returned before `from_progress` could remove the root.
+    #[test]
+    fn osc9_4_zero_clears_the_record_too() {
+        let mut t = term();
+        t.feed(b"\x1b]9;4;1;40\x1b\\");
+        assert_eq!(t.status.len(), 1);
+        t.feed(b"\x1b]9;4;0\x1b\\");
+        assert_eq!(t.status.len(), 0, "the record goes with the bar");
+        assert_eq!(t.progress, None, "nothing is left to draw");
+    }
+
+    /// `9;4;2` is a final state: it asks the user like `7501 error` does, and a
+    /// finished command has no bar.
+    #[test]
+    fn osc9_4_error_notifies_and_takes_the_bar() {
+        let mut t = term();
+        t.feed(b"\x1b]9;4;1;40\x1b\\");
+        assert_eq!(t.progress.map(|p| p.state), Some(1));
+        t.feed(b"\x1b]9;4;2\x1b\\");
+        assert_eq!(t.notifs, 1, "a finished command is news");
+        assert_eq!(t.progress, None, "and it has no bar any more");
+    }
+
+    /// A new prompt ends the record, so the next command gets its own notice —
+    /// otherwise the idempotence rule would swallow it (the same `done` twice).
+    #[test]
+    fn a_new_prompt_forgets_the_record_so_the_next_command_notifies() {
+        let mut t = term();
+        t.feed(b"\x1b]7501;state=done:app=cargo\x1b\\");
+        assert_eq!(t.notifs, 1);
+        // the same report again is the same fact: silence
+        t.feed(b"\x1b]7501;state=done:app=cargo\x1b\\");
+        assert_eq!(t.notifs, 1);
+        // the shell came back: the command that produced it is gone
+        t.feed(b"\x1b]133;A\x07");
+        assert_eq!(t.status.len(), 0);
+        // so the next command ending the same way is news again
+        t.feed(b"\x1b]7501;state=done:app=cargo\x1b\\");
+        assert_eq!(t.notifs, 2);
     }
 
     #[test]
@@ -5068,20 +5111,27 @@ mod tests {
     fn osc9_counts_the_notification_and_keeps_its_text() {
         let mut t = term();
         t.feed(b"\x1b]9;build ok\x07");
-        assert_eq!((t.notifs, t.notif_text.as_str()), (1, "build ok"));
+        assert_eq!((t.notifs, t.last_notification().as_str()), (1, "build ok"));
         // empty and control-only payloads are not notifications
         t.feed(b"\x1b]9;\x07");
         t.feed(b"\x1b]9;\x01\x02\x07");
-        assert_eq!((t.notifs, t.notif_text.as_str()), (1, "build ok"));
+        assert_eq!((t.notifs, t.last_notification().as_str()), (1, "build ok"));
     }
 
     #[test]
-    fn osc777_notify_joins_title_and_body() {
+    fn osc777_keeps_title_and_body_apart() {
         let mut t = term();
         t.feed(b"\x1b]777;notify;make;all done\x07");
-        assert_eq!((t.notifs, t.notif_text.as_str()), (1, "make: all done"));
+        {
+            let n = t.notifications.entries().next().expect("one entry");
+            assert_eq!(n.source, crate::notif::Source::Osc777);
+            assert_eq!(n.title.as_deref(), Some("make"));
+            assert_eq!(n.body.as_deref(), Some("all done"));
+            assert_eq!(n.text(), "make — all done");
+        }
         t.feed(b"\x1b]777;notify;;body only\x07");
-        assert_eq!(t.notif_text.as_str(), "body only");
+        assert_eq!(t.last_notification(), "body only");
+        assert_eq!(t.notifications.len(), 2, "no id: a new entry each time");
     }
 
     #[test]
@@ -5089,7 +5139,8 @@ mod tests {
         let mut t = term();
         t.feed(b"\x1b]777;foo;bar\x07");
         t.feed(b"\x1b]777\x07");
-        assert_eq!((t.notifs, t.notif_text.as_str()), (0, ""));
+        assert_eq!(t.notifs, 0);
+        assert!(t.notifications.is_empty());
     }
 
     #[test]

@@ -54,12 +54,10 @@ pub struct Metrics {
     pub rows: usize,
 }
 
-/// One tab, as the bar needs it: the title, whether it wears the bell, and the
-/// `OSC 7501` state word when `status_show tab` puts it on the label (`B47`).
+/// One tab, as the bar needs it: the title, and whether it wears the bell.
 pub struct Tab<'a> {
     pub title: &'a str,
     pub alert: bool,
-    pub state: Option<&'a str>,
 }
 
 /// A rectangle in origin space: `x, y, w, h`.
@@ -80,16 +78,12 @@ pub struct Layout {
     pub cards: Vec<Slot>,
 }
 
-/// The label of a tab: the number and the title, one cell of gutter each side —
-/// and, when `status_show tab` is on, the state in front of the number, where the
-/// bell's two cells also live: drawing and hit-test both read this, so a wider
-/// label cannot disagree with the click (`M-Q`).
+/// The label of a tab: the number and the title, one cell of gutter each side.
+/// The bell's two cells live in front of it: drawing and hit-test both read this,
+/// so a wider label cannot disagree with the click (`M-Q`).
 #[must_use]
 pub fn tab_label(i: usize, t: &Tab<'_>) -> String {
-    match t.state {
-        Some(state) => format!(" ● {state} {} {} ", i + 1, t.title),
-        None => format!(" {} {} ", i + 1, t.title),
-    }
+    format!(" {} {} ", i + 1, t.title)
 }
 
 /// How many cells a tab takes: the label, plus the two cells the bell reserves
@@ -97,55 +91,6 @@ pub fn tab_label(i: usize, t: &Tab<'_>) -> String {
 #[must_use]
 pub fn tab_cells(i: usize, t: &Tab<'_>) -> usize {
     tab_label(i, t).chars().count() + if t.alert { 2 } else { 0 }
-}
-
-/// The `status_show chip` box (`B47`): what it says, and where it lands.
-///
-/// It is the one surface that shows with a **single** tab — the bar is not drawn
-/// then — and the one the user clicks away, because `done` and `error` have no
-/// lifetime of their own. Drawing and the press read this same box, so a chip
-/// drawn one cell off cannot become a chip that is dismissed somewhere else
-/// (`M-Q`).
-pub struct StateChip {
-    pub word: String,
-    pub detail: String,
-}
-
-impl StateChip {
-    /// The cells the box takes: `[ ` + word + detail + ` ]`, plus the clear cell
-    /// that keeps it off the window edge.
-    #[must_use]
-    pub fn cells(&self) -> usize {
-        self.word.chars().count() + self.detail.chars().count() + 5
-    }
-
-    /// Where the box lands: the grid's last row, right-aligned, one cell clear of
-    /// the edge. `None` when it does not fit the grid's width.
-    #[must_use]
-    pub fn rect(&self, m: Metrics) -> Option<Rect> {
-        let cells = self.cells();
-        if cells > m.cols || m.rows == 0 {
-            return None;
-        }
-        #[allow(clippy::cast_precision_loss)] // a grid size, far below 2^23
-        let x = (m.cols - cells) as f32 * m.cw;
-        #[allow(clippy::cast_precision_loss)]
-        let y = (m.rows - 1) as f32 * m.ch;
-        #[allow(clippy::cast_precision_loss)]
-        let w = (cells - 1) as f32 * m.cw;
-        Some([x, y, w, m.ch])
-    }
-
-    /// Is the pointer on the box? Window px, tested against the numbers the
-    /// drawing used — the same rule as a tab and a card.
-    #[must_use]
-    pub fn hit(&self, m: Metrics, px: f64, py: f64) -> bool {
-        let Some([left, top, width, height]) = self.rect(m) else {
-            return false;
-        };
-        let (x, y) = m.in_origin(px, py);
-        x >= left && x < left + width && y >= top && y < top + height
-    }
 }
 
 /// The scrollbar (`M-M`): the strip on the grid's right edge, the thumb that
@@ -292,7 +237,7 @@ impl Toast {
     }
 
     /// Is the pointer on the box? Window px, tested against the numbers the
-    /// drawing used — the same rule as a tab, a card and the chip.
+    /// drawing used — the same rule as a tab and a card.
     #[must_use]
     pub fn hit(&self, m: Metrics, px: f64, py: f64) -> bool {
         let [left, top, width, height] = self.rect;
@@ -368,8 +313,6 @@ pub enum Hit {
     Menu,
     /// The notice box (`I12`/`K13`).
     Toast,
-    /// The `status_show chip` box (`B47`).
-    Chip,
     /// A workspace card (`I9`).
     Card(usize),
     /// A tab of the bar (`I9`).
@@ -398,7 +341,6 @@ pub struct Scene<'a> {
     pub layout: &'a Layout,
     pub menu: Option<&'a Menu>,
     pub toast: Option<&'a Toast>,
-    pub chip: Option<&'a StateChip>,
     pub scrollbar: Option<&'a Scrollbar>,
 }
 
@@ -407,7 +349,7 @@ impl Scene<'_> {
     ///
     /// The order is the drawing's, backwards: `render::Renderer::build` paints
     /// the bar and the cards, then the scrollbar, then the bottom row (the search
-    /// or the chip), then the toast, and last the menu — so a press is offered to
+    /// bar), then the toast, and last the menu — so a press is offered to
     /// them in exactly that reverse order. The one on top wins and the one under
     /// it does not hear about the click: before this, the chain in `app.rs` was a
     /// second ordering written by hand, and a menu drawn over a toast was pressed
@@ -420,9 +362,6 @@ impl Scene<'_> {
         }
         if self.toast.is_some_and(|t| t.hit(self.metrics, x, y)) {
             return Hit::Toast;
-        }
-        if self.chip.is_some_and(|c| c.hit(self.metrics, x, y)) {
-            return Hit::Chip;
         }
         if let Some(i) = self.layout.card_at(x, y) {
             return Hit::Card(i);
@@ -746,92 +685,74 @@ impl Menu {
 mod tests {
     use super::*;
 
-    /// `status_show tab`: the state word rides in the label, and the width follows
-    /// it — the bar is laid out from `tab_cells` and hit-tested from the same
-    /// rect, so a label that grew without the count would steal its neighbour's
-    /// clicks (`M-Q`).
+    /// The label is the number and the title, and the bell's two cells add up on
+    /// top of it: the bar is laid out from `tab_cells` and hit-tested from the
+    /// same rect, so a label that grew without the count would steal its
+    /// neighbour's clicks (`M-Q`).
     #[test]
-    fn a_tab_label_can_carry_the_state() {
+    fn a_tab_label_is_the_number_and_the_title() {
         let plain = Tab {
             title: "zsh",
             alert: false,
-            state: None,
         };
         let marked = Tab {
             title: "zsh",
-            alert: false,
-            state: Some("blocked"),
+            alert: true,
         };
         assert_eq!(tab_label(1, &plain), " 2 zsh ");
-        assert_eq!(tab_label(1, &marked), " ● blocked 2 zsh ");
-        assert_eq!(
-            tab_cells(1, &marked) - tab_cells(1, &plain),
-            "● blocked ".chars().count(),
-            "the word costs what it occupies"
-        );
-        // the bell's two cells still add up on top of a label that already grew
-        let quiet = Tab {
-            title: "zsh",
-            alert: false,
-            state: Some("error"),
-        };
-        let both = Tab {
-            title: "zsh",
-            alert: true,
-            state: Some("error"),
-        };
-        assert_eq!(tab_cells(1, &both), tab_cells(1, &quiet) + 2);
+        assert_eq!(tab_label(1, &marked), " 2 zsh ", "the bell is not text");
+        assert_eq!(tab_cells(1, &marked), tab_cells(1, &plain) + 2);
     }
 
-    /// The chip is right-aligned on the grid's last row, one cell clear of the
-    /// edge — and the box that is drawn is the box that is pressed (`M-Q`). A
-    /// click a pixel left of it, or one row below, has to miss: the chip sits on
-    /// the grid, and the child's own clicks are behind it.
+    /// The menu is the last thing drawn, so it is the first to be pressed — even
+    /// where a notice is drawn under it, and even where the pointer is not on a
+    /// usable row (then the press closes it).
     #[test]
-    fn the_chip_box_is_where_the_chip_is_drawn() {
-        let m = Metrics {
-            cw: 10.0,
-            ch: 20.0,
-            pad: 4.0,
-            bar: 30.0,
-            side: 180.0,
-            cols: 40,
-            rows: 5,
-        };
-        let chip = StateChip {
-            word: "blocked".to_string(),
-            detail: " · git · 40%".to_string(),
-        };
-        // `[ ` + word + detail + ` ]`, plus the clear cell — counted in cells,
-        // not bytes: the `·` is two of them
-        let expect = 2 + "blocked".chars().count() + " · git · 40%".chars().count() + 2 + 1;
-        assert_eq!(chip.cells(), expect);
-        let [left, top, width, height] = chip.rect(m).expect("it fits");
-        assert_eq!(top, 4.0 * m.ch, "the grid's last row");
-        assert_eq!(height, m.ch, "one row tall");
-        #[allow(clippy::cast_precision_loss)]
-        let edge = (m.cols - 1) as f32 * m.cw;
-        assert_eq!(left + width, edge, "one cell clear of the window edge");
-        // window px: the grid starts below the bar and right of the sidebar
-        let px = |origin: f32| f64::from(origin + m.pad + m.side);
-        let py = |origin: f32| f64::from(origin + m.pad + m.bar);
-        assert!(chip.hit(m, px(left) + 1.0, py(top) + 1.0), "inside the box");
-        assert!(
-            !chip.hit(m, px(left) - 1.0, py(top) + 1.0),
-            "a pixel to the left"
+    fn the_menu_claims_the_press_before_the_notice_under_it() {
+        let m = metrics();
+        let layout = Layout::build(m, &tabs(), 1, 0);
+        let toast = Toast::build(m, "boom", "the disk is full").expect("text");
+        // the pointer on the middle of the notice
+        let at = (
+            f64::from(m.pad + m.side) + f64::from(toast.rect[0] + toast.rect[2] / 2.0),
+            f64::from(m.pad + m.bar) + f64::from(toast.rect[1] + toast.rect[3] / 2.0),
         );
-        assert!(
-            !chip.hit(m, px(left) + 1.0, py(top + height)),
-            "the row below"
+        // without a menu, the notice wins
+        let s = scene_at(
+            at,
+            &layout,
+            Parts {
+                toast: Some(&toast),
+                ..Parts::default()
+            },
         );
-        // a grid narrower than the box: nothing drawn, so nothing to press
-        let narrow = Metrics { cols: 5, ..m };
-        assert_eq!(chip.rect(narrow), None);
-        assert!(!chip.hit(narrow, px(0.0), py(top) + 1.0));
+        assert_eq!(s.hit(), Hit::Toast);
+        // with one hanging from the pointer, the menu's row wins over the notice
+        let menu = Menu::build(m, &GRID_MENU, Anchor::Pointer, at);
+        let s = scene_at(
+            at,
+            &layout,
+            Parts {
+                menu: Some(&menu),
+                toast: Some(&toast),
+                ..Parts::default()
+            },
+        );
+        assert!(matches!(s.hit(), Hit::MenuRow(_)), "{:?}", s.hit());
+        // and the pointer off its rows is still the menu's: the press closes it
+        let away = Menu::build(m, &GRID_MENU, Anchor::Pointer, (10.0, 30.0));
+        let s = scene_at(
+            at,
+            &layout,
+            Parts {
+                menu: Some(&away),
+                toast: Some(&toast),
+                ..Parts::default()
+            },
+        );
+        assert_eq!(s.hit(), Hit::Menu);
     }
 
-    /// The grid's menu hangs from the pointer's cell and never leaves the grid: at
-    /// the bottom it flips up, and its rows are the ones the pointer can hit.
     #[test]
     fn the_menu_hangs_from_the_pointer_and_stays_inside() {
         let m = metrics();
@@ -906,17 +827,14 @@ mod tests {
             Tab {
                 title: "one",
                 alert: false,
-                state: None,
             },
             Tab {
                 title: "two",
                 alert: true,
-                state: None,
             },
             Tab {
                 title: "three",
                 alert: false,
-                state: None,
             },
         ]
     }
@@ -1074,7 +992,6 @@ mod tests {
             layout,
             menu: parts.menu,
             toast: parts.toast,
-            chip: parts.chip,
             scrollbar: parts.scrollbar,
         }
     }
@@ -1083,109 +1000,7 @@ mod tests {
     struct Parts<'a> {
         menu: Option<&'a Menu>,
         toast: Option<&'a Toast>,
-        chip: Option<&'a StateChip>,
         scrollbar: Option<&'a Scrollbar>,
-    }
-
-    /// The menu is the last thing drawn, so it is the first to be pressed — even
-    /// where a notice is drawn under it, and even where the pointer is not on a
-    /// usable row (then the press closes it).
-    #[test]
-    fn the_menu_claims_the_press_before_the_notice_under_it() {
-        let m = metrics();
-        let layout = Layout::build(m, &tabs(), 1, 0);
-        let toast = Toast::build(m, "boom", "the disk is full").expect("text");
-        // the pointer on the middle of the notice
-        let at = (
-            f64::from(m.pad + m.side) + f64::from(toast.rect[0] + toast.rect[2] / 2.0),
-            f64::from(m.pad + m.bar) + f64::from(toast.rect[1] + toast.rect[3] / 2.0),
-        );
-        // without a menu, the notice wins
-        let s = scene_at(
-            at,
-            &layout,
-            Parts {
-                toast: Some(&toast),
-                ..Parts::default()
-            },
-        );
-        assert_eq!(s.hit(), Hit::Toast);
-        // with one hanging from the pointer, the menu's row wins over the notice
-        let menu = Menu::build(m, &GRID_MENU, Anchor::Pointer, at);
-        let s = scene_at(
-            at,
-            &layout,
-            Parts {
-                menu: Some(&menu),
-                toast: Some(&toast),
-                ..Parts::default()
-            },
-        );
-        assert!(matches!(s.hit(), Hit::MenuRow(_)), "{:?}", s.hit());
-        // and the pointer off its rows is still the menu's: the press closes it
-        let away = Menu::build(m, &GRID_MENU, Anchor::Pointer, (10.0, 30.0));
-        let s = scene_at(
-            at,
-            &layout,
-            Parts {
-                menu: Some(&away),
-                toast: Some(&toast),
-                ..Parts::default()
-            },
-        );
-        assert_eq!(s.hit(), Hit::Menu);
-    }
-
-    /// The chip is drawn on the grid's last row, over the strip and the text:
-    /// where it stands, it is the chip that is pressed.
-    #[test]
-    fn the_chip_claims_its_box_and_the_strip_is_the_strips() {
-        let m = metrics();
-        let layout = Layout::build(m, &tabs(), 1, 0);
-        let chip = StateChip {
-            word: "done".to_string(),
-            detail: String::new(),
-        };
-        let sb = Scrollbar::new(90, m.rows, 0);
-        let rect = chip.rect(m).expect("it fits");
-        // inside the box: the chip, not the grid under it
-        let at = (
-            f64::from(m.pad + m.side + rect[0] + 2.0),
-            f64::from(m.pad + m.bar + rect[1] + 2.0),
-        );
-        let s = scene_at(
-            at,
-            &layout,
-            Parts {
-                chip: Some(&chip),
-                scrollbar: sb.as_ref(),
-                ..Parts::default()
-            },
-        );
-        assert_eq!(s.hit(), Hit::Chip);
-        // on the strip, one row up: the scrollbar, not the grid
-        let strip_x = 184.0 + f64::from(m.cols as f32 * m.cw) - 2.0;
-        let s = scene_at(
-            (strip_x, 100.0),
-            &layout,
-            Parts {
-                chip: Some(&chip),
-                scrollbar: sb.as_ref(),
-                ..Parts::default()
-            },
-        );
-        assert_eq!(s.hit(), Hit::Scrollbar);
-        // with nothing to scroll the strip is not there, and the same pixel is
-        // the grid's again
-        let s = scene_at(
-            (strip_x, 100.0),
-            &layout,
-            Parts {
-                chip: Some(&chip),
-                ..Parts::default()
-            },
-        );
-        assert_eq!(s.hit(), Hit::Grid);
     }
 
     /// The rest of the chrome answers where it is drawn: a card, a tab, the bar's

@@ -210,8 +210,8 @@ or `ok: false` with `err`. The protocol is stable on purpose:
 | verb | input | response |
 |---|---|---|
 | `state` | — | `ok` + everything a probe needs to assert **without reading a pixel**, grouped by what it answers. *Geometry*: `cols`, `rows`, `cell` `[w,h]`, `advance` (the cell's exact width, sub-pixel), `padding`, `dpi`, `cursor` `[row,col]`, `cursor_px` `[x,y]`, `cell_at` `[col,row]` (under the pointer, **clamped** at 0 — the origin-space lookup that does keep the sign is `chrome::Metrics::cell_at`), `xid`, `pid`. *Text*: `title`, `cwd`, `view_off`, `pin` (the same), `scrolled`, `scrollback`, `alt`, `sync`, `font`, `font_px`. *Mouse*: `mouse_mode`, `mouse_sgr`, `mouse_utf8`, `mouse_px`. *Selection*: `sel` (`a`/`b`/`scrolled`, or `null`). *Tabs and workspaces*: `tabs`, `active`, `tab_titles`, `workspaces`, `ws`, `ws_names`, `cards_off`, `cards_visible`. *Badges*: `tabs_alert`, `cards_alert`, `notifs`, `notif`, `tabs_progress`, `status`, `marks`, `toast` (the notice on screen: `title`, `detail`, `severity`, `times`, or `null`) and `toast_queue` (how many wait behind it). *Chrome on screen*: `search` (`[query, index, count]`) and `menu` (`items`, `enabled`, `subject`, `at` = the pointer, `rect` in window px). *Images*: `images`, `anims`, `placements`. *Damage and frames*: `draws`, **`drawn`**, **`skips`**, **`last_frame`**, `last_damage`, `frames_all`, `rows_max`, `all_reason`, `dirty_all`, `global_marks`, `global_why`, `dirty_rows`, `rows_built`, `cells_built`. *Config*: `config`, `config_os` (the template of the defaults that applied —
-`linux`, `macos` or `windows`), `status_show` (`chip`/`tab`/`none`: where the
-`OSC 7501` state is written), `errors` |
+`linux`, `macos` or `windows`), `progress_show` (`none`/`title`/`bar`: where the program's progress is
+drawn), `errors` |
 | `text` | `where` (`view`\|`history`\|`screen`), `start`, `count` | `lines` (strings) |
 | `write` | `data` (string) | `ok` (writes to the pty) |
 | `drop` | `path` (string) | `ok` — the same as dropping that file on the window, quoted and written into the child (the XDND event is a one-line arm over this) |
@@ -219,6 +219,7 @@ or `ok: false` with `err`. The protocol is stable on purpose:
 | `resize` | `cols`, `rows` | `requested` (the grid **asked for**; check it in `state`) |
 | `prof` | `on` (bool, optional) | counters: `draw_ms_call`, `draw_calls`, `parse_*`, `pty_*` |
 | `osc` | `tab` (optional, default the active one) | the last 8 OSC the parser saw, newest to oldest: `hex`, `text` (lossy), `truncated`, `title` (the resulting one). It is the probe for "why is the tab title full of garbage" |
+| `notifications` | — | every tab's notification list, newest first, with the workspace and tab it belongs to: `source` (`BEL`, `OSC 9`, `OSC 777`, `OSC 99`, `OSC 7501`), `id`, `title`, `body`, `shade`, `text` (the one line a surface with one line uses) and `alert` (the tab is marked). It is the textual form of the note list the owner wants as a menu |
 | `sel` | — | `text` (what `Ctrl+Shift+C` would copy) and `block` (the selection is a rectangle, `B5`) |
 | `log` | `value` (a path, or `off`) | starts the event log, moves it to another file, or turns it off — the same file `--debug-log` writes |
 | `quit` | — | closes the window |

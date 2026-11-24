@@ -15,6 +15,7 @@ pub mod graphics;
 pub mod grid;
 pub mod keymap;
 pub mod links;
+pub mod notif;
 pub mod placeholder;
 pub mod prompt;
 pub mod search;

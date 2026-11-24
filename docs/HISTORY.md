@@ -1634,6 +1634,14 @@ primeira.
 - `tools/target-prune.sh` handles what is left at each release: `cargo clean -p` on the crates read from `crates/*/Cargo.toml`, never on the dependencies, whose identity `Cargo.lock` pins and which are what a cold build pays for.
 - Measured on a two-version tree: 635 MiB back, 4.9 s to rebuild; above the ceiling with only the dependency tree left, it says so instead of pretending.
 
+## 2026-11-24 — notificações: um estado, dois destinos
+
+- O desenho inteiro ficou num só lugar (`docs/NOTIFICATIONS_REFACTOR.md`, task file fora do repo): **progresso** é estado (mostra igual em qualquer lugar, some no fim, nunca pede) e **notificação** é chamado (a vida depende de onde o usuário está); um mesmo evento pode escrever nos dois.
+- `State` virou uma **linha de tabela** (`bits()`: em curso / pede você), com `paused` novo; `idle` passou a pedir você e a repetição de um relato ficou silenciosa, o que dispensa olhar o estado anterior — e resolveu o `done` do segundo comando, que a idempotência engolia.
+- Correções de fio: `9;4;2`/`4` agora notificam (eram engolidos), `9;4;0` apaga o registro e não só a barra (o ramo `0` de `from_progress` era morto).
+- `notif_text`/`notif_state`/`notif_title` viraram `notif::List`: 8 entradas por aba, uma por `(source, id)`, com `title`/`body` separados; o chip e o toast de notificação saíram, e a sineta da aba tem uma vida só, decidida pela presença.
+- Config: `bell` agora diz o que o BEL **vira** (`none` descarta, `visual` notifica, `audible` só apita) e `status_show` virou `progress_show` (`none`/`title`/`bar`); a matriz de OSCs ficou desatualizada e espera uma passada.
+
 ## 2026-11-22 — tortty runs on Windows (minimal)
 
 - `platform/windows.rs` written and measured the same day: from this Linux host with `gcc-mingw-w64-x86-64`, into the Windows 10 21H2 guest (build 19044) driven headless. The seam was the whole obstacle — with it in place the feature code compiled unchanged, so the old "35 errors" were syscalls it had already absorbed.

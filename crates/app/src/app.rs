@@ -64,13 +64,42 @@ pub enum UserEvent {
 /// stays borrow-free.
 #[derive(Default)]
 struct PumpOut {
-    toast: Option<String>,
-    /// A notification arrived with this tab out of sight (`B8`): the card of its
-    /// workspace keeps the signal until someone enters it, and the toast comes
-    /// when the tab becomes visible.
+    /// A notification arrived for a tab in another workspace (`B8`): the card of
+    /// that workspace keeps the signal until someone enters it.
     card_alert: bool,
+    /// The window does not have the focus: the only case where the app asks the
+    /// window manager for attention.
     urgency: bool,
     beeps: u32,
+}
+
+/// Where the user is, from the point of view of one tab. The notification's
+/// mark is decided by this, never by who sent it.
+#[derive(Copy, Clone, Debug)]
+struct Presence {
+    /// This tab is the one on screen.
+    tab_visible: bool,
+    /// Its workspace is the one on screen.
+    ws_visible: bool,
+    window_focused: bool,
+}
+
+impl Presence {
+    /// The user is looking at this tab: the mark is an echo (800 ms), not a badge.
+    fn watched(self) -> bool {
+        self.tab_visible && self.window_focused
+    }
+}
+
+/// The tab's alert mark: one drawing (the bell on the label), two lifetimes.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Mark {
+    /// Nothing to say.
+    None,
+    /// The user was watching: shown for `FLASH_DUR` from this instant.
+    Fading(std::time::Instant),
+    /// The user was elsewhere: stays until the tab is visited.
+    UntilVisit,
 }
 
 struct Toast {
@@ -144,13 +173,10 @@ fn notice_config(errs: &[tortty_core::config::Error], kept: bool) -> String {
 /// Blink period (cursor and SGR 5). Half "on", half "off".
 const BLINK_MS: u64 = 500;
 
-/// How long the tab label stays highlighted after a BEL (I13).
+/// How long the mark echoes on a tab the user is already watching: long enough
+/// to be seen, short enough not to become a badge. A tab the user is *not*
+/// watching keeps its mark until they visit it (`Mark`).
 const FLASH_DUR: Duration = Duration::from_millis(800);
-/// A notification stays immune to keys this long (`M-K`): whoever is typing
-/// must not lose it. It is the notification toast's own time, because the toast
-/// outlives the key that would dismiss it — what the floor now guards is the
-/// badge, which has no other expiry.
-const NOTIF_FLOOR: Duration = Duration::from_secs(8);
 
 /// One card per this long while a drag holds the pointer in the band below the
 /// last card (`B55`). Long enough to read the list walking, short enough not to
@@ -384,17 +410,10 @@ pub struct Tab {
     /// clock only runs for the tab on screen: a parked animation waits, it does
     /// not jump six frames when you come back.
     pub anim_due: std::collections::HashMap<u32, std::time::Instant>,
-    /// `OSC 9`/`777` acknowledged (`M-K`): pending while
-    /// `notifs_acked != term.notifs`. Unlike the 800 ms bell flash, a badge
-    /// stays until the tab is visited or a key lands after the floor.
-    pub notifs_acked: u32,
-    /// When the last notification arrived: keys before `NOTIF_FLOOR` must not
-    /// eat it (whoever types must not lose it).
-    pub notif_at: Option<std::time::Instant>,
+    /// The alert mark of this tab (`M-K`): what the label's bell draws.
+    pub mark: Mark,
     /// Title requested by OSC 0/2 (empty = derive from the cwd).
     pub osc_title: String,
-    /// Last BEL, for the label flash (I13).
-    pub bell_at: Option<std::time::Instant>,
 }
 
 impl Tab {
@@ -418,58 +437,66 @@ impl Tab {
             bells_seen: 0,
             notifs_seen: 0,
             anim_due: std::collections::HashMap::new(),
-            notifs_acked: 0,
             osc_title: String::new(),
-            bell_at: None,
-            notif_at: None,
+            mark: Mark::None,
         }
     }
 
-    /// A notification is pending on this tab (`M-K`): delivered but neither
-    /// visited nor acknowledged by key.
-    fn notif_pending(&self) -> bool {
-        self.notifs_acked != self.term.notifs
+    /// The label draws the bell while the mark lives.
+    fn alert(&self) -> bool {
+        self.mark != Mark::None
     }
 
-    /// Marks every notification of this tab acknowledged (`M-K`).
-    fn ack_tab(&mut self) {
+    /// The user is looking at this tab now: the mark echoes for `FLASH_DUR` and
+    /// goes. This is the whole acknowledgement — there is no key that dismisses,
+    /// and no floor protecting it from typing.
+    fn visited(&mut self, now: std::time::Instant) {
         self.notifs_seen = self.term.notifs;
-        self.notifs_acked = self.term.notifs;
-        self.notif_at = None;
+        if self.mark == Mark::UntilVisit {
+            self.mark = Mark::Fading(now + FLASH_DUR);
+        }
     }
 
     /// Advances the seen counters and reports what the app owes the user.
-    /// One logic for the front tab and the parked ones: a background tab's
-    /// bell behaves the same wherever the tab lives; only the toast stays
-    /// with the foreground tab.
-    fn pump(&mut self, bell: Bell, foreground: bool, out: &mut PumpOut) {
-        let now = std::time::Instant::now();
+    /// One logic for the front tab and the parked ones: the **presence** decides
+    /// the mark, and the sender never does.
+    fn pump(&mut self, bell: Bell, presence: Presence, out: &mut PumpOut) {
         let bells = self.term.bells;
         while self.bells_seen != bells {
             self.bells_seen = self.bells_seen.wrapping_add(1);
-            // I13: the tab label flashes for 800 ms, even if it is not in
-            // front (it is the "something happened here" alert)
-            self.bell_at = Some(now);
             match bell {
+                // the owner's rule: `audible` is a sound, `none` throws the BEL
+                // away, and only `visual` makes it a notification
                 Bell::None => {},
-                Bell::Visual => out.urgency = true,
                 Bell::Audible => out.beeps += 1,
+                Bell::Visual => {
+                    self.term
+                        .push_notification(tortty_core::notif::Source::Bell);
+                    self.raise(presence, out);
+                },
             }
         }
         let notifs = self.term.notifs;
         while self.notifs_seen != notifs {
             self.notifs_seen = self.notifs_seen.wrapping_add(1);
-            self.notif_at = Some(now);
-            // a notification is an explicit "look here": urgency is not
-            // governed by `bell`, which rules only BEL
+            self.raise(presence, out);
+        }
+    }
+
+    /// One notification arrived. Where the user is decides what it becomes, and
+    /// the same two lifetimes serve every source.
+    fn raise(&mut self, presence: Presence, out: &mut PumpOut) {
+        if presence.watched() {
+            // already looking: an echo, not a demand
+            self.mark = Mark::Fading(std::time::Instant::now() + FLASH_DUR);
+            return;
+        }
+        self.mark = Mark::UntilVisit;
+        if !presence.ws_visible {
+            out.card_alert = true;
+        }
+        if !presence.window_focused {
             out.urgency = true;
-            if foreground {
-                out.toast = Some(self.term.notif_text.clone());
-            } else {
-                // out of sight: the card is the signal, and the content waits
-                // for the visit (`B8`)
-                out.card_alert = true;
-            }
         }
     }
 
@@ -614,6 +641,10 @@ pub struct App {
     /// (`B8`): the card stays alert until the workspace is entered, even after
     /// the tab that notified was visited — the card is the workspace's signal.
     card_alert: bool,
+    /// Does the window have the focus? A notification is only allowed to ask the
+    /// window manager for attention when the answer is no, and a tab on screen is
+    /// only "watched" when the window is focused.
+    focused: bool,
     /// Logical index of the workspace in front, in `0..ws_count()`.
     ws_idx: usize,
     /// Tab pressed on the bar, to drag and reorder (I10): index and the x of
@@ -767,6 +798,7 @@ impl App {
             search: None,
             search_gen: 0,
             opts,
+            focused: true,
             over,
             proxy,
             window: None,
@@ -961,22 +993,20 @@ impl App {
             if i == self.ws_idx {
                 cards.push(crate::render::WsCard {
                     name: editing.unwrap_or_else(|| self.ws_name.clone()),
-                    title: self.tabs[self.active].title(),
+                    title: self.shown_title(&self.tabs[self.active]),
                     ativa: true,
                     alert: self.card_alert,
                     progress: self.tabs[self.active].term.progress,
-                    status: self.status_word(&self.tabs[self.active].term),
                 });
             } else {
                 let slot = if i < self.ws_idx { i } else { i - 1 };
                 let w = &self.parked[slot];
                 cards.push(crate::render::WsCard {
                     name: editing.unwrap_or_else(|| w.name.clone()),
-                    title: w.tabs[w.active].title(),
+                    title: self.shown_title(&w.tabs[w.active]),
                     ativa: false,
                     alert: w.card_alert,
                     progress: w.tabs[w.active].term.progress,
-                    status: self.status_word(&w.tabs[w.active].term),
                 });
             }
         }
@@ -992,32 +1022,64 @@ impl App {
         }
     }
 
-    /// The state word for the tab label and the card, under `status_show tab`;
-    /// `None` in the other modes and when the root record is `idle` — a word for
-    /// "nothing is happening" would never leave the screen.
-    fn status_word(&self, term: &tortty_core::Term) -> Option<String> {
-        if self.opts.cfg.status_show != tortty_core::config::StatusShow::Tab {
-            return None;
+    /// The title as the bar and the card show it. Under `progress_show = title`
+    /// the percentage rides on it — that is the whole surface for progress then —
+    /// and a program that gave no measure gets its state word instead of a
+    /// number it never said.
+    fn shown_title(&self, t: &Tab) -> String {
+        let title = t.title();
+        if self.opts.cfg.progress_show != tortty_core::config::ProgressShow::Title {
+            return title;
         }
-        let root = term.status.root()?;
-        (root.state != tortty_core::status::State::Idle).then(|| root.state.name().to_string())
+        let Some(p) = t.term.progress else {
+            return title;
+        };
+        match p.pct {
+            Some(pct) => format!("{title} {pct}%"),
+            None => match t.term.status.root() {
+                Some(r) => format!("{title} {}", r.state.name()),
+                None => title,
+            },
+        }
+    }
+
+    /// Retires the marks whose echo is over. `Some(when)` = when the next one
+    /// dies, for the event loop to wake up for; `None` = nothing pending.
+    fn tick_marks(&mut self) -> Option<std::time::Instant> {
+        let now = std::time::Instant::now();
+        let mut apagou = false;
+        for t in &mut self.tabs {
+            if let Mark::Fading(when) = t.mark {
+                if now >= when {
+                    t.mark = Mark::None;
+                    apagou = true;
+                }
+            }
+        }
+        if apagou {
+            if let Some(w) = self.window.as_ref() {
+                w.request_redraw();
+            }
+        }
+        self.tabs
+            .iter()
+            .filter_map(|t| match t.mark {
+                Mark::Fading(when) => Some(when),
+                _ => None,
+            })
+            .min()
     }
 
     /// What the bar shows: number, title and BEL alert of each tab.
     fn tabinfo(&self) -> Vec<crate::render::TabInfo> {
-        let now = std::time::Instant::now();
         self.tabs
             .iter()
             .enumerate()
             .map(|(i, t)| crate::render::TabInfo {
-                title: t.title(),
+                title: self.shown_title(t),
                 ativa: i == self.active,
                 progress: t.term.progress,
-                status: self.status_word(&t.term),
-                alert: t
-                    .bell_at
-                    .is_some_and(|when| now.duration_since(when) < FLASH_DUR)
-                    || t.notif_pending(),
+                alert: t.alert(),
             })
             .collect()
     }
@@ -1103,7 +1165,6 @@ impl App {
         let toast = self
             .toast_text()
             .and_then(|t| crate::chrome::Toast::build(metrics, &t.title, &t.detail));
-        let chip = self.chip_shape();
         let scrollbar = self.scrollbar();
         let scene = crate::chrome::Scene {
             metrics,
@@ -1112,7 +1173,6 @@ impl App {
             layout: &layout,
             menu: menu.as_ref(),
             toast: toast.as_ref(),
-            chip: chip.as_ref(),
             scrollbar: scrollbar.as_ref(),
         };
         scene.hit()
@@ -1148,9 +1208,9 @@ impl App {
                 crate::chrome::Anchor::Pointer,
                 None,
             ),
-            // the chip and the strip are drawn on the grid: the menu they get is
-            // the grid's, and it needs the same `Shift` the rest of the grid does
-            Hit::Grid | Hit::Chip | Hit::Scrollbar => {
+            // the strip is drawn on the grid: the menu it gets is the grid's, and
+            // it needs the same `Shift` the rest of the grid does
+            Hit::Grid | Hit::Scrollbar => {
                 if !self.in_grid(px, py)
                     || !(self.mods.shift_key() || self.tabs[self.active].term.mouse_mode == 0)
                 {
@@ -1404,7 +1464,6 @@ impl App {
             .map(|t| crate::chrome::Tab {
                 title: &t.title,
                 alert: t.alert,
-                state: t.status.as_deref(),
             })
             .collect();
         crate::chrome::Layout::build(
@@ -1675,7 +1734,6 @@ impl App {
         ) else {
             return;
         };
-        self.ack_notifs();
         self.pty_write(&bytes);
         if let Some(w) = self.window.as_ref() {
             w.request_redraw();
@@ -1838,27 +1896,12 @@ impl App {
             }
             return;
         }
-        if state == ElementState::Pressed {
-            match hit {
-                // the notice is over the chrome and the grid and under the menu:
-                // any button dismisses it and nothing behind it hears the press
-                crate::chrome::Hit::Toast => {
-                    self.drop_toast();
-                    self.press_ours = true;
-                    return;
-                },
-                // `status_show chip`: a left press on the chip ends the state
-                // (`B47`) — `done` and `error` have no lifetime of their own, so
-                // without this the chip would stay until the tab closed. It is
-                // chrome drawn over the last row, so it takes the press even when
-                // the child holds the mouse, the same rule as the notice.
-                crate::chrome::Hit::Chip if btn == crate::mouse::LEFT => {
-                    self.dismiss_chip();
-                    self.press_ours = true;
-                    return;
-                },
-                _ => {},
-            }
+        // the notice is over the chrome and the grid and under the menu: any
+        // button dismisses it and nothing behind it hears the press
+        if hit == crate::chrome::Hit::Toast && state == ElementState::Pressed {
+            self.drop_toast();
+            self.press_ours = true;
+            return;
         }
         // a context menu: right button. Which one, and whether the press is even
         // ours, is the pointer's business (`open_menu`): over the grid the child
@@ -2543,7 +2586,13 @@ impl App {
                 }
                 let mut pumped = PumpOut::default();
                 let bell = self.opts.cfg.bell;
-                self.parked[s].tabs[j].pump(bell, false, &mut pumped);
+                // a parked tab is in a workspace nobody is looking at
+                let presence = Presence {
+                    tab_visible: false,
+                    ws_visible: false,
+                    window_focused: self.focused,
+                };
+                self.parked[s].tabs[j].pump(bell, presence, &mut pumped);
                 for _ in 0..pumped.beeps {
                     Self::beep();
                 }
@@ -2631,7 +2680,12 @@ impl App {
             self.take_osc_title(i);
             let mut pumped = PumpOut::default();
             let bell = self.opts.cfg.bell;
-            self.tabs[i].pump(bell, i == self.active, &mut pumped);
+            let presence = Presence {
+                tab_visible: i == self.active,
+                ws_visible: true,
+                window_focused: self.focused,
+            };
+            self.tabs[i].pump(bell, presence, &mut pumped);
             for _ in 0..pumped.beeps {
                 Self::beep();
             }
@@ -2641,16 +2695,16 @@ impl App {
             if pumped.card_alert {
                 self.card_alert = true;
             }
+            if i == self.active {
+                // the progress may have moved, and under `progress_show = title`
+                // it is part of the label (`sync_title` returns at once when the
+                // text did not change)
+                self.sync_title();
+            }
             if let Some(msg) = self.tabs[i].term.take_refused() {
                 // `B3`: the protocol that asks has no error channel, so the
                 // owner is told instead of a silence that reads as a broken image
                 self.toast("Image refused", msg, Severity::Err);
-            }
-            if let Some(text) = pumped.toast {
-                // it keeps the 8 s the badge floor assumes (`M-K`), and the shade
-                // is the program's own state when it said one (`B47`)
-                let (title, severity) = Self::notif_notice(&self.tabs[i].term);
-                self.toast_for(&title, &text, severity, Some(NOTIF_FLOOR));
             }
             // `OSC 52`: the child set the clipboard (a remote `ssh` copies),
             // parked or front — the drain is per tab
@@ -2830,30 +2884,6 @@ impl App {
         self.next_toast();
     }
 
-    /// The `status_show chip` box, when it is on screen (`B47`).
-    ///
-    /// Three conditions decide it, and they are the renderer's: `status_show chip`
-    /// is on, the search bar is not holding the last row (`M-D` wins it), and the
-    /// root record is not `idle`. The box itself is `chrome::StateChip` — the same
-    /// one the drawing used, so what is seen is what is pressed.
-    fn chip_shape(&self) -> Option<crate::chrome::StateChip> {
-        if self.opts.cfg.status_show != tortty_core::config::StatusShow::Chip
-            || self.search.is_some()
-        {
-            return None;
-        }
-        let (_, word, detail) = self.tabs.get(self.active)?.term.status_chip()?;
-        Some(crate::chrome::StateChip { word, detail })
-    }
-
-    /// A press on the chip ends the state it shows and the bar that came with it.
-    fn dismiss_chip(&mut self) {
-        self.tabs[self.active].term.dismiss_status();
-        if let Some(w) = self.window.as_ref() {
-            w.request_redraw();
-        }
-    }
-
     /// Toast for the renderer, with the count when there was a repeat.
     fn toast_text(&self) -> Option<ToastText> {
         let t = self.toast.as_ref()?;
@@ -2890,23 +2920,6 @@ impl App {
     fn urgency(&self) {
         if let Some(w) = self.window.as_ref() {
             w.request_user_attention(Some(UserAttentionType::Informational));
-        }
-    }
-
-    /// A key delivered to the child acknowledges the notification badge
-    /// (`M-K`): whoever types already saw it. Guarded by `NOTIF_FLOOR` — keys
-    /// typed while the notification is fresh must not eat it. The toast is not
-    /// in this list: it has its own time and leaves by the tick alone. Parked
-    /// workspaces keep their card until visited: nobody looked there.
-    fn ack_notifs(&mut self) {
-        let now = std::time::Instant::now();
-        for t in &mut self.tabs {
-            if t.notif_pending()
-                && t.notif_at
-                    .is_some_and(|at| now.duration_since(at) >= NOTIF_FLOOR)
-            {
-                t.ack_tab();
-            }
         }
     }
 
@@ -3260,15 +3273,15 @@ impl App {
                         .collect::<Vec<_>>(),
                     // notifications (M-K): what is still unacknowledged, for
                     // probes that cannot watch the toast
-                    "notifs": self.tabs.iter().filter(|t| t.notif_pending()).count()
+                    "notifs": self.tabs.iter().filter(|t| t.alert()).count()
                         + self
                             .parked
                             .iter()
                             .flat_map(|w| w.tabs.iter())
-                            .filter(|t| t.notif_pending())
+                            .filter(|t| t.alert())
                             .count(),
-                    "notif": if self.tabs[self.active].notif_pending() {
-                        self.tabs[self.active].term.notif_text.clone()
+                    "notif": if self.tabs[self.active].alert() {
+                        self.tabs[self.active].term.last_notification()
                     } else {
                         String::new()
                     },
@@ -3303,7 +3316,7 @@ impl App {
                         })
                         .collect::<Vec<_>>(),
                     "active": self.active,
-                    "tab_titles": self.tabs.iter().map(Tab::title).collect::<Vec<_>>(),
+                    "tab_titles": self.tabs.iter().map(|t| self.shown_title(t)).collect::<Vec<_>>(),
                     "workspaces": self.ws_count(),
                     "ws": self.ws_idx,
                     "ws_names": self.wscards().into_iter().map(|c| c.name).collect::<Vec<_>>(),
@@ -3313,7 +3326,7 @@ impl App {
                     "cards_visible": self.cards_visible(),
                     // badges and card alerts (`B8`): the tab keeps its own and
                     // the card is the workspace's, so a probe can tell them apart
-                    "tabs_alert": self.tabs.iter().map(Tab::notif_pending).collect::<Vec<_>>(),
+                    "tabs_alert": self.tabs.iter().map(Tab::alert).collect::<Vec<_>>(),
                     "cards_alert": self.wscards().iter().map(|c| c.alert).collect::<Vec<_>>(),
                     "tabs_progress": self.tabs.iter()
                         .map(|t| t.term.progress.map(|p| serde_json::json!([p.state, p.pct])))
@@ -3373,12 +3386,12 @@ impl App {
                     // which template of the defaults applied: the state verb is how
                     // a probe answers "why is this chord bound here"
                     "config_os": tortty_core::config::Os::current().name(),
-                    // where the state is written: a probe reads this instead of
+                    // where the progress is drawn: a probe reads this instead of
                     // guessing which of the three shapes to look for
-                    "status_show": match self.opts.cfg.status_show {
-                        tortty_core::config::StatusShow::Chip => "chip",
-                        tortty_core::config::StatusShow::Tab => "tab",
-                        tortty_core::config::StatusShow::None => "none",
+                    "progress_show": match self.opts.cfg.progress_show {
+                        tortty_core::config::ProgressShow::None => "none",
+                        tortty_core::config::ProgressShow::Title => "title",
+                        tortty_core::config::ProgressShow::Bar => "bar",
                     },
                     "dpi": self.opts.dpi,
                     "padding": self.opts.cfg.padding,
@@ -3412,6 +3425,37 @@ impl App {
                         .collect(),
                 };
                 debugsock::ok(serde_json::json!({ "lines": lines }))
+            },
+            // the notification list (`M-K`): every tab's, newest first, with
+            // where it came from. It is the textual form of the note list the
+            // owner wants as a menu, so the flow can be probed today.
+            "notifications" => {
+                let mut all = Vec::new();
+                let mut push = |ws: usize, tab: usize, alert: bool, t: &Tab| {
+                    for n in t.term.notifications.entries() {
+                        all.push(serde_json::json!({
+                            "ws": ws,
+                            "tab": tab,
+                            "alert": alert,
+                            "source": n.source.name(),
+                            "id": n.id,
+                            "title": n.title,
+                            "body": n.body,
+                            "shade": format!("{:?}", n.shade),
+                            "text": n.label(),
+                        }));
+                    }
+                };
+                for (i, t) in self.tabs.iter().enumerate() {
+                    push(self.ws_idx, i, t.alert(), t);
+                }
+                for (slot, w) in self.parked.iter().enumerate() {
+                    let ws = if slot < self.ws_idx { slot } else { slot + 1 };
+                    for (i, t) in w.tabs.iter().enumerate() {
+                        push(ws, i, t.alert(), t);
+                    }
+                }
+                debugsock::ok(serde_json::json!({ "notifications": all }))
             },
             "write" => match req.get("data").and_then(|v| v.as_str()) {
                 Some(data) => {
@@ -4364,38 +4408,13 @@ impl App {
         });
     }
 
-    /// The notice a notification becomes: title, text and shade. `OSC 7501`
-    /// brings the state and the `app` that asked, so a `blocked` wears yellow
-    /// and an `error` red — the same three tones as the tab's bar. A plain
-    /// `OSC 9`/`777` notification carries no state and stays the receipt green.
-    fn notif_notice(term: &tortty_core::Term) -> (String, Severity) {
-        use tortty_core::status::State;
-        let severity = match term.notif_state {
-            Some(State::Blocked) => Severity::Warn,
-            Some(State::Error) => Severity::Err,
-            _ => Severity::Ok,
-        };
-        let title = term
-            .notif_title
-            .clone()
-            .unwrap_or_else(|| "Notification".to_string());
-        (title, severity)
-    }
-
     /// Switches tab (Alt+N). Out of range, does nothing.
-    /// The tab in front was visited: show what it has to say and acknowledge
-    /// the badge (`M-K`). The content comes **now**, not when it arrived (`B8`):
-    /// a notification that waited in a parked tab must still be readable when
-    /// someone gets there.
+    /// The tab in front was visited: the mark echoes once and goes. The content
+    /// is not pushed at the user — a notification is a call to come back, and the
+    /// list (`state`/`notifications` on the socket) is where the text waits.
     fn visit_active(&mut self) {
-        if self.tabs[self.active].notif_pending() {
-            let text = self.tabs[self.active].term.notif_text.clone();
-            if !text.is_empty() {
-                let (title, severity) = Self::notif_notice(&self.tabs[self.active].term);
-                self.toast_for(&title, &text, severity, Some(NOTIF_FLOOR));
-            }
-        }
-        self.tabs[self.active].ack_tab();
+        let now = std::time::Instant::now();
+        self.tabs[self.active].visited(now);
     }
 
     fn select_tab(&mut self, i: usize) {
@@ -4431,7 +4450,13 @@ impl App {
 
     /// Window title = title of the active tab (I17), for the WM and the taskbar.
     fn sync_title(&mut self) {
-        let title = self.tabs[self.active].title();
+        // the title the bar shows, not the bare one: under
+        // `progress_show = title` the percentage rides here, and with a single
+        // tab this is the only label there is
+        let title = self
+            .tabs
+            .get(self.active)
+            .map_or_else(String::new, |t| self.shown_title(t));
         if title == self.last_title {
             return;
         }
@@ -4868,9 +4893,26 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::DroppedFile(path) => {
                 self.drop_path(&path);
             },
-            WindowEvent::Focused(focused) if self.tabs[self.active].term.focus_report => {
-                let seq = if focused { "\x1b[I" } else { "\x1b[O" };
-                self.pty_write(seq.as_bytes());
+            WindowEvent::Focused(focused) => {
+                self.focused = focused;
+                // the window came back with a tab on screen: the mark that was
+                // waiting for the user starts its 800 ms now, not when the
+                // notification arrived — otherwise it would be gone before they
+                // looked
+                if focused {
+                    let now = std::time::Instant::now();
+                    let active = &mut self.tabs[self.active];
+                    if active.mark == Mark::UntilVisit {
+                        active.mark = Mark::Fading(now + FLASH_DUR);
+                    }
+                    if let Some(w) = self.window.as_ref() {
+                        w.request_redraw();
+                    }
+                }
+                if self.tabs[self.active].term.focus_report {
+                    let seq = if focused { "\x1b[I" } else { "\x1b[O" };
+                    self.pty_write(seq.as_bytes());
+                }
             },
             _ => {},
         }
@@ -4955,30 +4997,9 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         event_loop.set_control_flow(ControlFlow::WaitUntil(when));
-        // BEL flash (I13): wake up when the first label goes dark and redraw
-        // once to remove the highlight
-        let now = std::time::Instant::now();
-        let mut apagou = false;
-        for t in &mut self.tabs {
-            if t.bell_at
-                .is_some_and(|b| now.duration_since(b) >= FLASH_DUR)
-            {
-                t.bell_at = None;
-                apagou = true;
-            }
-        }
-        if apagou {
-            if let Some(w) = self.window.as_ref() {
-                w.request_redraw();
-            }
-        }
-        let next_flash = self
-            .tabs
-            .iter()
-            .filter_map(|t| t.bell_at)
-            .map(|b| b + FLASH_DUR)
-            .min();
-        if let Some(q) = next_flash {
+        // the mark's echo dying (I13): wake up when the first label goes dark,
+        // redraw once to remove it, and re-arm for the next one
+        if let Some(q) = self.tick_marks() {
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 q.min(std::time::Instant::now() + Duration::from_millis(250)),
             ));
@@ -5287,25 +5308,76 @@ mod tests {
         }
     }
 
+    /// Presence decides the mark, and it decides it the same way for every
+    /// sender: watching gives an echo, being elsewhere gives a mark that waits.
     #[test]
-    fn a_notification_out_of_sight_raises_the_card_not_the_toast() {
-        // `B8`: with the tab in front the content goes out at arrival; out of
-        // sight the card keeps the signal and the content waits for the visit
+    fn presence_decides_the_lifetime_of_the_mark() {
+        let watching = Presence {
+            tab_visible: true,
+            ws_visible: true,
+            window_focused: true,
+        };
         let mut front = Tab::new(20, 5);
         front.term.feed(b"\x1b]9;done\x07");
         let mut out = PumpOut::default();
-        front.pump(Bell::None, true, &mut out);
-        assert_eq!(out.toast.as_deref(), Some("done"));
+        front.pump(Bell::None, watching, &mut out);
+        assert!(
+            matches!(front.mark, Mark::Fading(_)),
+            "an echo, not a badge"
+        );
         assert!(!out.card_alert);
+        assert!(!out.urgency, "the window is focused");
 
+        let elsewhere = Presence {
+            tab_visible: false,
+            ws_visible: false,
+            window_focused: false,
+        };
         let mut back = Tab::new(20, 5);
         back.term.feed(b"\x1b]9;done\x07");
         let mut out = PumpOut::default();
-        back.pump(Bell::None, false, &mut out);
-        assert!(out.toast.is_none(), "a parked tab must not toast");
-        assert!(out.card_alert, "the card is the signal while it waits");
-        // and the badge survives: it was delivered, not acknowledged
-        assert!(back.notif_pending());
+        back.pump(Bell::None, elsewhere, &mut out);
+        assert_eq!(back.mark, Mark::UntilVisit, "waits for the visit");
+        assert!(out.card_alert, "the card is the workspace's signal");
+        assert!(out.urgency, "and the window is not focused");
+
+        // visited: the mark echoes once and goes
+        back.visited(std::time::Instant::now());
+        assert!(matches!(back.mark, Mark::Fading(_)));
+    }
+
+    /// `bell audible` is a sound and nothing else; `bell none` throws the BEL
+    /// away. Only `bell visual` makes it a notification.
+    #[test]
+    fn the_bell_is_a_notification_only_under_visual() {
+        let watching = Presence {
+            tab_visible: true,
+            ws_visible: true,
+            window_focused: true,
+        };
+        let mut t = Tab::new(20, 5);
+        t.term.feed(b"\x07");
+        let mut out = PumpOut::default();
+        t.pump(Bell::Audible, watching, &mut out);
+        assert_eq!(out.beeps, 1);
+        assert_eq!(t.mark, Mark::None, "a sound is not a notification");
+        assert!(t.term.notifications.is_empty());
+
+        let mut v = Tab::new(20, 5);
+        v.term.feed(b"\x07");
+        let mut out = PumpOut::default();
+        v.pump(Bell::Visual, watching, &mut out);
+        assert_eq!(out.beeps, 0);
+        assert_eq!(v.term.notifications.len(), 1, "the BEL is in the list");
+        assert!(matches!(v.mark, Mark::Fading(_)));
+
+        let mut n = Tab::new(20, 5);
+        n.term.feed(b"\x07");
+        let mut out = PumpOut::default();
+        n.pump(Bell::None, watching, &mut out);
+        assert_eq!(out.beeps, 0);
+        assert_eq!(n.mark, Mark::None);
+        assert!(n.term.notifications.is_empty(), "discarded");
     }
 
     #[test]

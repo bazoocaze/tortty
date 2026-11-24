@@ -308,25 +308,38 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   and truncation counts characters, not cell width, so a wide glyph (emoji, CJK)
   can overflow the box, and the detail is cut
   at four lines.
-- Notifications (`OSC 9`/`777`): a tab in front toasts the text when it arrives,
-  a tab out of sight wears the **bell** in front of its label (two cells, from the
-  emoji atlas when the font has a colour one, tinted with the label otherwise)
-  **and** raises the card of its workspace — the card is the workspace's signal
-  and the bell the tab's, so
-  entering the workspace clears only the card and each tab keeps its own badge
-  until it is visited. The content follows the visit: a notification that
-  arrived while nobody was looking toasts when its tab comes to the front. The
-  toast is the one above, with its 8 s floor; the badges ignore keys for 8 s
-  (whoever types must not lose them), and after that the first key or the visit
-  acknowledges. The window always asks for urgency. **limit:** inside the window
-  + urgency only — no desktop notification daemon; `OSC 99`, the identified and
-  updatable notification, is not implemented (`B72`).
-- Progress (`OSC 9;4;state[;pct]`, the mintty/ConEmu form): a 2 px bar on the
-  bottom edge of the tab label and of the workspace card, in the shade of the
-  state — green normal, red error, yellow warning/paused, and the indeterminate
-  one as a still translucent band of the full width. The fill is in pixels, so
-  37% of a 20-cell tab is 7.4 cells of ink; `0` removes it. **limit:** the window
-  only (no taskbar), and nothing moves.
+- Notifications (every source, one drawing): `OSC 9`, `777;notify`, the final
+  states of `9;4` (`error`, `paused`) and of `7501` (`done`, `blocked`, `paused`,
+  `error`, `idle`), and the BEL under `bell visual`. The foreground tab wears the
+  **bell** in front of its label (two cells, from the emoji atlas when the font
+  has a colour one, tinted with the label otherwise); the workspace card turns
+  yellow when the tab is in another workspace, and the window asks for urgency
+  only when it is not focused. The lifetime comes from **where the user is**, not
+  from who sent it: watching the tab, the bell shows 800 ms and goes; elsewhere it
+  stays until the tab is visited (and a visit is the only acknowledgement — a key
+  is not, and there is no floor to protect). What was said lives in the tab's
+  **notification list**: the last eight, newest first, one entry per
+  `(source, id)` — an update replaces its own entry, which is exactly what a
+  program that identifies its notifications wants — with `title` and `body` kept
+  apart and `text` derived. The socket's `notifications` verb prints every tab's
+  list; the grid's text is the record of what happened. **limit:** inside the
+  window + urgency only — no desktop notification daemon; `OSC 99`, the identified
+  and updatable notification, is not implemented (`B72`); the list has no screen
+  of its own yet (the menu is future, the socket is the way to read it); a BEL
+  under `bell audible` is a beep and leaves no trace, and under `bell none` it is
+  discarded whole.
+- Progress (`OSC 9;4;state[;pct]`, the mintty/ConEmu form): `progress_show`
+  decides the face — `bar` (the 2 px bar on the bottom edge of the tab label and
+  of the workspace card), `title` (the percentage on the tab label **and on the
+  window title**, the state word when the program gave no measure) or `none`. The
+  shade is the state's: green normal, yellow while the program waits for you
+  (`blocked`/`paused`), and the indeterminate one as a still translucent cyan band
+  of the full width. The fill is in pixels, so 37% of a 20-cell tab is 7.4 cells
+  of ink; `0` removes the record, and the bar with it. Progress never asks for
+  you, so it never marks a tab. **limit:** the window only (no taskbar); the bar
+  needs the tab bar, so with a single tab and `progress_show = bar` nothing is
+  drawn — `title` is the face that shows in every window shape; only the root
+  record drives it (a named `id` reports without a bar).
 - Scrollback search (`M-D`, `Ctrl+Shift+F` or the `search` action): two chips on
   the grid's bottom row take the query — `[find: query_ ]`, with an amber `_`
   where the next character goes, and `[ 1/3 ]` beside it (red `[ no match ]`
@@ -340,31 +353,30 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   regex, no whole-word mode; matches stop at 5000 (a one-letter query in a huge
   history keeps the first 5000).
 - Program status (`OSC 7501`, the Program Status Protocol v0.4): the program says
-  what it is doing — `idle`/`working`/`done`/`blocked`/`error`, with `kind`,
-  `progress`, `app`, `title` and a base64 `msg` — and the terminal keeps a set of
-  records per tab, one per `id` path, replaced whole by each report. A record
-  without `app` inherits it from its nearest ancestor; `clear` removes the record
-  and everything beneath it. The root record drives the tab's progress bar
-  (`working` green, `blocked` yellow, `error` red) and the states that want the
-  user (`done`, `blocked`, `error`) raise the same badge, card and toast as `OSC
-  9`, and the toast keeps the meaning: `done` green, `blocked` yellow, `error`
-  red, with the title naming the state and the `app` that asked (`blocked ·
-  test`). Where the state stays visible after the toast leaves is
-  `status_show`: `chip` (default) draws `[ blocked · git ]` on the last grid row,
-  right — the only shape that shows with a single tab, since the bar is not drawn
-  then, and a click on it dismisses the state, bar included, because `done` and
-  `error` have no lifetime of their own; `tab` writes `● blocked` into the tab
-  label and the card; `none` leaves only the 2 px bar. `7501;?` is answered with the states and kinds this terminal accepts, and
-  `OSC 9;4` feeds the root record until a real report arrives. A new prompt
-  (`OSC 133;A`) or the process leaving drops `working`/`blocked`, never
-  `done`/`error`. **limit:** every hard cap of the spec is enforced by discarding
+  what it is doing — `idle`/`working`/`done`/`blocked`/`paused`/`error`, with
+  `kind`, `progress`, `app`, `title` and a base64 `msg` — and the terminal keeps a
+  set of records per tab, one per `id` path, replaced whole by each report. A
+  record without `app` inherits it from its nearest ancestor; `clear` removes the
+  record and everything beneath it. Each state is one row of a fixed table — still
+  in flight (`working`, `blocked`, `paused`: the bar) and asks for you (`blocked`,
+  `paused`, `done`, `error`, `idle`: the notification) — and nothing depends on
+  the state before, which is what makes `idle` after a long job the notice it
+  should be. A report that repeats the record is not news (no event, no notice),
+  so a program reporting `working` every second and a shell reporting `idle` at
+  every prompt stay silent; the notice wears the state's shade (`done` green,
+  `blocked`/`paused` yellow, `error` red) and names the state and the app
+  (`blocked · test`). `7501;?` is answered with the states and kinds this terminal
+  accepts; `OSC 9;4` feeds the root record until a real report arrives. A new
+  prompt (`OSC 133;A`) or the process leaving drops **every** record of the
+  terminal — deliberate deviation from the spec's "keep `done`/`error`": who
+  persists now is the notification list plus the mark, and keeping the record
+  would make the next command's final report read as a repetition and go
+  unannounced. **limit:** every hard cap of the spec is enforced by discarding
   the whole report (4096 bytes, `msg` 2732/2048, `title` 256/192, `app` 32, `id`
   128 in 8 levels of 32, 256 records, control characters in the decoded text);
-  nothing shows the records yet beyond the root record's bar and the
-  notification, the feature-detection reply lands on the grid when the program is
-  a shell that is not waiting for it, and `working` records are dropped with the
-  prompt rather than per process — the terminal cannot tell one program from
-  another.
+  nothing on screen shows the records themselves (the bar and the notification
+  read the root), the feature-detection reply lands on the grid when the program
+  is a shell that is not waiting for it, and a named `id` gets no bar.
 - Prompt marks (`OSC 133`): the shell says where the prompt starts, where the
   command starts, where the output starts and how the command ended (with the
   status); the marks live on absolute lines, so scrolling and output do not move

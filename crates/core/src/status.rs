@@ -39,6 +39,7 @@ pub enum State {
     Working,
     Done,
     Blocked,
+    Paused,
     Error,
 }
 
@@ -52,16 +53,38 @@ impl State {
             "working" => State::Working,
             "done" => State::Done,
             "blocked" => State::Blocked,
+            "paused" => State::Paused,
             "error" => State::Error,
             _ => return None,
         })
     }
 
-    /// Does a record in this state ask something of the user? (`done` is "the
-    /// result is ready and you have not seen it", so it does.)
+    /// The two fixed bits every consumer reads: `(in_flight, notifies)`.
+    ///
+    /// A state is a **row of this table**, not a kind: nothing here looks at
+    /// where the state came from. `idle` and `done` are the same row; `blocked`
+    /// and `paused` are the same row — a pause asks the user exactly like a
+    /// block does, and only the `kind` tells them apart.
     #[must_use]
-    pub fn wants_you(self) -> bool {
-        matches!(self, State::Done | State::Blocked | State::Error)
+    pub fn bits(self) -> (bool, bool) {
+        match self {
+            State::Working => (true, false),
+            State::Blocked | State::Paused => (true, true),
+            State::Done | State::Error | State::Idle => (false, true),
+        }
+    }
+
+    /// Is the work still going? This is the progress indicator's only question.
+    #[must_use]
+    pub fn in_flight(self) -> bool {
+        self.bits().0
+    }
+
+    /// Does reaching this state call the user? (`done` is "the result is ready
+    /// and you have not seen it", so it does.)
+    #[must_use]
+    pub fn notifies(self) -> bool {
+        self.bits().1
     }
 
     /// The state as the protocol spells it.
@@ -72,6 +95,7 @@ impl State {
             State::Working => "working",
             State::Done => "done",
             State::Blocked => "blocked",
+            State::Paused => "paused",
             State::Error => "error",
         }
     }
@@ -153,14 +177,14 @@ impl Status {
     /// A report body (`state=…:id=…:…`, without `7501;`).
     ///
     /// `None` = nothing to show: a malformed report, an unknown state, a broken
-    /// limit, or a `clear`. Only the states that want the user come back with an
-    /// `Applied`.
+    /// limit, a `clear`, or a report that repeats the record it already has. Any
+    /// **change** comes back as an `Applied`; whether it calls the user is
+    /// `state.notifies()`, asked by the caller — the decision does not belong
+    /// here, and it must not depend on what the record said before.
     pub fn report(&mut self, body: &[u8]) -> Option<Applied> {
         match self.apply(body) {
-            // `idle` and `working` change the record and nothing else: the user
-            // is not called for work in progress
-            Outcome::Applied(a) if a.state.wants_you() => Some(a),
-            Outcome::Applied(_) | Outcome::Ignored | Outcome::Cleared => None,
+            Outcome::Applied(a) => Some(a),
+            Outcome::Ignored | Outcome::Cleared => None,
         }
     }
 
@@ -200,21 +224,21 @@ impl Status {
         self.seen = false;
     }
 
-    /// The user said they read it (`status_show chip`, click): every record goes.
+    /// A new shell prompt (`OSC 133;A`): every record goes.
+    ///
+    /// Not just `working`/`blocked`: `done`/`error`/`idle` are not `in_flight`,
+    /// so nothing draws them any more, and keeping them would make the *next*
+    /// command's final report read as a repeat — the idempotence rule would
+    /// swallow the notice for the second command. The record's only jobs now are
+    /// the progress and being the memory that makes a repeat silent, and both are
+    /// per command. The notice itself does not live here: it is the tab's
+    /// notification list plus the mark, which outlive the prompt.
     ///
     /// `seen` survives on purpose — it says this terminal has *heard* a `7501`
-    /// report, which stays true after the record is dismissed; forgetting it
-    /// would let a later `9;4` take the root back.
+    /// report, which stays true after the records are gone; forgetting it would
+    /// let a later `9;4` take the root back.
     pub fn dismiss(&mut self) {
         self.map.clear();
-    }
-
-    /// A new shell prompt (`OSC 133;A`) or the process leaving: `working` and
-    /// `blocked` are about the command that is gone; `done` and `error` stay for
-    /// the user to find (the spec's lifetime rules).
-    pub fn forget_transient(&mut self) {
-        self.map
-            .retain(|_, r| !matches!(r.state, State::Working | State::Blocked));
     }
 
     /// `OSC 9;4;state[;pct]` feeding the root record (the spec allows the
@@ -222,21 +246,34 @@ impl Status {
     ///
     /// Stops once a real report arrived: a mapped `9;4` would wipe the `kind` and
     /// the `msg` of the record a program wrote.
-    pub fn from_progress(&mut self, state: u8, pct: Option<u8>) {
+    ///
+    /// `true` = the record changed. The caller needs it: a final state here is
+    /// news (the form still means "the command ended, badly"), and a repeater
+    /// must not say it twice.
+    #[must_use]
+    pub fn from_progress(&mut self, state: u8, pct: Option<u8>) -> bool {
         if self.seen {
-            return;
+            return false;
         }
         let (state, progress) = match state {
             0 => {
-                self.map.remove("");
-                return;
+                return self.map.remove("").is_some();
             },
             1 => (State::Working, pct),
             2 => (State::Error, Some(100)),
-            4 => (State::Blocked, pct),
+            4 => (State::Paused, pct),
             // indeterminate (3) and anything else: busy, no percentage
             _ => (State::Working, None),
         };
+        // a repeater (`9;4` at 1 Hz) must not churn the record: same state and
+        // same percentage is the same fact told twice
+        if self
+            .map
+            .get("")
+            .is_some_and(|r| r.state == state && r.progress == progress)
+        {
+            return false;
+        }
         self.seq += 1;
         let seq = self.seq;
         self.map.insert(
@@ -251,13 +288,14 @@ impl Status {
                 seq,
             },
         );
+        true
     }
 
     /// The feature-detection answer (`7501;?`), with the lists this terminal
     /// accepts.
     #[must_use]
     pub fn detection_reply() -> &'static [u8] {
-        b"\x1b]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth\x1b\\"
+        b"\x1b]7501;?:states=idle,working,done,blocked,paused,error:kinds=permission,question,auth\x1b\\"
     }
 
     fn apply(&mut self, body: &[u8]) -> Outcome {
@@ -303,19 +341,29 @@ impl Status {
             None
         };
         self.seen = true;
-        self.seq += 1;
-        let seq = self.seq;
         // a record without `app` takes it from the nearest ancestor that has one
         let app = app.or_else(|| self.ancestor_app(&id));
-        let record = Record {
+        let mut record = Record {
             state,
             kind,
             progress,
             app: app.clone(),
             title: title.clone(),
             msg: msg.clone(),
-            seq,
+            seq: 0,
         };
+        // a report that says exactly what the record already says is not news:
+        // no new `seq`, no notification. It is the idempotence rule, and it is
+        // the same for every state (a repeated `done` is as silent as a repeated
+        // `working`).
+        if let Some(old) = self.map.get(&id) {
+            record.seq = old.seq;
+            if &record == old {
+                return Outcome::Ignored;
+            }
+        }
+        self.seq += 1;
+        record.seq = self.seq;
         if !self.map.contains_key(&id) && self.map.len() >= RECORDS_MAX {
             self.evict();
         }
@@ -512,13 +560,11 @@ mod tests {
     #[test]
     fn one_program_keeps_one_record() {
         let mut s = Status::default();
-        assert_eq!(
-            s.report(
-                format!("state=working:app=brew:msg={}", b64("Installing updates")).as_bytes()
-            ),
-            None,
-            "working does not call the user"
-        );
+        let a = s
+            .report(format!("state=working:app=brew:msg={}", b64("Installing updates")).as_bytes())
+            .expect("a change comes back even when it does not call the user");
+        assert_eq!(a.state, State::Working);
+        assert!(!a.state.notifies(), "working is not news for the user");
         let r = s.root().expect("the root record exists");
         assert_eq!(r.state, State::Working);
         assert_eq!(r.app.as_deref(), Some("brew"));
@@ -528,6 +574,49 @@ mod tests {
         let r = s.root().expect("still there");
         assert_eq!(r.state, State::Done);
         assert_eq!(r.progress, None);
+    }
+
+    /// The table of the design: a state is a row, and nothing looks at where it
+    /// came from. `idle`/`done` are the same row; `blocked`/`paused` are the same
+    /// row.
+    #[test]
+    fn every_state_declares_its_row() {
+        let rows = [
+            (State::Working, (true, false)),
+            (State::Blocked, (true, true)),
+            (State::Paused, (true, true)),
+            (State::Done, (false, true)),
+            (State::Error, (false, true)),
+            (State::Idle, (false, true)),
+        ];
+        for (state, bits) in rows {
+            assert_eq!(state.bits(), bits, "{state:?}");
+            assert_eq!(state.in_flight(), bits.0, "{state:?}");
+            assert_eq!(state.notifies(), bits.1, "{state:?}");
+        }
+    }
+
+    #[test]
+    fn idle_after_working_is_news() {
+        let mut s = Status::default();
+        assert!(s.report(b"state=working:app=build").is_some());
+        let a = s
+            .report(b"state=idle:app=build")
+            .expect("the record changed");
+        assert_eq!(a.state, State::Idle);
+        assert!(a.state.notifies(), "the program finished: call the user");
+        assert!(!a.state.in_flight(), "and the progress is over");
+    }
+
+    #[test]
+    fn a_repeated_report_is_silent() {
+        let mut s = Status::default();
+        assert!(s.report(b"state=done:app=build").is_some());
+        let seq = s.get("").unwrap().seq;
+        assert_eq!(s.report(b"state=done:app=build"), None, "same fact twice");
+        assert_eq!(s.get("").unwrap().seq, seq, "and it did not even touch it");
+        // a different state is a change again
+        assert!(s.report(b"state=working:app=build").is_some());
     }
 
     #[test]
@@ -598,7 +687,7 @@ mod tests {
         let mut s = Status::default();
         assert_eq!(s.report(b"app=brew"), None);
         assert!(s.is_empty());
-        assert_eq!(s.report(b"state=paused:app=brew"), None, "a later state");
+        assert_eq!(s.report(b"state=flying:app=brew"), None, "a later state");
         assert!(s.is_empty());
     }
 
@@ -675,31 +764,73 @@ mod tests {
     }
 
     #[test]
-    fn a_new_prompt_drops_working_and_blocked_but_not_done() {
+    fn a_new_prompt_clears_every_record() {
         let mut s = Status::default();
         s.report(b"state=working:id=a");
         s.report(b"state=blocked:id=b");
         s.report(b"state=done:id=c");
         s.report(b"state=error:id=d");
-        s.forget_transient();
-        let left: Vec<&str> = s.records().map(|(k, _)| k.as_str()).collect();
-        assert_eq!(left, ["c", "d"]);
+        s.dismiss();
+        assert!(s.is_empty(), "the command that produced them is gone");
+        // and the next command gets to notify again: the memory that makes a
+        // repeat silent is per command, not per terminal
+        let a = s.report(b"state=done:id=c").expect("a new command ended");
+        assert!(a.state.notifies());
+        // `seen` survives: a real report arrived and `9;4` may not take the root
+        assert!(s.seen_report());
     }
 
     #[test]
     fn osc_9_4_feeds_the_root_until_a_real_report_arrives() {
         let mut s = Status::default();
-        s.from_progress(1, Some(37));
+        assert!(s.from_progress(1, Some(37)), "the root record appeared");
         assert_eq!(s.root().unwrap().state, State::Working);
         assert_eq!(s.root().unwrap().progress, Some(37));
         // the real report owns the record now
         s.report(b"state=blocked:kind=auth:app=brew");
-        s.from_progress(1, Some(80));
+        assert!(!s.from_progress(1, Some(80)), "a real report owns it now");
         assert_eq!(s.root().unwrap().state, State::Blocked);
         assert_eq!(s.root().unwrap().progress, None);
-        // `0` clears, but only while the mapping is alive
+        // `0` clears the record itself, not only the bar
         s.report(b"state=clear");
         assert!(s.root().is_none());
+        assert!(!s.from_progress(0, None), "nothing to remove");
+    }
+
+    /// The `9;4` form is mapped onto the same rows: `2` is an error (news), `4`
+    /// is a pause (still in flight, and news), and both are told once.
+    #[test]
+    fn osc_9_4_maps_two_and_four_onto_error_and_paused() {
+        let mut s = Status::default();
+        assert!(s.from_progress(1, Some(10)));
+        assert!(s.from_progress(2, None), "an error is a change");
+        let r = s.root().expect("the error is a record too");
+        assert_eq!(r.state, State::Error);
+        assert_eq!(r.progress, Some(100));
+        assert!(r.state.notifies());
+        assert!(!r.state.in_flight(), "a finished command has no bar");
+
+        let mut s = Status::default();
+        assert!(s.from_progress(4, Some(40)), "a pause is a change");
+        let r = s.root().expect("paused is a record");
+        assert_eq!(r.state, State::Paused);
+        assert_eq!(r.progress, Some(40));
+        assert!(r.state.notifies(), "a pause asks the user");
+        assert!(r.state.in_flight(), "and it is still in flight");
+    }
+
+    #[test]
+    fn a_repeating_progress_does_not_churn_the_record() {
+        let mut s = Status::default();
+        assert!(s.from_progress(1, Some(30)));
+        let seq = s.root().unwrap().seq;
+        assert!(
+            !s.from_progress(1, Some(30)),
+            "the same fact, not a new one"
+        );
+        assert_eq!(s.root().unwrap().seq, seq);
+        assert!(s.from_progress(1, Some(31)), "a new percentage is news");
+        assert_eq!(s.root().unwrap().seq, seq + 1, "a new percentage is news");
     }
 
     #[test]
@@ -707,7 +838,7 @@ mod tests {
         let reply = std::str::from_utf8(Status::detection_reply()).unwrap();
         assert!(reply.starts_with("\x1b]7501;?"));
         assert!(reply.ends_with("\x1b\\"));
-        assert!(reply.contains("states=idle,working,done,blocked,error"));
+        assert!(reply.contains("states=idle,working,done,blocked,paused,error"));
         assert!(reply.contains("kinds=permission,question,auth"));
     }
 }

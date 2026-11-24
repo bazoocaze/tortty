@@ -111,28 +111,28 @@ pub enum RestoreState {
     Content,
 }
 
-/// Where `OSC 7501` state (`B47`) stays visible after the toast is gone.
+/// Where the **progress** of a program (`OSC 9;4`, `OSC 7501` while it works)
+/// shows. Progress is a state, not a call: it never asks the user, so it never
+/// gets a mark — only a surface.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
-pub enum StatusShow {
-    /// `chip`: a chip on the last row, right of the grid — the only shape that
-    /// shows with a single tab, because the tab bar is not drawn then.
-    #[default]
-    Chip,
-    /// `tab`: the state word on the tab label and on the workspace card. `B8`'s
-    /// bell cell accounting is the precedent; the limit follows from it — no bar,
-    /// nothing to write on.
-    Tab,
-    /// `none`: the tab keeps the 2 px bar and nothing names the state.
+pub enum ProgressShow {
+    /// `none`: the progress exists in the record and is not drawn.
     None,
+    /// `title`: the percentage on the tab label (and on the workspace card's
+    /// title); the state word when the program gave no measure.
+    Title,
+    /// `bar` (the default): the 2 px bar at the foot of the tab and the card.
+    #[default]
+    Bar,
 }
 
-impl StatusShow {
+impl ProgressShow {
     #[must_use]
-    pub fn parse(value: &str) -> Option<StatusShow> {
+    pub fn parse(value: &str) -> Option<ProgressShow> {
         match value {
-            "chip" => Some(StatusShow::Chip),
-            "tab" => Some(StatusShow::Tab),
-            "none" => Some(StatusShow::None),
+            "none" => Some(ProgressShow::None),
+            "title" => Some(ProgressShow::Title),
+            "bar" => Some(ProgressShow::Bar),
             _ => None,
         }
     }
@@ -253,7 +253,7 @@ pub struct Config {
     pub bold_as_bright: bool,
     /// Where the state a program reports about itself (`OSC 7501`, `B47`) is
     /// visible once the toast is gone.
-    pub status_show: StatusShow,
+    pub progress_show: ProgressShow,
     pub debug_log: Option<String>,
     /// The shortcut table (`M-H`): chords the app eats before the encoder.
     pub bindings: crate::keymap::Bindings,
@@ -284,7 +284,7 @@ const KNOWN: &[&str] = &[
     "bell",
     "copy_on_select",
     "bold_as_bright",
-    "status_show",
+    "progress_show",
     "debug_log",
     "map",
     "unmap",
@@ -348,7 +348,7 @@ impl Config {
             bell: Bell::None,
             copy_on_select: false,
             bold_as_bright: false,
-            status_show: StatusShow::Chip,
+            progress_show: ProgressShow::Bar,
             debug_log: None,
             bindings: crate::keymap::Bindings::default(),
             fg: Color::Rgb(0xd6, 0xd6, 0xd6),
@@ -498,9 +498,9 @@ impl Config {
                     Some(b) => cfg.bold_as_bright = b,
                     None => errors.push(bad(format!("\"{value}\" is not on/off"))),
                 },
-                "status_show" => match StatusShow::parse(value) {
-                    Some(s) => cfg.status_show = s,
-                    None => errors.push(bad(format!("\"{value}\" is not chip, tab or none"))),
+                "progress_show" => match ProgressShow::parse(value) {
+                    Some(s) => cfg.progress_show = s,
+                    None => errors.push(bad(format!("\"{value}\" is not none, title or bar"))),
                 },
                 "map" => {
                     if let Err(msg) = cfg.bindings.map_text(value) {
@@ -735,29 +735,32 @@ mod tests {
         assert_eq!(errs[0].key, "ligatures");
     }
 
-    /// `status_show` picks where the `OSC 7501` state stays visible (`B47`), and
-    /// the default is the chip: the tab label is not drawn with a single tab, so
-    /// `tab` would show nothing in the common case.
+    /// `progress_show` picks where the program's progress shows: nowhere, the
+    /// percentage on the title, or the 2 px bar (the default).
     #[test]
-    fn status_show_by_name() {
-        assert_eq!(Config::parse("").0.status_show, StatusShow::Chip);
+    fn progress_show_by_name() {
+        assert_eq!(Config::parse("").0.progress_show, ProgressShow::Bar);
         assert_eq!(
-            Config::base().status_show,
-            StatusShow::Chip,
-            "the defaults file says chip"
+            Config::base().progress_show,
+            ProgressShow::Bar,
+            "the defaults file says bar"
         );
         for (text, expected) in [
-            ("chip", StatusShow::Chip),
-            ("tab", StatusShow::Tab),
-            ("none", StatusShow::None),
+            ("none", ProgressShow::None),
+            ("title", ProgressShow::Title),
+            ("bar", ProgressShow::Bar),
         ] {
-            let (cfg, errs) = Config::parse(&format!("status_show {text}\n"));
+            let (cfg, errs) = Config::parse(&format!("progress_show {text}\n"));
             assert!(errs.is_empty(), "{text}: {errs:?}");
-            assert_eq!(cfg.status_show, expected, "{text}");
+            assert_eq!(cfg.progress_show, expected, "{text}");
         }
-        let (cfg, errs) = Config::parse("status_show both\n");
-        assert_eq!(cfg.status_show, StatusShow::Chip, "a bad line keeps it");
+        let (cfg, errs) = Config::parse("progress_show both\n");
+        assert_eq!(cfg.progress_show, ProgressShow::Bar, "a bad line keeps it");
         assert_eq!(errs.len(), 1);
+        assert_eq!(errs[0].key, "progress_show");
+        // the old name is not an alias: it is an unknown key, and the user sees
+        // it in the config error instead of silently losing the setting
+        let (_, errs) = Config::parse("status_show chip\n");
         assert_eq!(errs[0].key, "status_show");
     }
 

@@ -109,13 +109,13 @@ pub struct Renderer {
     /// `bold_as_bright`: bold text on the low half of the palette draws the
     /// bright half (`color::bright`).
     bold_as_bright: bool,
-    /// `status_show`: where the `OSC 7501` state stays visible (`B47`).
+    /// `progress_show`: where the program's progress is drawn (`B47`).
     ///
     /// A field here that comes from the config has **two** readers: this
     /// constructor and `apply_layout`, which is what a reload runs. Missing the
     /// second is invisible — the app's copy of the config already changed, so the
     /// `state` verb reports the new value while the screen keeps the old one.
-    status_show: tortty_core::config::StatusShow,
+    progress_show: tortty_core::config::ProgressShow,
     instances: Vec<Instance>,
     pub palette: Vec<(u8, u8, u8)>,
     /// Effective theme (config + defaults); `build` resolves cell by cell.
@@ -538,7 +538,7 @@ impl Renderer {
             shaper: crate::shape::Shaper::new(),
             ligatures: tortty_core::config::Ligatures::default(),
             bold_as_bright: cfg.bold_as_bright,
-            status_show: cfg.status_show,
+            progress_show: cfg.progress_show,
             toast_corner,
             instances: Vec::with_capacity(4096),
             palette: cfg.palette256(),
@@ -597,10 +597,10 @@ impl Renderer {
     pub fn apply_layout(&mut self, cfg: &Config) {
         self.cursor_shape = cfg.cursor_shape;
         self.pad = cfg.padding as f32;
-        // `status_show` is drawn with the chrome, which every frame rebuilds, so
+        // `progress_show` is drawn with the chrome, which every frame rebuilds, so
         // it takes effect on the next frame; `bold_as_bright` changes the ink of
         // the cells already cached, and those have to be painted again
-        self.status_show = cfg.status_show;
+        self.progress_show = cfg.progress_show;
         if self.bold_as_bright != cfg.bold_as_bright {
             self.bold_as_bright = cfg.bold_as_bright;
             self.theme_gen = self.theme_gen.wrapping_add(1);
@@ -860,7 +860,6 @@ impl Renderer {
                 .map(|t| crate::chrome::Tab {
                     title: &t.title,
                     alert: t.alert,
-                    state: t.status.as_deref(),
                 })
                 .collect()
         });
@@ -899,7 +898,6 @@ impl Renderer {
             let spec = crate::chrome::Tab {
                 title: &t.title,
                 alert: t.alert,
-                state: t.status.as_deref(),
             };
             let label = crate::chrome::tab_label(slot.i, &spec);
             let (bg, fg) = if t.ativa {
@@ -915,7 +913,12 @@ impl Renderer {
                 self.chrome_bell(x, y, fg);
             }
             self.chrome_text(&label, text_x, y, fg, width - bell);
-            if let Some(p) = t.progress {
+            // the bar is one of the two faces of `progress_show`: `title` puts
+            // the number on the label instead, and `none` draws nothing
+            if let Some(p) = t
+                .progress
+                .filter(|_| self.progress_show == tortty_core::config::ProgressShow::Bar)
+            {
                 let (c, alpha, frac) = progress_ink(p);
                 let rgb = self.color(c, self.fg);
                 self.push_rect(
@@ -969,16 +972,7 @@ impl Renderer {
             } else {
                 fg
             };
-            let (first, mut second) = card_lines(i + 1, &c.name, &c.title);
-            // `status_show tab`: the word goes on the second row, which the card
-            // only draws when it has something to say
-            if let Some(word) = &c.status {
-                second = if second.is_empty() {
-                    word.clone()
-                } else {
-                    format!("{word} · {second}")
-                };
-            }
+            let (first, second) = card_lines(i + 1, &c.name, &c.title);
             if fits(y0 + 3.0) {
                 self.text_line(x0, y0 + 3.0, &first, fg, width);
             }
@@ -987,7 +981,10 @@ impl Renderer {
             if !second.is_empty() && fits(y0 + chh + 3.0) {
                 self.text_line(x0, y0 + chh + 3.0, &second, fg, width);
             }
-            if let Some(p) = c.progress {
+            if let Some(p) = c
+                .progress
+                .filter(|_| self.progress_show == tortty_core::config::ProgressShow::Bar)
+            {
                 let (color, alpha, frac) = progress_ink(p);
                 let rgb = if c.alert {
                     over
@@ -1240,65 +1237,12 @@ impl Renderer {
         }
     }
 
-    /// The bottom row of the grid carries one of two overlays: the search bar
-    /// (`M-D`), which is the transient one and wins, or the state chip (`B47`)
-    /// when `status_show chip` asks for it.
-    fn bottom_row(
-        &mut self,
-        search: Option<&SearchView>,
-        term: &tortty_core::Term,
-        m: crate::chrome::Metrics,
-    ) {
+    /// The bottom row of the grid carries the search bar (`M-D`), the one
+    /// overlay that lives there.
+    fn bottom_row(&mut self, search: Option<&SearchView>, m: crate::chrome::Metrics) {
         if let Some(sv) = search {
             self.search_bar(sv, m);
-        } else if self.status_show == tortty_core::config::StatusShow::Chip {
-            self.status_chip(term, m);
         }
-    }
-
-    /// `B47` + `status_show chip`: what the program is doing, right-aligned on
-    /// the grid's last row. It is the only shape that shows with **one** tab — the
-    /// tab bar is not drawn then — and the last row is where the search bar
-    /// already lives, so it yields to it. The box comes from `chrome::StateChip`,
-    /// which the press that dismisses it reads too (`M-Q`).
-    fn status_chip(&mut self, term: &tortty_core::Term, m: crate::chrome::Metrics) {
-        let Some((state, word, detail)) = term.status_chip() else {
-            return;
-        };
-        let chip = crate::chrome::StateChip { word, detail };
-        let Some([x, y, width, height]) = chip.rect(m) else {
-            return;
-        };
-        let (word, detail) = (chip.word.as_str(), chip.detail.as_str());
-        let edge = self.color(
-            match state {
-                tortty_core::status::State::Blocked => Color::Idx(3),
-                tortty_core::status::State::Error => Color::Idx(1),
-                _ => Color::Idx(2),
-            },
-            self.fg,
-        );
-        let base = self.color(Color::Default, self.bg);
-        let ink = self.color(Color::Default, self.fg);
-        let dim = [
-            ink[0] * 0.78 + base[0] * 0.22,
-            ink[1] * 0.78 + base[1] * 0.22,
-            ink[2] * 0.78 + base[2] * 0.22,
-        ];
-        let grey = self.color(Color::Idx(8), self.fg);
-        self.chip((x, y), (width, height), edge);
-        let cw = self.fonts.cw;
-        #[allow(clippy::cast_precision_loss)] // a column count, far below 2^23
-        let cell = |n: usize| n as f32 * cw;
-        self.chrome_text("[ ", x, y, grey, 0.0);
-        self.chrome_text(word, x + cell(2), y, edge, 0.0);
-        self.chrome_text(
-            &format!("{detail} ]"),
-            x + cell(2 + word.chars().count()),
-            y,
-            dim,
-            0.0,
-        );
     }
 
     /// A chip: the search bar's surface — a hair of ink over the grid's
@@ -2020,7 +1964,7 @@ impl Renderer {
         self.build_cursor(f);
 
         // 3b) the grid's bottom row, shared by two overlays (`M-D`, `B47`)
-        self.bottom_row(search, term, metrics);
+        self.bottom_row(search, metrics);
 
         // 4) history indicator (D8): "↑N" — without it, scrolling back is
         // indistinguishable from the app having stopped writing
@@ -2855,11 +2799,8 @@ pub struct TabInfo {
     /// Recent BELL: the label gets a highlight for ~800 ms (I13).
     pub alert: bool,
     /// Progress the program reports about itself (`OSC 9;4`): a bar on the
-    /// bottom edge of the tab.
+    /// bottom edge of the tab, under `progress_show = bar`.
     pub progress: Option<Progress>,
-    /// The `OSC 7501` state word, when `status_show tab` asks for it on the
-    /// label (`B47`). `None` in the other modes — the chip and the bar say it.
-    pub status: Option<String>,
 }
 
 /// Height of that bar. Two pixels on the bottom edge: thin enough not to eat the
@@ -2981,9 +2922,6 @@ pub struct WsCard {
     /// Progress of the selected tab (`OSC 9;4`), on the bottom edge of the card:
     /// the same report the tab label shows, so a parked workspace is not blind.
     pub progress: Option<Progress>,
-    /// The `OSC 7501` state word of the selected tab, under `status_show tab`
-    /// (`B47`): the tab bar of a parked workspace is not on screen.
-    pub status: Option<String>,
 }
 
 pub enum FrameOutcome {

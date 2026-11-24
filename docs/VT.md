@@ -133,31 +133,35 @@ parser's hot path for a sequence nothing in the wild uses.
 The mintty/ConEmu form: `OSC 9 ; 4 ; state [; percentage]`, where the state is
 digits, not a sentence.
 
-| state | meaning | on screen |
+| state | meaning | what it does |
 |---|---|---|
-| `0` | clear | the bar, the chip and the label mark go away |
-| `1` | working, normal | green bar, filled to the percentage |
-| `2` | error | red bar, full |
-| `3` | indeterminate | translucent cyan bar, full and still (it does not move: moving it would need a clock and a frame per step for a fact the state already tells) |
-| `4` | warning / paused | yellow bar, filled to the percentage |
+| `0` | clear | removes the root record — the bar goes with it |
+| `1` | working, normal | root record `working`, bar filled to the percentage |
+| `2` | error | root record `error`: **it asks for you** (see below) and there is no bar left |
+| `3` | indeterminate | root record `working` without a measure: translucent cyan bar, full and still (it does not move: moving it would need a clock and a frame per step for a fact the state already tells) |
+| `4` | warning / paused | root record `paused`: yellow bar **and** it asks for you |
 
-`percentage` is 0–100 and optional (absent means "busy, no measure"). The bar is
-2 px on the bottom edge of the tab and of the workspace card.
+`percentage` is 0–100 and optional (absent means "busy, no measure"). Where the
+bar is drawn, and whether it is drawn at all, is `progress_show`
+(`none`/`title`/`bar`) — see [`CONFIG.md`](CONFIG.md).
 
-Three behaviours worth knowing:
+Four behaviours worth knowing:
 
-- It is **swallowed, never toasted**. A program that repeats it once a second
-  would pin a toast to the screen forever.
+- States `1` and `3` are **progress only**: a program that repeats them once a
+  second changes nothing (the same state and the same percentage is the same fact
+  told twice), and nothing on screen asks for you.
+- States `2` and `4` are **final as far as the user is concerned**: they become a
+  notification, exactly like `OSC 9` — no text to invent, so the state's own word
+  (`error`, `paused`) is what the notification says.
 - A digit state tortty does not know is still this form: swallowed, no notification.
 - `OSC 9` with anything that is not `4;…` is a **notification**, as above — the
   two forms share the number and are told apart by shape.
 
-The progress form also feeds the root [status record](#program-status-osc-7501),
-so a program that only knows `9;4` still gets the bar and, with `status_show`, the
-chip or the label mark — but not a toast: `9;4` has no text to show, and a
-repeater would keep one on screen forever. That mapping stops for good once the
-program sends a real `7501` report — a mapped `9;4` would wipe the `kind` and the
-`msg` that report carried.
+The progress form feeds the root [status record](#program-status-osc-7501), so a
+program that only knows `9;4` still gets the same record, the same bar and the
+same notifications. That mapping stops for good once the program sends a real
+`7501` report — a mapped `9;4` would wipe the `kind` and the `msg` that report
+carried.
 
 ## Program status: `OSC 7501`
 
@@ -171,7 +175,7 @@ ESC ] 7501 ; state=blocked:kind=permission:app=terraform:msg=<base64> ST
 
 | key | values | notes |
 |---|---|---|
-| `state` | `idle`, `working`, `done`, `blocked`, `error` | the only required key; an unknown state discards the whole report (a state added by a later version of the spec must not read as `idle`) |
+| `state` | `idle`, `working`, `done`, `blocked`, `paused`, `error` | the only required key; an unknown state discards the whole report (a state added by a later version of the spec must not read as `idle`). `paused` is tortty's name for the `9;4` *warning/paused* shade, and it is advertised in the feature-detection answer |
 | `kind` | `permission`, `question`, `auth` | only means something with `blocked` |
 | `id` | a `/`-separated path, up to 8 levels of 32 bytes | addresses one record; **absent** (or empty) is the *root* record — the one the tab bar draws |
 | `app` | up to 32 bytes | who is asking; a record without it inherits its nearest ancestor's |
@@ -183,31 +187,42 @@ ESC ] 7501 ; state=blocked:kind=permission:app=terraform:msg=<base64> ST
 The text a notification carries is `msg`, else `title`, else `app`, else the
 state's name — one line, already decoded.
 
-**What appears, and when.**
+**What appears, and when.** Every state declares, once, two fixed facts — and
+nothing depends on what the record said before:
 
-- The tab's bar follows the state root record, exactly like `9;4` does:
-  `working` green with the percentage, `blocked` yellow with the percentage,
-  `error` red and full. `done` and `idle` draw no bar — for `done` the news is
-  the badge and the toast, not a bar that would stay on screen until the next
-  command.
-- `done`, `blocked` and `error` **ask for you**: toast (with the app's colour —
-  `done` green, `blocked` yellow, `error` red — and the title `blocked · app`), a
-  badge on the tab, an alert on the workspace card, and window urgency when the
-  window is not in front.
-- After the toast leaves, the state stays visible where `status_show` says
-  (`chip` on the last grid row, `tab` on the tab label and the card, or `none`) —
-  see [`CONFIG.md`](CONFIG.md). The chip is dismissed with a click on it: `done`
-  and `error` have no lifetime of their own, so nothing else would ever end them.
-  A program that is still working reports again and the chip comes back.
-- A new shell prompt (`OSC 133;A`) ends the command that is gone: `working` and
-  `blocked` records are dropped with it, while `done` and `error` stay for you to
-  find. That is the spec's lifetime rule, and it is why a `blocked` from a
-  finished command cannot linger forever.
+| state | still in flight (the bar) | asks for you |
+|---|---|---|
+| `working` | yes | no |
+| `blocked` | yes | **yes** — it is waiting for an answer |
+| `paused` | yes | **yes** — same |
+| `done` | no | **yes** |
+| `error` | no | **yes** |
+| `idle` | no | **yes** |
+
+- **The bar** follows the root record while it is in flight: `working` green with
+  the percentage, `blocked`/`paused` yellow with it. `done`, `error` and `idle`
+  draw no bar — a finished command has nothing left to show, and the news is the
+  notification.
+- **Asking for you** is a notification, the same one `OSC 9` raises: the bell in
+  front of the tab's label, the workspace card in yellow and the window's urgency.
+  Where the user is decides the lifetime, not the sender: watching the tab, the
+  bell shows 800 ms and goes; elsewhere it stays until the tab is visited. The
+  text is not pushed — it lands in the tab's notification list (last eight, one
+  entry per `(source, id)`), which is where the message waits; the state itself
+  lives in the grid.
+- **A report that says exactly what the record already says is not news**: no new
+  event, no notification. That is what keeps a program that reports `working`
+  every second — or a shell that reports `idle` at every prompt — silent.
+- **A new shell prompt (`OSC 133;A`) drops every record of that terminal.** The
+  command that produced them is gone, and the notice survives as the
+  notification — which is why the spec's "keep `done`/`error` for the user to
+  find" moved to the list and the mark. Keeping them would also make the *next*
+  command's final report read as a repetition, and it would not be announced.
 
 **Feature detection.** `OSC 7501 ; ?` is answered with
 
 ```
-ESC ] 7501 ; ? :states=idle,working,done,blocked,error:kinds=permission,question,auth ST
+ESC ] 7501 ; ? :states=idle,working,done,blocked,paused,error:kinds=permission,question,auth ST
 ```
 
 **Hard caps.** A report that breaks one is discarded **whole**, before any record
