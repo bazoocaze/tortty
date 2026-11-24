@@ -322,12 +322,11 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   `(source, id)` — an update replaces its own entry, which is exactly what a
   program that identifies its notifications wants — with `title` and `body` kept
   apart and `text` derived. The socket's `notifications` verb prints every tab's
-  list; the grid's text is the record of what happened. **limit:** inside the
-  window + urgency only — no desktop notification daemon; `OSC 99`, the identified
-  and updatable notification, is not implemented (`B72`); the list has no screen
-  of its own yet (the menu is future, the socket is the way to read it); a BEL
-  under `bell audible` is a beep and leaves no trace, and under `bell none` it is
-  discarded whole.
+  list — that is how the list is read, since it has no screen of its own.
+  **limit:** inside the window + urgency only — no desktop notification daemon;
+  `OSC 99`, the identified and updatable notification, is not implemented
+  (`B72`); a BEL under `bell audible` is a beep and leaves no trace, and under
+  `bell none` it is discarded whole.
 - Progress (`OSC 9;4;state[;pct]`, the mintty/ConEmu form): `progress_show`
   decides the face — `bar` (the 2 px bar on the bottom edge of the tab label and
   of the workspace card), `title` (the percentage on the tab label **and on the
@@ -461,7 +460,8 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 ## Debug socket and instrumentation
 
 - Unix socket, JSON per line, several requests per connection: `state`, `text`,
-  `write`, `drop`, `sel`, `resize`, `tab`, `keys`, `prof`, `osc`, `log`, `quit`
+  `write`, `drop`, `sel`, `resize`, `tab`, `keys`, `prof`, `osc`, `log`,
+  `notifications`, `quit`
   ([`DEBUG.md`](DEBUG.md) has the shape of each).
 - `--debug-socket auto` opens `$XDG_RUNTIME_DIR/tortty-<pid>.sock`; the socket is
   `0600` and checks `SO_PEERCRED`, and it never deletes a file that is not its
