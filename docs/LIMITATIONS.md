@@ -156,17 +156,22 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
 
 - **No automatic dark/light theme**: the palette comes from the config, not from
   the desktop portal.
-- **Notifications stay inside the window.** `OSC 9`/`777` toast, badge and
-  ask the window manager for urgency, but there is no D-Bus, no portal and no
+- **Notifications stay inside the window.** Every source (`OSC 9`, `777`, the
+  final states of `9;4` and of `7501`, and the BEL under `bell visual`) rings the
+  bell on the tab label, turns the workspace card yellow and asks the window
+  manager for urgency, but there is no D-Bus, no portal and no
   `org.freedesktop.Notifications`: a desktop notice carries a sender identity,
   and anything the child sends would arrive wearing the terminal's face — a
   remote `ssh` session popping system-level notices is spoofing, not a feature.
+  The notification list (the last eight, one per `(source, id)`) has no screen of
+  its own yet: the debug socket's `notifications` verb is how it is read.
 - **Progress stays in the window.** `OSC 9;4` (mintty/ConEmu) draws a 2 px bar
-  on the bottom edge of the tab and of the workspace card: no taskbar bar, no
-  percentage in the title, and no animation — the indeterminate state is a still
-  translucent band, because something that moves costs a clock and a frame per
-  step. The toast is never involved: a 1 Hz keepalive repeater would pin it
-  forever.
+  on the bottom edge of the tab and of the workspace card (or the percentage on
+  the label, under `progress_show = title`): no taskbar bar and no animation —
+  the indeterminate state is a still translucent band, because something that
+  moves costs a clock and a frame per step. The toast is never involved: a 1 Hz
+  keepalive repeater would pin it forever. With a single tab there is no tab bar
+  and `bar` draws nothing — `title` is the face that shows in every window.
 - **An `OSC 8` link opens through `xdg-open`, and only for five schemes**
   (`http`, `https`, `file`, `ftp`, `mailto`). No portal, no D-Bus, no browser
   integration: the URI comes from the child, and anything else becomes a toast
