@@ -510,37 +510,10 @@ impl Graphics {
                 kv: cur.clone(),
             });
         }
-        if let Some(buf) = self.buf.as_mut() {
-            if buf.data.len() + buf.tail.len() + payload.len() > MAX_APC {
-                self.buf = None;
-                return Output {
-                    responses: vec![b"Gi=0;EINVAL:too big".to_vec()],
-                    ..Output::default()
-                };
-            }
-            // Base64 decodes in groups of four, and the senders do not agree on
-            // where to cut: the kitty clients cut at 4096 characters and let the
-            // string carry on, while `chafa` encodes each chunk on its own and so
-            // **pads every chunk** — joined into one string, those `=` are
-            // "excess data after padding" and the whole transmission was refused
-            // (`chafa -f kitty` against `1.0.85`). Decoding chunk by chunk takes
-            // both: a padded chunk is complete in itself, an unpadded one hands
-            // its leftover characters to the next.
-            let mut pending = std::mem::take(&mut buf.tail);
-            pending.push_str(payload);
-            let usable = pending.len() - pending.len() % 4;
-            if usable > 0 {
-                let Some(bytes) = base64_decode(&pending[..usable]) else {
-                    let kv = buf.kv.clone();
-                    self.buf = None;
-                    return Self::error(&kv, "EINVAL:base64");
-                };
-                buf.data.extend_from_slice(&bytes);
-            }
-            buf.tail = pending[usable..].to_string();
-        }
-        if cur.get("m").is_some_and(|m| m == "1") {
-            return Output::default(); // there is still a chunk coming
+        match self.assemble(&cur, payload) {
+            Err(out) => return *out,
+            Ok(true) => return Output::default(), // there is still a chunk coming
+            Ok(false) => {},
         }
         let Some(buf) = self.buf.take() else {
             return Output::default();
@@ -608,6 +581,62 @@ impl Graphics {
             }
         }
         self.dispatch(action, &kv, &data, ident, quiet, cursor, cell, grid)
+    }
+
+    /// Folds one piece of a transmission into the open buffer: `Ok(true)` while
+    /// the sender says there is more, `Err` when the piece cannot be decoded (the
+    /// buffer is closed in that case, so the rest of the transmission cannot be
+    /// taken as a picture).
+    fn assemble(
+        &mut self,
+        cur: &HashMap<String, String>,
+        payload: &str,
+    ) -> Result<bool, Box<Output>> {
+        let Some(buf) = self.buf.as_mut() else {
+            return Ok(false);
+        };
+        if buf.data.len() + buf.tail.len() + payload.len() > MAX_APC {
+            self.buf = None;
+            return Err(Box::new(Output {
+                responses: vec![b"Gi=0;EINVAL:too big".to_vec()],
+                ..Output::default()
+            }));
+        }
+        // Base64 decodes in groups of four, and the senders do not agree on where
+        // to cut: the kitty clients cut at 4096 characters and let the string
+        // carry on, while `chafa` encodes each chunk on its own and so **pads
+        // every chunk** — joined into one string, those `=` are "excess data
+        // after padding" and the whole transmission was refused (`chafa -f kitty`
+        // against `1.0.85`). Decoding chunk by chunk takes both: a padded chunk is
+        // complete in itself, an unpadded one hands its leftover characters to the
+        // next.
+        //
+        // The **last** piece is different: it completes the stream, so it goes to
+        // the decoder whole, unpadded included. `kitten icat` cuts at 4096
+        // characters and drops the trailing `=` (the length comes from `S=`, so
+        // the `=` says nothing it does not already say), which leaves a remainder
+        // that is not a multiple of four — the group of four was never going to be
+        // completed, and demanding it answered `EINVAL:base64` to every image whose
+        // payload needs padding (55 KB of PNG is 73 806 characters, and the last
+        // chunk of it is 78).
+        let mut pending = std::mem::take(&mut buf.tail);
+        pending.push_str(payload);
+        let more = cur.get("m").is_some_and(|m| m == "1");
+        let head = if more {
+            pending.len() - pending.len() % 4
+        } else {
+            pending.len()
+        };
+        if head > 0 {
+            let Some(bytes) = base64_decode(&pending[..head]) else {
+                let kv = buf.kv.clone();
+                self.buf = None;
+                return Err(Box::new(Self::error(&kv, "EINVAL:base64")));
+            };
+            buf.data.extend_from_slice(&bytes);
+        }
+        buf.tail = pending[head..].to_string();
+        Ok(more)
     }
 
     /// Routes the APC action. Kept apart from the parse so the protocol fits in
@@ -1404,6 +1433,39 @@ mod checks_graphics {
         let out = g.handle(b"Gm=0", (0, 0), cell(), (80, 24));
         assert_eq!(out.responses, [b"Gi=7;OK".to_vec()], "the trailing `m=0`");
         assert_eq!(g.images()[&7].data, [9, 8, 7, 255].repeat(4));
+    }
+
+    /// `kitten icat` **drops the padding** of the last piece: the length comes
+    /// from `S=`, so the `=` carries nothing. The remainder is then not a
+    /// multiple of four, and answering `EINVAL:base64` to it refused every image
+    /// whose payload needs padding — 55 KB of PNG is 73 806 characters, and the
+    /// last 4096-character chunk of it is 78 (78 % 4 = 2).
+    #[test]
+    fn unpadded_last_chunk_is_taken() {
+        let raw: Vec<u8> = (0..16).map(|n| u8::try_from(n * 9).unwrap_or(0)).collect();
+        let padded = b64(&raw);
+        let unpadded = padded.trim_end_matches('=');
+        assert_eq!(unpadded.len() % 4, 2, "16 bytes leave two `=` behind");
+        // cut inside a group of four, so the carry-over has to survive to the end
+        let (a, b) = unpadded.split_at(10);
+        let mut g = Graphics::new();
+        let first = format!("Ga=t,f=32,s=2,v=2,i=9,m=1;{a}");
+        let out = g.handle(first.as_bytes(), (0, 0), cell(), (80, 24));
+        assert_eq!(out.responses.len(), 0, "a chunk does not answer");
+        let last = format!("Gm=0;{b}");
+        let out = g.handle(last.as_bytes(), (0, 0), cell(), (80, 24));
+        assert_eq!(out.responses, [b"Gi=9;OK".to_vec()], "the picture arrives");
+        assert_eq!(g.images()[&9].data, raw);
+    }
+
+    /// One leftover character is one character too many: no group of four can
+    /// ever be completed by it, so the transmission is refused whole.
+    #[test]
+    fn one_leftover_character_is_still_refused() {
+        let mut g = Graphics::new();
+        let out = g.handle(b"Ga=t,f=32,s=2,v=2,i=4;AAAAA", (0, 0), cell(), (80, 24));
+        assert_eq!(out.responses, [b"Gi=4;EINVAL:base64".to_vec()]);
+        assert!(g.images().is_empty());
     }
 
     /// `B3`: sixel has no id and no `d=`, so the map cannot grow forever: the

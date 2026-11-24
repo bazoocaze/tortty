@@ -220,6 +220,10 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   chunk, and no picture). The pieces are decoded as they arrive, so a piece that
   pads itself and a piece that does not are both taken; the spare bits of the
   last symbol are not required to be zero, which is how `chafa` writes them.
+  The **last** piece may also come without its padding: `kitten icat` cuts at
+  4096 characters and drops the trailing `=` (the length is in `S=`, so the `=`
+  says nothing), which used to be refused as `EINVAL:base64` for every image
+  whose payload needs padding — a 55 KB PNG ends in a 78-character piece.
   **limit:** the whole transmission is capped at 64 MiB, like a single one.
 - **A picture lives in its cells** (`B3`, reported against `1.0.84`): `ED`/`EL`/
   `ECH` erase the cells, so they take the picture covering them — `clear` no

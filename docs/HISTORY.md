@@ -1634,13 +1634,13 @@ primeira.
 - `tools/target-prune.sh` handles what is left at each release: `cargo clean -p` on the crates read from `crates/*/Cargo.toml`, never on the dependencies, whose identity `Cargo.lock` pins and which are what a cold build pays for.
 - Measured on a two-version tree: 635 MiB back, 4.9 s to rebuild; above the ceiling with only the dependency tree left, it says so instead of pretending.
 
-## 2026-11-24 — notificações: um estado, dois destinos
+## 2026-11-24 — notifications: one state, two destinations
 
-- O desenho inteiro ficou num só lugar (`docs/NOTIFICATIONS_REFACTOR.md`, task file fora do repo): **progresso** é estado (mostra igual em qualquer lugar, some no fim, nunca pede) e **notificação** é chamado (a vida depende de onde o usuário está); um mesmo evento pode escrever nos dois.
-- `State` virou uma **linha de tabela** (`bits()`: em curso / pede você), com `paused` novo; `idle` passou a pedir você e a repetição de um relato ficou silenciosa, o que dispensa olhar o estado anterior — e resolveu o `done` do segundo comando, que a idempotência engolia.
-- Correções de fio: `9;4;2`/`4` agora notificam (eram engolidos), `9;4;0` apaga o registro e não só a barra (o ramo `0` de `from_progress` era morto).
-- `notif_text`/`notif_state`/`notif_title` viraram `notif::List`: 8 entradas por aba, uma por `(source, id)`, com `title`/`body` separados; o chip e o toast de notificação saíram, e a sineta da aba tem uma vida só, decidida pela presença.
-- Config: `bell` agora diz o que o BEL **vira** (`none` descarta, `visual` notifica, `audible` só apita) e `status_show` virou `progress_show` (`none`/`title`/`bar`); a matriz de OSCs ficou desatualizada e espera uma passada.
+- The whole design lives in one place (`docs/NOTIFICATIONS_REFACTOR.md`, a task file outside the repo): **progress** is a state (drawn the same wherever you are, gone by itself, never asks for you) and **notification** is a call (its life depends on where the user is); one event may write to both.
+- `State` became a **table row** (`bits()`: in flight / asks for you), with a new `paused`; `idle` asks for you now, and a repeated report stays silent — no need to look at the previous state, and the second command's `done` is no longer eaten by idempotence.
+- Wire fixes: `9;4;2`/`4` notify now (they were swallowed), and `9;4;0` removes the record, not only the bar (the `0` arm of `from_progress` was dead).
+- `notif_text`/`notif_state`/`notif_title` became `notif::List`: eight entries per tab, one per `(source, id)`, with `title`/`body` apart; the chip and the notification toast are gone, and the tab's bell has a single life, decided by presence.
+- Config: `bell` now says what the BEL **becomes** (`none` drops it, `visual` notifies, `audible` only beeps) and `status_show` became `progress_show` (`none`/`title`/`bar`).
 
 ## 2026-11-22 — tortty runs on Windows (minimal)
 
@@ -1649,3 +1649,10 @@ primeira.
 - Two checks failed first and were wrong about the system, not about Windows: `config_file` and `config_options` compared `font_family` against the literal `Monospace`, which only the Linux template declares; they compare against the factory parse now.
 - The seam gained one capability, `has_debug_socket()`, so the self test asks before checking the permissions of a socket that cannot exist, and `backend_x11()` became `window_accepts_position()` — Windows honours a position, Wayland refuses it.
 - What it refuses with a reason: the debug socket (named pipe), `SIGHUP`/last words, the child cwd behind the title, the signals, the X11 window id and `WM_CLASS`, the civil time zone. Limits in `LIMITATIONS.md`, the measurement in `PORTABILITY.md`, what is left in `M-X`.
+
+## 2026-11-24 — the last `kitty` chunk may arrive without its `=`
+
+- `iicat.sh mario_face.png` answered `EINVAL:base64` and drew nothing: `kitten icat` cuts the base64 stream at 4096 characters and **drops the trailing `=`** (the length comes from `S=`), and the last piece of a 55 354-byte PNG is 78 characters — 78 % 4 = 2, which the assembler read as a group of four cut short and refused.
+- Fix: the **last** piece goes to the decoder whole, which already takes an unpadded string; the pieces before it keep decoding by group of four, handing the remainder to the next one. A single leftover character is still refused.
+- Proof: an instance under `Xvfb` with `zsh -f -i` and the real client — before, `images=0` and `EINVAL:base64` on screen; after, `images=1`, the picture placed and the prompt clean. Two new tests in `graphics.rs`.
+- The text left over at the prompt was a symptom, not a second cause: a client does not read the answer to a transmission that failed, so it landed in the shell's line editor, which ran it as a command.
