@@ -85,7 +85,7 @@ the two settings are independent.
 | `OSC 52 ; c ; base64` | the child sets the clipboard (`c` = CLIPBOARD, `p` = PRIMARY); the **query** form is refused, and so is a payload cut at the parser's cap |
 | `OSC 104 [; i …]` | palette slots back to the palette in force — the config's, not a built-in table (all, or only the slots named) |
 | `OSC 110` / `111` / `112` | foreground / background / cursor colour back to the default |
-| `OSC 133 ; A` / `B` / `C` / `D` (with the exit status on `D`) | prompt marks: prompt start, command start, output start, command end with the exit status. They feed the prompt navigation (Ctrl+Shift+Up/Down) and the status lifetimes below |
+| `OSC 133 ; A` / `B` / `C` / `D` (with the exit status on `D`) | prompt marks: prompt start, command start, output start, command end with the exit status. They feed the prompt navigation (Ctrl+Shift+Up/Down) and the status lifetimes below. `D` also raises the notification when the command ran long (`shell_notify_secs`, default 10 s, `none`/`off`/`0` disables it) — `exit 0 · 32.0 s`, red when it failed |
 | `OSC 777 ; notify ; title ; body` | urxvt notification: the same road as `OSC 9` |
 | `OSC 1337 ; File=… :base64` | iTerm2 inline image: `inline=1` is required (`inline=0` asks the terminal to write a file, and that is refused with a toast), `width`/`height` in cells — PNG, or the TIFF `chafa -f iterm` sends |
 | `OSC 7501 ; …` | program status — see [OSC 7501](#program-status-osc-7501) |
@@ -266,7 +266,9 @@ Short, because these are the axes the tables above do not cover:
 | `ESC c` | RIS: full reset — grid, pen, modes, margins, images, scrollback |
 | `ESC ( 0` / `ESC ) 0` | the DEC line-drawing charset for G0 / G1 (`lqk` → `┌─┐`); `ESC ( B` goes back to ASCII |
 | `ESC # 8` | DECALN: the screen fills with `E` (the alignment test) |
-| `ESC P … q … ST` | DCS: **sixel** — decoded by tortty's own decoder, cursor moves below the picture |
+| `ESC P … q … ST` | DCS: **sixel** — decoded by tortty's own decoder, cursor moves below the picture. Anything else answers `0` the standard way (see below) |
+| `DCS $ q Pt ST` | **DECRQSS**: asks what a setting is. Answered from what is really kept — `m` (the pen: `0` plus the attributes set, then the foreground, then the background, e.g. `0;1;31m`), `r` (the scroll region, 1-based, e.g. `2;3r`), `SP q` (the cursor style as `DECSCUSR`, e.g. `2 q`; without one seen, the shipped default, steady block) — as `DCS 1 $ r Pt ST`. Anything else (`"p` and the rest) gets `DCS 0 $ r ST` |
+| `DCS + q hex ST` | **XTGETTCAP**: asks for termcap values by hex name (`;`-separated). The table holds what is true here — `Co` = `256` (as the exported `TERM` says), `RGB` = `8` (as the exported `COLORTERM` says), `TN` = `tortty` (as the exported `TERM_PROGRAM` says; a kitty check fails here, correctly) — answered as `DCS 1 + r hex ST` with a literal `=` and `;`, unknown names skipped. Nothing known, or not hex at all: `DCS 0 + r ST`. Key names are refused on purpose: what a key sends depends on the keyboard flags in force, so a static answer would lie |
 | `ESC _ G … ST` | APC: the **kitty graphics protocol** — direct and chunked transmission, placement, ids, z-order, crop, animation, Unicode placeholders |
 
 Images have their own page: [`FEATURES.md`](FEATURES.md). The one rule that

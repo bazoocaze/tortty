@@ -323,6 +323,21 @@ pub struct Term {
     /// start, and how the command ended. Absolute lines, so scrolling and output
     /// do not move them.
     pub marks: crate::prompt::Marks,
+    /// Milliseconds since the app started, written by the app before every
+    /// `feed` — the core has no clock, so whoever feeds it says what time it
+    /// is (as `cell_size`: the caller passes what only it knows). Tests write
+    /// it by hand. It only drives the `133;D` duration (`B74`).
+    pub now_ms: u64,
+    /// When the running command started (`133;B`, `133;C` as the fallback when
+    /// the shell skips `B`), in `now_ms`. `None` = no command known: a `D`
+    /// without a start still reports a failure, but with no duration.
+    pub cmd_start_ms: Option<u64>,
+    /// The `133;D` rule (`B74`), synced from the config by the app before every
+    /// `feed`: a command that ran this long notifies, whatever the status was.
+    /// A fast command means the owner was watching — the screen is the source
+    /// of truth for what just happened — so speed alone is never news. `0` =
+    /// the `D` never notifies.
+    pub shell_notify_secs: u64,
     /// Something the child asked for that we refused, with the reason, for the
     /// app to show once (`B3`).
     refused: Option<&'static str>,
@@ -441,6 +456,9 @@ impl Term {
             progress: None,
             status: crate::status::Status::default(),
             marks: crate::prompt::Marks::default(),
+            now_ms: 0,
+            cmd_start_ms: None,
+            shell_notify_secs: crate::config::SHELL_NOTIFY_DEFAULT,
             refused: None,
             osc_cap: MAX_OSC,
             respond_size: false,
@@ -2163,9 +2181,55 @@ impl Term {
             self.status.dismiss();
             self.root_progress();
         }
+        if kind == MarkKind::CommandStart {
+            self.cmd_start_ms = Some(self.now_ms);
+        } else if kind == MarkKind::OutputStart && self.cmd_start_ms.is_none() {
+            // shells that skip `B` still open with `C`: the wait started there
+            self.cmd_start_ms = Some(self.now_ms);
+        } else if kind == MarkKind::CommandEnd {
+            self.command_done(status);
+        }
         let line = self.scrolled as i64 + self.cy as i64;
         let first = self.abs_first();
         self.marks.push(Mark { line, kind, status }, first);
+    }
+
+    /// `133;D`: the shell says the command ended. A long command notifies,
+    /// whatever the status was (`B74`) — through the same pipeline as every
+    /// other source, so presence decides whether it marks the tab or only
+    /// joins the list. Raised here, on the `D`, because the next prompt (`A`)
+    /// drops the status records: read afterwards, there would be nothing to
+    /// read.
+    fn command_done(&mut self, status: Option<i32>) {
+        let start = self.cmd_start_ms.take();
+        let status = status.unwrap_or(0);
+        let elapsed = self.now_ms.saturating_sub(start.unwrap_or(self.now_ms));
+        if self.shell_notify_secs == 0 || elapsed < self.shell_notify_secs.saturating_mul(1000) {
+            return;
+        }
+        let shade = if status == 0 {
+            crate::notif::Shade::Info
+        } else {
+            crate::notif::Shade::Err
+        };
+        self.notify(&crate::notif::Notif {
+            source: crate::notif::Source::Osc133,
+            id: None,
+            title: None,
+            body: Some(format!("exit {status} · {}", Self::dur_text(elapsed))),
+            shade,
+        });
+    }
+
+    /// What the `133;D` entry carries as its duration: one decimal below a
+    /// minute (`12.4 s`), minutes past it (`3m 07s`). Whole seconds would lie
+    /// about a command that ran 10.9 s against a 10 s floor.
+    fn dur_text(ms: u64) -> String {
+        if ms < 60_000 {
+            format!("{:.1} s", ms as f64 / 1000.0)
+        } else {
+            format!("{}m {:02}s", ms / 60_000, ms % 60_000 / 1000)
+        }
     }
 
     /// Previous/next prompt start for the navigation (`M-R`), as an absolute
@@ -2707,10 +2771,19 @@ impl Term {
         self.apc_output(out);
     }
 
-    /// A complete DCS arrived: the sixel kind becomes a picture, everything else
-    /// (the fonts, the `DECRQSS` answers) is still not ours and is dropped.
+    /// A complete DCS arrived: `DECRQSS`/`XTGETTCAP` are answered from the
+    /// state the terminal really keeps (`B73`), the sixel kind becomes a
+    /// picture, and everything else (the fonts) is still not ours.
     fn dcs_done(&mut self) {
         let dcs = std::mem::take(&mut self.dcs);
+        if dcs.starts_with(b"$q") {
+            self.dcs_decrqss(&dcs[2..]);
+            return;
+        }
+        if dcs.starts_with(b"+q") {
+            Self::dcs_xtgettcap(&dcs[2..], &mut self.child_out);
+            return;
+        }
         let cursor = (
             u16::try_from(self.cx).unwrap_or(0),
             u16::try_from(self.cy).unwrap_or(0),
@@ -2721,6 +2794,160 @@ impl Term {
         );
         let out = self.graphics.sixel(&dcs, cursor, self.cell_size, grid);
         self.apc_output(out);
+    }
+
+    /// `DECRQSS` (`DCS $ q Pt ST`): what a setting of ours is. Only what the
+    /// terminal really keeps is answerable — `m` (the pen), `r` (the scroll
+    /// region), `SP q` (the cursor style) — and everything else gets the
+    /// standard negative, which is the honest answer for a setting we do not
+    /// have (`"p` asks for a conformance level we never claimed).
+    fn dcs_decrqss(&mut self, pt: &[u8]) {
+        let body = match pt {
+            b"m" => Some(self.sgr_report()),
+            b"r" => Some(format!("{};{}r", self.top + 1, self.bottom + 1)),
+            b" q" => {
+                // `DECSCUSR`: `ps = shape * 2 + blink`. Without one the cursor
+                // still has a shape — the shipped default (steady block) — and
+                // that is what is answered until the app syncs the configured
+                // one (`CONFIG.md`: the core never sees the config).
+                let ps = self
+                    .app_cursor_style
+                    .map_or(2, |(shape, blink)| shape * 2 + u8::from(!blink) + 1);
+                Some(format!("{ps} q"))
+            },
+            _ => None,
+        };
+        match body {
+            Some(pt) => self
+                .child_out
+                .extend_from_slice(format!("\x1bP1$r{pt}\x1b\\").as_bytes()),
+            None => self.child_out.extend_from_slice(b"\x1bP0$r\x1b\\"),
+        }
+    }
+
+    /// The pen as a status string: `0` plus whatever is set — attributes,
+    /// then the foreground, then the background — so a program that saved it
+    /// can send it back. What has no classic number keeps the colon shape the
+    /// setter takes (`4:3` is curly, as in the `SGR 4:n` the grid draws).
+    fn sgr_report(&self) -> String {
+        use crate::cell::{BLINK, BOLD, FAINT, INV, ITALIC, OVERLINE, STRIKE};
+        let mut p = vec!["0".to_string()];
+        if self.flags & BOLD != 0 {
+            p.push("1".to_string());
+        }
+        if self.flags & FAINT != 0 {
+            p.push("2".to_string());
+        }
+        if self.flags & ITALIC != 0 {
+            p.push("3".to_string());
+        }
+        match self.ul {
+            crate::cell::UL_SINGLE => p.push("4".to_string()),
+            crate::cell::UL_DOUBLE => p.push("4:2".to_string()),
+            crate::cell::UL_CURLY => p.push("4:3".to_string()),
+            crate::cell::UL_DOTTED => p.push("4:4".to_string()),
+            crate::cell::UL_DASHED => p.push("4:5".to_string()),
+            _ => {},
+        }
+        if self.flags & BLINK != 0 {
+            p.push("5".to_string());
+        }
+        if self.flags & INV != 0 {
+            p.push("7".to_string());
+        }
+        if self.flags & STRIKE != 0 {
+            p.push("9".to_string());
+        }
+        if self.flags & OVERLINE != 0 {
+            p.push("53".to_string());
+        }
+        Self::color_report(&mut p, self.fg, 30, 38);
+        Self::color_report(&mut p, self.bg, 40, 48);
+        if let Color::Rgb(red, green, blue) = self.ul_color {
+            p.push(format!("58;2;{red};{green};{blue}"));
+        }
+        p.join(";") + "m"
+    }
+
+    /// One colour as SGR parameters: the low eight on their classic numbers,
+    /// the high eight on the bright ones, truecolor on `38/48;2`. `Default`
+    /// contributes nothing — it is the absence of a setting, not a colour.
+    fn color_report(p: &mut Vec<String>, col: Color, base: u8, ext: u8) {
+        match col {
+            Color::Default => {},
+            Color::Idx(n) if n < 8 => p.push((base + n).to_string()),
+            Color::Idx(n) => p.push((base + 60 + n - 8).to_string()),
+            Color::Rgb(red, green, blue) => {
+                p.push(format!("{ext};2;{red};{green};{blue}"));
+            },
+        }
+    }
+
+    /// `XTGETTCAP` (`DCS + q <hex names> ST`): termcap names the program wants
+    /// the value of. The table only holds what is true here: the palette is
+    /// 256 entries (`Co`, as the `TERM` we export says), truecolor is 8 bits
+    /// per channel (`RGB`, as the `COLORTERM` we export says), and the name is
+    /// ours (`TN`, as the `TERM_PROGRAM` we export says — a kitty check fails
+    /// here, which is correct: this is not kitty). The key names stay out on
+    /// purpose: what a key sends depends on the keyboard flags in force
+    /// (legacy vs kitty protocol), so a static answer would be a lie in two
+    /// modes out of three — they get the negative like every unknown name.
+    fn dcs_xtgettcap(hex: &[u8], child_out: &mut Vec<u8>) {
+        let names = Self::hex_decode(hex).unwrap_or_default();
+        let mut entries = Vec::new();
+        for name in names.split(|&b| b == b';') {
+            let value = match name {
+                b"Co" => Some("256"),
+                b"TN" => Some("tortty"),
+                b"RGB" => Some("8"),
+                _ => None,
+            };
+            if let Some(v) = value {
+                // the name goes back in hex, as it arrived: `Co` echoes as
+                // `436F`, not as the decoded word
+                entries.push(format!(
+                    "{}={}",
+                    Self::hex_encode(name),
+                    Self::hex_encode(v.as_bytes())
+                ));
+            }
+        }
+        if entries.is_empty() {
+            child_out.extend_from_slice(b"\x1bP0+r\x1b\\");
+        } else {
+            // entries are hex already; the `;` between them is literal
+            child_out.extend_from_slice(format!("\x1bP1+r{}\x1b\\", entries.join(";")).as_bytes());
+        }
+    }
+
+    /// Even-length ASCII hex to bytes; `None` on any other byte (an odd tail,
+    /// a `Z`). Both cases spell the word the same in upper and lower case.
+    fn hex_decode(hex: &[u8]) -> Option<Vec<u8>> {
+        if !hex.len().is_multiple_of(2) {
+            return None;
+        }
+        let digit = |b: u8| match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'a'..=b'f' => Some(b - b'a' + 10),
+            b'A'..=b'F' => Some(b - b'A' + 10),
+            _ => None,
+        };
+        let (pairs, _) = hex.as_chunks::<2>();
+        pairs
+            .iter()
+            .map(|c| Some(digit(c[0])? << 4 | digit(c[1])?))
+            .collect()
+    }
+
+    /// Bytes to uppercase ASCII hex, the case the other terminals answer in.
+    fn hex_encode(bytes: &[u8]) -> String {
+        const H: &[u8; 16] = b"0123456789ABCDEF";
+        let mut s = String::with_capacity(bytes.len() * 2);
+        for &b in bytes {
+            s.push(H[(b >> 4) as usize] as char);
+            s.push(H[(b & 15) as usize] as char);
+        }
+        s
     }
 
     /// Frames the responses and moves the cursor — the same tail for an APC
@@ -3684,6 +3911,155 @@ mod cluster_tests {
         t.feed("a\u{200D}b".as_bytes());
         assert_eq!(t.cx, 1);
         assert_eq!(t.grid[0].tail_at(0), ['\u{200D}', 'b']);
+    }
+}
+
+#[cfg(test)]
+mod dcs_query_tests {
+    use super::*;
+
+    #[test]
+    fn decrqss_answers_the_pen_it_has() {
+        let mut t = Term::new(20, 4);
+        t.feed(b"\x1b[1;31m");
+        t.feed(b"\x1bP$qm\x1b\\");
+        assert_eq!(t.take_child_out(), b"\x1bP1$r0;1;31m\x1b\\".to_vec());
+    }
+
+    #[test]
+    fn decrqss_without_attributes_is_zero() {
+        let mut t = Term::new(20, 4);
+        t.feed(b"\x1bP$qm\x1b\\");
+        assert_eq!(t.take_child_out(), b"\x1bP1$r0m\x1b\\".to_vec());
+    }
+
+    #[test]
+    fn decrqss_answers_region_and_cursor_shape() {
+        let mut t = Term::new(20, 4);
+        t.feed(b"\x1b[2;3r");
+        t.feed(b"\x1bP$qr\x1b\\");
+        assert_eq!(t.take_child_out(), b"\x1bP1$r2;3r\x1b\\".to_vec());
+        // no DECSCUSR seen: the shipped default (steady block, `2`)
+        t.feed(b"\x1bP$q q\x1b\\");
+        assert_eq!(t.take_child_out(), b"\x1bP1$r2 q\x1b\\".to_vec());
+        // a steady underline the program asked for
+        t.feed(b"\x1b[4 q");
+        t.feed(b"\x1bP$q q\x1b\\");
+        assert_eq!(t.take_child_out(), b"\x1bP1$r4 q\x1b\\".to_vec());
+    }
+
+    #[test]
+    fn decrqss_refuses_what_it_does_not_keep() {
+        let mut t = Term::new(20, 4);
+        t.feed(b"\x1bP$q\"p\x1b\\");
+        assert_eq!(t.take_child_out(), b"\x1bP0$r\x1b\\".to_vec());
+    }
+
+    #[test]
+    fn xtgettcap_answers_the_table_and_refuses_the_rest() {
+        let mut t = Term::new(20, 4);
+        // `Co` is asked, `ZZ` is not: the answer carries only the known one,
+        // with a literal `=` (the reply is hex words joined by raw separators,
+        // which is what the requesters split on)
+        t.feed(b"\x1bP+q436F3B5A5A\x1b\\");
+        assert_eq!(t.take_child_out(), b"\x1bP1+r436F=323536\x1b\\".to_vec());
+        // nothing known: the standard negative
+        t.feed(b"\x1bP+q5A5A\x1b\\");
+        assert_eq!(t.take_child_out(), b"\x1bP0+r\x1b\\".to_vec());
+        // not hex at all: the negative, not a guess
+        t.feed(b"\x1bP+qZZ\x1b\\");
+        assert_eq!(t.take_child_out(), b"\x1bP0+r\x1b\\".to_vec());
+    }
+}
+
+#[cfg(test)]
+mod done_tests {
+    use super::*;
+
+    /// A command from `B` to `D` with the clock in the test's hand.
+    fn run(secs: u64, status: i32) -> Term {
+        let mut t = Term::new(20, 4);
+        t.now_ms = 0;
+        t.feed(b"\x1b]133;B\x07sleep\r\n");
+        t.now_ms = secs * 1000;
+        t.feed(format!("\x1b]133;D;{status}\x07").as_bytes());
+        t
+    }
+
+    #[test]
+    fn a_fast_success_is_silence() {
+        let t = run(2, 0);
+        assert_eq!(t.notifs, 0);
+        assert!(t.notifications.is_empty());
+    }
+
+    #[test]
+    fn a_long_success_notifies() {
+        let t = run(32, 0);
+        assert_eq!(t.notifs, 1);
+        let n = t.notifications.entries().next().unwrap();
+        assert_eq!(n.source, crate::notif::Source::Osc133);
+        assert_eq!(n.text(), "exit 0 · 32.0 s");
+        assert_eq!(n.shade, crate::notif::Shade::Info);
+    }
+
+    #[test]
+    fn a_fast_failure_is_silence() {
+        // a fast command means the owner was watching: the screen already said
+        // it, so the `D` says nothing, whatever the status was
+        let t = run(1, 2);
+        assert_eq!(t.notifs, 0);
+        assert!(t.notifications.is_empty());
+    }
+
+    #[test]
+    fn a_long_failure_notifies_as_an_error() {
+        let t = run(32, 2);
+        assert_eq!(t.notifs, 1);
+        let n = t.notifications.entries().next().unwrap();
+        assert_eq!(n.text(), "exit 2 · 32.0 s");
+        assert_eq!(n.shade, crate::notif::Shade::Err);
+    }
+
+    #[test]
+    fn a_d_without_a_start_has_no_wait_to_report() {
+        let mut t = Term::new(20, 4);
+        t.now_ms = 5_000;
+        t.feed(b"\x1b]133;D;1\x07");
+        // no start, no wait: below any floor, so silence even on failure
+        assert_eq!(t.notifs, 0);
+    }
+
+    #[test]
+    fn zero_means_the_d_never_notifies() {
+        let mut t = Term::new(20, 4);
+        t.shell_notify_secs = 0;
+        t.now_ms = 0;
+        t.feed(b"\x1b]133;B\x07sleep 600\r\n");
+        t.now_ms = 600_000;
+        t.feed(b"\x1b]133;D;0\x07");
+        assert_eq!(t.notifs, 0);
+    }
+
+    #[test]
+    fn none_and_off_mean_zero() {
+        let (cfg, errs) = crate::config::Config::parse("shell_notify_secs none\n");
+        assert!(errs.is_empty(), "{errs:?}");
+        assert_eq!(cfg.shell_notify_secs, 0);
+        let (cfg, errs) = crate::config::Config::parse("shell_notify_secs off\n");
+        assert!(errs.is_empty(), "{errs:?}");
+        assert_eq!(cfg.shell_notify_secs, 0);
+        let (cfg, errs) = crate::config::Config::parse("shell_notify_secs 30\n");
+        assert!(errs.is_empty(), "{errs:?}");
+        assert_eq!(cfg.shell_notify_secs, 30);
+        let (_, errs) = crate::config::Config::parse("shell_notify_secs soon\n");
+        assert_eq!(errs.len(), 1);
+    }
+
+    #[test]
+    fn minutes_get_their_own_shape() {
+        assert_eq!(Term::dur_text(9_500), "9.5 s");
+        assert_eq!(Term::dur_text(187_000), "3m 07s");
     }
 }
 

@@ -31,6 +31,8 @@ pub enum Source {
     Osc777,
     Osc99,
     Osc7501,
+    /// `OSC 133;D`: the shell reporting how the command ended (`B74`).
+    Osc133,
 }
 
 impl Source {
@@ -45,6 +47,7 @@ impl Source {
             Source::Osc777 => "OSC 777",
             Source::Osc99 => "OSC 99",
             Source::Osc7501 => "OSC 7501",
+            Source::Osc133 => "OSC 133",
         }
     }
 }

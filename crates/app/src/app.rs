@@ -733,6 +733,10 @@ pub struct App {
     /// Instant the blink was reset (last key/paste). The phase comes out of it
     /// by arithmetic: no accumulated state, no `sleep`.
     blink_epoch: std::time::Instant,
+    /// When the app started: the base of `Term::now_ms`, which is what the
+    /// `133;D` duration counts against (`B74`). Never reset — a command that
+    /// started before a keypress must not lose its start.
+    boot: std::time::Instant,
     /// Current blink phase, so we only redraw when it flips.
     blink_phase: bool,
     /// There is a cell with SGR 5 on screen. Recomputed on every `feed`: asking
@@ -835,6 +839,7 @@ impl App {
             cfg_mtime,
             cfg_checked: std::time::Instant::now(),
             blink_epoch: std::time::Instant::now(),
+            boot: std::time::Instant::now(),
             blink_phase: true,
             blink_text: false,
             gate: crate::frame::Gate::default(),
@@ -2544,6 +2549,23 @@ impl App {
         self.drain_parked();
     }
 
+    /// What the core needs before a `feed` and only the app knows: what time
+    /// it is (the core has no clock) and the `133;D` floor (`B74`), straight
+    /// from the config in force. Takes the values, not the
+    /// app: the caller already holds the tab mutably.
+    fn sync_cmd_clock(term: &mut tortty_core::Term, now_ms: u64, shell_notify_secs: u64) {
+        term.now_ms = now_ms;
+        term.shell_notify_secs = shell_notify_secs;
+    }
+
+    /// The two values `sync_cmd_clock` needs, read once per drain.
+    fn cmd_clock(&self) -> (u64, u64) {
+        (
+            self.boot.elapsed().as_millis() as u64,
+            self.opts.cfg.shell_notify_secs,
+        )
+    }
+
     /// Feeds the parked workspaces (`M-K`): a notification in workspace 3 has
     /// to fire while workspace 1 is in front, and the pty produces whether
     /// anybody looks. Feed only — no title, blink or draw belongs to a parked
@@ -2564,6 +2586,8 @@ impl App {
                 let mark = self.parked[s].tabs[j].term.mark();
                 let t0 = std::time::Instant::now();
                 let view_before = self.parked[s].tabs[j].view_off;
+                let (now_ms, floor) = self.cmd_clock();
+                Self::sync_cmd_clock(&mut self.parked[s].tabs[j].term, now_ms, floor);
                 self.parked[s].tabs[j].term.feed(&bytes);
                 if prof::enabled() {
                     prof::add_parse(t0.elapsed().as_nanos() as u64, bytes.len());
@@ -2661,6 +2685,8 @@ impl App {
             let mark = self.tabs[i].term.mark();
             let t0 = std::time::Instant::now();
             let view_before = self.tabs[i].view_off;
+            let (now_ms, floor) = self.cmd_clock();
+            Self::sync_cmd_clock(&mut self.tabs[i].term, now_ms, floor);
             self.tabs[i].term.feed(&bytes);
             if prof::enabled() {
                 prof::add_parse(t0.elapsed().as_nanos() as u64, bytes.len());

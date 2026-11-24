@@ -314,7 +314,8 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   at four lines.
 - Notifications (every source, one drawing): `OSC 9`, `777;notify`, the final
   states of `9;4` (`error`, `paused`) and of `7501` (`done`, `blocked`, `paused`,
-  `error`, `idle`), and the BEL under `bell visual`. The foreground tab wears the
+  `error`, `idle`), the shell's `133;D` when the command ran long
+  (`shell_notify_secs`), and the BEL under `bell visual`. The foreground tab wears the
   **bell** in front of its label (two cells, from the emoji atlas when the font
   has a colour one, tinted with the label otherwise); the workspace card turns
   yellow when the tab is in another workspace, and the window asks for urgency

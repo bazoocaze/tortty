@@ -1650,6 +1650,12 @@ primeira.
 - The seam gained one capability, `has_debug_socket()`, so the self test asks before checking the permissions of a socket that cannot exist, and `backend_x11()` became `window_accepts_position()` — Windows honours a position, Wayland refuses it.
 - What it refuses with a reason: the debug socket (named pipe), `SIGHUP`/last words, the child cwd behind the title, the signals, the X11 window id and `WM_CLASS`, the civil time zone. Limits in `LIMITATIONS.md`, the measurement in `PORTABILITY.md`, what is left in `M-X`.
 
+## 2026-11-24 — a finished command notifies, and the DCS answers back
+
+- `133;D` is a notification now (`B74`): a command that ran past `shell_notify_secs` (default 10 s) notifies, whatever the status was — a fast one means the owner was watching, so speed alone is never news. A long one that failed shows red (`exit 2 · 32.0 s`). `none`/`off`/`0` turns the `D` off. The shell has to send the marks (still `B39`'s snippet); the clock is the app's (`Term::now_ms`, written before every `feed` — the core has no clock, as `cell_size` already showed), raised on the `D` because the next prompt drops the status records.
+- `DECRQSS` and `XTGETTCAP` answer (`B73`): `m` (the pen), `r` (the scroll region), `SP q` (the cursor style, or the shipped default without one seen), and a table of three true things (`Co` = 256, `TN` = tortty, `RGB` = 8); everything else gets the standard negative. Key names are refused on purpose — what a key sends depends on the keyboard flags in force, so a static answer would lie.
+- Twelve new core tests, config keys in `CONFIG.md`, the wire in `VT.md`.
+
 ## 2026-11-24 — the last `kitty` chunk may arrive without its `=`
 
 - `iicat.sh mario_face.png` answered `EINVAL:base64` and drew nothing: `kitten icat` cuts the base64 stream at 4096 characters and **drops the trailing `=`** (the length comes from `S=`), and the last piece of a 55 354-byte PNG is 78 characters — 78 % 4 = 2, which the assembler read as a group of four cut short and refused.

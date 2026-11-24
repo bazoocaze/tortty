@@ -237,6 +237,12 @@ impl Theme {
 }
 
 /// The effective configuration.
+/// When the shell's `133;D` becomes a notification (`B74`): a command that
+/// ran this long. Ten seconds: long enough that the owner may have left the
+/// tab, short enough that a surprise still feels fresh.
+pub const SHELL_NOTIFY_DEFAULT: u64 = 10;
+
+#[allow(clippy::struct_excessive_bools)] // the config is flags by nature
 #[derive(Clone, PartialEq, Debug)]
 pub struct Config {
     pub shell: Option<String>,
@@ -254,6 +260,11 @@ pub struct Config {
     /// Where the state a program reports about itself (`OSC 7501`, `B47`) is
     /// visible once the toast is gone.
     pub progress_show: ProgressShow,
+    /// The `133;D` rule (`B74`): a command that ran this long notifies —
+    /// whatever the status was, since a fast one means the owner was watching
+    /// (the screen is the source of truth for what just happened). `0` = the
+    /// `D` never notifies.
+    pub shell_notify_secs: u64,
     pub debug_log: Option<String>,
     /// The shortcut table (`M-H`): chords the app eats before the encoder.
     pub bindings: crate::keymap::Bindings,
@@ -285,6 +296,7 @@ const KNOWN: &[&str] = &[
     "copy_on_select",
     "bold_as_bright",
     "progress_show",
+    "shell_notify_secs",
     "debug_log",
     "map",
     "unmap",
@@ -349,6 +361,7 @@ impl Config {
             copy_on_select: false,
             bold_as_bright: false,
             progress_show: ProgressShow::Bar,
+            shell_notify_secs: SHELL_NOTIFY_DEFAULT,
             debug_log: None,
             bindings: crate::keymap::Bindings::default(),
             fg: Color::Rgb(0xd6, 0xd6, 0xd6),
@@ -501,6 +514,16 @@ impl Config {
                 "progress_show" => match ProgressShow::parse(value) {
                     Some(s) => cfg.progress_show = s,
                     None => errors.push(bad(format!("\"{value}\" is not none, title or bar"))),
+                },
+                "shell_notify_secs" => match value {
+                    "none" | "off" => cfg.shell_notify_secs = 0,
+                    other => match other.parse::<u64>() {
+                        Ok(v) if v <= 3600 => cfg.shell_notify_secs = v,
+                        Ok(v) => errors.push(bad(format!("{v} above the ceiling 3600 s"))),
+                        Err(_) => {
+                            errors.push(bad(format!("\"{value}\" is not seconds, none or off")));
+                        },
+                    },
                 },
                 "map" => {
                     if let Err(msg) = cfg.bindings.map_text(value) {
