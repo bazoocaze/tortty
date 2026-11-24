@@ -116,7 +116,9 @@ would paint in the middle of a glyph that spans more than one cell.
   configuration that was already in effect. Half a configuration is worse than
   none.
 
-An unknown key is an error, it is not silently ignored.
+An unknown key is an error, it is not silently ignored. A renamed key is an
+unknown key: `progress_show` replaced `status_show` with no alias, so a file
+still carrying the old line says so and the line has no effect.
 
 ## Colours change at run time
 
