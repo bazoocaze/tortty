@@ -337,8 +337,9 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   of the workspace card), `title` (the percentage on the tab label **and on the
   window title**, the state word when the program gave no measure) or `none`. The
   shade is the state's, one light tone each, all opaque: light green normal,
-  light yellow while the program waits for you (`blocked`/`paused`), light red
-  on error, light cyan for the indeterminate band of the full width. The fill is in pixels, so 37% of a 20-cell tab is 7.4 cells
+  light yellow while the program waits for you (`blocked`/`paused`), light cyan
+  for the indeterminate band of the full width (an error asks instead of
+  drawing: it has no bar). The fill is in pixels, so 37% of a 20-cell tab is 7.4 cells
   of ink; `0` removes the record, and the bar with it. Progress never asks for
   you, so it never marks a tab. **limit:** the window only (no taskbar); the bar
   needs the tab bar, so with a single tab and `progress_show = bar` nothing is

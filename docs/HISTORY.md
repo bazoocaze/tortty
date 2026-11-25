@@ -2,6 +2,12 @@
 
 Concise history of past activities. A maximum of 5 lines per activity.
 
+## 2026-11-25 — the entry of progress is faithful to the wire
+
+- The `9;4` lock was `seen` forever: one real `7501` (a pi's startup `idle`) killed the keepalive — and its `0` — for the whole tab. It is now the rich report itself: in flight with a `kind`, exactly what a mapped `9;4` would wipe, gone with the records.
+- `9;4;2` keeps the percentage the program gave instead of stuffing `100` into the record (an error draws no bar either way); a digit state the terminal does not know is dropped whole — the gate is explicit, never guessed as busy.
+- Regression test with the owner's sequence: `9;4;3` → `7501 working` → `7501 done` → `9;4;3` paints again. 290 core tests.
+
 ## 2026-11-25 — the chrome gets its own colours
 
 - Colour round with the owner (swatches in a throwaway `/tmp` page, discussion first): the selected tab and card wear `#0f3d22` with pure-white text instead of the theme inversion; the bar is one light tone per state (`#4ade80` ok, `#fcd34d` paused/blocked, `#f87171` error, `#22d3ee` indeterminate, all opaque).

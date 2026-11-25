@@ -168,8 +168,8 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
 - **Progress stays in the window.** `OSC 9;4` (mintty/ConEmu) draws a 2 px bar
   on the bottom edge of the tab and of the workspace card (or the percentage on
   the label, under `progress_show = title`): no taskbar bar and no animation —
-  the indeterminate state is a still translucent band, because something that
-  moves costs a clock and a frame per step. The toast is never involved: a 1 Hz
+  the indeterminate state is a still band of light cyan, because something
+  that moves costs a clock and a frame per step. The toast is never involved: a 1 Hz
   keepalive repeater would pin it forever. With a single tab there is no tab bar
   and `bar` draws nothing — `title` is the face that shows in every window.
 - **An `OSC 8` link opens through `xdg-open`, and only for five schemes**

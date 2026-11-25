@@ -2027,11 +2027,13 @@ impl Term {
             // progress form (which some TUIs send as a keepalive while busy).
             // Swallowed, not toasted: a 1 Hz repeater would pin the toast and
             // the badge forever, and `4;3` is a state, not a sentence.
-            // 0 clears, 1 normal, 2 error, 3 indeterminate, 4 warning/paused; a
-            // digit state we do not know is still this form — swallowed, never a
-            // toast (a 1 Hz repeater would pin it forever)
+            // 0 clears, 1 normal, 2 error, 3 indeterminate, 4 warning/paused. A
+            // digit state we do not know is dropped whole: not the progress form,
+            // and not a toast either (a 1 Hz repeater would pin one forever)
             9 => match Self::osc_progress(arg) {
-                Some((state, pct)) if state < 5 => {
+                // `0`-`4` are the states this terminal knows; a digit it does not
+                // know is not the progress form and is dropped whole
+                Some((state @ 0..=4, pct)) => {
                     // the spec's mapping: the progress form feeds the root record
                     // until a real `7501` report arrives, and it is why the form
                     // is swallowed instead of toasted
@@ -4229,6 +4231,26 @@ mod tests {
         assert_eq!(t.notifs, 0);
     }
 
+    /// The keepalive came back after the `7501` reports settled: the lock is the
+    /// rich report itself, not the fact that one was ever heard (the bug the
+    /// owner hit — one `pi` startup report and the `9;4;3` was dead for the
+    /// tab's whole life).
+    #[test]
+    fn the_keepalive_returns_after_a_report_settles() {
+        let mut t = Term::new(20, 4);
+        t.feed(b"\x1b]9;4;3\x07");
+        assert_eq!(t.progress.map(|p| (p.state, p.pct)), Some((3, None)));
+        t.feed(b"\x1b]7501;state=working:app=pi\x1b\\");
+        t.feed(b"\x1b]7501;state=done:app=pi\x1b\\");
+        // the reports are over and neither carried a `kind`: the root is free
+        t.feed(b"\x1b]9;4;3\x07");
+        assert_eq!(
+            t.progress.map(|p| (p.state, p.pct)),
+            Some((3, None)),
+            "the indeterminate band is back"
+        );
+    }
+
     #[test]
     fn osc9_progress_is_clamped_and_an_unknown_state_is_still_not_a_message() {
         let mut t = Term::new(20, 4);
@@ -5426,12 +5448,12 @@ mod tests {
         t.feed(b"\x1b]133;A\x07");
         assert_eq!(t.status.len(), 0);
         assert_eq!(t.progress, None, "the bar goes with the record");
-        // what the prompt must **not** take: the program still speaks `7501`,
-        // so a later `9;4` is not allowed to map itself onto the root again
+        // the prompt left the root free: the lock was that report's `kind`, and
+        // it went with the records — so the keepalive may map again
         t.feed(b"\x1b]9;4;1;40\x1b\\");
-        assert!(t.status.is_empty());
-        assert_eq!(t.progress, None);
-        // ...and the program reporting again brings the bar back, by design
+        assert_eq!(t.status.len(), 1);
+        assert_eq!(t.progress.map(|p| (p.state, p.pct)), Some((1, Some(40))));
+        // ...and the program reporting again takes the bar back, by design
         t.feed(b"\x1b]7501;state=working:app=cargo:progress=40\x1b\\");
         assert_eq!(t.progress.map(|p| (p.state, p.pct)), Some((1, Some(40))));
     }

@@ -137,8 +137,8 @@ digits, not a sentence.
 |---|---|---|
 | `0` | clear | removes the root record — the bar goes with it |
 | `1` | working, normal | root record `working`, bar filled to the percentage |
-| `2` | error | root record `error`: **it asks for you** (see below) and there is no bar left |
-| `3` | indeterminate | root record `working` without a measure: translucent cyan bar, full and still (it does not move: moving it would need a clock and a frame per step for a fact the state already tells) |
+| `2` | error | root record `error`: **it asks for you** (see below), no bar either way — and the percentage, when the program gave one, stays on the record |
+| `3` | indeterminate | root record `working` without a measure: light cyan bar, full and still (it does not move: moving it would need a clock and a frame per step for a fact the state already tells) |
 | `4` | warning / paused | root record `paused`: yellow bar **and** it asks for you |
 
 `percentage` is 0–100 and optional (absent means "busy, no measure"). Where the
@@ -153,15 +153,18 @@ Four behaviours worth knowing:
 - States `2` and `4` are **final as far as the user is concerned**: they become a
   notification, exactly like `OSC 9` — no text to invent, so the state's own word
   (`error`, `paused`) is what the notification says.
-- A digit state tortty does not know is still this form: swallowed, no notification.
+- A digit state tortty does not know is dropped whole: it is not this form at all, and never a notification.
 - `OSC 9` with anything that is not `4;…` is a **notification**, as above — the
   two forms share the number and are told apart by shape.
 
 The progress form feeds the root [status record](#program-status-osc-7501), so a
 program that only knows `9;4` still gets the same record, the same bar and the
-same notifications. That mapping stops for good once the program sends a real
-`7501` report — a mapped `9;4` would wipe the `kind` and the `msg` that report
-carried.
+same notifications. The form stays out of the root while a real `7501` report
+owns it **and is still in flight with a `kind`** — exactly the `kind` and `msg`
+a mapped `9;4` would wipe. Nothing richer than that is protected, and the lock
+ends with the report: a finished report (or one carrying only a state) leaves
+the root to the form again, so the keepalive keeps painting for the rest of the
+tab's life.
 
 ## Program status: `OSC 7501`
 

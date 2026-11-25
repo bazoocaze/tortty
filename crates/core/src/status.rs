@@ -161,9 +161,6 @@ pub struct Applied {
 pub struct Status {
     map: BTreeMap<String, Record>,
     seq: u64,
-    /// A real `7501` report arrived: `OSC 9;4` stops feeding the root record
-    /// until the next full reset (spec).
-    seen: bool,
 }
 
 /// The result of one report: the record changed, or the report was ignored.
@@ -215,13 +212,16 @@ impl Status {
 
     #[must_use]
     pub fn seen_report(&self) -> bool {
-        self.seen
+        // the rich record is what the lock protects, not the fact that a report
+        // was ever heard: a `7501` that is over stops owning the root
+        self.map
+            .get("")
+            .is_some_and(|r| r.state.in_flight() && r.kind.is_some())
     }
 
     /// `RIS` (and a new `Term`): every record goes.
     pub fn clear(&mut self) {
         self.map.clear();
-        self.seen = false;
     }
 
     /// A new shell prompt (`OSC 133;A`): every record goes.
@@ -234,9 +234,8 @@ impl Status {
     /// per command. The notice itself does not live here: it is the tab's
     /// notification list plus the mark, which outlive the prompt.
     ///
-    /// `seen` survives on purpose — it says this terminal has *heard* a `7501`
-    /// report, which stays true after the records are gone; forgetting it would
-    /// let a later `9;4` take the root back.
+    /// A `9;4` may take the root back afterwards: the lock that keeps it out is
+    /// the rich report itself, and it left with the records (see `from_progress`).
     pub fn dismiss(&mut self) {
         self.map.clear();
     }
@@ -244,15 +243,19 @@ impl Status {
     /// `OSC 9;4;state[;pct]` feeding the root record (the spec allows the
     /// mapping, and it is why the form is swallowed today).
     ///
-    /// Stops once a real report arrived: a mapped `9;4` would wipe the `kind` and
-    /// the `msg` of the record a program wrote.
+    /// It stays out while a real report owns the root and that report is still in
+    /// flight with a `kind` — exactly the `kind`/`msg` a mapped `9;4` would wipe.
+    /// Nothing richer than that is protected, and the lock ends with the report:
+    /// a finished report, or one that carries nothing but a state, leaves the root
+    /// to the form again (a terminal that answered `7501;?` must not lose the
+    /// `9;4;3` keepalive for the rest of the tab's life).
     ///
     /// `true` = the record changed. The caller needs it: a final state here is
     /// news (the form still means "the command ended, badly"), and a repeater
     /// must not say it twice.
     #[must_use]
     pub fn from_progress(&mut self, state: u8, pct: Option<u8>) -> bool {
-        if self.seen {
+        if self.seen_report() {
             return false;
         }
         let (state, progress) = match state {
@@ -260,10 +263,17 @@ impl Status {
                 return self.map.remove("").is_some();
             },
             1 => (State::Working, pct),
-            2 => (State::Error, Some(100)),
+            // an error follows the percentage when the program gave one: the
+            // record is the truth, and a bar jumping to 100% would say the
+            // command got further than it did
+            2 => (State::Error, pct),
             4 => (State::Paused, pct),
-            // indeterminate (3) and anything else: busy, no percentage
-            _ => (State::Working, None),
+            // indeterminate (3): busy, no percentage
+            3 => (State::Working, None),
+            // a digit we give no meaning to is not this form at all: ignored,
+            // never "busy by guess". A later version of the spec must not read
+            // as `working` here, the same way an unknown `7501` state is dropped.
+            _ => return false,
         };
         // a repeater (`9;4` at 1 Hz) must not churn the record: same state and
         // same percentage is the same fact told twice
@@ -340,7 +350,6 @@ impl Status {
         } else {
             None
         };
-        self.seen = true;
         // a record without `app` takes it from the nearest ancestor that has one
         let app = app.or_else(|| self.ancestor_app(&id));
         let mut record = Record {
@@ -776,25 +785,44 @@ mod tests {
         // repeat silent is per command, not per terminal
         let a = s.report(b"state=done:id=c").expect("a new command ended");
         assert!(a.state.notifies());
-        // `seen` survives: a real report arrived and `9;4` may not take the root
-        assert!(s.seen_report());
+        // the lock left with the records: it protected that report's `kind`, and
+        // there is no record left for a `9;4` to wipe
+        assert!(!s.seen_report());
     }
 
     #[test]
-    fn osc_9_4_feeds_the_root_until_a_real_report_arrives() {
+    fn osc_9_4_stays_out_only_while_a_rich_report_owns_the_root() {
         let mut s = Status::default();
         assert!(s.from_progress(1, Some(37)), "the root record appeared");
         assert_eq!(s.root().unwrap().state, State::Working);
         assert_eq!(s.root().unwrap().progress, Some(37));
-        // the real report owns the record now
+        // the real report owns the record now: a mapped `9;4` would wipe the
+        // `kind` and the `msg` it carries, so it stays out — even `0`
         s.report(b"state=blocked:kind=auth:app=brew");
         assert!(!s.from_progress(1, Some(80)), "a real report owns it now");
         assert_eq!(s.root().unwrap().state, State::Blocked);
         assert_eq!(s.root().unwrap().progress, None);
-        // `0` clears the record itself, not only the bar
-        s.report(b"state=clear");
+        assert!(!s.from_progress(0, None), "nor clear it");
+        // the report ends: the root is free again and the keepalive paints
+        s.report(b"state=done:app=brew");
+        assert!(s.from_progress(3, None), "the keepalive paints again");
+        assert_eq!(s.root().unwrap().state, State::Working);
+        // and the form still cleans up after itself
+        assert!(s.from_progress(0, None));
         assert!(s.root().is_none());
-        assert!(!s.from_progress(0, None), "nothing to remove");
+    }
+
+    /// A `9;4` that only says "busy" never owns the root against a report that
+    /// says more: the lock is exactly the `kind` a mapped `9;4` would wipe.
+    #[test]
+    fn a_state_without_a_kind_is_not_locked_against_the_form() {
+        let mut s = Status::default();
+        s.report(b"state=working:app=make");
+        assert!(!s.seen_report(), "nothing richer than a state is here");
+        // a new percentage is a change: the lock is open and the form writes
+        assert!(s.from_progress(1, Some(50)), "the form takes the root");
+        assert_eq!(s.root().unwrap().progress, Some(50));
+        assert_eq!(s.root().unwrap().state, State::Working);
     }
 
     /// The `9;4` form is mapped onto the same rows: `2` is an error (news), `4`
@@ -806,9 +834,14 @@ mod tests {
         assert!(s.from_progress(2, None), "an error is a change");
         let r = s.root().expect("the error is a record too");
         assert_eq!(r.state, State::Error);
-        assert_eq!(r.progress, Some(100));
+        // no measure from the program: the error record has no bar to draw
+        assert_eq!(r.progress, None);
         assert!(r.state.notifies());
         assert!(!r.state.in_flight(), "a finished command has no bar");
+        // an error that gave a percentage keeps it: the record is the truth
+        assert!(s.from_progress(1, Some(10)), "back to working");
+        assert!(s.from_progress(2, Some(40)), "an error is a change again");
+        assert_eq!(s.root().unwrap().progress, Some(40));
 
         let mut s = Status::default();
         assert!(s.from_progress(4, Some(40)), "a pause is a change");
