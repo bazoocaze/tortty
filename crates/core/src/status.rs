@@ -250,17 +250,22 @@ impl Status {
     /// to the form again (a terminal that answered `7501;?` must not lose the
     /// `9;4;3` keepalive for the rest of the tab's life).
     ///
-    /// `true` = the record changed. The caller needs it: a final state here is
-    /// news (the form still means "the command ended, badly"), and a repeater
-    /// must not say it twice.
+    /// The outcome tells the caller why: a final state here is news (`Applied`,
+    /// the form still means "the command ended, badly"), and a repeater must not
+    /// say it twice. The reason is what the trace shows.
     #[must_use]
-    pub fn from_progress(&mut self, state: u8, pct: Option<u8>) -> bool {
+    pub fn from_progress(&mut self, state: u8, pct: Option<u8>) -> crate::trace::Outcome {
+        use crate::trace::Outcome;
         if self.seen_report() {
-            return false;
+            return Outcome::Locked;
         }
         let (state, progress) = match state {
             0 => {
-                return self.map.remove("").is_some();
+                return if self.map.remove("").is_some() {
+                    Outcome::Applied
+                } else {
+                    Outcome::Repeat
+                };
             },
             1 => (State::Working, pct),
             // an error follows the percentage when the program gave one: the
@@ -273,7 +278,7 @@ impl Status {
             // a digit we give no meaning to is not this form at all: ignored,
             // never "busy by guess". A later version of the spec must not read
             // as `working` here, the same way an unknown `7501` state is dropped.
-            _ => return false,
+            _ => return Outcome::Unknown,
         };
         // a repeater (`9;4` at 1 Hz) must not churn the record: same state and
         // same percentage is the same fact told twice
@@ -282,7 +287,7 @@ impl Status {
             .get("")
             .is_some_and(|r| r.state == state && r.progress == progress)
         {
-            return false;
+            return Outcome::Repeat;
         }
         self.seq += 1;
         let seq = self.seq;
@@ -298,7 +303,7 @@ impl Status {
                 seq,
             },
         );
-        true
+        Outcome::Applied
     }
 
     /// The feature-detection answer (`7501;?`), with the lists this terminal
@@ -793,22 +798,39 @@ mod tests {
     #[test]
     fn osc_9_4_stays_out_only_while_a_rich_report_owns_the_root() {
         let mut s = Status::default();
-        assert!(s.from_progress(1, Some(37)), "the root record appeared");
+        assert!(
+            matches!(s.from_progress(1, Some(37)), crate::trace::Outcome::Applied),
+            "the root record appeared"
+        );
         assert_eq!(s.root().unwrap().state, State::Working);
         assert_eq!(s.root().unwrap().progress, Some(37));
         // the real report owns the record now: a mapped `9;4` would wipe the
         // `kind` and the `msg` it carries, so it stays out — even `0`
         s.report(b"state=blocked:kind=auth:app=brew");
-        assert!(!s.from_progress(1, Some(80)), "a real report owns it now");
+        assert_ne!(
+            s.from_progress(1, Some(80)),
+            crate::trace::Outcome::Applied,
+            "a real report owns it now"
+        );
         assert_eq!(s.root().unwrap().state, State::Blocked);
         assert_eq!(s.root().unwrap().progress, None);
-        assert!(!s.from_progress(0, None), "nor clear it");
+        assert_ne!(
+            s.from_progress(0, None),
+            crate::trace::Outcome::Applied,
+            "nor clear it"
+        );
         // the report ends: the root is free again and the keepalive paints
         s.report(b"state=done:app=brew");
-        assert!(s.from_progress(3, None), "the keepalive paints again");
+        assert!(
+            matches!(s.from_progress(3, None), crate::trace::Outcome::Applied),
+            "the keepalive paints again"
+        );
         assert_eq!(s.root().unwrap().state, State::Working);
         // and the form still cleans up after itself
-        assert!(s.from_progress(0, None));
+        assert!(matches!(
+            s.from_progress(0, None),
+            crate::trace::Outcome::Applied
+        ));
         assert!(s.root().is_none());
     }
 
@@ -820,7 +842,10 @@ mod tests {
         s.report(b"state=working:app=make");
         assert!(!s.seen_report(), "nothing richer than a state is here");
         // a new percentage is a change: the lock is open and the form writes
-        assert!(s.from_progress(1, Some(50)), "the form takes the root");
+        assert!(
+            matches!(s.from_progress(1, Some(50)), crate::trace::Outcome::Applied),
+            "the form takes the root"
+        );
         assert_eq!(s.root().unwrap().progress, Some(50));
         assert_eq!(s.root().unwrap().state, State::Working);
     }
@@ -830,8 +855,14 @@ mod tests {
     #[test]
     fn osc_9_4_maps_two_and_four_onto_error_and_paused() {
         let mut s = Status::default();
-        assert!(s.from_progress(1, Some(10)));
-        assert!(s.from_progress(2, None), "an error is a change");
+        assert!(matches!(
+            s.from_progress(1, Some(10)),
+            crate::trace::Outcome::Applied
+        ));
+        assert!(
+            matches!(s.from_progress(2, None), crate::trace::Outcome::Applied),
+            "an error is a change"
+        );
         let r = s.root().expect("the error is a record too");
         assert_eq!(r.state, State::Error);
         // no measure from the program: the error record has no bar to draw
@@ -839,12 +870,21 @@ mod tests {
         assert!(r.state.notifies());
         assert!(!r.state.in_flight(), "a finished command has no bar");
         // an error that gave a percentage keeps it: the record is the truth
-        assert!(s.from_progress(1, Some(10)), "back to working");
-        assert!(s.from_progress(2, Some(40)), "an error is a change again");
+        assert!(
+            matches!(s.from_progress(1, Some(10)), crate::trace::Outcome::Applied),
+            "back to working"
+        );
+        assert!(
+            matches!(s.from_progress(2, Some(40)), crate::trace::Outcome::Applied),
+            "an error is a change again"
+        );
         assert_eq!(s.root().unwrap().progress, Some(40));
 
         let mut s = Status::default();
-        assert!(s.from_progress(4, Some(40)), "a pause is a change");
+        assert!(
+            matches!(s.from_progress(4, Some(40)), crate::trace::Outcome::Applied),
+            "a pause is a change"
+        );
         let r = s.root().expect("paused is a record");
         assert_eq!(r.state, State::Paused);
         assert_eq!(r.progress, Some(40));
@@ -855,14 +895,21 @@ mod tests {
     #[test]
     fn a_repeating_progress_does_not_churn_the_record() {
         let mut s = Status::default();
-        assert!(s.from_progress(1, Some(30)));
+        assert!(matches!(
+            s.from_progress(1, Some(30)),
+            crate::trace::Outcome::Applied
+        ));
         let seq = s.root().unwrap().seq;
-        assert!(
-            !s.from_progress(1, Some(30)),
+        assert_ne!(
+            s.from_progress(1, Some(30)),
+            crate::trace::Outcome::Applied,
             "the same fact, not a new one"
         );
         assert_eq!(s.root().unwrap().seq, seq);
-        assert!(s.from_progress(1, Some(31)), "a new percentage is news");
+        assert!(
+            matches!(s.from_progress(1, Some(31)), crate::trace::Outcome::Applied),
+            "a new percentage is news"
+        );
         assert_eq!(s.root().unwrap().seq, seq + 1, "a new percentage is news");
     }
 

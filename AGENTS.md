@@ -57,7 +57,10 @@ testable without a display:
   parser, scrollback. **It knows no window, pty, GPU, clock, thread or
   configuration.** No `wgpu`, no `winit`, no system dependency. If it needs
   something from the world, the caller passes it as a parameter or reads the
-  result of an event returned by `feed`.
+  result of an event returned by `feed`. It has no log either: what the wire
+  delivered and what the parser decided leaves as trace events
+  (`Term::take_trace`, a bounded ring that never stops the emulation), which
+  the app stamps and writes.
 - `crates/app` — the app: `pty` (portable-pty), `app` (winit + event loop),
   `render`/`glyph`/`atlas` (wgpu + swash), `keys`, `debugsock`, `prof`, `cli`.
 - `tools/` — `devrun.sh`/`devkill.sh` (PID file), `benchrun.py`, `bench.sh`,

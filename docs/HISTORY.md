@@ -2,6 +2,11 @@
 
 Concise history of past activities. A maximum of 5 lines per activity.
 
+## 2026-11-25 — the emulation speaks: trace events to the log
+
+- The core now accumulates a bounded ring of trace events (`crates/core/src/trace.rs`, 64 max — a full ring forgets the oldest and the parser never stops for lack of a consumer): every `9;4` form with **why** it was applied/repeated/locked/unknown, every notification entering the list, every `7501` report that changed nothing, every `133;A` prompt. The app drains (`take_trace`) and stamps into the new `osc` area. Born from the owner's challenge that an emulator with no voice about its decisions is strange — the two-shape answer (port vs. domain events) landed on the drained ring, the codebase's own idiom (`take_sync_closed`).
+- Regression tests: the trace says why the form was refused (the lock that killed the keepalive used to be invisible), and an undrained ring never stops the emulation.
+
 ## 2026-11-25 — the entry of progress is faithful to the wire
 
 - The `9;4` lock was `seen` forever: one real `7501` (a pi's startup `idle`) killed the keepalive — and its `0` — for the whole tab. It is now the rich report itself: in flight with a `kind`, exactly what a mapped `9;4` would wipe, gone with the records.

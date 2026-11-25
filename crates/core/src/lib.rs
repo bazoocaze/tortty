@@ -25,6 +25,7 @@ pub mod snapshot;
 pub mod status;
 pub mod term;
 pub mod tiff;
+pub mod trace;
 
 pub use cell::Cell;
 pub use color::Color;

@@ -318,6 +318,9 @@ pub struct Term {
     pub notifs: u32,
     /// What the child asked the user to look at, newest first.
     pub notifications: crate::notif::List,
+    /// The emulation's decisions since the last drain (bounded: a full ring
+    /// forgets the oldest — the emulation never stops for lack of a consumer).
+    trace: crate::trace::Trace,
     /// Progress reported by the program (`OSC 9;4`): the tab label draws it.
     /// `None` = nothing to show; state `0` clears it.
     pub progress: Option<Progress>,
@@ -458,6 +461,7 @@ impl Term {
             bells: 0,
             notifs: 0,
             notifications: crate::notif::List::default(),
+            trace: crate::trace::Trace::default(),
             progress: None,
             status: crate::status::Status::default(),
             marks: crate::prompt::Marks::default(),
@@ -2035,21 +2039,27 @@ impl Term {
                 // know is not the progress form and is dropped whole
                 Some((state @ 0..=4, pct)) => {
                     // the spec's mapping: the progress form feeds the root record
-                    // until a real `7501` report arrives, and it is why the form
-                    // is swallowed instead of toasted
-                    let changed = self.status.from_progress(state, pct);
+                    // while no rich report owns it, and it is why the form is
+                    // swallowed instead of toasted
+                    let outcome = self.status.from_progress(state, pct);
                     // the bar is always re-derived from the record (`state=0`
                     // removes it): one truth, not two
                     self.root_progress();
+                    self.trace.push(crate::trace::Event::Progress {
+                        state,
+                        pct,
+                        outcome,
+                        bar: self.progress.map(|p| (p.state, p.pct)),
+                    });
                     // a final state is news, exactly like the same state reported
                     // by `7501` — the form carries no text, so the state's word is
                     // the text. A repeater changes nothing and says nothing.
-                    let word = self
-                        .status
-                        .root()
-                        .filter(|r| r.state.notifies())
-                        .map(|r| r.state.name().to_string());
-                    if changed {
+                    if outcome == crate::trace::Outcome::Applied {
+                        let word = self
+                            .status
+                            .root()
+                            .filter(|r| r.state.notifies())
+                            .map(|r| r.state.name().to_string());
                         if let Some(word) = word {
                             let shade = self.status.root().map_or(crate::notif::Shade::Info, |r| {
                                 crate::notif::Shade::of(r.state)
@@ -2064,7 +2074,15 @@ impl Term {
                         }
                     }
                 },
-                Some(_) => {},
+                Some((state, pct)) => {
+                    // a digit we give no meaning to: not this form, dropped whole
+                    self.trace.push(crate::trace::Event::Progress {
+                        state,
+                        pct,
+                        outcome: crate::trace::Outcome::Unknown,
+                        bar: self.progress.map(|p| (p.state, p.pct)),
+                    });
+                },
                 None => self.osc_notify(arg),
             },
             777 => self.osc_notify777(arg),
@@ -2099,6 +2117,10 @@ impl Term {
         }
         let Some(applied) = self.status.report(arg) else {
             self.root_progress();
+            self.trace.push(crate::trace::Event::Status {
+                body: String::from_utf8_lossy(arg).into_owned(),
+                what: "no change",
+            });
             return;
         };
         if applied.state.notifies() {
@@ -2122,6 +2144,12 @@ impl Term {
             });
         }
         self.root_progress();
+    }
+
+    /// What the wire delivered and the parser decided since the last call: the
+    /// app stamps and writes it (`drain_tab`); the core only accumulates.
+    pub fn take_trace(&mut self) -> Vec<crate::trace::Event> {
+        self.trace.take()
     }
 
     /// The text of the newest notification, which is what a surface with one line
@@ -2197,6 +2225,7 @@ impl Term {
             // draws any more)
             self.status.dismiss();
             self.root_progress();
+            self.trace.push(crate::trace::Event::Prompt);
         }
         if kind == MarkKind::CommandStart {
             self.cmd_start_ms = Some(self.now_ms);
@@ -2478,6 +2507,12 @@ impl Term {
             notif.shade,
         ) {
             self.notifs = self.notifs.wrapping_add(1);
+            self.trace.push(crate::trace::Event::Notify {
+                source: notif.source,
+                id: notif.id.clone(),
+                shade: notif.shade,
+                text: notif.text(),
+            });
         }
     }
 
@@ -4229,6 +4264,78 @@ mod tests {
         t.feed(b"\x1b]9;4;0\x07");
         assert_eq!(t.progress, None);
         assert_eq!(t.notifs, 0);
+    }
+
+    /// The trace is the debugging voice: a refusal says WHY it was refused.
+    /// Before this, the lock that killed the keepalive (the owner's bug) was
+    /// invisible — not a fact, not in a list, not on the bar.
+    #[test]
+    fn the_trace_says_why_the_form_was_refused() {
+        let mut t = Term::new(20, 4);
+        t.feed(b"\x1b]9;4;1;30\x07");
+        t.feed(b"\x1b]9;4;1;30\x07"); // the same fact twice
+        t.feed(b"\x1b]7501;state=blocked:kind=auth:app=pi\x1b\\");
+        t.feed(b"\x1b]9;4;1;40\x07"); // locked out
+        t.feed(b"\x1b]9;4;7\x07"); // a digit with no meaning
+        let trace = t.take_trace();
+        assert_eq!(trace.len(), 5);
+        assert!(matches!(
+            trace[0],
+            crate::trace::Event::Progress {
+                outcome: crate::trace::Outcome::Applied,
+                ..
+            }
+        ));
+        assert!(matches!(
+            trace[1],
+            crate::trace::Event::Progress {
+                outcome: crate::trace::Outcome::Repeat,
+                ..
+            }
+        ));
+        assert!(matches!(
+            trace[2],
+            crate::trace::Event::Notify {
+                source: crate::notif::Source::Osc7501,
+                ..
+            }
+        ));
+        assert!(matches!(
+            trace[3],
+            crate::trace::Event::Progress {
+                outcome: crate::trace::Outcome::Locked,
+                ..
+            }
+        ));
+        assert!(matches!(
+            trace[4],
+            crate::trace::Event::Progress {
+                outcome: crate::trace::Outcome::Unknown,
+                ..
+            }
+        ));
+        // the drain takes everything: no event is left behind
+        assert_eq!(t.take_trace(), [], "no event is left behind");
+    }
+
+    /// The emulation cannot stop for lack of log consumption: a ring left full
+    /// forgets the oldest event and the parser goes on, byte after byte.
+    #[test]
+    fn an_undrained_trace_never_stops_the_emulation() {
+        let mut t = Term::new(20, 4);
+        for i in 0..(crate::trace::TRACE_MAX as u32 + 20) {
+            t.feed(format!("\x1b]9;4;1;{}\x07", i % 101).as_bytes());
+        }
+        // the ring held its cap and the emulation is alive: the last state is
+        // on the grid's record, not lost to a stuck log
+        assert_eq!(t.take_trace().len(), crate::trace::TRACE_MAX);
+        // 84 feeds applied (84 distinct percentages, the repeats are Repeat);
+        // the last one was 83
+        assert_eq!(
+            t.progress.map(|p| p.pct),
+            Some(Some(83)),
+            "the parser kept working"
+        );
     }
 
     /// The keepalive came back after the `7501` reports settled: the lock is the

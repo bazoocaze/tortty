@@ -65,8 +65,9 @@ line is the same four columns, so `cut`, `awk` and `grep` work without a parser:
   lines from it would hide them from that person. A `toast` line takes the level
   of the box it describes — a warning on screen is a warning in the file.
 - **The area** is one word: `app`, `socket`, `config`, `font`, `gpu`, `toast`,
-  `sync`, `view`, `dump`, `prof`. A tab-scoped event says its tab in the message
-  (`sync  tab 2 open …`), because the tab is a subject and not a kind of event.
+  `sync`, `view`, `dump`, `prof`, `osc`. A tab-scoped event says its tab in the
+  message (`sync  tab 2 open …`), because the tab is a subject and not a kind
+  of event.
 - **Only what happened** is printed: a window with no clears says nothing about
   clears, instead of eleven `×0` that hide the one counter that is not zero.
 - **The prologue** is written every time a file is opened — at startup and on the
@@ -127,6 +128,28 @@ A window that never closes is logged once as `open` and then only at `state`
 reset ends the DEC modes. The core counts and the app times: `SyncTrace`
 (`crates/core/src/term.rs`) has no clock, and the app stamps the window when it
 first sees it open.
+
+### The `osc` lines: what arrived, what was decided
+
+One line per trace event of the emulation — the notification/progress wire and
+its refusals. The core accumulates (a bounded ring of 64: a full ring forgets
+the oldest and the parser never stops for lack of a consumer); the app drains
+every frame and stamps the lines:
+
+```
+2026-11-25 01:37:14.958  info  osc     tab 1 OSC 9;4 state=3 pct=- applied bar=Some((3, None))
+2026-11-25 01:37:18.887  info  osc     tab 1 OSC 7501 id=- Warn "blocked — pi"
+2026-11-25 01:37:19.100  info  osc     tab 1 OSC 9;4 state=1 pct=40 locked bar=None
+```
+
+- `OSC 9;4 … applied` / `repeat` / `locked` / `unknown` — the progress form and
+  **why** it was treated that way: `locked` is the rich-report rule (a `7501`
+  in flight with a `kind` owns the root), `unknown` a digit state the terminal
+  gives no meaning to. `bar=` is what the tab shows after the decision.
+- `OSC 7501 id=- …` — a notification entering the tab's list: source, the
+  protocol id (`-` when the report has none), the shade and the text.
+- `OSC 7501 "…" (no change)` — a report that repeated the record or was
+  malformed, and `OSC 133;A — records dropped` for the prompt that clears.
 
 ### The view line: who moved the reader
 

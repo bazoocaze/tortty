@@ -241,6 +241,15 @@ fn hex(bytes: &[u8]) -> String {
 /// one that closed it. A window that opens and closes in a single read is
 /// therefore `0.0 ms` with `feeds 1`, which is the honest answer: the parser
 /// never held anything.
+/// The emulation's voice: what arrived and what the parser decided since the
+/// last drain, one line per event. The core only accumulates (bounded ring — a
+/// tab nobody watches forgets its oldest events and never stops).
+fn log_trace(term: &mut tortty_core::Term, who: &str) {
+    for ev in term.take_trace() {
+        log::line(log::Level::Info, "osc", &format!("{who} {}", ev.line()));
+    }
+}
+
 fn log_sync(tab: &mut Tab, who: &str, view_before: usize, now: std::time::Instant) {
     let view_now = tab.view_off;
     if let Some(t) = tab.term.sync_open() {
@@ -468,10 +477,14 @@ impl Tab {
                 // the owner's rule: `audible` is a sound, `none` throws the BEL
                 // away, and only `visual` makes it a notification
                 Bell::None => {},
-                Bell::Audible => out.beeps += 1,
+                Bell::Audible => {
+                    out.beeps += 1;
+                    log::line(log::Level::Info, "notif", "BEL audible — beep");
+                },
                 Bell::Visual => {
                     self.term
                         .push_notification(tortty_core::notif::Source::Bell);
+                    log::line(log::Level::Info, "notif", "BEL visual — notification");
                     self.raise(presence, out);
                 },
             }
@@ -479,6 +492,22 @@ impl Tab {
         let notifs = self.term.notifs;
         while self.notifs_seen != notifs {
             self.notifs_seen = self.notifs_seen.wrapping_add(1);
+            // every notification the wire delivered, with who sent it and what
+            // it said — this is the arrival, `raise` is only what we made of it
+            let news = self.term.notifications.entries().next().map(|n| {
+                format!(
+                    "{} id={} {:?} {:?}",
+                    n.source.name(),
+                    n.id.as_deref().unwrap_or("-"),
+                    n.shade,
+                    n.label()
+                )
+            });
+            log::line(
+                log::Level::Info,
+                "notif",
+                news.as_deref().unwrap_or("count moved, empty list"),
+            );
             self.raise(presence, out);
         }
     }
@@ -2594,6 +2623,7 @@ impl App {
                 }
                 let who = format!("ws {s} tab {}", self.parked[s].tabs[j].id);
                 log_sync(&mut self.parked[s].tabs[j], &who, view_before, t0);
+                log_trace(&mut self.parked[s].tabs[j].term, &who);
                 if self.parked[s].tabs[j].term.theme_dirty {
                     self.parked[s].tabs[j].term.theme_dirty = false;
                     let theme = self.parked[s].tabs[j].term.theme.clone();
@@ -2693,6 +2723,7 @@ impl App {
             }
             let who = format!("tab {}", self.tabs[i].id);
             log_sync(&mut self.tabs[i], &who, view_before, t0);
+            log_trace(&mut self.tabs[i].term, &who);
             // `OSC 4/10/11/12` touched the colors: the renderer has to know. It
             // holds for any tab: the theme belongs to the emulator, not the tab.
             if self.tabs[i].term.theme_dirty {
