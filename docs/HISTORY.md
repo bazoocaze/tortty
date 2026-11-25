@@ -2,6 +2,11 @@
 
 Concise history of past activities. A maximum of 5 lines per activity.
 
+## 2026-11-25 — the chrome gets its own colours
+
+- Colour round with the owner (swatches in a throwaway `/tmp` page, discussion first): the selected tab and card wear `#0f3d22` with pure-white text instead of the theme inversion; the bar is one light tone per state (`#4ade80` ok, `#fcd34d` paused/blocked, `#f87171` error, `#22d3ee` indeterminate, all opaque).
+- Bug fixed on the way: on an alerting card the bar turned `over` (the dark grid background — invisible on the dark card); it keeps the state's colour now, like the tab always did, and the yellow text keeps priority over the white.
+
 ## 2026-11-01 — phase 1: the feasibility experiment
 
 Question: does rewriting in Rust solve distribution and performance? The abort criterion was "if it does not do ≥3× the Python's MB/s and does not open `vim`/`mc`, it does not pay".

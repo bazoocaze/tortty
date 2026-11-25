@@ -881,8 +881,8 @@ impl Renderer {
         #[allow(clippy::cast_precision_loss)] // columns, far below 2^23
         let total_w = layout.m.cols as f32 * cw;
         let bg = self.color(Color::Idx(0), self.bg);
-        // text over the active tab uses the grid background colour (inversion)
-        let over = self.color(Color::Default, self.bg);
+        // the selected tab wears its own background with a white label now
+        // (`SEL_BG`/`SEL_FG` above), not the theme inversion
         // `origin.y` is `pad + bar`: so the bar lands in the reserved strip
         // (and not over the first grid row) it is drawn at y = -bar
         let y0 = -self.bar;
@@ -901,7 +901,7 @@ impl Renderer {
             };
             let label = crate::chrome::tab_label(slot.i, &spec);
             let (bg, fg) = if t.ativa {
-                (self.color(Color::Default, self.fg), over)
+                (chrome_rgb(SEL_BG), chrome_rgb(SEL_FG))
             } else {
                 (bg, self.color(Color::Idx(8), self.fg))
             };
@@ -945,7 +945,6 @@ impl Renderer {
         }
         let chh = self.fonts.ch;
         let bg = self.color(Color::Idx(0), self.bg);
-        let over = self.color(Color::Default, self.bg);
         // the column's bottom, in this coordinate space (y = 0 is the first grid
         // row): the cards and their text are cut here
         let bottom = layout.m.card_bottom();
@@ -957,7 +956,7 @@ impl Renderer {
             let y1 = y0 + height;
             let active = c.ativa;
             let (bg, fg) = if active {
-                (self.color(Color::Default, self.fg), over)
+                (chrome_rgb(SEL_BG), chrome_rgb(SEL_FG))
             } else {
                 (bg, self.color(Color::Idx(8), self.fg))
             };
@@ -986,11 +985,11 @@ impl Renderer {
                 .filter(|_| self.progress_show == tortty_core::config::ProgressShow::Bar)
             {
                 let (color, alpha, frac) = progress_ink(p);
-                let rgb = if c.alert {
-                    over
-                } else {
-                    self.color(color, self.fg)
-                };
+                // the bar keeps the state's colour even while the card alerts
+                // (it used to turn `over` here, which on a dark card was
+                // invisible): the yellow text carries the alert, the bar the
+                // measure — and the alert tint wins over the white, as agreed
+                let rgb = self.color(color, self.fg);
                 let h = PROGRESS_H.min(y1 - y0);
                 self.push_rect(x0, y1 - h, width * frac, h, [rgb[0], rgb[1], rgb[2], alpha]);
             }
@@ -2807,18 +2806,32 @@ pub struct TabInfo {
 /// label, and the width is in pixels (37% of a 20-cell tab is 7.4 cells of ink).
 const PROGRESS_H: f32 = 2.0;
 
-/// Colour and fill of a progress report: the shade follows the state, in the
-/// same three tones the toast uses, and a state with no measure fills the tab
-/// (there is a band, the program just cannot say how wide). Indeterminate is the
-/// only translucent one, and it does not move — moving it would need a clock and
-/// a frame per step, for a fact the state already tells.
+/// The selected tab and card wear their own background now (`#0f3d22`, picked
+/// by the owner in the colour round), not the theme inversion: the label is
+/// pure white on it, whatever the palette says.
+const SEL_BG: (u8, u8, u8) = (0x0f, 0x3d, 0x22);
+const SEL_FG: (u8, u8, u8) = (0xff, 0xff, 0xff);
+
+/// A fixed chrome tone for the shader (the chrome does not follow the
+/// terminal palette, and `Color::Default` would resolve to the theme).
+fn chrome_rgb(c: (u8, u8, u8)) -> [f32; 3] {
+    [
+        f32::from(c.0) / 255.0,
+        f32::from(c.1) / 255.0,
+        f32::from(c.2) / 255.0,
+    ]
+}
+
+/// Colour and fill of a progress report: one light tone per state, all opaque
+/// (picks of the colour round) — the bar says how far, the bell and the card
+/// tint say whether it wants you. A state with no measure fills the tab.
 fn progress_ink(p: Progress) -> (Color, f32, f32) {
     let frac = p.pct.map_or(1.0, |pct| f32::from(pct) / 100.0);
     match p.state {
-        2 => (Color::Idx(1), 1.0, frac),
-        4 => (Color::Idx(3), 1.0, frac),
-        3 => (Color::Idx(6), 0.35, 1.0),
-        _ => (Color::Idx(2), 1.0, frac),
+        2 => (Color::Rgb(0xf8, 0x71, 0x71), 1.0, frac),
+        4 => (Color::Rgb(0xfc, 0xd3, 0x4d), 1.0, frac),
+        3 => (Color::Rgb(0x22, 0xd3, 0xee), 1.0, frac),
+        _ => (Color::Rgb(0x4a, 0xde, 0x80), 1.0, frac),
     }
 }
 
@@ -3023,16 +3036,16 @@ mod tests {
         );
     }
 
-    /// `OSC 9;4`: the shade follows the state and the fill follows the fraction.
+    /// `OSC 9;4`: one light tone per state, all opaque, filled by the fraction.
     #[test]
     fn progress_ink_follows_the_state() {
-        // the three shades of the toast, opaque, filled by the fraction
+        // the colour round's picks: light green, light red, light yellow
         assert_eq!(
             progress_ink(Progress {
                 state: 1,
                 pct: Some(37)
             }),
-            (Color::Idx(2), 1.0, 37.0 / 100.0)
+            (Color::Rgb(0x4a, 0xde, 0x80), 1.0, 37.0 / 100.0)
         );
         assert_eq!(
             progress_ink(Progress {
@@ -3040,23 +3053,23 @@ mod tests {
                 pct: Some(50)
             })
             .0,
-            Color::Idx(1)
+            Color::Rgb(0xf8, 0x71, 0x71)
         );
         assert_eq!(
             progress_ink(Progress {
                 state: 4,
                 pct: None
             }),
-            (Color::Idx(3), 1.0, 1.0)
+            (Color::Rgb(0xfc, 0xd3, 0x4d), 1.0, 1.0)
         );
-        // indeterminate is the only translucent one, and it fills the tab: it
-        // does not move, because moving costs a clock and a frame per step
+        // indeterminate is opaque too and fills the tab: it does not move,
+        // because moving costs a clock and a frame per step
         assert_eq!(
             progress_ink(Progress {
                 state: 3,
                 pct: None
             }),
-            (Color::Idx(6), 0.35, 1.0)
+            (Color::Rgb(0x22, 0xd3, 0xee), 1.0, 1.0)
         );
         // a state with no fraction still gets a band
         assert_eq!(
@@ -3064,7 +3077,7 @@ mod tests {
                 state: 1,
                 pct: None
             }),
-            (Color::Idx(2), 1.0, 1.0)
+            (Color::Rgb(0x4a, 0xde, 0x80), 1.0, 1.0)
         );
     }
 
