@@ -1652,6 +1652,8 @@ primeira.
 
 ## 2026-11-24 — a finished command notifies, and the DCS answers back
 
+- `RIS` after a notification hung the tab: `reset` rebuilt the `Term` from scratch, rewinding `bells`/`notifs` to zero, and the app follows them with `while seen != count` — after one prior notification that loop is ~2^32 laps. Found by the `demo_osc_133.sh` script (its trailing `ESC c` froze the tab that the long run had just notified). Fix: the unseen state (`bells`, `notifs`, the list) survives the reset — only the emulation state goes — and the forward-only rule is written on the fields. Two regression tests: the core one keeps the counts and the list past a `RIS`, the app one pumps past it (pre-fix it never returned).
+
 - `133;D` is a notification now (`B74`): a command that ran past `shell_notify_secs` (default 10 s) notifies, whatever the status was — a fast one means the owner was watching, so speed alone is never news. A long one that failed shows red (`exit 2 · 32.0 s`). `none`/`off`/`0` turns the `D` off. The shell has to send the marks (still `B39`'s snippet); the clock is the app's (`Term::now_ms`, written before every `feed` — the core has no clock, as `cell_size` already showed), raised on the `D` because the next prompt drops the status records.
 - `DECRQSS` and `XTGETTCAP` answer (`B73`): `m` (the pen), `r` (the scroll region), `SP q` (the cursor style, or the shipped default without one seen), and a table of three true things (`Co` = 256, `TN` = tortty, `RGB` = 8); everything else gets the standard negative. Key names are refused on purpose — what a key sends depends on the keyboard flags in force, so a static answer would lie.
 - Twelve new core tests, config keys in `CONFIG.md`, the wire in `VT.md`.

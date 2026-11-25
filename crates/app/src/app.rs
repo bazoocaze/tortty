@@ -5406,6 +5406,28 @@ mod tests {
         assert!(n.term.notifications.is_empty(), "discarded");
     }
 
+    /// `RIS` after a notification must still pump: the counters only move
+    /// forward, and a reset that rewinds them turns the `while seen != count`
+    /// below into ~2^32 laps — the tab hangs. (Pre-fix this test never
+    /// returns; run it under `timeout`.)
+    #[test]
+    fn a_reset_after_a_notification_still_pumps() {
+        let watching = Presence {
+            tab_visible: true,
+            ws_visible: true,
+            window_focused: true,
+        };
+        let mut t = Tab::new(20, 5);
+        t.term.feed(b"\x1b]9;done\x07");
+        let mut out = PumpOut::default();
+        t.pump(Bell::None, watching, &mut out);
+        t.term.feed(b"\x1bc"); // RIS
+        let mut out = PumpOut::default();
+        t.pump(Bell::None, watching, &mut out);
+        assert_eq!(t.term.notifs, 1, "the count never rewinds");
+        assert_eq!(t.term.last_notification(), "done", "nor does the list");
+    }
+
     #[test]
     fn a_moved_workspace_carries_the_order_around_it() {
         // `B49`: the front is a place in the list, so a move on either side of

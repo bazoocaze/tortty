@@ -308,6 +308,11 @@ pub struct Term {
     pub bells: u32,
     /// How many notifications arrived (the app's cursor, as `bells`).
     ///
+    /// Both counts only move forward: the app follows them with
+    /// `while seen != count`, so a rewind is not a missed event but ~2^32
+    /// laps of the pump — the tab hangs. `reset` preserves them for exactly
+    /// this reason, and so does the unseen list below them.
+    ///
     /// The content is `notifications`, not a slot: a tab that says two things
     /// keeps both, and the same `(source, id)` replaces its own entry.
     pub notifs: u32,
@@ -550,6 +555,13 @@ impl Term {
         let limit = self.scrollback_limit;
         let hist = self.hist_gen + 1;
         let abs = self.abs_gen + 1;
+        // the unseen state survives: `bells`/`notifs` only move forward (the
+        // app's pump hangs on a rewind) and a reset of the grid must not eat
+        // news the user has not seen — the mark outlives `RIS` on the app's
+        // side, and it would point at an empty list otherwise
+        let bells = self.bells;
+        let notifs = self.notifs;
+        let notifications = std::mem::take(&mut self.notifications);
         // the log survives the reset (a `RIS` *is* one of the events it reports)
         let in_sync = self.sync_trace.is_some();
         let mut closed = std::mem::take(&mut self.sync_closed);
@@ -564,6 +576,9 @@ impl Term {
         self.scrollback_limit = limit;
         self.hist_gen = hist;
         self.abs_gen = abs;
+        self.bells = bells;
+        self.notifs = notifs;
+        self.notifications = notifications;
         self.sync_closed = closed;
         if in_sync {
             self.quiet_wipe_gen = hist;
@@ -4239,6 +4254,21 @@ mod tests {
         // `RIS` clears it: the state belongs to the emulation
         t.feed(b"\x1bc");
         assert_eq!(t.progress, None);
+    }
+
+    #[test]
+    fn ris_keeps_the_unseen_counters_and_their_list() {
+        // the app follows `bells`/`notifs` with `while seen != count`: a rewind
+        // is ~2^32 laps of the pump, so the counts — and the unseen news they
+        // stand for — survive the reset, only the emulation state goes
+        let mut t = Term::new(20, 4);
+        t.feed(b"\x07");
+        t.feed(b"\x1b]9;done\x07");
+        assert_eq!((t.bells, t.notifs), (1, 1));
+        t.feed(b"\x1bc"); // RIS
+        assert_eq!((t.bells, t.notifs), (1, 1), "counts only move forward");
+        assert_eq!(t.last_notification(), "done");
+        assert_eq!(t.grid[0].cells[0].ch, ' ', "but the grid is new");
     }
 
     #[test]
