@@ -2,6 +2,10 @@
 
 Concise history of past activities. A maximum of 5 lines per activity.
 
+## 2026-11-25 — kitty notifications, phase one (B72)
+
+- `OSC 99` parses: `p=title`/`p=body` payloads (kept apart), chunked assembly under one `i` (`d=0` holds, `d=1` displays), base64 through the permissive engine (unpadded accepted), the payload caps of the spec (2048 plain / 4096 encoded, plus a cap on the assembled whole and on the pending map — an id that never finishes cannot rent memory forever), update in place by id through the notification list's own replace rule, unknown keys and `p=icon`/`p=buttons`/`p=close`/`p=alive`/`p=?` ignored by spec. Close events, activation reports and the support reply are phase two (`B72` in the backlog, rewritten). A `RIS` kills half-assembled chunks; delivered notifications survive it.
+
 ## 2026-11-25 — the rename gets an action, and no chord (B70)
 
 - `ws_rename` joins the keymap (`Action::ALL`, `map ws_rename` in the config): it opens the rename of the workspace in front, the same inline editor the card's context menu and the double click already open. Deliberately **no default chord** — a factory key here is a key the child program may be owed (`F2` is `mc`'s user menu; the Java port paid for that). The reachability test now swears the absence: the one action a default is forbidden to bind.

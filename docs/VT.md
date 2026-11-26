@@ -88,6 +88,7 @@ the two settings are independent.
 | `OSC 133 ; A` / `B` / `C` / `D` (with the exit status on `D`) | prompt marks: prompt start, command start, output start, command end with the exit status. They feed the prompt navigation (Ctrl+Shift+Up/Down) and the status lifetimes below. `D` also raises the notification when the command ran long (`shell_notify_secs`, default 10 s, `none`/`off`/`0` disables it) — `exit 0 · 32.0 s`, red when it failed |
 | `OSC 777 ; notify ; title ; body` | urxvt notification: the same road as `OSC 9` |
 | `OSC 1337 ; File=… :base64` | iTerm2 inline image: `inline=1` is required (`inline=0` asks the terminal to write a file, and that is refused with a toast), `width`/`height` in cells — PNG, or the TIFF `chafa -f iterm` sends |
+| `OSC 99 ; metadata ; payload` | kitty's identified notification — see [OSC 99](#osc-99) |
 | `OSC 7501 ; …` | program status — see [OSC 7501](#program-status-osc-7501) |
 
 The whole OSC body is capped at **4096 bytes** (the image form gets its own,
@@ -156,6 +157,35 @@ Four behaviours worth knowing:
 - A digit state tortty does not know is dropped whole: it is not this form at all, and never a notification.
 - `OSC 9` with anything that is not `4;…` is a **notification**, as above — the
   two forms share the number and are told apart by shape.
+
+## OSC 99
+
+Kitty's identified desktop notification (`B72`, phase one — parse, assemble,
+notify). The escape is `OSC 99 ; metadata ; payload ST`, both semicolons always
+present, the metadata colon-separated `key=value` pairs.
+
+- `p=title` / `p=body` — the payload sets the title or the body; both sides are
+  kept apart in the notification, and specifying one of them several times
+  concatenates. `p=icon`, `p=buttons`, `p=close`, `p=alive` and `p=?` are
+  **accepted and ignored**: this terminal draws no icons or buttons in a
+  notification, and the close/report lifecycle is not wired yet.
+- `i=id` — the notification id: the same id **updates the notification in
+  place** (the list replaces the entry and moves it to the end — how a program
+  shows progress inside a notification). Without `i`, the notification is
+  unique by definition and no updating ever takes place, by spec.
+- `d=0` — the notification is not done: pieces accumulate under the id until a
+  chunk with `d=1` arrives, and only then it displays. Without an id, `d=0`
+  holds nothing (there is nothing to assemble with).
+- `e=1` — the payload is Base64 (unpadded accepted); plain otherwise. A payload
+  over 2048 bytes plain / 4096 encoded is refused whole, and the trace says so.
+- `f`, `t`, `n`, `g`, `s`, `a`, `c`, `w`, `o`, `u` and any unknown key —
+  ignored, by spec (filtering and lifecycle keys with no surface here).
+
+The notification rides the same road as every other source: `OSC 9`'s surfaces
+(bell on the tab label, yellow card, window urgency), the same list, the same
+presence rules. `p=?` gets **no answer** yet — it would be the OSC family's
+first negative reply (`B72` phase two). A `RIS` kills the half-assembled
+chunks; delivered notifications survive.
 
 The progress form feeds the root [status record](#program-status-osc-7501), so a
 program that only knows `9;4` still gets the same record, the same bar and the

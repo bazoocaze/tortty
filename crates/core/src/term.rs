@@ -318,6 +318,9 @@ pub struct Term {
     pub notifs: u32,
     /// What the child asked the user to look at, newest first.
     pub notifications: crate::notif::List,
+    /// The `OSC 99` chunk assembler (`B72`): payloads that arrived as pieces
+    /// under one id, waiting for their `d=1`.
+    notify99: crate::notify99::Assembler,
     /// The emulation's decisions since the last drain (bounded: a full ring
     /// forgets the oldest — the emulation never stops for lack of a consumer).
     trace: crate::trace::Trace,
@@ -461,6 +464,7 @@ impl Term {
             bells: 0,
             notifs: 0,
             notifications: crate::notif::List::default(),
+            notify99: crate::notify99::Assembler::default(),
             trace: crate::trace::Trace::default(),
             progress: None,
             status: crate::status::Status::default(),
@@ -566,6 +570,9 @@ impl Term {
         let bells = self.bells;
         let notifs = self.notifs;
         let notifications = std::mem::take(&mut self.notifications);
+        // the half-assembled `OSC 99` chunks die with the program that was
+        // sending them: a reset ends every stream (the delivered list stays)
+        self.notify99 = crate::notify99::Assembler::default();
         // the log survives the reset (a `RIS` *is* one of the events it reports)
         let in_sync = self.sync_trace.is_some();
         let mut closed = std::mem::take(&mut self.sync_closed);
@@ -2086,6 +2093,21 @@ impl Term {
                 None => self.osc_notify(arg),
             },
             777 => self.osc_notify777(arg),
+            // `OSC 99` kitty notifications (`B72`), phase one: parse, assemble
+            // chunks under an id, notify. Close events, activation reports and
+            // the support query stay silent — they need a click channel.
+            99 => match self.notify99.feed(arg) {
+                crate::notify99::Outcome::Notify(notif) => self.notify(&notif),
+                crate::notify99::Outcome::Held => {
+                    self.trace.push(crate::trace::Event::Osc99("held"));
+                },
+                crate::notify99::Outcome::Ignored => {
+                    self.trace.push(crate::trace::Event::Osc99("no surface"));
+                },
+                crate::notify99::Outcome::Refused(why) => {
+                    self.trace.push(crate::trace::Event::Osc99(why));
+                },
+            },
             // `OSC 133` prompt marks (`M-R`): the substrate of shell integration
             133 => self.osc_prompt(arg),
             // `OSC 7501` Program Status Protocol (`B47`): what the program says

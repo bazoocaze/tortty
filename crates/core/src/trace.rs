@@ -48,6 +48,9 @@ pub enum Event {
     Status { body: String, what: &'static str },
     /// `133;A`: a new prompt, every record dropped.
     Prompt,
+    /// An `OSC 99` that did not become a notification: a chunk held for its
+    /// `d=1`, a payload with no surface to draw on, or a refusal (`B72`).
+    Osc99(&'static str),
 }
 
 impl Event {
@@ -87,6 +90,7 @@ impl Event {
                 format!("OSC 7501 \"{body}\" ({what})")
             },
             Self::Prompt => "OSC 133;A — records dropped".to_string(),
+            Self::Osc99(what) => format!("OSC 99 {what}"),
         }
     }
 }
