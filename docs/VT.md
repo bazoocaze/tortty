@@ -160,15 +160,27 @@ Four behaviours worth knowing:
 
 ## OSC 99
 
-Kitty's identified desktop notification (`B72`, phase one — parse, assemble,
-notify). The escape is `OSC 99 ; metadata ; payload ST`, both semicolons always
-present, the metadata colon-separated `key=value` pairs.
+Kitty's identified desktop notification (`B72`). The escape is
+`OSC 99 ; metadata ; payload ST`, both semicolons always present, the metadata
+colon-separated `key=value` pairs.
 
 - `p=title` / `p=body` — the payload sets the title or the body; both sides are
   kept apart in the notification, and specifying one of them several times
-  concatenates. `p=icon`, `p=buttons`, `p=close`, `p=alive` and `p=?` are
-  **accepted and ignored**: this terminal draws no icons or buttons in a
-  notification, and the close/report lifecycle is not wired yet.
+  concatenates. **Absent, `p` means title** (the spec's quickstart,
+  `99;;Hello world`). `p=icon` and `p=buttons` are **accepted and ignored**:
+  this terminal draws no icons or buttons in a notification.
+- `p=close` — the program retires its own notification: the entry with that
+  `i` leaves the list (an unknown id is ignored, and no `i` is a no-op, by
+  spec). A close also kills an assembly still held under the id.
+- `p=alive` — the program asks which of its notifications live: the answer
+  rides the same tab's pty, `OSC 99 ; i=<echo> : p=alive ; id1,id2 <ST>` (the
+  ids still in the list; empty when none).
+- `p=?` — the support query: the answer is
+  `OSC 99 ; i=<echo> : p=? ; p=title,body:o=always <ST>` — the two payload
+  types this terminal renders, and `o=always` because it implements no
+  occasions (the spec demands the key in that case). Actions (`a`), close
+  events (`c`), sounds (`s`), urgency (`u`) and expiry (`w`) are absent
+  rather than lied about. This is the OSC family's first reply.
 - `i=id` — the notification id: the same id **updates the notification in
   place** (the list replaces the entry and moves it to the end — how a program
   shows progress inside a notification). Without `i`, the notification is
@@ -179,13 +191,15 @@ present, the metadata colon-separated `key=value` pairs.
 - `e=1` — the payload is Base64 (unpadded accepted); plain otherwise. A payload
   over 2048 bytes plain / 4096 encoded is refused whole, and the trace says so.
 - `f`, `t`, `n`, `g`, `s`, `a`, `c`, `w`, `o`, `u` and any unknown key —
-  ignored, by spec (filtering and lifecycle keys with no surface here).
+  ignored, by spec (filtering keys and the click lifecycle, which has no
+  surface here).
 
 The notification rides the same road as every other source: `OSC 9`'s surfaces
 (bell on the tab label, yellow card, window urgency), the same list, the same
-presence rules. `p=?` gets **no answer** yet — it would be the OSC family's
-first negative reply (`B72` phase two). A `RIS` kills the half-assembled
-chunks; delivered notifications survive.
+presence rules. What stays silent is the **click side**: the activation report
+(`a=report`) and the close-event report (`c=1`) need a click surface and a way
+to find the tab that owns an id — `B72` keeps that in the backlog. A `RIS`
+kills the half-assembled chunks; delivered notifications survive it.
 
 The progress form feeds the root [status record](#program-status-osc-7501), so a
 program that only knows `9;4` still gets the same record, the same bar and the

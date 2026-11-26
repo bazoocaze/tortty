@@ -167,6 +167,17 @@ impl List {
         self.entries.iter().rev()
     }
 
+    /// Retires the entry with this `(source, id)` — the `OSC 99` `p=close` —
+    /// and says whether there was one (a close of an absent id is ignored,
+    /// by spec).
+    pub fn remove(&mut self, source: Source, id: &str) -> bool {
+        let at = self
+            .entries
+            .iter()
+            .position(|n| n.source == source && n.id.as_deref() == Some(id));
+        at.is_some_and(|at| self.entries.remove(at).is_some())
+    }
+
     #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()

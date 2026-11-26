@@ -51,6 +51,9 @@ pub enum Event {
     /// An `OSC 99` that did not become a notification: a chunk held for its
     /// `d=1`, a payload with no surface to draw on, or a refusal (`B72`).
     Osc99(&'static str),
+    /// An `OSC 99` lifecycle command (`p=close`/`p=alive`/`p=?`): what it
+    /// was and what became of it (`B72` phase two).
+    Osc99Cmd { cmd: &'static str, detail: String },
 }
 
 impl Event {
@@ -91,6 +94,7 @@ impl Event {
             },
             Self::Prompt => "OSC 133;A — records dropped".to_string(),
             Self::Osc99(what) => format!("OSC 99 {what}"),
+            Self::Osc99Cmd { cmd, detail } => format!("OSC 99 {cmd} {detail}"),
         }
     }
 }

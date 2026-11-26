@@ -1,7 +1,8 @@
-//! `OSC 99` — kitty's identified desktop notification, phase one of `B72`:
-//! parse, assemble, notify. No lifecycle yet — `c=1` close events, `a=report`
-//! and the `p=?` support query need a click channel and a reply, and stay
-//! silent here (see `docs/BACKLOG.md`).
+//! `OSC 99` — kitty's identified desktop notification, `B72`: parse, assemble,
+//! notify, and the lifecycle that needs no click channel (`p=close`, the
+//! `p=alive` and `p=?` queries). What stays silent is the click side: the
+//! activation report (`a=report`) and close-event reports (`c=1`) need a click
+//! surface and a way to find the tab that owns an id — see `docs/BACKLOG.md`.
 //!
 //! Wire (`kitty/desktop-notifications`): `OSC 99 ; metadata ; payload ST` —
 //! both semicolons always present, metadata colon-separated `key=value` pairs.
@@ -34,12 +35,26 @@ pub enum Outcome {
     Notify(Notif),
     /// A chunk of an unfinished notification: stored, nothing to show.
     Held,
+    /// `p=close`: retire the notification with this id — `None` is a no-op,
+    /// by spec. The id may also name an assembly still held: it dies with it.
+    Close(Option<String>),
+    /// `p=alive`: the id echo (the caller's `i`, or `0`) — the caller knows
+    /// which ids are alive and writes the reply.
+    Alive(Option<String>),
+    /// `p=?`: the id echo — the caller writes the support reply.
+    Query(Option<String>),
     /// The escape said something this terminal gives no surface to (`p=icon`,
-    /// `p=buttons`, a close event, the support query) — ignored, by spec.
+    /// `p=buttons`, the close-event request `c=1`) — ignored, by spec.
     Ignored,
     /// Refused: the payload broke a cap or the escape has no payload section.
     Refused(&'static str),
 }
+
+/// What the `p=?` reply declares this terminal supports. Payload types are
+/// the two this terminal renders; occasions are none, and the spec demands
+/// `o=always` in that case. No actions, no close events, no sounds, no
+/// urgency, no expiry: the keys stay absent rather than lie.
+pub const SUPPORT: &str = "p=title,body:o=always";
 
 /// The `p` values that carry displayable text.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -75,31 +90,17 @@ impl Assembler {
         let Some((meta, payload)) = split_sections(arg) else {
             return Outcome::Refused("no payload section");
         };
-        let mut id: Option<String> = None;
-        let mut done = true;
-        let mut encoded = false;
-        let mut kind: Option<Piece> = None;
-        let mut saw_p = false;
-        for pair in String::from_utf8_lossy(meta).split(':') {
-            let Some((key, value)) = pair.split_once('=') else {
-                continue;
-            };
-            match (key, value) {
-                ("i", v) => id = Some(v.chars().take(crate::notif::FIELD_MAX).collect()),
-                ("d", v) => done = v != "0",
-                ("e", "1") => encoded = true,
-                // the quickstart of the spec (`99;;Hello world`) has no `p`:
-                // absent means title. A `p` the terminal gives no meaning to
-                // (icon, buttons, close, alive, ?) stays ignored.
-                ("p", v) => {
-                    saw_p = true;
-                    kind = piece(v);
-                },
-                // `f`, `t`, `n`, `g`, `s`, `a`, `c`, `w`, `o`, `u` — filtering
-                // and lifecycle keys with no surface in phase one; unknown
-                // keys too. The spec says: ignore and keep going.
-                _ => {},
+        let (id, done, encoded, kind, saw_p, cmd) = read_meta(meta);
+        // the commands ride on the metadata alone (their payload is empty by
+        // spec): no caps, no assembly — the caller acts and answers. A close
+        // also consumes an assembly still held under the id: the program
+        // saying "forget it" means the whole of it.
+        if let Some(cmd) = cmd {
+            let outcome = cmd(id.clone());
+            if let (Outcome::Close(Some(_)), Some(i)) = (&outcome, &id) {
+                self.partial.remove(i);
             }
+            return outcome;
         }
         let kind = match (saw_p, kind) {
             (false, None) => Piece::Title,
@@ -176,6 +177,52 @@ impl Assembler {
 fn split_sections(arg: &[u8]) -> Option<(&[u8], &[u8])> {
     let at = arg.iter().position(|b| *b == b';')?;
     Some((&arg[..at], &arg[at + 1..]))
+}
+
+/// The metadata section, read once: the id, whether the notification is done,
+/// whether the payload is Base64, and what the `p` key said. A `p` naming a
+/// lifecycle command (close/alive/?) comes back in `cmd`; the other `p`
+/// values come back in `kind` (an unknown one, as `None`).
+type Cmd = fn(Option<String>) -> Outcome;
+#[allow(clippy::type_complexity)] // the six facts of one metadata section
+fn read_meta(meta: &[u8]) -> (Option<String>, bool, bool, Option<Piece>, bool, Option<Cmd>) {
+    let mut id: Option<String> = None;
+    let mut done = true;
+    let mut encoded = false;
+    let mut kind: Option<Piece> = None;
+    let mut cmd: Option<Cmd> = None;
+    let mut saw_p = false;
+    for pair in String::from_utf8_lossy(meta).split(':') {
+        let Some((key, value)) = pair.split_once('=') else {
+            continue;
+        };
+        match (key, value) {
+            ("i", v) => id = Some(v.chars().take(crate::notif::FIELD_MAX).collect()),
+            ("d", v) => done = v != "0",
+            ("e", "1") => encoded = true,
+            ("p", "close") => {
+                saw_p = true;
+                cmd = Some(Outcome::Close);
+            },
+            ("p", "alive") => {
+                saw_p = true;
+                cmd = Some(Outcome::Alive);
+            },
+            ("p", "?") => {
+                saw_p = true;
+                cmd = Some(Outcome::Query);
+            },
+            ("p", v) => {
+                saw_p = true;
+                kind = piece(v);
+            },
+            // `f`, `t`, `n`, `g`, `s`, `a`, `c`, `w`, `o`, `u` — filtering
+            // and click-lifecycle keys with no surface here; unknown keys
+            // too. The spec says: ignore and keep going.
+            _ => {},
+        }
+    }
+    (id, done, encoded, kind, saw_p, cmd)
 }
 
 /// A one-piece notification: the piece is whichever side it is, the other side
@@ -297,8 +344,6 @@ mod tests {
         let mut a = Assembler::default();
         assert!(matches!(feed(&mut a, "p=icon;png"), Outcome::Ignored));
         assert!(matches!(feed(&mut a, "p=buttons;yes"), Outcome::Ignored));
-        assert!(matches!(feed(&mut a, "i=8:p=close;"), Outcome::Ignored));
-        assert!(matches!(feed(&mut a, "i=8:p=?;"), Outcome::Ignored));
         // unknown keys do not stop the payload
         assert!(matches!(
             feed(&mut a, "z=9:w=1000:p=title;kept"),
@@ -306,6 +351,38 @@ mod tests {
         ));
         // no payload section at all (the two semicolons are the wire's law)
         assert!(matches!(feed(&mut a, "p=title"), Outcome::Refused(_)));
+    }
+
+    #[test]
+    fn the_lifecycle_commands_carry_their_id_and_skip_the_assembly() {
+        let mut a = Assembler::default();
+        assert_eq!(
+            feed(&mut a, "i=8:p=close;"),
+            Outcome::Close(Some("8".into()))
+        );
+        assert_eq!(
+            feed(&mut a, "i=9:p=alive;"),
+            Outcome::Alive(Some("9".into()))
+        );
+        assert_eq!(feed(&mut a, "i=10:p=?;"), Outcome::Query(Some("10".into())));
+        // no id: close is a no-op by spec; the queries echo `i=0`
+        assert_eq!(feed(&mut a, "p=close;"), Outcome::Close(None));
+        assert_eq!(feed(&mut a, "p=?;"), Outcome::Query(None));
+        // a close arrives with no payload to cap — even an oversized one
+        assert_eq!(
+            feed(&mut a, &format!("i=11:p=close;{}", "x".repeat(9000))),
+            Outcome::Close(Some("11".into()))
+        );
+        // and a close does not leave a half-assembled id behind
+        assert!(matches!(
+            feed(&mut a, "i=12:d=0:p=title;chunk"),
+            Outcome::Held
+        ));
+        assert_eq!(
+            feed(&mut a, "i=12:p=close;"),
+            Outcome::Close(Some("12".into()))
+        );
+        assert!(a.partial.is_empty());
     }
 
     #[test]
@@ -341,5 +418,31 @@ mod wire_tests {
             .notifications
             .entries()
             .any(|n| n.title.as_deref() == Some("Hello world")));
+    }
+
+    /// Phase two: `p=close` retires the entry, `p=alive` and `p=?` answer on
+    /// the same tab's pty.
+    #[test]
+    fn the_lifecycle_answers_on_the_wire() {
+        let mut t = Term::new(20, 4);
+        t.feed(b"\x1b]99;i=1:p=title;first\x1b\\");
+        t.feed(b"\x1b]99;i=2:p=title;second\x1b\\");
+        t.feed(b"\x1b]99;i=1:p=close;\x1b\\");
+        assert_eq!(t.notifications.len(), 1, "the closed one left");
+        assert!(t
+            .notifications
+            .entries()
+            .all(|n| n.id.as_deref() != Some("1")));
+        // an absent id is ignored, by spec
+        t.feed(b"\x1b]99;i=1:p=close;\x1b\\");
+        assert_eq!(t.notifications.len(), 1);
+
+        t.feed(b"\x1b]99;i=me:p=alive;\x1b\\");
+        assert!(t.child_out.ends_with(b"\x1b]99;i=me:p=alive;2\x1b\\"));
+
+        t.feed(b"\x1b]99;p=?;\x1b\\");
+        assert!(t
+            .child_out
+            .ends_with(b"\x1b]99;i=0:p=?;p=title,body:o=always\x1b\\"));
     }
 }

@@ -2093,21 +2093,7 @@ impl Term {
                 None => self.osc_notify(arg),
             },
             777 => self.osc_notify777(arg),
-            // `OSC 99` kitty notifications (`B72`), phase one: parse, assemble
-            // chunks under an id, notify. Close events, activation reports and
-            // the support query stay silent — they need a click channel.
-            99 => match self.notify99.feed(arg) {
-                crate::notify99::Outcome::Notify(notif) => self.notify(&notif),
-                crate::notify99::Outcome::Held => {
-                    self.trace.push(crate::trace::Event::Osc99("held"));
-                },
-                crate::notify99::Outcome::Ignored => {
-                    self.trace.push(crate::trace::Event::Osc99("no surface"));
-                },
-                crate::notify99::Outcome::Refused(why) => {
-                    self.trace.push(crate::trace::Event::Osc99(why));
-                },
-            },
+            99 => self.osc_notify99(arg),
             // `OSC 133` prompt marks (`M-R`): the substrate of shell integration
             133 => self.osc_prompt(arg),
             // `OSC 7501` Program Status Protocol (`B47`): what the program says
@@ -2549,6 +2535,80 @@ impl Term {
             body: Some(text),
             shade: crate::notif::Shade::Info,
         });
+    }
+
+    /// The `OSC 99` arm (`B72`): feed the assembler and act on the outcome —
+    /// notify, hold, retire, or answer on the tab's pty.
+    fn osc_notify99(&mut self, arg: &[u8]) {
+        match self.notify99.feed(arg) {
+            crate::notify99::Outcome::Notify(notif) => self.notify(&notif),
+            crate::notify99::Outcome::Held => {
+                self.trace.push(crate::trace::Event::Osc99("held"));
+            },
+            crate::notify99::Outcome::Ignored => {
+                self.trace.push(crate::trace::Event::Osc99("no surface"));
+            },
+            crate::notify99::Outcome::Refused(why) => {
+                self.trace.push(crate::trace::Event::Osc99(why));
+            },
+            crate::notify99::Outcome::Close(id) => {
+                let Some(id) = id else {
+                    self.trace.push(crate::trace::Event::Osc99Cmd {
+                        cmd: "close",
+                        detail: "no id — no-op".into(),
+                    });
+                    return;
+                };
+                let gone = self.notifications.remove(crate::notif::Source::Osc99, &id);
+                self.trace.push(crate::trace::Event::Osc99Cmd {
+                    cmd: "close",
+                    detail: if gone {
+                        format!("id={id} — closed")
+                    } else {
+                        format!("id={id} — absent, ignored")
+                    },
+                });
+            },
+            crate::notify99::Outcome::Alive(echo) => {
+                let alive = self
+                    .notifications
+                    .entries()
+                    .filter(|n| n.source == crate::notif::Source::Osc99)
+                    .filter_map(|n| n.id.as_deref())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                self.child_out.extend_from_slice(
+                    format!(
+                        "\x1b]99;i={}:p=alive;{}\x1b\\",
+                        echo.as_deref().unwrap_or("0"),
+                        alive
+                    )
+                    .as_bytes(),
+                );
+                self.trace.push(crate::trace::Event::Osc99Cmd {
+                    cmd: "alive",
+                    detail: format!("replied i={}:{}", echo.as_deref().unwrap_or("0"), alive),
+                });
+            },
+            crate::notify99::Outcome::Query(echo) => {
+                self.child_out.extend_from_slice(
+                    format!(
+                        "\x1b]99;i={}:p=?;{}\x1b\\",
+                        echo.as_deref().unwrap_or("0"),
+                        crate::notify99::SUPPORT
+                    )
+                    .as_bytes(),
+                );
+                self.trace.push(crate::trace::Event::Osc99Cmd {
+                    cmd: "?",
+                    detail: format!(
+                        "replied i={}:{}",
+                        echo.as_deref().unwrap_or("0"),
+                        crate::notify99::SUPPORT
+                    ),
+                });
+            },
+        }
     }
 
     /// `OSC 777;notify;title;body` (urxvt): only `notify` is a notification,

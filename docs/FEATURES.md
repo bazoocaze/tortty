@@ -329,9 +329,10 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   apart and `text` derived. The socket's `notifications` verb prints every tab's
   list — that is how the list is read, since it has no screen of its own.
   **limit:** inside the window + urgency only — no desktop notification daemon;
-  `OSC 99` (kitty's identified notification) is phase one only: parse, chunked
-  assembly under `d=0`/`d=1`, base64 payloads, update in place by `i` — close
-  events, activation reports and the `p=?` reply are not wired (`B72`); a BEL
+  `OSC 99` (kitty's identified notification) parses, assembles chunks under
+  `d=0`/`d=1`, takes base64 payloads, updates in place by `i`, and answers the
+  lifecycle that needs no click (`p=close` retires, `p=alive`/`p=?` reply on
+  the pty) — the click side (`a=report`, `c=1`) is not wired (`B72`); a BEL
   under `bell audible` is a beep and leaves no trace, and under `bell none` it
   is discarded whole.
 - Progress (`OSC 9;4;state[;pct]`, the mintty/ConEmu form): `progress_show`
