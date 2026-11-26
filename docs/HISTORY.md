@@ -2,6 +2,10 @@
 
 Concise history of past activities. A maximum of 5 lines per activity.
 
+## 2026-11-25 — the bar follows the newest in-flight record (B75)
+
+- `Status::bar()` answers the record the progress display follows: the newest one still in flight, not the root only. A program that names its parts (`build`, `test`, `deploy`) now gets progress all the same — the last that reported owns the bar, an older in-flight lane comes back when the newer finishes, and `progress_show = title` follows the same record so title and bar never disagree. No stacking: the cheap answer to "which of three lanes wins" (`docs/BACKLOG.md` had it queued as a drawing decision).
+
 ## 2026-11-25 — the emulation speaks: trace events to the log
 
 - The core now accumulates a bounded ring of trace events (`crates/core/src/trace.rs`, 64 max — a full ring forgets the oldest and the parser never stops for lack of a consumer): every `9;4` form with **why** it was applied/repeated/locked/unknown, every notification entering the list, every `7501` report that changed nothing, every `133;A` prompt. The app drains (`take_trace`) and stamps into the new `osc` area. Born from the owner's challenge that an emulator with no voice about its decisions is strange — the two-shape answer (port vs. domain events) landed on the drained ring, the codebase's own idiom (`take_sync_closed`).

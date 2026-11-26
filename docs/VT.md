@@ -180,7 +180,7 @@ ESC ] 7501 ; state=blocked:kind=permission:app=terraform:msg=<base64> ST
 |---|---|---|
 | `state` | `idle`, `working`, `done`, `blocked`, `paused`, `error` | the only required key; an unknown state discards the whole report (a state added by a later version of the spec must not read as `idle`). `paused` is tortty's name for the `9;4` *warning/paused* shade, and it is advertised in the feature-detection answer |
 | `kind` | `permission`, `question`, `auth` | only means something with `blocked` |
-| `id` | a `/`-separated path, up to 8 levels of 32 bytes | addresses one record; **absent** (or empty) is the *root* record — the one the tab bar draws |
+| `id` | a `/`-separated path, up to 8 levels of 32 bytes | addresses one record; **absent** (or empty) is the *root* record |
 | `app` | up to 32 bytes | who is asking; a record without it inherits its nearest ancestor's |
 | `title` | up to 192 bytes | one line |
 | `msg` | up to 2048 bytes when decoded | base64; what the toast shows |
@@ -202,10 +202,12 @@ nothing depends on what the record said before:
 | `error` | no | **yes** |
 | `idle` | no | **yes** |
 
-- **The bar** follows the root record while it is in flight: `working` green with
-  the percentage, `blocked`/`paused` yellow with it. `done`, `error` and `idle`
-  draw no bar — a finished command has nothing left to show, and the news is the
-  notification.
+- **The bar** follows the newest record still in flight: `working` green with
+  the percentage, `blocked`/`paused` yellow with it. A program that names its
+  parts reports several records — the last that reported owns the bar, and an
+  older in-flight lane comes back when the newer finishes. `done`, `error` and
+  `idle` draw no bar — a finished command has nothing left to show, and the news
+  is the notification.
 - **Asking for you** is a notification, the same one `OSC 9` raises: the bell in
   front of the tab's label, the workspace card in yellow and the window's urgency.
   Where the user is decides the lifetime, not the sender: watching the tab, the

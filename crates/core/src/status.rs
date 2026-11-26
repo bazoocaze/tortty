@@ -200,6 +200,18 @@ impl Status {
         self.map.get("")
     }
 
+    /// The record the progress display follows (`B75`): the newest one still in
+    /// flight, not a stack of them. "Which of three lanes wins" answered the
+    /// cheap way — the last that reported — with the older lanes coming back
+    /// when the newer finishes (a finished record is not `in_flight`).
+    #[must_use]
+    pub fn bar(&self) -> Option<&Record> {
+        self.map
+            .values()
+            .filter(|r| r.state.in_flight())
+            .max_by_key(|r| r.seq)
+    }
+
     #[must_use]
     pub fn len(&self) -> usize {
         self.map.len()
@@ -694,6 +706,28 @@ mod tests {
         // with no id, everything goes
         s.report(b"state=clear");
         assert!(s.is_empty());
+    }
+
+    #[test]
+    fn the_bar_follows_the_newest_in_flight_record() {
+        let mut s = Status::default();
+        // the shell integration mapped a root progress, then the program named
+        // a part: the newer voice owns the display
+        let _ = s.from_progress(1, Some(10));
+        s.report(b"state=working:app=build:id=build:id2=1");
+        let bar = s.bar().unwrap();
+        assert_eq!(bar.app.as_deref(), Some("build"), "the newest wins");
+        // the root keepalive reports again: newest again
+        let _ = s.from_progress(1, Some(20));
+        assert!(s.bar().unwrap().app.is_none(), "the last that reported");
+        // the named part finishes: not in flight, the older lane comes back
+        s.report(b"state=done:app=build:id=build");
+        let bar = s.bar().unwrap();
+        assert!(bar.app.is_none(), "a finished record never owns the bar");
+        assert_eq!(bar.progress, Some(20));
+        // and nothing in flight at all: no bar
+        let _ = s.from_progress(0, None);
+        assert!(s.bar().is_none());
     }
 
     #[test]

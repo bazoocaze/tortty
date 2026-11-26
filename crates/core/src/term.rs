@@ -2044,7 +2044,7 @@ impl Term {
                     let outcome = self.status.from_progress(state, pct);
                     // the bar is always re-derived from the record (`state=0`
                     // removes it): one truth, not two
-                    self.root_progress();
+                    self.sync_progress();
                     self.trace.push(crate::trace::Event::Progress {
                         state,
                         pct,
@@ -2116,7 +2116,7 @@ impl Term {
             return;
         }
         let Some(applied) = self.status.report(arg) else {
-            self.root_progress();
+            self.sync_progress();
             self.trace.push(crate::trace::Event::Status {
                 body: String::from_utf8_lossy(arg).into_owned(),
                 what: "no change",
@@ -2143,7 +2143,7 @@ impl Term {
                 shade: crate::notif::Shade::of(applied.state),
             });
         }
-        self.root_progress();
+        self.sync_progress();
     }
 
     /// What the wire delivered and the parser decided since the last call: the
@@ -2172,10 +2172,11 @@ impl Term {
             .push(source, None, None, None, crate::notif::Shade::Info);
     }
 
-    fn root_progress(&mut self) {
+    fn sync_progress(&mut self) {
         use crate::status::State;
-        // a state is a row: `in_flight` is the only question the bar asks
-        let bar = match self.status.root() {
+        // the bar follows the newest in-flight record (`B75`), not the root
+        // only: a program that names its parts gets progress all the same
+        let bar = match self.status.bar() {
             Some(r) if r.state.in_flight() => Some(Progress {
                 // `9;4`'s shades: no percentage is indeterminate (cyan), a wait
                 // for the user is the warning one, the rest is the normal one.
@@ -2224,7 +2225,7 @@ impl Term {
             // seen it" lives now (`B47` kept it in the record, which nothing
             // draws any more)
             self.status.dismiss();
-            self.root_progress();
+            self.sync_progress();
             self.trace.push(crate::trace::Event::Prompt);
         }
         if kind == MarkKind::CommandStart {

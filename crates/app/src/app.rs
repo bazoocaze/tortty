@@ -1084,7 +1084,7 @@ impl App {
         };
         match p.pct {
             Some(pct) => format!("{title} {pct}%"),
-            None => match t.term.status.root() {
+            None => match t.term.status.bar() {
                 Some(r) => format!("{title} {}", r.state.name()),
                 None => title,
             },

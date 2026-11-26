@@ -343,8 +343,8 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   of ink; `0` removes the record, and the bar with it. Progress never asks for
   you, so it never marks a tab. **limit:** the window only (no taskbar); the bar
   needs the tab bar, so with a single tab and `progress_show = bar` nothing is
-  drawn — `title` is the face that shows in every window shape; only the root
-  record drives it (a named `id` reports without a bar).
+  drawn — `title` is the face that shows in every window shape; the newest
+  in-flight record drives it (a named `id` that reported last owns the bar).
 - Scrollback search (`M-D`, `Ctrl+Shift+F` or the `search` action): two chips on
   the grid's bottom row take the query — `[find: query_ ]`, with an amber `_`
   where the next character goes, and `[ 1/3 ]` beside it (red `[ no match ]`
