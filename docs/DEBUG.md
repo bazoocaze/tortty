@@ -51,7 +51,7 @@ probe wants a clean start.
 line is the same four columns, so `cut`, `awk` and `grep` work without a parser:
 
 ```
-2026-11-17 22:48:08.608  info  sync     tab 2 closed after 7.1 ms — feeds 3, 193 B, view 0→0, hist 20 — ed2×1 home×1, pushed 20
+2026-11-17 22:48:08.608  info  sync     tab 2 CSI ?2026 end — 7.1 ms, reads 3, 193 B, view 0→0, hist 20 — ed2×1 home×1, pushed 20
 │                       │     │       └ the message, free text
 │                       │     └ the area: one word, never carrying a space
 │                       └ err | warn | info
@@ -66,7 +66,8 @@ line is the same four columns, so `cut`, `awk` and `grep` work without a parser:
   of the box it describes — a warning on screen is a warning in the file.
 - **The area** is one word: `app`, `socket`, `config`, `font`, `gpu`, `toast`,
   `sync`, `view`, `dump`, `prof`, `osc`. A tab-scoped event says its tab in the
-  message (`sync  tab 2 open …`), because the tab is a subject and not a kind
+  message (`sync  tab 2 CSI ?2026 begin …`), because the tab is a subject and
+  not a kind
   of event.
 - **Only what happened** is printed: a window with no clears says nothing about
   clears, instead of eleven `×0` that hide the one counter that is not zero.
@@ -101,21 +102,22 @@ One line when the window opens and one when it closes, with the counters of what
 it carried:
 
 ```
-2026-11-17 22:48:08.601  info  sync     tab 2 open — feeds 1, 0 B, view 0, hist 0 — ed2×1 home×1
-2026-11-17 22:48:08.608  info  sync     tab 2 closed after 7.1 ms — feeds 3, 193 B, view 0→0, hist 20 — ed2×1 home×1, pushed 20
+2026-11-17 22:48:08.601  info  sync     tab 2 CSI ?2026 begin — reads 1, 0 B, view 0, hist 0 — ed2×1 home×1
+2026-11-17 22:48:08.608  info  sync     tab 2 CSI ?2026 end — 7.1 ms, reads 3, 193 B, view 0→0, hist 20 — ed2×1 home×1, pushed 20
 ```
 
-- `feeds 1, 0 B` on a **closed** line — the window opened **and** closed inside
+- `reads 1, 0 B` on an **end** line — the window opened **and** closed inside
   one pty read, so the parser never held the screen and the duration is `0.0 ms`.
-  There is no `open` line in that case: there was no moment at which it was open.
+  There is no `begin` line in that case: there was no moment at which it was
+  holding the screen.
   A window like that which also wrote nothing (`0 B` — the read that opens it
   is not charged, so `0 B` is automatic there), pushed nothing, and carried no
   erase/reset is a **frame wrapper**, not an event — a program that wraps every
   repaint in `?2026h … EL … ?2026l` would otherwise say the same vacuous fact a
-  dozen times a second — and it is not logged at all. The bar: `feeds > 1 ||
+  dozen times a second — and it is not logged at all. The bar: `reads > 1 ||
   bytes > 0 || pushed > 0 || any ED/home/STBM/alt/RIS/DECSTR` — an erase inside
   the window is something the screen felt, even in a single read.
-  `feeds > 1` means the app took several reads to finish the frame, and then the
+  `reads > 1` means the app took several reads to finish the frame, and then the
   duration is the time it kept us waiting.
 - `ed0..3`, `el`, `home`, `stbm`, `alt`, `ris`, `decstr` — the clears and resets
   the window carried: `ed2` erases the screen, `ed3` erases the scrollback too,
@@ -130,7 +132,7 @@ it carried:
   is not, because a line-by-line append clears lines too.
 - `view A→B` — our view offset before and after the read.
 
-A window that never closes is logged once as `open` and then only at `state`
+A window that never ends is logged once as `begin` and then only at `state`
 (`"sync": true`); a `RIS` inside it closes the trace with `ris×1` because a full
 reset ends the DEC modes. The core counts and the app times: `SyncTrace`
 (`crates/core/src/term.rs`) has no clock, and the app stamps the window when it

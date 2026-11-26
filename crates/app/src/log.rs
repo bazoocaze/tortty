@@ -5,7 +5,7 @@
 //! `grep` work without a parser:
 //!
 //! ```text
-//! 2026-11-17 22:41:03.512  info  sync    tab 2 closed after 2.2 ms — feeds 3, 264 B
+//! 2026-11-17 22:41:03.512  info  sync    tab 2 CSI ?2026 end — 2.2 ms, reads 3, 264 B
 //! │                       │     │       └ the message, free text
 //! │                       │     └ the area: one word, never carrying a space
 //! │                       └ err | warn | info

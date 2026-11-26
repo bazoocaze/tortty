@@ -259,7 +259,7 @@ fn log_sync(tab: &mut Tab, who: &str, view_before: usize, now: std::time::Instan
                 log::Level::Info,
                 "sync",
                 &format!(
-                    "{who} open — feeds {}, {} B, view {view_before}, hist {}{}",
+                    "{who} CSI ?2026 begin — reads {}, {} B, view {view_before}, hist {}{}",
                     t.feeds,
                     t.bytes,
                     tab.term.scrollback.len(),
@@ -291,7 +291,7 @@ fn log_sync(tab: &mut Tab, who: &str, view_before: usize, now: std::time::Instan
             log::Level::Info,
             "sync",
             &format!(
-                "{who} closed after {held:.1} ms — feeds {}, {} B, view {view_before}→{view_now}, \
+                "{who} CSI ?2026 end — {held:.1} ms, reads {}, {} B, view {view_before}→{view_now}, \
                  hist {}{}",
                 t.feeds,
                 t.bytes,
