@@ -108,6 +108,13 @@ it carried:
 - `feeds 1, 0 B` on a **closed** line — the window opened **and** closed inside
   one pty read, so the parser never held the screen and the duration is `0.0 ms`.
   There is no `open` line in that case: there was no moment at which it was open.
+  A window like that which also wrote nothing (`0 B` — the read that opens it
+  is not charged, so `0 B` is automatic there), pushed nothing, and carried no
+  erase/reset is a **frame wrapper**, not an event — a program that wraps every
+  repaint in `?2026h … EL … ?2026l` would otherwise say the same vacuous fact a
+  dozen times a second — and it is not logged at all. The bar: `feeds > 1 ||
+  bytes > 0 || pushed > 0 || any ED/home/STBM/alt/RIS/DECSTR` — an erase inside
+  the window is something the screen felt, even in a single read.
   `feeds > 1` means the app took several reads to finish the frame, and then the
   duration is the time it kept us waiting.
 - `ed0..3`, `el`, `home`, `stbm`, `alt`, `ris`, `decstr` — the clears and resets

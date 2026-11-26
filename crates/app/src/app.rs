@@ -269,6 +269,20 @@ fn log_sync(tab: &mut Tab, who: &str, view_before: usize, now: std::time::Instan
         }
     }
     for t in tab.term.take_sync_closed() {
+        // a window that opened and closed inside one read and did nothing the
+        // screen could feel (no byte written, no line pushed, no erase/reset —
+        // the read that opens it is not charged, so `bytes` alone proves
+        // nothing) is a frame wrapper, not an event: repeating it per frame is
+        // noise, not history
+        let structural = t.ed.iter().any(|c| *c > 0)
+            || t.home > 0
+            || t.stbm > 0
+            || t.alt > 0
+            || t.ris > 0
+            || t.decstr > 0;
+        if t.feeds <= 1 && t.bytes == 0 && t.hist == 0 && !structural {
+            continue;
+        }
         let held = tab
             .sync_at
             .take()
