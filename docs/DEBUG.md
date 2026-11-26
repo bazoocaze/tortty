@@ -159,6 +159,9 @@ every frame and stamps the lines:
   protocol id (`-` when the report has none), the shade and the text.
 - `OSC 7501 "…" (no change)` — a report that repeated the record or was
   malformed, and `OSC 133;A — records dropped` for the prompt that clears.
+- `OSC 99 held` / `no surface` / a refusal — the other `OSC 99` outcomes
+  (`B72`); a lifecycle command says what it did (`OSC 99 close id=7 — closed`,
+  `OSC 99 alive replied i=me:7`, `OSC 99 ? replied i=x:p=title,body:o=always`).
 
 ### The view line: who moved the reader
 
@@ -251,7 +254,7 @@ drawn), `errors` |
 | `resize` | `cols`, `rows` | `requested` (the grid **asked for**; check it in `state`) |
 | `prof` | `on` (bool, optional) | counters: `draw_ms_call`, `draw_calls`, `parse_*`, `pty_*` |
 | `osc` | `tab` (optional, default the active one) | the last 8 OSC the parser saw, newest to oldest: `hex`, `text` (lossy), `truncated`, `title` (the resulting one). It is the probe for "why is the tab title full of garbage" |
-| `notifications` | — | every tab's notification list, newest first, with the workspace and tab it belongs to: `source` (`BEL`, `OSC 9`, `OSC 777`, `OSC 9;4`, `OSC 7501`), `id`, `title`, `body`, `shade`, `text` (the one line a surface with one line uses) and `alert` (the tab is marked). It is the list as text: the list itself has no screen of its own |
+| `notifications` | — | every tab's notification list, newest first, with the workspace and tab it belongs to: `source` (`BEL`, `OSC 9`, `OSC 777`, `OSC 99`, `OSC 9;4`, `OSC 7501`), `id`, `title`, `body`, `shade`, `text` (the one line a surface with one line uses) and `alert` (the tab is marked). It is the list as text: the list itself has no screen of its own |
 | `sel` | — | `text` (what `Ctrl+Shift+C` would copy) and `block` (the selection is a rectangle, `B5`) |
 | `log` | `value` (a path, or `off`) | starts the event log, moves it to another file, or turns it off — the same file `--debug-log` writes |
 | `quit` | — | closes the window |
