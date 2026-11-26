@@ -75,6 +75,7 @@ right f1`…`f24`.
 | `copy` / `paste` | CLIPBOARD |
 | `new_tab` / `close_tab` | tab |
 | `new_workspace` / `close_workspace` | workspace |
+| `ws_rename` | open the rename of the workspace in front — **no default chord** (`B70`): a factory key would be a key the child program may be owed; bind your own with `map` |
 | `prev_prompt` / `next_prompt` | walk the `OSC 133` marks (`M-R`) |
 | `open_config` | the config file in `$EDITOR`: a tab next to the current one, which gives the view back when the editor exits |
 | `scroll_page_up` / `scroll_page_down` / `scroll_top` / `scroll_bottom` | the history |

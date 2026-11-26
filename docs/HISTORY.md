@@ -2,6 +2,10 @@
 
 Concise history of past activities. A maximum of 5 lines per activity.
 
+## 2026-11-25 — the rename gets an action, and no chord (B70)
+
+- `ws_rename` joins the keymap (`Action::ALL`, `map ws_rename` in the config): it opens the rename of the workspace in front, the same inline editor the card's context menu and the double click already open. Deliberately **no default chord** — a factory key here is a key the child program may be owed (`F2` is `mc`'s user menu; the Java port paid for that). The reachability test now swears the absence: the one action a default is forbidden to bind.
+
 ## 2026-11-25 — the bar follows the newest in-flight record (B75)
 
 - `Status::bar()` answers the record the progress display follows: the newest one still in flight, not the root only. A program that names its parts (`build`, `test`, `deploy`) now gets progress all the same — the last that reported owns the bar, an older in-flight lane comes back when the newer finishes, and `progress_show = title` follows the same record so title and bar never disagree. No stacking: the cheap answer to "which of three lanes wins" (`docs/BACKLOG.md` had it queued as a drawing decision).

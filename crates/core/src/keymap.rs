@@ -151,6 +151,10 @@ pub enum Action {
     CloseTab,
     NewWorkspace,
     CloseWorkspace,
+    /// Rename the workspace in front. No default chord on purpose (`B70`): a
+    /// factory key here is a key the child program may be owed (`F2` is `mc`'s
+    /// user menu).
+    WsRename,
     /// Walk the prompt marks (`M-R`).
     PrevPrompt,
     NextPrompt,
@@ -179,6 +183,7 @@ impl Action {
         ("close_tab", Action::CloseTab),
         ("new_workspace", Action::NewWorkspace),
         ("close_workspace", Action::CloseWorkspace),
+        ("ws_rename", Action::WsRename),
         ("prev_prompt", Action::PrevPrompt),
         ("next_prompt", Action::NextPrompt),
         ("open_config", Action::OpenConfig),
@@ -375,12 +380,25 @@ mod tests {
     }
 
     /// A template has to answer for every action: an `Action` that only lands on
-    /// one system is a shortcut missing on the other two.
+    /// one system is a shortcut missing on the other two. The one exception is
+    /// deliberate (`B70`): the rename has no factory chord, because a chord here
+    /// is a chord the child program may be owed — and the same test swears no
+    /// default ever binds it.
     #[test]
     fn every_system_has_a_chord_for_every_action() {
         for os in Os::ALL {
             let bound: Vec<Action> = base_of(os).list().iter().map(|(_, a)| *a).collect();
             for (name, action) in Action::ALL {
+                if matches!(action, Action::WsRename) {
+                    assert!(
+                        !bound
+                            .iter()
+                            .any(|b| std::mem::discriminant(b) == std::mem::discriminant(action)),
+                        "{}: {name} was meant to have no default chord",
+                        os.name()
+                    );
+                    continue;
+                }
                 assert!(
                     bound
                         .iter()

@@ -1842,6 +1842,7 @@ impl App {
                 let i = self.ws_idx;
                 self.close_workspace(i);
             },
+            Action::WsRename => self.start_rename(self.ws_idx),
             Action::PrevPrompt => self.prompt_jump(true),
             Action::NextPrompt => self.prompt_jump(false),
             Action::OpenConfig => self.open_config(),
