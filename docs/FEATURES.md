@@ -370,6 +370,19 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   a dump that keeps the **colour of the output** — the pair is one decision
   (`platform::pager`). **limit:** the snapshot is text, `SGR` and links — no
   images; a snapshot is a photograph, edits land nowhere; macOS still `M-Y`.
+- Copy-mode (`copy_mode`, `Ctrl+Shift+[`, the chord toggles): the modal
+  keyboard selection, tmux-style — the keyboard of the tab belongs to the mode
+  and the **child sees no key** while it lasts (the chords stay with the app,
+  so the search still opens from inside it). Arrows/`h j k l` move a cursor
+  over grid and scrollback (the view follows at the edges), `Home`/`End`,
+  `PgUp`/`PgDn` move more; `Space` anchors the selection, again releases;
+  `v` takes whole lines (a full-width block) instead of the flow a drag
+  takes; `y` copies (`CLIPBOARD` + `PRIMARY`) and leaves, `q`/`Esc` leave
+  without copying; `n`/`N` walk the matches of the last search. The mode
+  draws with the selection's own ink — the span is `Tab::sel`, so there is
+  nothing new under the renderer. **limit:** no counts (`5j`), no rectangular
+  block by key (whole lines only), and the terminal's own cursor keeps
+  blinking where the child left it.
 - Program status (`OSC 7501`, the Program Status Protocol v0.4): the program says
   what it is doing — `idle`/`working`/`done`/`blocked`/`paused`/`error`, with
   `kind`, `progress`, `app`, `title` and a base64 `msg` — and the terminal keeps a
@@ -410,7 +423,7 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   marks (the snippet is the reader's).
 - Shortcuts are a **table** (`map`/`unmap` in the config, `M-H`): `map
   ctrl+shift+y new_tab` re-binds, `unmap ctrl+shift+w` frees the chord so the
-  program sees the key again. Twenty-three actions (copy, paste, tab and workspace
+  program sees the key again. Twenty-four actions (copy, paste, tab and workspace
   open/close, prompt walk, config, the four scroll moves, search, the
   scrollback viewer, the output yank, the output viewer,
   `select_tab`/`select_workspace` with a number, the workspace walk and carry).

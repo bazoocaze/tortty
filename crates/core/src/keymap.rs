@@ -171,6 +171,8 @@ pub enum Action {
     CopyOutput,
     /// The last command's output, frozen, in a viewer tab (`B79`).
     ViewOutput,
+    /// The modal keyboard selection, tmux-style (`B76`); the chord toggles.
+    CopyMode,
     /// 1..=10, where 10 is the tenth (`alt+0`).
     SelectTab(u8),
     SelectWorkspace(u8),
@@ -201,6 +203,7 @@ impl Action {
         ("view_scrollback", Action::ViewScrollback),
         ("copy_output", Action::CopyOutput),
         ("view_output", Action::ViewOutput),
+        ("copy_mode", Action::CopyMode),
         ("select_tab", Action::SelectTab(0)),
         ("select_workspace", Action::SelectWorkspace(0)),
         ("ws_prev", Action::WsPrev),

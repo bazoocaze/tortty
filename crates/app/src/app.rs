@@ -716,6 +716,8 @@ pub struct App {
     /// The scrollback search (`M-D`). While it is `Some`, the keyboard belongs to
     /// the query and the screen shows the matches; `Esc` closes it.
     search: Option<tortty_core::search::Search>,
+    /// The copy-mode state (`B76`), while it lasts. `None` = normal.
+    copy: Option<CopyMode>,
     /// Bumped whenever the highlight can change: it is what makes the renderer
     /// rebuild the rows even with an unmoved view (`M-D`).
     search_gen: u64,
@@ -849,6 +851,7 @@ impl App {
         App {
             search: None,
             search_gen: 0,
+            copy: None,
             opts,
             focused: true,
             over,
@@ -1820,6 +1823,12 @@ impl App {
                 return true;
             }
         }
+        // `B76`: in copy-mode what is left of the keyboard belongs to the mode
+        // — the chords are gone, and even a key the mode ignores must not
+        // reach the child (the mode is modal, that is its point)
+        if self.copy.is_some() {
+            return self.copy_mode_key(k);
+        }
         // a real key returns to live; a bare modifier does not (otherwise the
         // Shift of Shift+PgUp already reset the view before scrolling)
         if self.tabs[self.active].view_off > 0
@@ -1854,6 +1863,7 @@ impl App {
             Action::ViewScrollback => self.view_scrollback(),
             Action::CopyOutput => self.copy_output(),
             Action::ViewOutput => self.view_output(),
+            Action::CopyMode => self.enter_copy_mode(),
             Action::ScrollPageUp => self.scroll_view(rows - 1),
             Action::ScrollPageDown => self.scroll_view(-(rows - 1)),
             // `Shift+Home` with nothing above does nothing: a key that moves
@@ -4391,6 +4401,8 @@ impl App {
         if i >= total || i == self.ws_idx {
             return;
         }
+        // the mode rides the tab in front; another workspace is out of its world
+        self.copy_exit();
         let old = self.ws_idx;
         let cur = Workspace::take(self);
         // `all[j]` = logical workspace j; the one in the middle is the one in front
@@ -4601,6 +4613,207 @@ impl App {
         self.open_in_pager(&bytes, "output");
     }
 
+    // ------------------------------------------------------------ copy-mode
+
+    /// `B76`: the chord toggles — a second press leaves, like `q` does.
+    fn enter_copy_mode(&mut self) {
+        if self.copy.take().is_some() {
+            self.copy_exit();
+            return;
+        }
+        let t = &self.tabs[self.active];
+        let cursor = t.term.anchor_at(t.view_off, 0, 0);
+        self.copy = Some(CopyMode {
+            cursor,
+            anchor: None,
+            lines: false,
+            search: self.search.clone(),
+        });
+        // the mouse selection and the mode's do not mix: the mode owns `sel`
+        self.tabs[self.active].sel = None;
+        self.copy_show();
+    }
+
+    fn copy_exit(&mut self) {
+        if self.copy.is_some() {
+            self.copy = None;
+            self.tabs[self.active].sel = None;
+            self.ask_frame();
+        }
+    }
+
+    /// The mode draws with the selection's ink: the span from the anchor (or
+    /// the cursor alone) **is** `Tab::sel` — one rendering, one truth, nothing
+    /// new for the renderer to learn.
+    fn copy_show(&mut self) {
+        let t = &self.tabs[self.active];
+        let (cols, gen) = (t.term.cols, t.term.abs_gen);
+        if let Some(mode) = &self.copy {
+            let mut cur = mode.cursor;
+            cur.gen = gen;
+            self.tabs[self.active].sel = mode.span(&cur, cols);
+        }
+        self.ask_frame();
+    }
+
+    /// Moves the cursor; the view follows at the edges (the pager's habit).
+    fn copy_move(&mut self, dl: i64, dc: i64) {
+        {
+            let Some(mode) = &mut self.copy else {
+                return;
+            };
+            let t = &mut self.tabs[self.active];
+            #[allow(clippy::cast_sign_loss)] // rows/cols are small
+            let rows = t.term.rows as i64;
+            let last = t.term.scrolled as i64 + rows - 1;
+            mode.cursor.line = (mode.cursor.line + dl).clamp(t.term.abs_first(), last);
+            mode.cursor.col = (mode.cursor.col as i64 + dc)
+                .clamp(0, t.term.cols as i64 - 1)
+                .max(0) as usize;
+            mode.cursor.gen = t.term.abs_gen;
+            let mut off = t.view_off as i64;
+            let row = mode.cursor.line - t.term.scrolled as i64 + off;
+            if row < 0 {
+                off += -row;
+            } else if row >= rows {
+                off -= row - (rows - 1);
+            }
+            t.view_off = off.clamp(0, t.term.scrollback.len() as i64) as usize;
+        }
+        self.copy_show();
+    }
+
+    /// Space: the anchor sits where the cursor is; again and it is gone.
+    fn copy_anchor(&mut self) {
+        let Some(mode) = &mut self.copy else {
+            return;
+        };
+        let gen = self.tabs[self.active].term.abs_gen;
+        mode.anchor = match mode.anchor {
+            Some(_) => None,
+            None => Some(Anchor {
+                line: mode.cursor.line,
+                col: mode.cursor.col,
+                gen,
+            }),
+        };
+        self.copy_show();
+    }
+
+    /// `y`: the mode's span on the clipboard (`CLIPBOARD` and `PRIMARY`, as the
+    /// mouse copy does); copying leaves the mode.
+    fn copy_yank(&mut self) {
+        let t = &self.tabs[self.active];
+        let (cols, gen) = (t.term.cols, t.term.abs_gen);
+        let span = self
+            .copy
+            .as_ref()
+            .and_then(|mode| {
+                let mut cur = mode.cursor;
+                cur.gen = gen;
+                mode.span(&cur, cols)
+            })
+            .and_then(|span| t.term.span_text(&span));
+        if let Some(txt) = span {
+            if !txt.is_empty() {
+                self.clip.set(&txt);
+                self.clip.set_primary(&txt);
+            }
+        }
+        self.copy_exit();
+    }
+
+    /// `n`/`N`: the next/previous match of the last search becomes the cursor
+    /// (and the view, like the bar's `Enter`). Without a search there is
+    /// nothing to walk — the mode keeps the query the bar last saw.
+    fn copy_search(&mut self, back: bool) {
+        let hit = {
+            let Some(mode) = &mut self.copy else {
+                return;
+            };
+            if self.search.is_some() {
+                mode.search = self.search.clone();
+            }
+            let Some(s) = mode.search.as_mut() else {
+                return;
+            };
+            s.step(back);
+            s.current()
+        };
+        if let Some(h) = hit {
+            let t = &mut self.tabs[self.active];
+            if let Some(mode) = &mut self.copy {
+                mode.cursor = Anchor {
+                    line: h.line,
+                    col: h.col,
+                    gen: t.term.abs_gen,
+                };
+            }
+            let off = (t.term.scrolled as i64 - h.line).clamp(0, t.term.scrollback.len() as i64);
+            // clamped above
+            #[allow(clippy::cast_sign_loss)]
+            let off = off as usize;
+            t.view_off = off;
+        }
+        self.copy_show();
+    }
+
+    /// The mode owns the keyboard: every real key is eaten (the child never
+    /// sees one while the mode lasts). The chords were already served above —
+    /// `ctrl+shift+f` opens the search from inside the mode, as tmux's `/`.
+    fn copy_mode_key(&mut self, k: &KeyIn<'_>) -> bool {
+        use winit::keyboard::NamedKey;
+        let cols = self.tabs[self.active].term.cols as i64;
+        let rows = self.tabs[self.active].term.rows as i64;
+        match k.named {
+            Some(NamedKey::ArrowLeft) => self.copy_move(0, -1),
+            Some(NamedKey::ArrowRight) => self.copy_move(0, 1),
+            Some(NamedKey::ArrowUp) => self.copy_move(-1, 0),
+            Some(NamedKey::ArrowDown) => self.copy_move(1, 0),
+            Some(NamedKey::Home) => self.copy_move(0, -cols),
+            Some(NamedKey::End) => self.copy_move(0, cols),
+            Some(NamedKey::PageUp) => self.copy_move(-(rows - 1), 0),
+            Some(NamedKey::PageDown) => self.copy_move(rows - 1, 0),
+            Some(NamedKey::Escape) => {
+                self.copy_exit();
+            },
+            Some(NamedKey::Space) => {
+                self.copy_anchor();
+            },
+            _ => {
+                let Some(text) = k.text.or(k.character) else {
+                    return true;
+                };
+                for c in text.chars() {
+                    match c {
+                        'h' => self.copy_move(0, -1),
+                        'l' => self.copy_move(0, 1),
+                        'k' => self.copy_move(-1, 0),
+                        'j' => self.copy_move(1, 0),
+                        'v' => {
+                            if let Some(mode) = &mut self.copy {
+                                mode.lines = !mode.lines;
+                            }
+                            self.copy_show();
+                        },
+                        'y' => {
+                            self.copy_yank();
+                            return true;
+                        },
+                        'q' => {
+                            self.copy_exit();
+                            return true;
+                        },
+                        'n' => self.copy_search(false),
+                        'N' => self.copy_search(true),
+                        _ => {},
+                    }
+                }
+            },
+        }
+        true
+    }
+
     /// Switches tab (Alt+N). Out of range, does nothing.
     /// The tab in front was visited: the mark echoes once and goes. The content
     /// is not pushed at the user — a notification is a call to come back, and the
@@ -4614,6 +4827,8 @@ impl App {
         if i >= self.tabs.len() || i == self.active {
             return;
         }
+        // the mode rides the tab in front; another tab is out of its world
+        self.copy_exit();
         self.active = i;
         self.visit_active();
         self.sync_title();
@@ -4664,6 +4879,64 @@ impl App {
         }
         if let Some(w) = self.window.as_ref() {
             w.set_title(&format!("{title} — tortty"));
+        }
+    }
+}
+
+/// `B76`: the copy-mode state — a cursor over the grid and the scrollback that
+/// the child never sees, an optional anchor (space sets, space again releases)
+/// and the shape (`v`: whole lines instead of the flow a drag takes). The
+/// keyboard of the tab belongs to the mode while it lasts; the chords stay
+/// with the app, so `ctrl+shift+f` still opens the search from inside it.
+struct CopyMode {
+    /// Where the cursor is — the selection's own absolute coordinate, so it
+    /// rides the scroll and the history the way a drawn selection does.
+    cursor: Anchor,
+    /// Where the selection was anchored (`None` = nothing selected yet: the
+    /// span is the cursor alone, which is how the mode shows itself).
+    anchor: Option<Anchor>,
+    /// `v` toggles: whole lines (a full-width block) instead of the flow.
+    lines: bool,
+    /// The last search, for `n`/`N`: the bar's `Search` walks matches on
+    /// absolute lines, which is the coordinate the cursor speaks.
+    search: Option<tortty_core::search::Search>,
+}
+
+impl CopyMode {
+    /// The span the mode draws and `y` copies: the anchor and the cursor, or
+    /// the cursor alone when nothing is anchored. Whole-lines is a full-width
+    /// block — every covered row from column 0 to the last column.
+    fn span(&self, cur: &Anchor, cols: usize) -> Option<Span> {
+        let gen = cur.gen;
+        match self.anchor {
+            None if !self.lines => Some(Span::new(*cur, *cur)),
+            anchor => {
+                let a = anchor.map(|mut a| {
+                    a.gen = gen;
+                    a
+                });
+                if self.lines {
+                    let (lo, hi) = match a {
+                        Some(a) if a.line <= cur.line => (a, *cur),
+                        Some(a) => (*cur, a),
+                        None => (*cur, *cur),
+                    };
+                    Some(Span::block(
+                        Anchor {
+                            line: lo.line,
+                            col: 0,
+                            gen,
+                        },
+                        Anchor {
+                            line: hi.line,
+                            col: cols.saturating_sub(1),
+                            gen,
+                        },
+                    ))
+                } else {
+                    Some(Span::new(a?, *cur))
+                }
+            },
         }
     }
 }
@@ -5804,5 +6077,67 @@ mod tests {
         assert!(real.exists(), "canonicalized out of temp, no delete");
         std::fs::remove_file(&real).unwrap();
         std::fs::remove_dir(&dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod copy_mode_tests {
+    use super::CopyMode;
+    use tortty_core::Anchor;
+
+    fn at(line: i64, col: usize) -> Anchor {
+        Anchor { line, col, gen: 7 }
+    }
+
+    #[test]
+    fn without_an_anchor_the_span_is_the_cursor_alone() {
+        let m = CopyMode {
+            cursor: at(3, 5),
+            anchor: None,
+            lines: false,
+            search: None,
+        };
+        let s = m.span(&at(3, 5), 20).unwrap();
+        assert_eq!((s.a.line, s.a.col, s.b.line, s.b.col), (3, 5, 3, 5));
+    }
+
+    #[test]
+    fn the_flow_span_sorts_itself() {
+        let m = CopyMode {
+            cursor: at(1, 0),
+            anchor: Some(at(4, 9)),
+            lines: false,
+            search: None,
+        };
+        let s = m.span(&at(1, 0), 20).unwrap();
+        assert_eq!((s.a.line, s.a.col), (1, 0));
+        assert_eq!((s.b.line, s.b.col), (4, 9));
+        assert!(!s.is_block());
+    }
+
+    #[test]
+    fn whole_lines_is_a_full_width_block() {
+        let m = CopyMode {
+            cursor: at(4, 7),
+            anchor: Some(at(1, 3)),
+            lines: true,
+            search: None,
+        };
+        let s = m.span(&at(4, 7), 20).unwrap();
+        assert!(s.is_block());
+        assert_eq!((s.a.line, s.a.col, s.b.line, s.b.col), (1, 0, 4, 19));
+    }
+
+    #[test]
+    fn whole_lines_without_an_anchor_is_the_cursor_line() {
+        let m = CopyMode {
+            cursor: at(2, 5),
+            anchor: None,
+            lines: true,
+            search: None,
+        };
+        let s = m.span(&at(2, 5), 20).unwrap();
+        assert_eq!((s.a.col, s.b.col), (0, 19));
+        assert_eq!(s.a.line, 2);
     }
 }

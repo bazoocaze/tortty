@@ -83,11 +83,12 @@ right f1`…`f24`.
 | `view_scrollback` | the scrollback of the tab, frozen, in a viewer tab — `Ctrl+Shift+O`; the pager is `$PAGER` (as is, plain text) or our `less -R` with the colours of the output |
 | `copy_output` | the last command's output on the clipboard — `Ctrl+Shift+Y`; the `OSC 133` marks name the range (`C`…`D`), so the shell has to send them (`B39`'s snippet) |
 | `view_output` | the last command's output alone, frozen, in a viewer tab — `Ctrl+Shift+Alt+O`; the same range as `copy_output`, the same viewer contract as `view_scrollback` |
+| `copy_mode` | the modal keyboard selection (`B76`), `Ctrl+Shift+[`; the chord toggles — inside it, arrows/`h j k l` move, `Space` anchors, `v` takes whole lines, `y` copies and leaves, `q`/`Esc` leave, `n`/`N` walk the last search; the child sees no key while it lasts |
 | `select_tab N` / `select_workspace N` | `N` is 1..10, where 10 is key `0` |
 | `ws_prev` / `ws_next` / `ws_move_up` / `ws_move_down` | walk and carry the workspace |
 
 The defaults are `map` lines in the defaults file itself — `Ctrl+Shift+C/V/T/W/N/Q`,
-`Ctrl+Shift+Up/Down`, `Ctrl+Shift+F/O/Y/F2`, `Shift+PgUp/PgDn/Home/End`, `Alt+1`…`0`
+`Ctrl+Shift+Up/Down`, `Ctrl+Shift+F/O/Y/[/F2`, `Shift+PgUp/PgDn/Home/End`, `Alt+1`…`0`
 (tab), `Ctrl+Shift+1`…`0` and `Super+1`…`0` (workspace), `Super+Up/Down` and
 `Super+Shift+Up/Down`, one line per chord. That text is the single source: copying
 the block into your file reproduces the app's table, changing an action changes it

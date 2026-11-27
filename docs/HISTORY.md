@@ -2,6 +2,13 @@
 
 Concise history of past activities. A maximum of 5 lines per activity.
 
+## 2026-11-27 — copy-mode: the keyboard learns to select
+
+- `B76` closed. `copy_mode` (`Ctrl+Shift+[`, the chord toggles): a cursor over grid and scrollback (the selection's own absolute coordinate), `Space` anchors, `v` takes whole lines (a full-width block), `y` copies and leaves, `q`/`Esc` leave, `n`/`N` walk the last search, `Home`/`End`/`PgUp`/`PgDn` move more. The view follows the cursor at the edges, like a pager.
+- The mode is **modal for real**: while it lasts, every real key is eaten before the encoder — the child never sees one. The chords stay with the app (they are served first), so `Ctrl+Shift+F` opens the search from inside the mode and `n`/`N` walk it after `Esc` closed the bar (the mode keeps the query).
+- The mode draws with the selection's ink: the span it holds **is** `Tab::sel` — the cursor alone, anchor to cursor, or a full-width block — so the renderer learned nothing and the mouse and the keyboard share one truth. Switching tab or workspace leaves the mode (its world is the tab in front); the mouse selection is dropped on entering (one `sel`, one owner).
+- Four unit tests on the span's three shapes; the keymap gains `copy_mode`.
+
 ## 2026-11-27 — the command's output alone in its own viewer
 
 - `B79` closed. `view_output` (`Ctrl+Shift+Alt+O`, factory): the same range `copy_output` takes (`C`…`D`, or to the last line alive while the command runs), dumped by the same walk, handed to the same primitive (`B81`) — the work of this one was only the seed and the chord, as the backlog had promised.
