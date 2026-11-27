@@ -38,7 +38,7 @@ reading; only README.md is for humans.
   ours, with the proof and the workaround.
 - `docs/HISTORY.md` — dated record of what was done (narrative).
 - `README.md` — the human view: run, measure, structure. The project owner must
-  approve changes before committing.
+  approve changes to it before committing.
 
 ### A rule is not created by itself
 
