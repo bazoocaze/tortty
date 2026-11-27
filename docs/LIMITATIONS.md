@@ -154,8 +154,6 @@ Accepted or unresolved limitations. Planned work lives in `BACKLOG.md`
 
 ## Interface
 
-- **No automatic dark/light theme**: the palette comes from the config, not from
-  the desktop portal.
 - **Notifications stay inside the window.** Every source (`OSC 9`, `777`, the
   final states of `9;4` and of `7501`, and the BEL under `bell visual`) rings the
   bell on the tab label, turns the workspace card yellow and asks the window
