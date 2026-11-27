@@ -37,8 +37,7 @@ reading; only README.md is for humans.
 - `docs/EXTERNALS.md` — bugs of other software that were measured and are not
   ours, with the proof and the workaround.
 - `docs/HISTORY.md` — dated record of what was done (narrative).
-- `README.md` — the human view: run, measure, structure. The project owner must
-  approve changes before committing.
+- `README.md` — the human view: run, measure, structure.
 
 ### A rule is not created by itself
 
@@ -102,6 +101,7 @@ per category, in order).
 - Use Conventional Commits (`<type>(<scope>): <description>`; types: feat, fix, chore, docs, style,
   refactor, perf, test, build, ci, revert.
 - Commit message in English, concise, three lines maximum.
+- Commit is local; push only when the owner asks (`make-release.sh` pushes the tag, on request only).
 - File names and symbols (variable, field, etc) in English.
 - For what is already in Portuguese, the fix is on demand, during the edit, in
   the commit that already touches the file.
