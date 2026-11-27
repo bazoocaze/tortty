@@ -472,6 +472,17 @@ Careful when testing: `ctrl+c`/`ctrl+\\` kill the child (`SIGINT`/`SIGQUIT`), th
 app closes with it and the client is left reading from a dead socket. Use a child
 that ignores the signals (`sh -c 'trap "" INT QUIT; sleep 200'`).
 
+A shortcut that does not fire on a non-US keyboard is a question about what the
+window system handed over, and guessing it from the label on the keycap is how a
+fix becomes fragile. `tools/show-keys.sh` opens a window and prints one line per
+key press — `phys`, `logical`, `unshift`, `text`, `mods`, `loc` — with
+`unshift` being `KeyEventExtModifierSupplement::key_without_modifiers`, the keycap
+of the layout in force. On ABNT2 the key printed `[` arrives as `Char("{")` with
+`c+s`, carries the US index `BracketRight`, and `unshift` says `Char("[")`: that
+is the name a chord must be matched by. The tool depends on `winit` alone (no
+`tortty-core`, no config), so a disagreement between it and the terminal is a
+fact about the terminal.
+
 Dead keys have no code of ours: `winit` delivers `Key::Dead` (which generates no
 byte) and then the composed text in `event.text`. Test with
 `xdotool key dead_tilde a` and read the screen through `text`. The second key

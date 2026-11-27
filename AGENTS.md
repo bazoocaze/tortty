@@ -50,8 +50,9 @@ too.
 
 ## Architecture
 
-Two-crate workspace. The boundary is rigid and it is the reason the core is
-testable without a display:
+Two-crate workspace, plus one crate that is a tool and not part of the app
+(`tools/show-keys`, which depends on `winit` alone). The boundary is rigid and it
+is the reason the core is testable without a display:
 
 - `crates/core` — pure emulation: cell, palette, DEC charset, grid, VT
   parser, scrollback. **It knows no window, pty, GPU, clock, thread or
@@ -64,7 +65,8 @@ testable without a display:
 - `crates/app` — the app: `pty` (portable-pty), `app` (winit + event loop),
   `render`/`glyph`/`atlas` (wgpu + swash), `keys`, `debugsock`, `prof`, `cli`.
 - `tools/` — `devrun.sh`/`devkill.sh` (PID file), `benchrun.py`, `bench.sh`,
-  `doomfire.py` (the fixed load, byte for byte, so two runs are comparable).
+  `doomfire.py` (the fixed load, byte for byte, so two runs are comparable), and
+  `show-keys/` (the witness: what the window system hands to a key press).
 
 Flow of a byte: pty reader thread → `Term::feed` (core) → marks damage on the
 line → `request_redraw` → `RedrawRequested` builds the instance vector →
@@ -180,6 +182,11 @@ the package name built by `tools/targets.sh` — the contract is in
   `./tools/pixel-probe.py shot.png --diff a.png b.png` says how many pixels
   changed, and where.
 - `./tools/bench.sh` — the ladder in both grids, against the reference build.
+- `./tools/show-keys.sh` — opens a window and prints, one line per key press,
+  what the window system handed over (`phys`, `logical`, `unshift`, `text`,
+  `mods`, `loc`). It is how a shortcut that does not fire on a non-US keyboard is
+  answered with a measurement instead of a guess; `unshift` is the keycap of the
+  layout, the name a chord is matched by.
 - `cargo run --release -p tortty-core --bin parsebench -- --file /tmp/dmesg.txt`
   — real-load parsing, no display.
 - `./tools/target-prune.sh` — housekeeping for `target/`: the version is part of the

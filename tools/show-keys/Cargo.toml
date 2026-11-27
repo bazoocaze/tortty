@@ -1,0 +1,12 @@
+[package]
+name = "show-keys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "TorTTY — what the window system hands to a key press"
+
+[lints]
+workspace = true
+
+[dependencies]
+winit = "0.30"
