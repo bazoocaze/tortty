@@ -2,6 +2,13 @@
 
 Concise history of past activities. A maximum of 5 lines per activity.
 
+## 2026-11-26 — the cursor becomes a widget, and copy-mode owns it
+
+- `chrome::Cursor` is **one** cursor with two owners: `program(metrics, term, shape)` (the grid cell the child writes to) and `at(metrics, anchor, scrolled, view_off, shape)` (an absolute anchor, for a mode that takes it over). Both return the same rectangle for the same cell, so the painter has one path; `Frame.cursor` replaced the program-cursor branch inside `build_cursor`, and the shape resolution (`CSI 6 q` before the config's `cursor_shape`) moved to the app.
+- Copy-mode takes the cursor while it lasts: the child's hides and the mode's blinks at its anchor — always, whatever `cursor_blink` says, because it is a mode indicator and not the terminal's cursor (the tmux rule).
+- The mode's selection only exists **after `Space`**: painting `Tab::sel` on the cursor's own cell swallowed the cursor, and with it the blink (the pixel probe showed a still screen while the phase was flipping). `CopyMode::selection` is the drawn span; `span` still answers what `y` copies.
+- Three unit tests on `chrome::Cursor` (the same rectangle for either owner, the three shapes, off-view/off-grid `None`) and one on the empty selection; verified by pixel probe under Xvfb: 242 px alternating in the cursor's cell in copy-mode, steady cursor outside it.
+
 ## 2026-11-26 — the shortcut chord reads the keycap, not the shifted character
 
 - Copy-mode's `ctrl+shift+[` never matched on the real keyboard: with Shift

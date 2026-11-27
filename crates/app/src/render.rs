@@ -12,7 +12,7 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
 use swash::scale::ScaleContext;
 use tortty_core::cell::{Cell, INV};
-use tortty_core::config::{Config, CursorShape, Theme};
+use tortty_core::config::{Config, Theme};
 use tortty_core::select::Rect;
 use tortty_core::term::{sanitize_title, Progress};
 use tortty_core::{Color, Span, Term};
@@ -130,7 +130,6 @@ pub struct Renderer {
     /// Width of the workspace sidebar in px (0 = a single workspace). Pushes the
     /// grid right: `origin` becomes `pad + side`.
     side: f32,
-    pub cursor_shape: CursorShape,
     /// Where text ends and images come in (images sit above text and below the
     /// cursor/chrome, as in kitty).
     img_split: usize,
@@ -548,7 +547,6 @@ impl Renderer {
             pad: cfg.padding as f32,
             bar: 0.0,
             side: 0.0,
-            cursor_shape: cfg.cursor_shape,
             img_split: 0,
             emoji_split: 0,
             img_pipeline,
@@ -595,7 +593,6 @@ impl Renderer {
     /// What is not colour: cursor shape, margin and ligatures (only changes per
     /// file).
     pub fn apply_layout(&mut self, cfg: &Config) {
-        self.cursor_shape = cfg.cursor_shape;
         self.pad = cfg.padding as f32;
         // `progress_show` is drawn with the chrome, which every frame rebuilds, so
         // it takes effect on the next frame; `bold_as_bright` changes the ink of
@@ -1778,43 +1775,29 @@ impl Renderer {
     }
 
     /// Cursor (block, underline or beam) — on top of the text and the images.
-    fn build_cursor(&mut self, f: &Frame<'_>) {
-        let term = f.term;
-        let cw = self.fonts.cw;
-        let chh = self.fonts.ch;
-        let view_off = f.view_off;
-        let cols = term.cols;
-        let blink = f.blink;
-        if blink.cursor
-            && view_off == 0
-            && term.cursor_visible
-            && term.cy < term.rows
-            && term.cx < cols
-        {
-            let cx = term.cx as f32 * cw;
-            let cy = term.cy as f32 * chh;
-            let style = term.app_cursor_style.map_or_else(
-                || match self.cursor_shape {
-                    CursorShape::Block => 0,
-                    CursorShape::Underline => 1,
-                    CursorShape::Beam => 2,
-                },
-                |(f, _)| f,
-            );
-            let cor = self.color(Color::Default, self.cursor);
-            match style {
-                1 | 2 => {
-                    // underline / beam
-                    let h = if style == 1 { 2.0 } else { chh };
-                    let w = if style == 1 { cw } else { 2.0 };
-                    let y = if style == 1 { cy + chh - 3.0 } else { cy };
-                    self.push_rect(cx, y, w, h, [cor[0], cor[1], cor[2], 0.9]);
-                },
-                _ => {
-                    self.push_rect(cx, cy, cw, chh, [cor[0], cor[1], cor[2], 0.85]);
-                },
-            }
+    ///
+    /// One cursor, two owners: whoever owns it (the program, or copy-mode
+    /// while the mode lasts) resolved the cell into `chrome::Cursor`, and this
+    /// only turns it into ink. Which owner it is does not reach here.
+    fn build_cursor(&mut self, frame: &Frame<'_>) {
+        let Some(cursor) = frame.cursor else { return };
+        if !frame.blink.cursor {
+            return;
         }
+        let ink = self.color(Color::Default, self.cursor);
+        // a line or a beam is thinner ink and reads better a shade stronger
+        let alpha = match cursor.shape {
+            crate::chrome::CursorShape::Block => 0.85,
+            crate::chrome::CursorShape::Underline | crate::chrome::CursorShape::Beam => 0.9,
+        };
+        let rect = cursor.rect;
+        self.push_rect(
+            rect[0],
+            rect[1],
+            rect[2],
+            rect[3],
+            [ink[0], ink[1], ink[2], alpha],
+        );
     }
 
     /// The scrollbar: an 8 px strip on the grid's right edge, drawn only when
@@ -1855,6 +1838,8 @@ impl Renderer {
             term,
             view_off,
             sel,
+            // read whole in `build_cursor`, which needs nothing else
+            cursor: _,
             blink,
             toast,
             tabs,
@@ -2889,6 +2874,10 @@ pub struct Frame<'a> {
     pub metrics: crate::chrome::Metrics,
     pub view_off: usize,
     pub sel: Option<Span>,
+    /// The cursor, already resolved to a cell and a shape by whoever owns it:
+    /// the program, or copy-mode while the mode lasts (`B76`). `None` = not
+    /// shown, and the painter draws nothing.
+    pub cursor: Option<crate::chrome::Cursor>,
     pub blink: Blink,
     pub toast: Option<&'a ToastText>,
     pub tabs: Option<&'a [TabInfo]>,

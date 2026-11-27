@@ -187,6 +187,86 @@ impl Scrollbar {
 /// The toast box (`I12`/`K13`): the notice's text wrapped to the grid, and the
 /// box it lands in.
 ///
+/// The cursor's shape, already resolved by the app: the program's `CSI 6 q`
+/// wins over the config's `cursor_shape`, and the widget does not care which
+/// of the two spoke.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum CursorShape {
+    Block,
+    Underline,
+    Beam,
+}
+
+/// The cursor as geometry (`B76`): **one** cursor, two owners.
+///
+/// The program owns it — the grid cell where the shell is waiting — and
+/// copy-mode takes it over while the mode lasts, at its own anchor. Both come
+/// out of here as the same rectangle, so the painter has one path and the two
+/// owners cannot disagree about where the cursor is or whether it is shown.
+/// What stays out: the colour, the alpha and the blink (ink and time belong to
+/// the app and the renderer).
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct Cursor {
+    pub rect: Rect,
+    pub shape: CursorShape,
+}
+
+impl Cursor {
+    /// The program's cursor: the grid cell it sits on. `None` when it is not
+    /// shown — hidden by the program, off the grid, or the view scrolled back
+    /// into the history (the cell on screen is not where the program writes).
+    #[must_use]
+    pub fn program(
+        m: Metrics,
+        term: &tortty_core::term::Term,
+        shape: CursorShape,
+    ) -> Option<Cursor> {
+        if !term.cursor_visible || term.cy >= term.rows || term.cx >= m.cols {
+            return None;
+        }
+        #[allow(clippy::cast_precision_loss)] // grid cells
+        let (x, y) = (term.cx as f32 * m.cw, term.cy as f32 * m.ch);
+        Some(Cursor {
+            rect: Self::rect(x, y, m, shape),
+            shape,
+        })
+    }
+
+    /// The cursor of a mode that owns it (copy-mode), from an **absolute**
+    /// anchor: the history and the scroll offset turn the line into a view row.
+    /// `None` off the view — above it, below it, or a column off the grid.
+    #[must_use]
+    pub fn at(
+        metrics: Metrics,
+        anchor: &tortty_core::select::Anchor,
+        scrolled: usize,
+        view_off: usize,
+        shape: CursorShape,
+    ) -> Option<Cursor> {
+        let row = anchor.line - scrolled as i64 + view_off as i64;
+        #[allow(clippy::cast_possible_truncation)] // grid rows, far below 2^31
+        if row < 0 || row >= metrics.rows as i64 || anchor.col >= metrics.cols {
+            return None;
+        }
+        #[allow(clippy::cast_precision_loss)] // grid cells
+        let (x, y) = (anchor.col as f32 * metrics.cw, row as f32 * metrics.ch);
+        Some(Cursor {
+            rect: Self::rect(x, y, metrics, shape),
+            shape,
+        })
+    }
+
+    /// The cell's top-left corner plus the shape: a block fills the cell, an
+    /// underline is a 2 px line on its base, a beam is 2 px of its left edge.
+    fn rect(x: f32, y: f32, metrics: Metrics, shape: CursorShape) -> Rect {
+        match shape {
+            CursorShape::Block => [x, y, metrics.cw, metrics.ch],
+            CursorShape::Underline => [x, y + metrics.ch - 3.0, metrics.cw, 2.0],
+            CursorShape::Beam => [x, y, 2.0, metrics.ch],
+        }
+    }
+}
+
 /// It floats over everything and is drawn last, so a press on it is the box's and
 /// never the grid's. The wrapping lives here and not in the painter because the
 /// box's width **is** the wrapped text: a painter that wrapped on its own would
@@ -1086,5 +1166,95 @@ mod tests {
         // above and below the track clamp, so a wild drag cannot pass the ends
         assert_eq!(sb.offset_at(m, top - 50.0).unwrap_or(0), 90);
         assert_eq!(sb.offset_at(m, top + 500.0).unwrap_or(0), 0);
+    }
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::{Cursor, CursorShape, Metrics};
+    use tortty_core::select::Anchor;
+    use tortty_core::term::Term;
+
+    fn metrics() -> Metrics {
+        Metrics {
+            cw: 10.0,
+            ch: 20.0,
+            pad: 4.0,
+            bar: 24.0,
+            side: 100.0,
+            cols: 10,
+            rows: 6,
+        }
+    }
+
+    fn at(line: i64, col: usize) -> Anchor {
+        Anchor { line, col, gen: 7 }
+    }
+
+    /// One cursor, two owners, one rectangle: the block fills the cell whoever
+    /// owns it, and an underline/beam is the same cell's ink in a thinner form.
+    #[test]
+    fn the_block_fills_the_cell_for_either_owner() {
+        let m = metrics();
+        let mut t = Term::new(10, 6);
+        t.feed(b"\r\n\r\n");
+        let prog = Cursor::program(m, &t, CursorShape::Block).unwrap();
+        assert_eq!(prog.rect, [0.0, 40.0, 10.0, 20.0], "row 2, col 0");
+        let mode = Cursor::at(m, &at(2, 0), 0, 0, CursorShape::Block).unwrap();
+        assert_eq!(prog.rect, mode.rect, "the same cell, the same rectangle");
+        let under = Cursor::at(m, &at(2, 0), 0, 0, CursorShape::Underline).unwrap();
+        assert_eq!(
+            under.rect,
+            [0.0, 57.0, 10.0, 2.0],
+            "a line on the cell's base"
+        );
+        let beam = Cursor::at(m, &at(2, 0), 0, 0, CursorShape::Beam).unwrap();
+        assert_eq!(beam.rect, [0.0, 40.0, 2.0, 20.0], "2 px of the left edge");
+    }
+
+    /// The mode's anchor is absolute: history and scroll decide the view row,
+    /// and off the view there is no cursor to draw.
+    #[test]
+    fn the_mode_cursor_follows_the_scroll_and_hides_off_view() {
+        let m = metrics();
+        // 3 lines of history, 2 lines scrolled back, 6 rows on screen
+        let c = Cursor::at(m, &at(5, 0), 3, 2, CursorShape::Block).unwrap();
+        assert_eq!(c.rect[1], 80.0, "view row 4 of 6");
+        assert!(
+            Cursor::at(m, &at(0, 0), 3, 2, CursorShape::Block).is_none(),
+            "above"
+        );
+        assert!(
+            Cursor::at(m, &at(7, 0), 3, 2, CursorShape::Block).is_none(),
+            "below"
+        );
+        assert!(
+            Cursor::at(m, &at(5, 10), 3, 2, CursorShape::Block).is_none(),
+            "column off the grid"
+        );
+    }
+
+    /// The program's cursor has the same three ways of not being shown: hidden
+    /// by the program, or on a cell outside the grid.
+    #[test]
+    fn the_program_cursor_is_none_when_it_is_not_shown() {
+        let m = metrics();
+        let mut t = Term::new(10, 6);
+        t.feed(b"ab");
+        assert!(Cursor::program(m, &t, CursorShape::Block).is_some());
+        t.cursor_visible = false;
+        assert!(Cursor::program(m, &t, CursorShape::Block).is_none());
+        t.cursor_visible = true;
+        t.cx = 10;
+        assert!(
+            Cursor::program(m, &t, CursorShape::Block).is_none(),
+            "off the grid"
+        );
+        t.cx = 0;
+        t.cy = 6;
+        assert!(
+            Cursor::program(m, &t, CursorShape::Block).is_none(),
+            "below the grid"
+        );
     }
 }

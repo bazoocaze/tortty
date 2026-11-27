@@ -380,9 +380,11 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   takes; `y` copies (`CLIPBOARD` + `PRIMARY`) and leaves, `q`/`Esc` leave
   without copying; `n`/`N` walk the matches of the last search. The mode
   draws with the selection's own ink — the span is `Tab::sel`, so there is
-  nothing new under the renderer. **limit:** no counts (`5j`), no rectangular
-  block by key (whole lines only), and the terminal's own cursor keeps
-  blinking where the child left it.
+  nothing new under the renderer — and **nothing is selected until `Space`**:
+  before the first anchor the only indicator is the cursor, which the mode
+  takes over from the child and blinks (whatever `cursor_blink` says: it is a
+  mode indicator, not the terminal's cursor). **limit:** no counts (`5j`), no
+  rectangular block by key (whole lines only).
 - Program status (`OSC 7501`, the Program Status Protocol v0.4): the program says
   what it is doing — `idle`/`working`/`done`/`blocked`/`paused`/`error`, with
   `kind`, `progress`, `app`, `title` and a base64 `msg` — and the terminal keeps a

@@ -1490,6 +1490,45 @@ impl App {
         self.chrome_metrics().cards_visible()
     }
 
+    /// The cursor of this frame: **one** cursor, two owners (`B76`). Copy-mode
+    /// owns it while the mode lasts and it sits on the mode's anchor; otherwise
+    /// the program owns it and it sits on the grid cell it writes to. Either
+    /// way the geometry and the shape come from `chrome::Cursor`, so the
+    /// painter has a single path and the owners cannot disagree.
+    fn cursor(&self) -> Option<crate::chrome::Cursor> {
+        use crate::chrome::Cursor;
+        let t = &self.tabs[self.active];
+        let m = self.chrome_metrics();
+        let shape = self.cursor_shape();
+        match self.copy.as_ref() {
+            Some(mode) => Cursor::at(m, &mode.cursor, t.term.scrolled as usize, t.view_off, shape),
+            // scrolled back into the history the program's cell is not where
+            // it writes: the cursor has no place on screen
+            None if t.view_off > 0 => None,
+            None => Cursor::program(m, &t.term, shape),
+        }
+    }
+
+    /// The shape of the cursor: what the program asked for with `CSI 6 q`
+    /// while it wants it, and the config's `cursor_shape` otherwise.
+    fn cursor_shape(&self) -> crate::chrome::CursorShape {
+        use crate::chrome::CursorShape;
+        let asked = self.tabs[self.active]
+            .term
+            .app_cursor_style
+            .map(|(shape, _)| shape);
+        match asked {
+            Some(1) => CursorShape::Underline,
+            Some(2) => CursorShape::Beam,
+            Some(_) => CursorShape::Block,
+            None => match self.opts.cfg.cursor_shape {
+                tortty_core::config::CursorShape::Block => CursorShape::Block,
+                tortty_core::config::CursorShape::Underline => CursorShape::Underline,
+                tortty_core::config::CursorShape::Beam => CursorShape::Beam,
+            },
+        }
+    }
+
     /// The metrics the chrome is laid out with (`M-Q`): the renderer builds the
     /// same ones, and both ask `chrome::Layout` — one formula, two readers.
     fn chrome_metrics(&self) -> crate::chrome::Metrics {
@@ -2892,9 +2931,18 @@ impl App {
     ///
     /// The cursor blinks if the config allows it **and** the program did not ask
     /// for a steady cursor via `CSI 6 q` (4/6 = steady). Text with SGR 5 always
-    /// blinks — the program asked for it, not the config.
+    /// blinks — the program asked for it, not the config. In copy-mode the
+    /// mode's cursor blinks always: it is a mode indicator, not the terminal's
+    /// cursor, and the config that mutes the terminal's does not mute the mode
+    /// (the same rule tmux follows).
     fn blink(&self) -> crate::render::Blink {
         let phase = self.blink_phase;
+        if self.copy.is_some() {
+            return crate::render::Blink {
+                phase,
+                cursor: phase,
+            };
+        }
         crate::render::Blink {
             phase,
             cursor: !self.cursor_blinks() || phase,
@@ -2915,7 +2963,8 @@ impl App {
     /// Is anything blinking on screen (cursor or text with SGR 5)? Only in that
     /// case does the loop need to wake up in the middle of the period.
     fn blink_active(&self) -> bool {
-        (self.cursor_blinks() && self.tabs[self.active].term.cursor_visible)
+        self.copy.is_some()
+            || (self.cursor_blinks() && self.tabs[self.active].term.cursor_visible)
             || self.has_text_piscando()
     }
 
@@ -3207,6 +3256,7 @@ impl App {
             term: &self.tabs[self.active].term,
             view_off: self.tabs[self.active].view_off,
             sel: self.tabs[self.active].sel,
+            cursor: self.cursor(),
             blink,
             toast: toast.as_ref(),
             tabs: tabs.as_deref(),
@@ -4642,16 +4692,17 @@ impl App {
         }
     }
 
-    /// The mode draws with the selection's ink: the span from the anchor (or
-    /// the cursor alone) **is** `Tab::sel` — one rendering, one truth, nothing
-    /// new for the renderer to learn.
+    /// The mode draws with the selection's ink: the span from the anchor to
+    /// the cursor **is** `Tab::sel` — one rendering, one truth. Nothing is
+    /// drawn before the first `Space`: the cursor is the indicator then, and
+    /// it blinks.
     fn copy_show(&mut self) {
         let t = &self.tabs[self.active];
         let (cols, gen) = (t.term.cols, t.term.abs_gen);
         if let Some(mode) = &self.copy {
             let mut cur = mode.cursor;
             cur.gen = gen;
-            self.tabs[self.active].sel = mode.span(&cur, cols);
+            self.tabs[self.active].sel = mode.selection(&cur, cols);
         }
         self.ask_frame();
     }
@@ -4903,6 +4954,15 @@ struct CopyMode {
 }
 
 impl CopyMode {
+    /// What the mode **draws** as a selection: nothing until something is
+    /// anchored. Without an anchor the only indicator is the cursor itself
+    /// (`B76`), which blinks — a selection painted on the cursor's own cell
+    /// would swallow it, and the mode would look frozen.
+    fn selection(&self, cur: &Anchor, cols: usize) -> Option<Span> {
+        self.anchor?;
+        self.span(cur, cols)
+    }
+
     /// The span the mode draws and `y` copies: the anchor and the cursor, or
     /// the cursor alone when nothing is anchored. Whole-lines is a full-width
     /// block — every covered row from column 0 to the last column.
@@ -6160,6 +6220,23 @@ mod copy_mode_tests {
 
     fn at(line: i64, col: usize) -> Anchor {
         Anchor { line, col, gen: 7 }
+    }
+
+    /// Nothing is drawn as a selection before the first `Space`: the cursor is
+    /// the only indicator, and a selection over its own cell would swallow it
+    /// (and the blink with it).
+    #[test]
+    fn the_selection_is_empty_until_something_is_anchored() {
+        let mut m = CopyMode {
+            cursor: at(2, 5),
+            anchor: None,
+            lines: false,
+            search: None,
+        };
+        assert!(m.selection(&at(2, 5), 20).is_none());
+        m.anchor = Some(at(2, 1));
+        let s = m.selection(&at(2, 5), 20).unwrap();
+        assert_eq!((s.a.col, s.b.col), (1, 5));
     }
 
     #[test]

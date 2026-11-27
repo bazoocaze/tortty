@@ -46,7 +46,7 @@ file.
 | `font_size` | `12` | size in **points** (4..96); the DPI converts to pixels |
 | `ligatures` | `standard` | font ligatures: `off`, `standard` (`liga`/`calt`: `fi`, `->`, `!=`) or `all` (`standard` + discretionary). Only shows up in a font that has them (Fira Code, JetBrains Mono); it does not merge cells — the cell is still one character |
 | `cursor_shape` | `block` | `block`, `beam` or `underline`; a `CSI 6 q` from an app wins while it lasts |
-| `cursor_blink` | `off` | blinking cursor (500 ms per phase); a key or a paste lights the cursor immediately. `CSI 6 q` with an even shape (4/6) asks for a steady cursor and wins while the program wants it |
+| `cursor_blink` | `off` | blinking cursor (500 ms per phase); a key or a paste lights the cursor immediately. `CSI 6 q` with an even shape (4/6) asks for a steady cursor and wins while the program wants it. The copy-mode cursor blinks regardless — it is the mode's indicator, not the terminal's |
 | `restore_state` | `layout` | what comes back on the next run: `none` (one tab, a clean screen — nothing of the session is written, and since only the owner of the state writes, the geometry is not remembered either), `layout` (the workspaces and tabs of the last run, in their order, the front where it was) or `content` (the layout **and** what the tabs had on screen and in the history — a photograph, not the process: the shell starts again in the same directory). The window position and size are always remembered, whatever the value |
 | `scrollback` | `10000` | history lines above the screen (cap 100000); with `restore_state = content` it is also the size of the snapshot written on the way out |
 | `window_padding_width` | `0` | margin in px around the grid (cap 200) |
