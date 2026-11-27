@@ -305,9 +305,12 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   the box that was drawn, **rounded corners** (one anti-aliased tile in the mask atlas, mirrored
   into the four) with a **shadow** of two veils, theme background veiled 14%
   towards the foreground, 1.5-cell gutter.
-  Three shades: a receipt lives 3 s, a warning and an error 10 s, a notification
-  8 s; no key takes it out, a click does; a different notice waits in a queue and
-  the same words only raise the count (`×3`) without restarting the clock.
+  Four shades, each an accent on the border and the left strip (the fill is the
+  theme's background for all of them): `ok` green, `info` blue, `warn` yellow,
+  `err` red. A receipt and an info live 3 s, a warning and an error 10 s, a
+  notification 8 s; no key takes it out, a click does; a different notice waits in
+  a queue and the same words only raise the count (`×3`) without restarting the
+  clock.
   Visual bell, audible bell. **limit:** the shadow is two flat veils, not a blur,
   and truncation counts characters, not cell width, so a wide glyph (emoji, CJK)
   can overflow the box, and the detail is cut
@@ -368,8 +371,10 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   ends (`q`), the temp dying with the tab. The pager is `$PAGER` used as is
   against a **plain** dump, or our own `less -R` (with `-R`, never `-r`) against
   a dump that keeps the **colour of the output** — the pair is one decision
-  (`platform::pager`). **limit:** the snapshot is text, `SGR` and links — no
-  images; a snapshot is a photograph, edits land nowhere; macOS still `M-Y`.
+  (`platform::pager`). An `info` toast names the new tab (`Scrollback viewer`):
+  the keys there belong to the pager, so nothing else on screen says what it is.
+  **limit:** the snapshot is text, `SGR` and links — no images; a snapshot is a
+  photograph, edits land nowhere; macOS still `M-Y`.
 - Copy-mode (`copy_mode`, `Ctrl+Shift+[`, the chord toggles): the modal
   keyboard selection, tmux-style — the keyboard of the tab belongs to the mode
   and the **child sees no key** while it lasts (the chords stay with the app,
@@ -383,8 +388,9 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   nothing new under the renderer — and **nothing is selected until `Space`**:
   before the first anchor the only indicator is the cursor, which the mode
   takes over from the child and blinks (whatever `cursor_blink` says: it is a
-  mode indicator, not the terminal's cursor). **limit:** no counts (`5j`), no
-  rectangular block by key (whole lines only).
+  mode indicator, not the terminal's cursor). An `info` toast (`Copy mode`) is
+  what says the keys changed hands. **limit:** no counts (`5j`), no rectangular
+  block by key (whole lines only).
 - Program status (`OSC 7501`, the Program Status Protocol v0.4): the program says
   what it is doing — `idle`/`working`/`done`/`blocked`/`paused`/`error`, with
   `kind`, `progress`, `app`, `title` and a base64 `msg` — and the terminal keeps a

@@ -124,7 +124,7 @@ impl Toast {
             detail: detail.to_string(),
             severity,
             life: match severity {
-                Severity::Ok => TOAST_OK,
+                Severity::Ok | Severity::Info => TOAST_OK,
                 Severity::Warn | Severity::Err => TOAST_LONG,
             },
             since: std::time::Instant::now(),
@@ -4620,6 +4620,9 @@ impl App {
         let pager = platform::pager();
         let bytes = self.tabs[self.active].term.dump(pager.colours);
         self.open_in_pager(&bytes, "scrollback");
+        // the new tab covers the screen the keys now belong to a pager: the toast
+        // is the only thing that says which view this is
+        self.toast("Scrollback viewer", "", Severity::Info);
     }
 
     /// `B78`: the last command's output on the clipboard — the range the
@@ -4682,6 +4685,9 @@ impl App {
         // the mouse selection and the mode's do not mix: the mode owns `sel`
         self.tabs[self.active].sel = None;
         self.copy_show();
+        // the mode takes the keyboard away from the child, and the toast is how
+        // the owner knows the keys are no longer going where they were
+        self.toast("Copy mode", "", Severity::Info);
     }
 
     fn copy_exit(&mut self) {
@@ -5853,9 +5859,13 @@ mod tests {
         let ok = Toast::new("Opening", "https://x", Severity::Ok);
         let err = Toast::new("Link failed", "xdg-open: no method", Severity::Err);
         let warn = Toast::new("Security warning", "debug socket enabled", Severity::Warn);
+        // a mode announcing itself has nothing to act on, so it is read like a
+        // receipt: it stays as long as a glance takes
+        let info = Toast::new("Copy mode", "", Severity::Info);
         assert_eq!(ok.life, TOAST_OK);
         assert_eq!(err.life, TOAST_LONG);
         assert_eq!(warn.life, TOAST_LONG);
+        assert_eq!(info.life, TOAST_OK);
         assert!(ok.life < warn.life);
     }
 

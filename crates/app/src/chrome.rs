@@ -1058,6 +1058,11 @@ mod tests {
         // a title wider than the grid is cut, never a box wider than the grid
         let long = Toast::build(m, &"x".repeat(200), "").expect("one line");
         assert!(long.rect[2] <= m.cols as f32 * m.cw);
+        // a notice that is only a title — a mode announcing itself — is one line
+        // tall: the empty detail is no second line, not a blank one
+        let only_title = Toast::build(m, "Copy mode", "").expect("one line");
+        assert!(only_title.detail.is_empty(), "no second line");
+        assert_eq!(only_title.rect[3], m.ch + 2.0 * TOAST_PAD_Y);
     }
 
     // ---- the chrome scene ----

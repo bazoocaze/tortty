@@ -2821,11 +2821,15 @@ fn progress_ink(p: Progress) -> (Color, f32, f32) {
 }
 
 /// What a notice is telling the owner: the accent (bar and border) and, on the
-/// app's side, how long it stays. Three shades, not a spectrum.
+/// app's side, how long it stays. Four shades, not a spectrum.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Severity {
     /// A receipt: something worked.
     Ok,
+    /// Neither good nor bad: the app saying what it just did (a mode entered, a
+    /// view opened). It is not a receipt — nothing was accomplished — and it is
+    /// not a warning either.
+    Info,
     /// Not the owner's fault, but it costs attention.
     Warn,
     /// Something did not work and the owner may have to act.
@@ -2838,6 +2842,9 @@ impl Severity {
     fn color(self) -> Color {
         match self {
             Severity::Ok => Color::Idx(2),
+            // blue carries no judgement: 2, 3 and 1 already mean good,
+            // attention and bad, and this shade must not read as any of them
+            Severity::Info => Color::Idx(4),
             Severity::Warn => Color::Idx(3),
             Severity::Err => Color::Idx(1),
         }
@@ -2847,7 +2854,7 @@ impl Severity {
     /// file, and a receipt is not one.
     pub fn level(self) -> crate::log::Level {
         match self {
-            Severity::Ok => crate::log::Level::Info,
+            Severity::Ok | Severity::Info => crate::log::Level::Info,
             Severity::Warn => crate::log::Level::Warn,
             Severity::Err => crate::log::Level::Err,
         }
@@ -3096,6 +3103,23 @@ mod tests {
         // and the word the column already is does not come back
         for (line, _) in [card_lines(1, "", "tortty"), card_lines(2, "build", "make")] {
             assert!(!line.contains("workspace"), "{line}");
+        }
+    }
+
+    /// The info shade is blue, and it is blue *because* it judges nothing: 2, 3
+    /// and 1 already mean good, attention and bad, so a mode announcing itself
+    /// must not borrow any of them. In the log it is an info line, like a receipt.
+    #[test]
+    fn the_info_shade_is_blue() {
+        use super::Severity;
+        assert_eq!(Severity::Info.color(), Color::Idx(4));
+        assert_eq!(Severity::Info.level(), crate::log::Level::Info);
+        for (shade, slot) in [(Severity::Ok, 2), (Severity::Warn, 3), (Severity::Err, 1)] {
+            assert_ne!(
+                Severity::Info.color(),
+                shade.color(),
+                "slot {slot} is taken"
+            );
         }
     }
 }

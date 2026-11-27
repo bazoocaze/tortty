@@ -2,6 +2,13 @@
 
 Concise history of past activities. A maximum of 5 lines per activity.
 
+## 2026-11-26 — a fourth shade for the toast, and the two modes name themselves
+
+- `Severity::Info`: blue (`Idx(4)`) on the border and the left strip, and the 3 s of a receipt. The fill stays the theme's background for every shade, so a level is an accent, never a surface.
+- The colour must judge nothing: slots 2, 3 and 1 already mean good, attention and bad, and a mode announcing itself cannot borrow any of them.
+- Copy-mode raises `Copy mode` on entry (the keys changed hands) and the scrollback viewer raises `Scrollback viewer` in the new tab (there the keys belong to the pager); both title-only, so the box is one line.
+- Tests: the info slot and its log level, the one-line box, and info living 3 s. `docs/FEATURES.md` states the four shades.
+
 ## 2026-11-26 — the chord is named by the keycap of the layout, not by the US index
 
 - Measured on ABNT2 with the new `tools/show-keys`: the key printed `[` arrives as `Char("{")` with `ctrl+shift` and as the US index `BracketRight` — `winit`'s `physical` is a position index whose names are American, so a chord matched by it is a US-only chord. The tool is a crate of its own (`winit` alone, no `tortty-core`, no config) and prints `phys`, `logical`, `unshift`, `text`, `mods` and `loc` per key press.
