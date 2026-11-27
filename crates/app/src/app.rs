@@ -437,6 +437,10 @@ pub struct Tab {
     pub mark: Mark,
     /// Title requested by OSC 0/2 (empty = derive from the cwd).
     pub osc_title: String,
+    /// Temp file this tab reads (a viewer tab, `B81`): it dies with the tab —
+    /// the pager may keep reading while the tab lives, and nothing owes a file
+    /// to `/tmp` after that.
+    pub temp: Option<std::path::PathBuf>,
 }
 
 impl Tab {
@@ -461,6 +465,7 @@ impl Tab {
             notifs_seen: 0,
             anim_due: std::collections::HashMap::new(),
             osc_title: String::new(),
+            temp: None,
             mark: Mark::None,
         }
     }
@@ -1846,6 +1851,7 @@ impl App {
             Action::PrevPrompt => self.prompt_jump(true),
             Action::NextPrompt => self.prompt_jump(false),
             Action::OpenConfig => self.open_config(),
+            Action::ViewScrollback => self.view_scrollback(),
             Action::ScrollPageUp => self.scroll_view(rows - 1),
             Action::ScrollPageDown => self.scroll_view(-(rows - 1)),
             // `Shift+Home` with nothing above does nothing: a key that moves
@@ -3795,6 +3801,11 @@ impl App {
         }
         let return_to = self.tabs[i].return_to;
         let was_active = i == self.active;
+        // the viewer's temp dies with the tab (`B81`): the file exists exactly
+        // while a tab may still read it
+        if let Some(path) = self.tabs[i].temp.take() {
+            let _ = std::fs::remove_file(path);
+        }
         self.tabs.remove(i);
         if self.tabs.is_empty() {
             // last tab of the workspace: the workspace goes with it (I20), and
@@ -4414,6 +4425,10 @@ impl App {
                 if let Some(p) = t.pty.as_mut() {
                     p.kill();
                 }
+                // the viewers' temps die with their tabs (`B81`)
+                if let Some(path) = t.temp.take() {
+                    let _ = std::fs::remove_file(path);
+                }
             }
             self.tabs.clear();
             self.drop_empty_workspace();
@@ -4496,6 +4511,51 @@ impl App {
             cmd: Some(&cmd),
             return_to: Some(origin),
         });
+    }
+
+    /// `B81`: the viewer-tab primitive — bytes to a temp file, a tab of the
+    /// pager on it, the origin back when it ends, the temp dying with the tab.
+    /// The dump contract lives in `platform::pager` (colour only when we picked
+    /// the pager); the name only labels the file for a human reading `/tmp`.
+    fn open_in_pager(&mut self, bytes: &[u8], name: &str) {
+        static VIEW_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let pager = platform::pager();
+        let path = std::env::temp_dir().join(format!(
+            "tortty-view-{}-{name}",
+            VIEW_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        if std::fs::write(&path, bytes).is_err() {
+            self.toast("Viewer", "could not write the temp file", Severity::Err);
+            return;
+        }
+        let cmd = format!(
+            "{} {}",
+            pager.cmd,
+            platform::shell_quote(&path.to_string_lossy())
+        );
+        // the origin is read before the call: `new_tab` makes the new one active
+        let origin = self.tabs[self.active].id;
+        let before = self.tabs.len();
+        self.new_tab(&NewTab {
+            cmd: Some(&cmd),
+            return_to: Some(origin),
+        });
+        if self.tabs.len() > before {
+            self.tabs[self.active].temp = Some(path);
+        } else {
+            // no tab was born (no window yet): the file must not leak either
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    /// `B77`: the scrollback of the tab in front — the whole history the cap
+    /// holds, the visible screen included — frozen in a pager tab. The snapshot
+    /// is the strong version of `view_off`: nothing the child writes from now
+    /// on moves or erases what the user is reading.
+    fn view_scrollback(&mut self) {
+        let pager = platform::pager();
+        let bytes = self.tabs[self.active].term.dump(pager.colours);
+        self.open_in_pager(&bytes, "scrollback");
     }
 
     /// Switches tab (Alt+N). Out of range, does nothing.

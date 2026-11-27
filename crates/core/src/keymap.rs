@@ -165,6 +165,8 @@ pub enum Action {
     ScrollBottom,
     /// Open the search bar over the scrollback (`M-D`).
     Search,
+    /// The scrollback of the tab, frozen, in a viewer tab (`B77`/`B81`).
+    ViewScrollback,
     /// 1..=10, where 10 is the tenth (`alt+0`).
     SelectTab(u8),
     SelectWorkspace(u8),
@@ -192,6 +194,7 @@ impl Action {
         ("scroll_top", Action::ScrollTop),
         ("scroll_bottom", Action::ScrollBottom),
         ("search", Action::Search),
+        ("view_scrollback", Action::ViewScrollback),
         ("select_tab", Action::SelectTab(0)),
         ("select_workspace", Action::SelectWorkspace(0)),
         ("ws_prev", Action::WsPrev),

@@ -273,6 +273,33 @@ pub fn editor() -> String {
         .unwrap_or_else(|_| "notepad".to_string())
 }
 
+/// The viewer-tab contract, the same as Linux's ([super::linux::pager]): a
+/// `$PAGER` the owner set is used as is with a plain dump; without one the
+/// fallback is `more`, which does not speak `SGR` — so the dump goes plain
+/// here too until a colour-speaking pager ships with the port.
+#[must_use]
+pub fn pager() -> Pager {
+    match std::env::var("PAGER") {
+        Ok(cmd) => Pager {
+            cmd,
+            colours: false,
+        },
+        Err(_) => Pager {
+            cmd: "more".to_string(),
+            colours: false,
+        },
+    }
+}
+
+/// What a viewer tab runs, and what its dump may carry — the pair is one
+/// decision ([`pager`]).
+pub struct Pager {
+    /// The command line for the tab (no file name: the caller appends it).
+    pub cmd: String,
+    /// Whether the dump may carry `SGR` and links.
+    pub colours: bool,
+}
+
 /// One clipboard, no PRIMARY: the middle-button selection does not exist here.
 #[must_use]
 pub fn has_primary() -> bool {

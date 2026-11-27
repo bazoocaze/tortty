@@ -3506,6 +3506,14 @@ impl Term {
     pub fn snapshot(&self) -> Vec<u8> {
         crate::snapshot::snapshot(self)
     }
+
+    /// The tab as **text to read** (`B81`): the whole history plus the screen,
+    /// for the pager. `colour` is the reader's business: a pager we picked
+    /// (`less -R`) takes `SGR` and keeps the output as it was; one the owner
+    /// named in `$PAGER` takes plain text.
+    pub fn dump(&self, colour: bool) -> Vec<u8> {
+        crate::snapshot::dump(self, colour)
+    }
 }
 
 #[inline]

@@ -114,6 +114,29 @@ fn padding(c: &Cell) -> bool {
 
 /// The snapshot of `t` as ANSI bytes.
 pub fn snapshot(t: &Term) -> Vec<u8> {
+    let mut out = picture(t, true, "\r\n");
+    // On the alt screen the visible grid belongs to the app (vim repaints it),
+    // so the snapshot carries the primary screen and the primary cursor is not
+    // known while the app holds the screen: no `CUP` there.
+    if !t.in_alt_screen() {
+        let _ = write!(out, "\x1b[{};{}H", t.cy + 1, t.cx + 1);
+    }
+    out.into_bytes()
+}
+
+/// The tab as **text to read** (`B81`): the history and the screen joined by
+/// `\n` — a file for the pager, not a picture for the parser. `colour` decides
+/// whether `SGR` and links ride along (the `less -R` contract: we picked the
+/// pager, so the dump keeps the output as it was); plain is what a pager we
+/// did not pick receives — escapes in it are soup that breaks search.
+/// No cursor addressing: the reader of this file is a human, not a `Term`.
+pub fn dump(t: &Term, colour: bool) -> Vec<u8> {
+    picture(t, colour, "\n").into_bytes()
+}
+
+/// The one walk both readers share: every row of history and screen, trimmed
+/// of padding, clusters and links whole, pen changes emitted only when `colour`.
+fn picture(t: &Term, colour: bool, sep: &str) -> String {
     let mut out = String::new();
     let mut pen = Pen::default();
     let mut link: u16 = 0;
@@ -130,7 +153,7 @@ pub fn snapshot(t: &Term) -> Vec<u8> {
         .filter(|r| !r.chrome)
     {
         if !first && !prev_wrapped {
-            out.push_str("\r\n");
+            out.push_str(sep);
         }
         first = false;
         prev_wrapped = row.wrapped;
@@ -150,7 +173,7 @@ pub fn snapshot(t: &Term) -> Vec<u8> {
             if c.is_cont() {
                 continue; // the wide char before it takes the two cells
             }
-            if c.link != link {
+            if colour && c.link != link {
                 if link != 0 {
                     out.push_str("\x1b]8;;\x1b\\");
                 }
@@ -169,7 +192,7 @@ pub fn snapshot(t: &Term) -> Vec<u8> {
                 }
             }
             let p = Pen::of(c);
-            if p != pen {
+            if colour && p != pen {
                 out.push_str(&p.sgr());
                 pen = p;
             }
@@ -180,24 +203,18 @@ pub fn snapshot(t: &Term) -> Vec<u8> {
             out.extend(row.tail_at(x).iter());
         }
     }
-    if link != 0 {
+    if colour && link != 0 {
         out.push_str("\x1b]8;;\x1b\\");
     }
-    if pen != Pen::default() {
+    if colour && pen != Pen::default() {
         out.push_str("\x1b[0m");
     }
-    // On the alt screen the visible grid belongs to the app (vim repaints it),
-    // so the snapshot carries the primary screen and the primary cursor is not
-    // known while the app holds the screen: no `CUP` there.
-    if !t.in_alt_screen() {
-        let _ = write!(out, "\x1b[{};{}H", t.cy + 1, t.cx + 1);
-    }
-    out.into_bytes()
+    out
 }
 
 #[cfg(test)]
 mod checks_snapshot {
-    use super::snapshot;
+    use super::{dump, snapshot};
     use crate::term::Term;
 
     /// Feed the same bytes twice, into two different widths.
@@ -353,5 +370,39 @@ mod checks_snapshot {
             file.contains("a[31mb"),
             "the ESC is dropped, the text around it is not: {file:?}"
         );
+    }
+
+    #[test]
+    fn the_coloured_dump_carries_sgr_and_no_cursor_addressing() {
+        let mut t = Term::new(20, 6);
+        t.feed(b"\x1b[1;31mred\x1b[0m\r\nrest");
+        let d = String::from_utf8_lossy(&dump(&t, true)).to_string();
+        assert!(
+            d.contains("1;31red") || (d.contains("1;31") && d.contains("red")),
+            "the pen of the output rides along: {d:?}"
+        );
+        assert!(d.contains('\n'));
+        assert!(!d.contains('H'), "no `CUP` for a human reader: {d:?}");
+    }
+
+    #[test]
+    fn the_plain_dump_carries_no_escape_at_all() {
+        let mut t = Term::new(20, 6);
+        t.feed(b"\x1b[1;31mred\x1b[0m plain\r\n\x1b]8;;https://x\x1b\\link\x1b]8;;\x1b\\");
+        let d = String::from_utf8_lossy(&dump(&t, false)).to_string();
+        assert!(!d.contains('\x1b'), "escapes in a plain pager are soup");
+        assert!(d.contains("red plain"));
+        assert!(d.contains("link"));
+    }
+
+    #[test]
+    fn the_dump_carries_the_history_and_the_screen() {
+        let mut t = Term::new(20, 3);
+        for i in 0..6 {
+            t.feed(format!("line {i}\r\n").as_bytes());
+        }
+        let d = String::from_utf8_lossy(&dump(&t, true)).to_string();
+        assert!(d.contains("line 0"), "the whole cap, not only the screen");
+        assert!(d.contains("line 5"));
     }
 }

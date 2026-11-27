@@ -416,6 +416,37 @@ pub fn editor() -> String {
         .unwrap_or_else(|_| "vim".to_string())
 }
 
+/// The pager a viewer tab runs (`B81`), and whether its dump may carry colour.
+/// The contract, decided once:
+///
+/// - `$PAGER` **unset** — we pick `less -R` and the dump keeps `SGR` (`-R`,
+///   never `-r`: colour and attributes pass, cursor control never does);
+/// - `$PAGER` **set** — the owner of the variable chose; the pager is used as
+///   it is and the dump goes **plain text** (a pager we did not pick may not
+///   speak `SGR`, and escapes in a plain pager are soup that breaks search).
+#[must_use]
+pub fn pager() -> Pager {
+    match std::env::var("PAGER") {
+        Ok(cmd) => Pager {
+            cmd,
+            colours: false,
+        },
+        Err(_) => Pager {
+            cmd: "less -R".to_string(),
+            colours: true,
+        },
+    }
+}
+
+/// What a viewer tab runs, and what its dump may carry — the pair is one
+/// decision ([`pager`]).
+pub struct Pager {
+    /// The command line for the tab (no file name: the caller appends it).
+    pub cmd: String,
+    /// Whether the dump may carry `SGR` and links.
+    pub colours: bool,
+}
+
 /// Does this system have a second selection besides `CLIPBOARD`? Linux has, and
 /// it is the X11 PRIMARY — the "paste with the middle button". Windows and macOS
 /// have one clipboard only, and the app must not ask which system it is on.

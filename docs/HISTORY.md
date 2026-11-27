@@ -2,6 +2,13 @@
 
 Concise history of past activities. A maximum of 5 lines per activity.
 
+## 2026-11-27 — the viewer tab, and the scrollback frozen in it
+
+- `B81` + `B77` closed. The **primitive**: bytes to a temp file, a tab running the pager on it (`return_to` the origin — the road `open_config` proved with `$EDITOR`), the temp dying with the tab (`Tab::temp`, removed on close and on workspace close). The **contract** lives in `platform::pager()`: `$PAGER` unset → our `less -R` (never `-r`) against a dump that keeps the colour of the output; `$PAGER` set → the owner's pager, as is, against a **plain** dump — escapes in a pager we did not pick are soup that breaks search.
+- The dump is the snapshot walk, retold for a human reader: `\n` between rows, no cursor addressing, `SGR`/links only when the reader speaks them (`Term::dump(colour)`, shared walk with `snapshot()`).
+- `B77` is one consumer: `view_scrollback` (`Ctrl+Shift+O`, factory) dumps the whole cap plus the screen and hands it to the primitive. Windows: `$PAGER` or `more`, plain in both — no colour-speaking pager ships with the port.
+- Three new core tests (`dump` colour/plain/history), the keymap gains `view_scrollback`.
+
 ## 2026-11-27 — a rewritten line drops the selection whole
 
 - `B80` closed. The anchors are absolute on purpose (they follow the content through scroll), but nothing watched the **mutation**: a `\r` progress line or a TUI write inside the selection left it pointing at text the screen no longer showed — and the copy came out different from what the user saw.

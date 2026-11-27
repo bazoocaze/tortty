@@ -360,6 +360,16 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   query is not kept after `Esc` closes the bar beyond that run's last one; no
   regex, no whole-word mode; matches stop at 5000 (a one-letter query in a huge
   history keeps the first 5000).
+- Scrollback viewer (`view_scrollback`, `Ctrl+Shift+O`): the whole history the
+  cap holds plus the visible screen, **frozen** in a viewer tab — a strong
+  version of the `view_off` rule, because nothing the child writes from then on
+  moves or erases what is being read. The viewer is the **primitive** (`B81`):
+  bytes to a temp file, a tab running the pager on it, the origin back when it
+  ends (`q`), the temp dying with the tab. The pager is `$PAGER` used as is
+  against a **plain** dump, or our own `less -R` (with `-R`, never `-r`) against
+  a dump that keeps the **colour of the output** — the pair is one decision
+  (`platform::pager`). **limit:** the snapshot is text, `SGR` and links — no
+  images; a snapshot is a photograph, edits land nowhere; macOS still `M-Y`.
 - Program status (`OSC 7501`, the Program Status Protocol v0.4): the program says
   what it is doing — `idle`/`working`/`done`/`blocked`/`paused`/`error`, with
   `kind`, `progress`, `app`, `title` and a base64 `msg` — and the terminal keeps a
@@ -396,8 +406,9 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   (the snippet is the reader's).
 - Shortcuts are a **table** (`map`/`unmap` in the config, `M-H`): `map
   ctrl+shift+y new_tab` re-binds, `unmap ctrl+shift+w` frees the chord so the
-  program sees the key again. Twenty actions (copy, paste, tab and workspace
-  open/close, prompt walk, config, the four scroll moves, search,
+  program sees the key again. Twenty-one actions (copy, paste, tab and workspace
+  open/close, prompt walk, config, the four scroll moves, search, the
+  scrollback viewer,
   `select_tab`/`select_workspace` with a number, the workspace walk and carry).
   **The defaults are `map` lines in four files**, the same syntax you write: the
   common base holds the chords that mean the same thing everywhere
