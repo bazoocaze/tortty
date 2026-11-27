@@ -4950,6 +4950,10 @@ struct KeyIn<'a> {
     /// Digit of the physical key (0..=9); on the socket it comes from `spec`
     /// itself.
     digit: Option<usize>,
+    /// Keycap glyph of the physical key (US): what the config names when a
+    /// shortcut modifier is held, because the shifted/AltGr character is not
+    /// what the user means (`ctrl+shift+[` arrives as `{`).
+    physical: Option<char>,
     mods: ModifiersState,
 }
 
@@ -4962,12 +4966,21 @@ impl KeyIn<'_> {
         // ABNT2 `Ctrl+Shift+2` arrives as `@` and `Ctrl+Shift+6` as `¨`, and the
         // shortcut that is meant is still 2 and 6 (I16)
         let shortcut = self.mods.control_key() || self.mods.alt_key() || self.mods.super_key();
-        let id = match (self.digit.filter(|_| shortcut), self.named, self.character) {
-            (Some(d), _, _) => Id::Char(char::from(b'0' + d as u8)),
-            (None, Some(n), _) => Id::Named(named_name(n)?),
+        let id = match (
+            self.digit.filter(|_| shortcut),
+            self.named,
+            self.character,
+            self.physical.filter(|_| shortcut),
+        ) {
+            (Some(d), _, _, _) => Id::Char(char::from(b'0' + d as u8)),
+            (_, Some(n), _, _) => Id::Named(named_name(n)?),
+            // a physical keycap under a shortcut modifier: `ctrl+shift+[` on a
+            // layout where shift turns the key into `{` is still the key named
+            // `[` (I16, the same rule the digits follow)
+            (_, _, _, Some(g)) => Id::Char(g),
             // a character key: `Character("T")` with shift becomes `t`, so a
             // `shift+t` chord matches it
-            (None, None, Some(s)) => Id::Char(s.chars().next()?.to_ascii_lowercase()),
+            (_, _, Some(s), _) => Id::Char(s.chars().next()?.to_ascii_lowercase()),
             _ => return None,
         };
         let mut mods = tortty_core::keymap::NONE;
@@ -5042,6 +5055,55 @@ fn f_name(n: NamedKey) -> Option<&'static str> {
     })
 }
 
+/// The keycap glyph of the physical key (US layout): letters and the
+/// punctuation the config names. What a shortcut chord means when the layout
+/// or a held Shift changes what the character key produces (I16).
+fn glyph_of(key: PhysicalKey) -> Option<char> {
+    let PhysicalKey::Code(code) = key else {
+        return None;
+    };
+    Some(match code {
+        KeyCode::KeyA => 'a',
+        KeyCode::KeyB => 'b',
+        KeyCode::KeyC => 'c',
+        KeyCode::KeyD => 'd',
+        KeyCode::KeyE => 'e',
+        KeyCode::KeyF => 'f',
+        KeyCode::KeyG => 'g',
+        KeyCode::KeyH => 'h',
+        KeyCode::KeyI => 'i',
+        KeyCode::KeyJ => 'j',
+        KeyCode::KeyK => 'k',
+        KeyCode::KeyL => 'l',
+        KeyCode::KeyM => 'm',
+        KeyCode::KeyN => 'n',
+        KeyCode::KeyO => 'o',
+        KeyCode::KeyP => 'p',
+        KeyCode::KeyQ => 'q',
+        KeyCode::KeyR => 'r',
+        KeyCode::KeyS => 's',
+        KeyCode::KeyT => 't',
+        KeyCode::KeyU => 'u',
+        KeyCode::KeyV => 'v',
+        KeyCode::KeyW => 'w',
+        KeyCode::KeyX => 'x',
+        KeyCode::KeyY => 'y',
+        KeyCode::KeyZ => 'z',
+        KeyCode::BracketLeft => '[',
+        KeyCode::BracketRight => ']',
+        KeyCode::Semicolon => ';',
+        KeyCode::Quote => '\'',
+        KeyCode::Backslash => '\\',
+        KeyCode::Comma => ',',
+        KeyCode::Period => '.',
+        KeyCode::Slash => '/',
+        KeyCode::Minus => '-',
+        KeyCode::Equal => '=',
+        KeyCode::Backquote => '`',
+        _ => return None,
+    })
+}
+
 impl<'a> KeyIn<'a> {
     fn from_event(ev: &'a winit::event::KeyEvent) -> KeyIn<'a> {
         let (named, character) = match &ev.logical_key {
@@ -5054,6 +5116,7 @@ impl<'a> KeyIn<'a> {
             character,
             text: ev.text.as_deref(),
             digit: digit_of(ev),
+            physical: glyph_of(ev.physical_key),
             mods: ModifiersState::empty(), // the caller sets `self.mods`
         }
     }
@@ -5154,6 +5217,9 @@ fn key_from_spec(spec: &str) -> Option<KeyIn<'_>> {
         character,
         text: character,
         digit,
+        // the socket speaks the config's own language: the character it names
+        // **is** the keycap, so the physical glyph is the same
+        physical: character.and_then(|c| c.chars().next()),
         mods,
     })
 }
@@ -6146,5 +6212,49 @@ mod copy_mode_tests {
         let s = m.span(&at(2, 5), 20).unwrap();
         assert_eq!((s.a.col, s.b.col), (0, 19));
         assert_eq!(s.a.line, 2);
+    }
+}
+
+#[cfg(test)]
+mod chord_tests {
+    use super::{glyph_of, KeyIn};
+    use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
+
+    /// `ctrl+shift+[` with Shift turning the key into `{`: the chord is the
+    /// keycap (I16 for punctuation), not the shifted character.
+    #[test]
+    fn the_chord_under_a_shortcut_is_the_keycap() {
+        let glyph = glyph_of(PhysicalKey::Code(KeyCode::BracketLeft));
+        assert_eq!(glyph, Some('['));
+        let k = KeyIn {
+            named: None,
+            character: Some("{"),
+            text: None,
+            digit: None,
+            physical: glyph,
+            mods: ModifiersState::CONTROL | ModifiersState::SHIFT,
+        };
+        let chord = k.chord().unwrap();
+        assert_eq!(
+            chord.mods,
+            tortty_core::keymap::CTRL | tortty_core::keymap::SHIFT
+        );
+        assert!(matches!(chord.id, tortty_core::keymap::Id::Char('[')));
+    }
+
+    /// Without a shortcut modifier the shifted character is the truth: the
+    /// user typing `{` (no chord matches it) is typing `{`.
+    #[test]
+    fn without_a_shortcut_the_character_wins() {
+        let k = KeyIn {
+            named: None,
+            character: Some("{"),
+            text: Some("{"),
+            digit: None,
+            physical: Some('['),
+            mods: ModifiersState::SHIFT,
+        };
+        let chord = k.chord().unwrap();
+        assert!(matches!(chord.id, tortty_core::keymap::Id::Char('{')));
     }
 }

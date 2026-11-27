@@ -2,6 +2,19 @@
 
 Concise history of past activities. A maximum of 5 lines per activity.
 
+## 2026-11-26 — the shortcut chord reads the keycap, not the shifted character
+
+- Copy-mode's `ctrl+shift+[` never matched on the real keyboard: with Shift
+  held, winit reports the key as `Character("{")` and the chord was looked up
+  with the shifted character. The digits already took the physical key under a
+  shortcut modifier (I16); the punctuation now does the same — `glyph_of`
+  translates the physical code (letters and the punctuation keys the config
+  names) and `KeyIn::chord` prefers it under `Ctrl`/`Alt`/`Super`. Without a
+  shortcut modifier nothing changes: the character is the truth.
+- Two tests: the chord under a shortcut is the keycap; without a shortcut the
+  character wins. Verified with xdotool under Xvfb: `ctrl+shift+bracketleft`
+  enters the mode and the child sees none of the movement keys.
+
 ## 2026-11-27 — copy-mode: the keyboard learns to select
 
 - `B76` closed. `copy_mode` (`Ctrl+Shift+[`, the chord toggles): a cursor over grid and scrollback (the selection's own absolute coordinate), `Space` anchors, `v` takes whole lines (a full-width block), `y` copies and leaves, `q`/`Esc` leave, `n`/`N` walk the last search, `Home`/`End`/`PgUp`/`PgDn` move more. The view follows the cursor at the edges, like a pager.

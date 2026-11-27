@@ -92,9 +92,11 @@ The defaults are `map` lines in the defaults file itself — `Ctrl+Shift+C/V/T/W
 (tab), `Ctrl+Shift+1`…`0` and `Super+1`…`0` (workspace), `Super+Up/Down` and
 `Super+Shift+Up/Down`, one line per chord. That text is the single source: copying
 the block into your file reproduces the app's table, changing an action changes it
-for you, and **deleting a line frees the key** as surely as `unmap`. A digit under
-`Ctrl`/`Alt`/`Super` is read from the **physical** key, so `Ctrl+Shift+2` still
-means 2 on a layout where it produces `@`. An unbound key goes to the program.
+for you, and **deleting a line frees the key** as surely as `unmap`. A digit or a
+punctuation key under `Ctrl`/`Alt`/`Super` is read from the **physical** key,
+so `Ctrl+Shift+2` still means 2 on a layout where it produces `@`, and
+`Ctrl+Shift+[` still means the bracket where Shift turns it into `{`. An
+unbound key goes to the program.
 
 ```conf
 map ctrl+shift+g new_tab
