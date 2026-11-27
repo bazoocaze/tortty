@@ -1852,6 +1852,7 @@ impl App {
             Action::NextPrompt => self.prompt_jump(false),
             Action::OpenConfig => self.open_config(),
             Action::ViewScrollback => self.view_scrollback(),
+            Action::CopyOutput => self.copy_output(),
             Action::ScrollPageUp => self.scroll_view(rows - 1),
             Action::ScrollPageDown => self.scroll_view(-(rows - 1)),
             // `Shift+Home` with nothing above does nothing: a key that moves
@@ -4556,6 +4557,27 @@ impl App {
         let pager = platform::pager();
         let bytes = self.tabs[self.active].term.dump(pager.colours);
         self.open_in_pager(&bytes, "scrollback");
+    }
+
+    /// `B78`: the last command's output on the clipboard — the range the
+    /// `OSC 133` marks already name (`C`…`D`), extracted by the same road the
+    /// selection takes. No marks, nothing to name: the toast says so instead
+    /// of copying the screen and calling it output.
+    fn copy_output(&mut self) {
+        let span = self.tabs[self.active].term.output_span();
+        let Some(txt) = span.and_then(|s| self.tabs[self.active].term.span_text(&s)) else {
+            self.toast(
+                "Copy output",
+                "no command output to take (the shell sends no `OSC 133` marks, or the output fell out of the history)",
+                Severity::Warn,
+            );
+            return;
+        };
+        if txt.is_empty() {
+            return;
+        }
+        self.clip.set(&txt);
+        self.clip.set_primary(&txt);
     }
 
     /// Switches tab (Alt+N). Out of range, does nothing.

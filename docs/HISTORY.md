@@ -2,6 +2,12 @@
 
 Concise history of past activities. A maximum of 5 lines per activity.
 
+## 2026-11-27 — the last command's output on the clipboard
+
+- `B78` closed. `copy_output` (`Ctrl+Shift+Y`, factory): the range the `OSC 133` marks already name — from the last `C` to the `D` that follows it, or to the last line alive while the command still runs — extracted with the same road the selection takes (`span_text`: soft wrap whole, trailing padding trimmed) and set on `CLIPBOARD` **and** `PRIMARY`.
+- Two range corrections the marks themselves dictated: the shell draws the next prompt on the very line it marked `D`, so the range stops **before** the next `A`; and a trailing blank line is padding, not a paragraph of its own. A dead mark (the line left the history) means `None` — half a truth would be worse than the toast.
+- No marks, no copy: the toast says the shell sends no `OSC 133` instead of copying the screen and calling it output. Three core tests (`output_span_tests`); the keymap gains `copy_output`.
+
 ## 2026-11-27 — the viewer tab, and the scrollback frozen in it
 
 - `B81` + `B77` closed. The **primitive**: bytes to a temp file, a tab running the pager on it (`return_to` the origin — the road `open_config` proved with `$EDITOR`), the temp dying with the tab (`Tab::temp`, removed on close and on workspace close). The **contract** lives in `platform::pager()`: `$PAGER` unset → our `less -R` (never `-r`) against a dump that keeps the colour of the output; `$PAGER` set → the owner's pager, as is, against a **plain** dump — escapes in a pager we did not pick are soup that breaks search.

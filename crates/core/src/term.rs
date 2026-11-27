@@ -15,7 +15,7 @@ use crate::charset::dec_graphics;
 use crate::color::Color;
 use crate::config::Theme;
 use crate::grid::Row;
-use crate::select::Span;
+use crate::select::{Anchor, Span};
 
 const REPLACEMENT: char = '\u{FFFD}';
 
@@ -2381,6 +2381,56 @@ impl Term {
         } else {
             self.marks.prompt_after(from)
         }
+    }
+
+    /// The span of the **last** command's output (`B78`): from the `C` mark's
+    /// line to the `D` that follows it — or, while the command still runs, to
+    /// the last line the buffer holds. `None`: no `C` mark ever arrived (a
+    /// shell without the integration), and there is nothing to name a range
+    /// with.
+    #[must_use]
+    pub fn output_span(&self) -> Option<Span> {
+        use crate::prompt::MarkKind;
+        let all = self.marks.all();
+        let c = all.iter().rev().find(|m| m.kind == MarkKind::OutputStart)?;
+        #[allow(clippy::cast_possible_wrap)] // rows is small
+        let last = self.scrolled as i64 + self.rows as i64 - 1;
+        let mut end = all
+            .iter()
+            .find(|m| m.kind == MarkKind::CommandEnd && m.line >= c.line)
+            .map_or(last, |m| m.line);
+        // the shell often marks `D` on the very line where it then draws the
+        // next prompt (`A`): the prompt is not output, so the range stops
+        // before it
+        if let Some(a) = all
+            .iter()
+            .find(|m| m.kind == MarkKind::PromptStart && m.line > c.line)
+        {
+            end = end.min(a.line - 1);
+        }
+        // and a trailing blank line is padding, not a paragraph of its own
+        while end > c.line && self.abs_row(end).is_none_or(|r| r.text().trim().is_empty()) {
+            end -= 1;
+        }
+        let gen = self.abs_gen;
+        let span = Span::new(
+            Anchor {
+                line: c.line,
+                col: 0,
+                gen,
+            },
+            Anchor {
+                line: end,
+                col: self.cols.saturating_sub(1),
+                gen,
+            },
+        );
+        // a mark can outlive its line (the cap pushed it out); a dead anchor
+        // means the range would be a lie, not half a truth
+        if !self.anchor_alive(&span.a) || !self.anchor_alive(&span.b) {
+            return None;
+        }
+        Some(span)
     }
 
     /// `CSI 22 ; Ps t`: saves the title for the matching `23`.
@@ -6266,5 +6316,44 @@ mod tests {
         assert_eq!(t.mode_state(1016, true), 1);
         t.feed(b"\x1b[?1016l");
         assert!(!t.mouse_px);
+    }
+}
+
+#[cfg(test)]
+mod output_span_tests {
+    use super::*;
+
+    /// A prompt, a command and its output, marks as the shell integration sends
+    /// them; a second command appended after.
+    fn session() -> Term {
+        let mut t = Term::new(20, 6);
+        t.feed(b"\x1b]133;A\x07$ \x1b]133;B\x07ls\r\n");
+        t.feed(b"\x1b]133;C\x07file one\r\nfile two\r\n");
+        t.feed(b"\x1b]133;D;0\x07");
+        t.feed(b"\x1b]133;A\x07$ ");
+        t
+    }
+
+    #[test]
+    fn the_output_span_takes_the_last_command() {
+        let t = session();
+        let s = t.output_span().expect("a C mark exists");
+        assert_eq!(t.span_text(&s).unwrap(), "file one\nfile two");
+    }
+
+    #[test]
+    fn a_running_command_ends_at_the_last_line_alive() {
+        let mut t = Term::new(20, 6);
+        t.feed(b"\x1b]133;A\x07$ \x1b]133;B\x07make\r\n");
+        t.feed(b"\x1b]133;C\x07compiling\r\nstill going");
+        let s = t.output_span().expect("running counts too");
+        assert_eq!(t.span_text(&s).unwrap(), "compiling\nstill going");
+    }
+
+    #[test]
+    fn no_marks_means_no_output_span() {
+        let mut t = Term::new(20, 6);
+        t.feed(b"plain output");
+        assert!(t.output_span().is_none());
     }
 }

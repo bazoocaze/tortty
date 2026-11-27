@@ -81,11 +81,12 @@ right f1`…`f24`.
 | `scroll_page_up` / `scroll_page_down` / `scroll_top` / `scroll_bottom` | the history |
 | `search` | the search bar over the scrollback (`M-D`), `Ctrl+Shift+F` |
 | `view_scrollback` | the scrollback of the tab, frozen, in a viewer tab — `Ctrl+Shift+O`; the pager is `$PAGER` (as is, plain text) or our `less -R` with the colours of the output |
+| `copy_output` | the last command's output on the clipboard — `Ctrl+Shift+Y`; the `OSC 133` marks name the range (`C`…`D`), so the shell has to send them (`B39`'s snippet) |
 | `select_tab N` / `select_workspace N` | `N` is 1..10, where 10 is key `0` |
 | `ws_prev` / `ws_next` / `ws_move_up` / `ws_move_down` | walk and carry the workspace |
 
 The defaults are `map` lines in the defaults file itself — `Ctrl+Shift+C/V/T/W/N/Q`,
-`Ctrl+Shift+Up/Down`, `Ctrl+Shift+F/O/F2`, `Shift+PgUp/PgDn/Home/End`, `Alt+1`…`0`
+`Ctrl+Shift+Up/Down`, `Ctrl+Shift+F/O/Y/F2`, `Shift+PgUp/PgDn/Home/End`, `Alt+1`…`0`
 (tab), `Ctrl+Shift+1`…`0` and `Super+1`…`0` (workspace), `Super+Up/Down` and
 `Super+Shift+Up/Down`, one line per chord. That text is the single source: copying
 the block into your file reproduces the app's table, changing an action changes it
@@ -94,7 +95,7 @@ for you, and **deleting a line frees the key** as surely as `unmap`. A digit und
 means 2 on a layout where it produces `@`. An unbound key goes to the program.
 
 ```conf
-map ctrl+shift+y new_tab
+map ctrl+shift+g new_tab
 unmap ctrl+shift+w
 ```
 
