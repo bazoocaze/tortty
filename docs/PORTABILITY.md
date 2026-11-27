@@ -47,10 +47,11 @@ The boundary is **one module**: `crates/app/src/platform/`, whose rule and whose
 gate are in `AGENTS.md` (`tools/platform-gate.sh` fails if `std::os::unix`,
 `libc::`, `windows_sys::`, `winapi::` or `winit::platform::` appears anywhere else
 in `crates/`). The app asks for a capability — `platform::try_lock`,
-`platform::hangup`, `platform::shell_quote`, `platform::open_uri` — and the name of
-a system exists only there. Linux has the full implementation and it is the measured
-one; Windows has a minimal one (`platform/windows.rs`), written on 2026-11-22 and
-measured in the same day, which is what the next section records. macOS has none.
+`platform::hangup`, `platform::shell_quote`, `platform::open_uri`,
+`platform::keycap` — and the name of a system exists only there. Linux has the
+full implementation and it is the measured one; Windows has a minimal one
+(`platform/windows.rs`), written on 2026-11-22 and measured in the same day, which
+is what the next section records. macOS has none.
 
 Measured on 2026-11-16, with the seam in place: a build for Windows stops with
 **one** error instead of 35, and for macOS with **one** instead of 4. That error is
@@ -86,10 +87,13 @@ Measured in the guest, `tortty.exe` 1.0.124:
 What the minimal port answers with a reason instead of a stub: the debug socket
 (`Listener::bind` refuses — a named pipe is the real answer), `SIGHUP` and the
 last words (`B48`), the child cwd behind the title, `SIGUSR1`/`SIGTERM` triggers,
-the X11 window id and `WM_CLASS`. What it does have: paths from `%APPDATA%` /
-`%LOCALAPPDATA%` / `%USERPROFILE%`, the session lock over `LockFileEx`, `cmd.exe`
-as default shell, Windows quoting, `notepad` as editor, one clipboard (no PRIMARY),
-and a window position that Windows honours.
+the X11 window id and `WM_CLASS`, and the keycap of the layout
+(`platform::keycap` answers `None`: `winit`'s `KeyEventExtModifierSupplement` is
+not implemented there, so a shortcut on a non-US layout is named by the US index —
+the fallback `KeyIn::chord` keeps for exactly this case). What it does have: paths
+from `%APPDATA%` / `%LOCALAPPDATA%` / `%USERPROFILE%`, the session lock over
+`LockFileEx`, `cmd.exe` as default shell, Windows quoting, `notepad` as editor, one
+clipboard (no PRIMARY), and a window position that Windows honours.
 
 What follows is the list a second implementation has to answer, ordered by
 severity. None of them is architectural.

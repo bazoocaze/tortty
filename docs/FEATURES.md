@@ -444,8 +444,12 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   `Super+Up/Down`, `Alt+Up/Down` or `⌘⌥↑/↓`, and the font family. Deleting a line
   frees the key (no `unmap` needed), and the auto-reload reparses from that base,
   so an edit takes effect without a restart. **limit:** chord + action only — no
-  sequences, no per-program tables — and a digit under `Ctrl`/`Alt`/`Super` is
-  read from the physical key, so a non-QWERTY layout reaches the same number.
+  sequences, no per-program tables. A digit under `Ctrl`/`Alt`/`Super` is read
+  from the physical key, so a non-QWERTY layout reaches the same number; any
+  other key is named by the **keycap of your layout** (`Ctrl+Shift+[` is the key
+  printed `[`, even on ABNT2, where that key's US index is `]`), and on Windows
+  the US index is the fallback because the window system cannot name the keycap
+  there.
 - Geometry: 980×640 without state, size restored, maximized tracked separately
   from the normal size, invalid geometry rejected; the workspaces and tabs of the
   last session come back with the workspace and tab that were in front, each
