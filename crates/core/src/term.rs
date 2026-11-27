@@ -28,6 +28,10 @@ const MAX_OSC_IMAGE: usize = 16 * 1024 * 1024;
 const ITERM_PREFIX: &[u8] = b"1337;File=";
 /// How many distinct `OSC 8` URIs are kept (a span reuses its index).
 pub const LINK_MAX: usize = 4096;
+/// Cap of the write record (`B80`): one full-screen rewrite names every row
+/// (a few dozen); past this the feed is a flood and the pump treats every line
+/// as written.
+const WRITE_RECORD_MAX: usize = 1024;
 /// How many OSC the probe keeps, and how much of each (the socket's `osc` verb).
 const OSC_SEEN: usize = 8;
 const OSC_SEEN_MAX: usize = 256;
@@ -367,6 +371,16 @@ pub struct Term {
     /// `clear_damage`. Full-screen scrolling dirties no row at all: the content
     /// only changed place, and the renderer reuses the rows already built.
     pub scroll_shift: isize,
+    /// Absolute lines the program **wrote** since the last `clear_written`
+    /// (`B80`): the record the pump reads to drop a selection under a rewritten
+    /// line. Movement (full-screen scroll) never lands here — the content keeps
+    /// its absolute line and the selection follows it; a write replaces what was
+    /// under the anchor, and the copy would come out different from the screen.
+    pub written: Vec<i64>,
+    /// The record overflowed (`WRITE_RECORD_MAX`): every line now counts as
+    /// written, so a late write cannot escape the pump's check by falling off
+    /// the cap.
+    pub written_flood: bool,
     /// Scrolling happened both ways: the net shift no longer describes what
     /// happened (a row that leaves becomes blank and never comes back), so the
     /// renderer has to rebuild everything.
@@ -479,6 +493,8 @@ impl Term {
             dirty: vec![true; rows],
             scroll_shift: 0,
             scroll_conflict: false,
+            written: Vec::new(),
+            written_flood: false,
             dirty_all: true,
             global_marks: 0,
             global_why: "",
@@ -556,6 +572,30 @@ impl Term {
         self.dirty.fill(false);
         self.scroll_shift = 0;
         self.scroll_conflict = false;
+    }
+
+    /// Forgets the write record. The pump calls it right before each `feed`, so
+    /// what the check reads is exactly what that feed wrote — `dirty` cannot
+    /// play this role: it rotates with the scroll, and a parked tab never gets
+    /// its damage consumed by a render.
+    pub fn clear_written(&mut self) {
+        self.written.clear();
+        self.written_flood = false;
+    }
+
+    /// A cell write on view row `y` happened: the absolute line it belongs to
+    /// goes on the record. Region scroll (`IL`/`DL`) records the whole region:
+    /// the shift moves content without moving the absolute lines, so every row
+    /// under it now shows text its anchor does not name.
+    fn note_write(&mut self, y: usize) {
+        if self.written.len() >= WRITE_RECORD_MAX {
+            self.written_flood = true;
+            return;
+        }
+        #[allow(clippy::cast_possible_wrap)] // scrolled fits i64 by construction
+        {
+            self.written.push(self.scrolled as i64 + y as i64);
+        }
     }
 
     pub fn reset(&mut self) {
@@ -881,6 +921,7 @@ impl Term {
             }
             self.last_char = run[i + n - 1] as char;
             self.dirty[cy] = true;
+            self.note_write(cy);
             i += n;
             if cx + n >= self.cols {
                 self.cx = self.cols - 1;
@@ -984,6 +1025,7 @@ impl Term {
         self.grid[row].clear_marks(col + 1);
         self.grid[row].cells[col + 1] = cont;
         self.dirty[row] = true;
+        self.note_write(row);
         if col + 2 >= self.cols {
             self.cx = self.cols - 1;
             if self.autowrap {
@@ -1033,30 +1075,7 @@ impl Term {
             } else {
                 ch
             };
-            let cell = Cell {
-                ch,
-                fg: self.fg,
-                bg: self.bg,
-                ul_color: self.ul_color,
-                flags: self.flags,
-                ul: self.ul,
-                link: self.link,
-            };
-            self.grid[self.cy].cells[self.cx] = cell;
-            // the character that was there is gone, and its marks go with it
-            self.grid[self.cy].clear_marks(self.cx);
-            if self.chrome_feed {
-                self.grid[self.cy].chrome = true;
-            }
-            self.dirty[self.cy] = true;
-            self.last_char = ch;
-            if self.cx == self.cols - 1 {
-                if self.autowrap {
-                    self.wrap_pending = true;
-                }
-            } else {
-                self.cx += 1;
-            }
+            self.put_narrow(ch);
             return;
         }
         // wide: needs two free columns
@@ -1109,6 +1128,7 @@ impl Term {
             self.grid[cy].cells[cx + 1] = cont;
         }
         self.dirty[cy] = true;
+        self.note_write(cy);
         self.last_char = ch;
         if cx + 2 >= self.cols {
             self.cx = self.cols - 1;
@@ -1117,6 +1137,35 @@ impl Term {
             }
         } else {
             self.cx = cx + 2;
+        }
+    }
+
+    /// One narrow (single-column) character, DEC charset already applied.
+    fn put_narrow(&mut self, ch: char) {
+        let cell = Cell {
+            ch,
+            fg: self.fg,
+            bg: self.bg,
+            ul_color: self.ul_color,
+            flags: self.flags,
+            ul: self.ul,
+            link: self.link,
+        };
+        self.grid[self.cy].cells[self.cx] = cell;
+        // the character that was there is gone, and its marks go with it
+        self.grid[self.cy].clear_marks(self.cx);
+        if self.chrome_feed {
+            self.grid[self.cy].chrome = true;
+        }
+        self.dirty[self.cy] = true;
+        self.note_write(self.cy);
+        self.last_char = ch;
+        if self.cx == self.cols - 1 {
+            if self.autowrap {
+                self.wrap_pending = true;
+            }
+        } else {
+            self.cx += 1;
         }
     }
 
@@ -1157,6 +1206,11 @@ impl Term {
             }
         } else {
             self.mark_global("scroll_up_region");
+            // the region shift moves content without moving the absolute
+            // lines: the whole region is rewritten under the anchors (`B80`)
+            for y in self.top..=self.bottom {
+                self.note_write(y);
+            }
         }
         let keep = full && self.alt.is_none();
         // H12: the image moves up with the text. Full-screen scrolling sends the
@@ -1230,8 +1284,19 @@ impl Term {
             {
                 self.scroll_shift -= n as isize;
             }
+            // downwards the content does **not** keep its absolute line (it
+            // moves into rows below without a scroll of `scrolled`): every row
+            // under the anchors is rewritten (`B80`)
+            for y in 0..self.rows {
+                self.note_write(y);
+            }
         } else {
             self.mark_global("scroll_down_region");
+            // the region shift moves content without moving the absolute
+            // lines: the whole region is rewritten under the anchors (`B80`)
+            for y in self.top..=self.bottom {
+                self.note_write(y);
+            }
         }
         for _ in 0..n {
             let at = self.bottom.min(self.grid.len().saturating_sub(1));
@@ -1377,6 +1442,13 @@ impl Term {
             1 => self.mark_rows(0, self.cy + 1),
             _ => self.mark_rows(self.cy, self.rows),
         }
+        // an erase **replaces** what was on the rows: for the selection record
+        // it is a write of blanks, not a move (`B80`)
+        match n {
+            2 | 3 => (0..self.rows).for_each(|y| self.note_write(y)),
+            1 => (0..=self.cy.min(self.rows - 1)).for_each(|y| self.note_write(y)),
+            _ => (self.cy..self.rows).for_each(|y| self.note_write(y)),
+        }
         match n {
             2 | 3 => {
                 self.graphics.erase(0..self.rows, 0..self.cols);
@@ -1437,6 +1509,7 @@ impl Term {
     fn erase_line(&mut self, n: u32) {
         self.sync_count(|t| t.el += 1);
         self.touch(self.cy);
+        self.note_write(self.cy);
         let cols = match n {
             2 => 0..self.cols,
             1 => 0..self.cx + 1,
@@ -1468,6 +1541,11 @@ impl Term {
         if !(self.top..=self.bottom).contains(&self.cy) {
             return;
         }
+        // the shift moves content without moving the absolute lines: every row
+        // of the region now shows text its anchor does not name (`B80`)
+        for y in self.cy..=self.bottom {
+            self.note_write(y);
+        }
         for _ in 0..n {
             let at = self.bottom.min(self.grid.len().saturating_sub(1));
             if at >= self.cy && self.grid.len() > at {
@@ -1485,6 +1563,10 @@ impl Term {
         if !(self.top..=self.bottom).contains(&self.cy) {
             return;
         }
+        // the shift moves content without moving the absolute lines (`B80`)
+        for y in self.cy..=self.bottom {
+            self.note_write(y);
+        }
         for _ in 0..n {
             self.grid.remove(self.cy);
             let at = self.bottom.min(self.grid.len());
@@ -1497,6 +1579,7 @@ impl Term {
 
     fn insert_chars(&mut self, n: usize) {
         self.touch(self.cy);
+        self.note_write(self.cy);
         let cell = self.blank_cell();
         let x = self.cx;
         let row = &mut self.grid[self.cy];
@@ -1508,6 +1591,7 @@ impl Term {
 
     fn delete_chars(&mut self, n: usize) {
         self.touch(self.cy);
+        self.note_write(self.cy);
         let cell = self.blank_cell();
         let x = self.cx;
         let row = &mut self.grid[self.cy];
@@ -1520,6 +1604,7 @@ impl Term {
 
     fn erase_chars(&mut self, n: usize) {
         self.touch(self.cy);
+        self.note_write(self.cy);
         let cell = self.blank_cell();
         let end = (self.cx + n).min(self.cols);
         self.graphics.erase(self.cy..self.cy + 1, self.cx..end);

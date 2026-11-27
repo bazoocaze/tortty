@@ -2632,7 +2632,16 @@ impl App {
                 let view_before = self.parked[s].tabs[j].view_off;
                 let (now_ms, floor) = self.cmd_clock();
                 Self::sync_cmd_clock(&mut self.parked[s].tabs[j].term, now_ms, floor);
+                self.parked[s].tabs[j].term.clear_written();
                 self.parked[s].tabs[j].term.feed(&bytes);
+                // B80: a line the program wrote under the selection drops the
+                // selection whole — copying text the screen no longer shows is
+                // the failure this closes.
+                if let Some(span) = self.parked[s].tabs[j].sel {
+                    if self.parked[s].tabs[j].term.lines_written_under(&span) {
+                        self.parked[s].tabs[j].sel = None;
+                    }
+                }
                 if prof::enabled() {
                     prof::add_parse(t0.elapsed().as_nanos() as u64, bytes.len());
                 }
@@ -2732,7 +2741,16 @@ impl App {
             let view_before = self.tabs[i].view_off;
             let (now_ms, floor) = self.cmd_clock();
             Self::sync_cmd_clock(&mut self.tabs[i].term, now_ms, floor);
+            self.tabs[i].term.clear_written();
             self.tabs[i].term.feed(&bytes);
+            // B80: a line the program wrote under the selection drops the
+            // selection whole — copying text the screen no longer shows is the
+            // failure this closes.
+            if let Some(span) = self.tabs[i].sel {
+                if self.tabs[i].term.lines_written_under(&span) {
+                    self.tabs[i].sel = None;
+                }
+            }
             if prof::enabled() {
                 prof::add_parse(t0.elapsed().as_nanos() as u64, bytes.len());
             }

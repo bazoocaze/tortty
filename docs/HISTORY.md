@@ -2,6 +2,13 @@
 
 Concise history of past activities. A maximum of 5 lines per activity.
 
+## 2026-11-27 — a rewritten line drops the selection whole
+
+- `B80` closed. The anchors are absolute on purpose (they follow the content through scroll), but nothing watched the **mutation**: a `\r` progress line or a TUI write inside the selection left it pointing at text the screen no longer showed — and the copy came out different from what the user saw.
+- The core now keeps a **write record**: the absolute lines the program wrote since the last `feed` (`Term::written`, capped; past the cap every line counts as written). The pump clears it before the feed and asks `lines_written_under(span)` after: one hit drops the selection **whole** — the same contract as the alt buffer, no clipping, the decision taken on 2026-11-26.
+- What is **not** a write: full-screen scrolling (the content keeps its absolute line, the selection follows it — the good case the anchors were built for) and the blank row a scroll leaves at the edge. What is: cell writes, `EL`/`ECH`/`ED`, `ICH`/`DCH`, and the region shifts (`IL`/`DL`, region scroll) — a shift moves content **without moving the absolute lines**, so every row under it is rewritten as far as the anchor knows.
+- `put_char` gave its narrow-character branch to `put_narrow` (the lint counted the new line past 100). Five new core tests in `select.rs`.
+
 ## 2026-11-26 — the pen reads back, and the documented separator is taken
 
 Two divergences the siblings reported (measured against the reference):

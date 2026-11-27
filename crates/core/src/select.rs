@@ -176,6 +176,21 @@ impl Term {
         a.line - self.scrolled as i64 + off as i64
     }
 
+    /// Did the program write inside `span`'s line range since the last
+    /// `clear_written` (`B80`)? The contract is whole-drop: a rewritten line
+    /// under the selection means the copy would come out different from what
+    /// the screen shows. Columns play no part — a rewrite of any covered row
+    /// kills the selection, flow or block.
+    #[must_use]
+    pub fn lines_written_under(&self, span: &Span) -> bool {
+        if self.written_flood {
+            return true;
+        }
+        self.written
+            .iter()
+            .any(|&l| l >= span.a.line && l <= span.b.line)
+    }
+
     /// The anchor still points at content that exists.
     #[must_use]
     pub fn anchor_alive(&self, a: &Anchor) -> bool {
@@ -608,5 +623,64 @@ mod tests {
         assert_eq!(t.paste_payload("a\nb"), b"a\nb");
         t.feed(b"\x1b[?2004h");
         assert_eq!(t.paste_payload("a\nb"), b"\x1b[200~a\nb\x1b[201~");
+    }
+
+    // ---------------------------------------------------------- B80: writes
+
+    fn span_row0(t: &Term) -> Span {
+        Span::new(t.anchor_at(0, 0, 0), t.anchor_at(0, 0, 9))
+    }
+
+    #[test]
+    fn a_write_under_the_selection_names_the_line() {
+        let mut t = term();
+        t.feed(b"0123456789");
+        let s = span_row0(&t);
+        t.clear_written();
+        t.feed(b"\rXX"); // the progress line rewrites row 0 in place
+        assert!(t.lines_written_under(&s));
+    }
+
+    #[test]
+    fn scroll_is_not_a_write_and_the_selection_survives_it() {
+        let mut t = term();
+        t.feed(b"0123456789");
+        let s = span_row0(&t);
+        t.clear_written();
+        for _ in 0..8 {
+            t.feed(b"\r\n"); // the line goes to the history, nothing is rewritten
+        }
+        assert!(!t.lines_written_under(&s));
+        assert!(t.anchor_alive(&s.a), "the anchor follows the content");
+    }
+
+    #[test]
+    fn an_erase_on_the_selection_counts_as_a_write() {
+        let mut t = term();
+        t.feed(b"0123456789\r\n0123456789");
+        let s = span_row0(&t);
+        t.clear_written();
+        t.feed(b"\x1b[1;1H\x1b[2K"); // EL 2 on row 0: blanks replace the text
+        assert!(t.lines_written_under(&s));
+    }
+
+    #[test]
+    fn a_write_off_the_selection_leaves_it_alone() {
+        let mut t = term();
+        t.feed(b"0123456789\r\n0123456789");
+        let s = span_row0(&t);
+        t.clear_written();
+        t.feed(b"\x1b[2;1HX"); // row 1, outside the span
+        assert!(!t.lines_written_under(&s));
+    }
+
+    #[test]
+    fn clear_written_empties_the_record() {
+        let mut t = term();
+        t.feed(b"0123456789");
+        let s = span_row0(&t);
+        t.feed(b"\rXX");
+        t.clear_written();
+        assert!(!t.lines_written_under(&s));
     }
 }
