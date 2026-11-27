@@ -5508,6 +5508,13 @@ impl ApplicationHandler<UserEvent> for App {
         if let Some(pty) = self.tabs.get_mut(self.active).and_then(|t| t.pty.as_mut()) {
             pty.kill();
         }
+        // the viewers' temps die with their tabs — on exit, with the app
+        // (B81): the pty children were killed above, nobody reads them now
+        for t in &mut self.tabs {
+            if let Some(path) = t.temp.take() {
+                let _ = std::fs::remove_file(path);
+            }
+        }
         self.debug = None;
     }
 }
