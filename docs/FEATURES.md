@@ -298,6 +298,13 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   the window title mirrors the active tab. **limit:** an app that sets a title
   without pushing it (`CSI 22/23 t`) keeps the tab on it after leaving
   ([`EXTERNALS.md`](EXTERNALS.md)).
+- Chrome: the buttons of the bar and the sidebar own their colours — the label
+  of an inactive one is a fixed ink (`#7f7f7f`, no longer the palette's slot 8,
+  which a theme or `bold_as_bright` moves), its body is the bar's `color0`
+  pulled 14% towards that ink, and the pointer standing on it pulls 14% more —
+  the one shade that reacts to motion alone, framed only when the pointer
+  crosses a button's edge (the selected tab/card keep `#0f3d22` + white, and the
+  alert's yellow still wins over both).
 - Chrome: toast as a floating box over the bottom of the grid, centred — two
   levels (title in the foreground colour, detail pulled towards the surface and
   wrapped in up to four lines), an accent bar and border in the shade of the

@@ -2,6 +2,13 @@
 
 Concise history of past activities. A maximum of 5 lines per activity.
 
+## 2026-11-27 — the inactive button gets a body, and the pointer a shade
+
+- The inactive tab/card had its colours on loan — label in the palette's slot 8, body indistinguishable from the bar's black. Now both are the chrome's: `INK_INACTIVE` is a fixed `#7f7f7f` (`mix`, the one step formula, also serves the toast and the menu), and the body is `color0` pulled 14% towards it — `#121212` on the defaults.
+- Hover: the pointer standing on an inactive button pulls the body 14% more — `#212121` — the one shade that reacts to motion alone. The app keeps the pointer's last `chrome::Hit`; a *changed* answer, and only one that crosses a button's edge, asks for the frame (`hover_draws`, pure and tested): motion over the grid never redraws.
+- Verified in pixels under Xvfb: the crop of tab 0 shows `#121212` at rest and `#212121` under the pointer, with the label's `#7f7f7f` in both. Selected (`#0f3d22` + white) and alert (`color3`) untouched.
+- Tests: the two steps and their ends (`the_button_body_is_two_steps_of_the_same_mix`), and the frame only on the crossing (`the_hover_frame_follows_the_pointer_crossing_a_button`). `docs/FEATURES.md` states the buttons' colours.
+
 ## 2026-11-26 — a fourth shade for the toast, and the two modes name themselves
 
 - `Severity::Info`: blue (`Idx(4)`) on the border and the left strip, and the 3 s of a receipt. The fill stays the theme's background for every shade, so a level is an accent, never a surface.

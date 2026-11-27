@@ -900,7 +900,19 @@ impl Renderer {
             let (bg, fg) = if t.ativa {
                 (chrome_rgb(SEL_BG), chrome_rgb(SEL_FG))
             } else {
-                (bg, self.color(Color::Idx(8), self.fg))
+                // the button's own body, one step up from the bar, and one more
+                // under the pointer: the two steps are the same mix, towards
+                // the label's own ink. The bar's face is `color0`; the step is
+                // computed on its RGB, not on the slot, so the body does not
+                // move when the palette does
+                let bar_bg = tortty_core::color::resolve(Color::Idx(0), &self.palette, self.bg);
+                let body = mix(bar_bg, INK_INACTIVE, 0.14);
+                let body = if t.hover {
+                    mix(body, INK_INACTIVE, 0.14)
+                } else {
+                    body
+                };
+                (chrome_rgb(body), chrome_rgb(INK_INACTIVE))
             };
             // one rectangle per tab (not one per letter): the label background is
             // a single piece, and the text is drawn on top of it
@@ -941,7 +953,6 @@ impl Renderer {
             return;
         }
         let chh = self.fonts.ch;
-        let bg = self.color(Color::Idx(0), self.bg);
         // the column's bottom, in this coordinate space (y = 0 is the first grid
         // row): the cards and their text are cut here
         let bottom = layout.m.card_bottom();
@@ -952,10 +963,19 @@ impl Renderer {
             let (i, [x0, y0, width, height]) = (slot.i, slot.rect);
             let y1 = y0 + height;
             let active = c.ativa;
+            let bar_bg = tortty_core::color::resolve(Color::Idx(0), &self.palette, self.bg);
             let (bg, fg) = if active {
                 (chrome_rgb(SEL_BG), chrome_rgb(SEL_FG))
             } else {
-                (bg, self.color(Color::Idx(8), self.fg))
+                // the card's body, one step up from the column, and one more
+                // under the pointer — the same two steps the tab takes
+                let body = mix(bar_bg, INK_INACTIVE, 0.14);
+                let body = if c.hover {
+                    mix(body, INK_INACTIVE, 0.14)
+                } else {
+                    body
+                };
+                (chrome_rgb(body), chrome_rgb(INK_INACTIVE))
             };
             self.push_rect(x0, y0, width, y1 - y0, [bg[0], bg[1], bg[2], 1.0]);
             // a text row is drawn only when the whole cell fits: half a glyph
@@ -2785,11 +2805,19 @@ pub struct TabInfo {
     /// Progress the program reports about itself (`OSC 9;4`): a bar on the
     /// bottom edge of the tab, under `progress_show = bar`.
     pub progress: Option<Progress>,
+    /// The pointer is standing on this tab: the one shade the chrome reacts to
+    /// without a press.
+    pub hover: bool,
 }
 
 /// Height of that bar. Two pixels on the bottom edge: thin enough not to eat the
 /// label, and the width is in pixels (37% of a 20-cell tab is 7.4 cells of ink).
 const PROGRESS_H: f32 = 2.0;
+
+/// The inactive tab and card wear their own ink now, not the palette's slot 8:
+/// the chrome does not follow the terminal palette, so a theme or
+/// `bold_as_bright` changing `color8` must not move the labels with it.
+const INK_INACTIVE: (u8, u8, u8) = (0x7f, 0x7f, 0x7f);
 
 /// The selected tab and card wear their own background now (`#0f3d22`, picked
 /// by the owner in the colour round), not the theme inversion: the label is
@@ -2805,6 +2833,23 @@ fn chrome_rgb(c: (u8, u8, u8)) -> [f32; 3] {
         f32::from(c.1) / 255.0,
         f32::from(c.2) / 255.0,
     ]
+}
+
+/// The chrome's one step: `base` pulled `t` of the way towards `ink`. The
+/// toast's surface and the menu's use the same formula inline; the buttons
+/// build on it twice (a step up from the bar, another for the hover), so the
+/// arithmetic has one home. `t` in `0.0..=1.0`.
+fn mix(base: (u8, u8, u8), ink: (u8, u8, u8), t: f32) -> (u8, u8, u8) {
+    // a channel, rounded; the result is between both inputs
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn step(b: u8, i: u8, t: f32) -> u8 {
+        (f32::from(b) + (f32::from(i) - f32::from(b)) * t).round() as u8
+    }
+    (
+        step(base.0, ink.0, t),
+        step(base.1, ink.1, t),
+        step(base.2, ink.2, t),
+    )
 }
 
 /// Colour and fill of a progress report: one light tone per state, all opaque
@@ -2931,6 +2976,9 @@ pub struct WsCard {
     /// Progress of the selected tab (`OSC 9;4`), on the bottom edge of the card:
     /// the same report the tab label shows, so a parked workspace is not blind.
     pub progress: Option<Progress>,
+    /// The pointer is standing on this card: the one shade the chrome reacts to
+    /// without a press.
+    pub hover: bool,
 }
 
 pub enum FrameOutcome {
@@ -3030,6 +3078,26 @@ mod tests {
             !is_swap(&cell, Some(flow), 3, 6),
             "and its last row stops at the end column"
         );
+    }
+
+    /// The chrome's one step, twice: the inactive button's body is the bar's
+    /// black pulled 14% towards the label ink, and the hover is that body
+    /// pulled 14% more. Computed, not written: a change in either input moves
+    /// both steps with it.
+    #[test]
+    fn the_button_body_is_two_steps_of_the_same_mix() {
+        use super::{mix, INK_INACTIVE};
+        let bar = (0, 0, 0); // `color0` as the defaults have it
+        let body = mix(bar, INK_INACTIVE, 0.14);
+        // one step: 14% of the way on every channel (ink is 0x7f over black)
+        assert_eq!(body, (18, 18, 18));
+        // two steps: the body pulled 14% again — up, and never past the ink
+        let hovered = mix(body, INK_INACTIVE, 0.14);
+        assert_eq!(hovered, (33, 33, 33));
+        assert!(hovered.0 > body.0 && hovered.0 < INK_INACTIVE.0);
+        // the ends hold: no pull is the base, the whole pull is the ink
+        assert_eq!(mix(bar, INK_INACTIVE, 0.0), bar);
+        assert_eq!(mix(bar, INK_INACTIVE, 1.0), INK_INACTIVE);
     }
 
     /// `OSC 9;4`: one light tone per state, all opaque, filled by the fraction.

@@ -759,6 +759,11 @@ pub struct App {
     mods: ModifiersState,
     /// Last mouse position in physical pixels (the base of `cell_at`).
     cursor_px: (f64, f64),
+    /// What the pointer last stood on (`chrome::Hit`), kept so the chrome can
+    /// react to motion alone: an inactive tab or card tints under the pointer.
+    /// Updated on every move, and the *change* is what asks for the frame —
+    /// motion itself never redraws.
+    chrome_hover: crate::chrome::Hit,
     /// Button currently held, to report release/motion with it.
     held: Option<u8>,
     /// The press was consumed by chrome drawn over the grid — the toast or the
@@ -881,6 +886,7 @@ impl App {
             wheel_pair: None,
             mods: ModifiersState::empty(),
             cursor_px: (0.0, 0.0),
+            chrome_hover: crate::chrome::Hit::Grid,
             held: None,
             press_ours: false,
             clip: Clip::new(),
@@ -1053,6 +1059,7 @@ impl App {
                     ativa: true,
                     alert: self.card_alert,
                     progress: self.tabs[self.active].term.progress,
+                    hover: self.chrome_hover == crate::chrome::Hit::Card(i),
                 });
             } else {
                 let slot = if i < self.ws_idx { i } else { i - 1 };
@@ -1063,6 +1070,7 @@ impl App {
                     ativa: false,
                     alert: w.card_alert,
                     progress: w.tabs[w.active].term.progress,
+                    hover: self.chrome_hover == crate::chrome::Hit::Card(i),
                 });
             }
         }
@@ -1136,6 +1144,7 @@ impl App {
                 ativa: i == self.active,
                 progress: t.term.progress,
                 alert: t.alert(),
+                hover: self.chrome_hover == crate::chrome::Hit::Tab(i),
             })
             .collect()
     }
@@ -1933,6 +1942,13 @@ impl App {
     /// Motion: only matters to the app when it asked for `?1002`/`?1003`.
     fn on_cursor_moved(&mut self, x: f64, y: f64) {
         self.cursor_px = (x, y);
+        // the chrome reacts to motion alone now (an inactive tab or card tints
+        // under the pointer): re-answer what the pointer stands on, and a
+        // *changed* answer asks for the frame — motion itself never redraws
+        if hover_draws(self.chrome_hover, self.chrome_hit()) {
+            self.chrome_hover = self.chrome_hit();
+            self.ask_frame();
+        }
         // the scrollbar owns the motion while it is being dragged
         if self.scroll_drag {
             self.scroll_to_y(y);
@@ -5300,6 +5316,17 @@ fn key_from_spec(spec: &str) -> Option<KeyIn<'_>> {
     })
 }
 
+/// Does the pointer's answer to "what are you standing on" ask for a frame?
+/// Only a change does, and only a change *onto* the chrome: motion over the
+/// grid is the child's business (it may repaint by itself), and moving within
+/// the same button is the same tint. Pure, so the transition rule is testable
+/// without a window.
+fn hover_draws(was: crate::chrome::Hit, now: crate::chrome::Hit) -> bool {
+    use crate::chrome::Hit;
+    let on_button = |h: Hit| matches!(h, Hit::Tab(_) | Hit::Card(_));
+    was != now && (on_button(now) || on_button(was))
+}
+
 impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
@@ -5851,6 +5878,28 @@ fn drop_legacy_default(name: &str, idx: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The hover tint lives on the chrome's reaction to motion: a frame is
+    /// asked for exactly when the pointer moves *onto* or *off* a button —
+    /// never for motion inside one button, and never for the grid alone.
+    #[test]
+    fn the_hover_frame_follows_the_pointer_crossing_a_button() {
+        use crate::chrome::Hit;
+        let grid = Hit::Grid;
+        let (tab0, tab1, card0) = (Hit::Tab(0), Hit::Tab(1), Hit::Card(0));
+        // crossing onto a button, and from one button to another
+        assert!(hover_draws(grid, tab0));
+        assert!(hover_draws(grid, card0));
+        assert!(hover_draws(tab0, tab1), "a different button is a change");
+        assert!(hover_draws(tab0, card0));
+        // leaving: the tint must come back off
+        assert!(hover_draws(tab0, grid));
+        // motion the chrome does not paint
+        assert!(!hover_draws(grid, Hit::Bar));
+        assert!(!hover_draws(Hit::Scrollbar, grid));
+        // inside the same button: same answer, same tint, no frame
+        assert!(!hover_draws(tab0, tab0));
+    }
 
     /// A receipt, a warning and an error do not share the time on screen: the
     /// first is read in a glance, the others carry something to act on.
