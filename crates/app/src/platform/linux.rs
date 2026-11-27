@@ -396,6 +396,32 @@ pub fn window_id(window: &winit::window::Window) -> u64 {
     }
 }
 
+// ---------------------------------------------------------------- keyboard
+
+/// The keycap of **this** layout for the key that was pressed, with every
+/// modifier ignored (`[` on the ABNT2 key that types `[`, even though the same
+/// press arrives as `{` and as the US index `BracketRight`).
+///
+/// It is a platform extension in `winit` (`KeyEventExtModifierSupplement`), so it
+/// lives here: on Linux/macOS it asks xkbcommon for the level-0 keysym of the
+/// current layout, and on Windows there is no such extension — `None`, and the
+/// caller falls back to the US index. `None` also for a key that has no single
+/// character (a named key, a multi-character result).
+#[must_use]
+pub fn keycap(ev: &winit::event::KeyEvent) -> Option<char> {
+    use winit::platform::modifier_supplement::KeyEventExtModifierSupplement as _;
+    match ev.key_without_modifiers() {
+        winit::keyboard::Key::Character(s) => {
+            let mut it = s.chars();
+            match (it.next(), it.next()) {
+                (Some(c), None) => Some(c),
+                _ => None,
+            }
+        },
+        _ => None,
+    }
+}
+
 /// Opens a URI with the desktop handler. The caller has already restricted the
 /// schemes: `xdg-open` would happily run a `.desktop` handler for anything else.
 pub fn open_uri(uri: &str) -> io::Result<()> {

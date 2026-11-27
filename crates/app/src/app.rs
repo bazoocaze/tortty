@@ -5010,9 +5010,13 @@ struct KeyIn<'a> {
     /// Digit of the physical key (0..=9); on the socket it comes from `spec`
     /// itself.
     digit: Option<usize>,
-    /// Keycap glyph of the physical key (US): what the config names when a
-    /// shortcut modifier is held, because the shifted/AltGr character is not
-    /// what the user means (`ctrl+shift+[` arrives as `{`).
+    /// Keycap of **this** layout, modifiers ignored: what the config names when a
+    /// shortcut modifier is held. On ABNT2 the key printed `[` arrives with the
+    /// character `{` and with the US index `BracketRight`, and neither is the
+    /// name the user wrote — `[` is.
+    keycap: Option<char>,
+    /// US index of the physical key: the fallback when the layout cannot name the
+    /// key (Windows, a dead key, a multi-character result).
     physical: Option<char>,
     mods: ModifiersState,
 }
@@ -5029,18 +5033,22 @@ impl KeyIn<'_> {
         let id = match (
             self.digit.filter(|_| shortcut),
             self.named,
+            self.keycap.filter(|_| shortcut),
             self.character,
             self.physical.filter(|_| shortcut),
         ) {
-            (Some(d), _, _, _) => Id::Char(char::from(b'0' + d as u8)),
-            (_, Some(n), _, _) => Id::Named(named_name(n)?),
-            // a physical keycap under a shortcut modifier: `ctrl+shift+[` on a
-            // layout where shift turns the key into `{` is still the key named
-            // `[` (I16, the same rule the digits follow)
-            (_, _, _, Some(g)) => Id::Char(g),
+            (Some(d), _, _, _, _) => Id::Char(char::from(b'0' + d as u8)),
+            (_, Some(n), _, _, _) => Id::Named(named_name(n)?),
+            // the keycap of **this** layout under a shortcut modifier: the key
+            // printed `[` on ABNT2 produces `{` with Shift and carries the US
+            // index `BracketRight`, and the chord the user wrote is `[`
+            (_, _, Some(c), _, _) => Id::Char(c.to_ascii_lowercase()),
+            // no keycap (Windows, a dead key): the US index is the only name
+            // left, and it is still better than nothing
+            (_, _, _, _, Some(g)) => Id::Char(g),
             // a character key: `Character("T")` with shift becomes `t`, so a
             // `shift+t` chord matches it
-            (_, _, Some(s), _) => Id::Char(s.chars().next()?.to_ascii_lowercase()),
+            (_, _, _, Some(s), _) => Id::Char(s.chars().next()?.to_ascii_lowercase()),
             _ => return None,
         };
         let mut mods = tortty_core::keymap::NONE;
@@ -5176,6 +5184,7 @@ impl<'a> KeyIn<'a> {
             character,
             text: ev.text.as_deref(),
             digit: digit_of(ev),
+            keycap: platform::keycap(ev),
             physical: glyph_of(ev.physical_key),
             mods: ModifiersState::empty(), // the caller sets `self.mods`
         }
@@ -5278,7 +5287,8 @@ fn key_from_spec(spec: &str) -> Option<KeyIn<'_>> {
         text: character,
         digit,
         // the socket speaks the config's own language: the character it names
-        // **is** the keycap, so the physical glyph is the same
+        // **is** the keycap, and the US index it would be is the same
+        keycap: character.and_then(|c| c.chars().next()),
         physical: character.and_then(|c| c.chars().next()),
         mods,
     })
@@ -6295,32 +6305,65 @@ mod copy_mode_tests {
 #[cfg(test)]
 mod chord_tests {
     use super::{glyph_of, KeyIn};
+    use tortty_core::keymap::{Id, CTRL, SHIFT};
     use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 
-    /// `ctrl+shift+[` with Shift turning the key into `{`: the chord is the
-    /// keycap (I16 for punctuation), not the shifted character.
+    /// On ABNT2 the key printed `[` is at the US position of `]`: the press
+    /// arrives as `{` (Shift) and as `BracketRight`. The chord the user wrote is
+    /// `[` — the keycap of the layout wins over both (I16).
     #[test]
-    fn the_chord_under_a_shortcut_is_the_keycap() {
-        let glyph = glyph_of(PhysicalKey::Code(KeyCode::BracketLeft));
-        assert_eq!(glyph, Some('['));
+    fn the_keycap_of_the_layout_wins_over_the_us_index() {
+        let us_index = glyph_of(PhysicalKey::Code(KeyCode::BracketRight));
+        assert_eq!(us_index, Some(']'));
         let k = KeyIn {
             named: None,
             character: Some("{"),
-            text: None,
+            text: Some("{"),
             digit: None,
-            physical: glyph,
+            keycap: Some('['),
+            physical: us_index,
             mods: ModifiersState::CONTROL | ModifiersState::SHIFT,
         };
         let chord = k.chord().unwrap();
-        assert_eq!(
-            chord.mods,
-            tortty_core::keymap::CTRL | tortty_core::keymap::SHIFT
-        );
-        assert!(matches!(chord.id, tortty_core::keymap::Id::Char('[')));
+        assert_eq!(chord.mods, CTRL | SHIFT);
+        assert!(matches!(chord.id, Id::Char('[')));
+    }
+
+    /// With no keycap (Windows, a dead key) the US index is still a name: it is
+    /// wrong for the layout, but it is the only one left.
+    #[test]
+    fn without_a_keycap_the_us_index_is_the_name() {
+        let k = KeyIn {
+            named: None,
+            character: Some("}"),
+            text: None,
+            digit: None,
+            keycap: None,
+            physical: Some(']'),
+            mods: ModifiersState::CONTROL | ModifiersState::SHIFT,
+        };
+        assert!(matches!(k.chord().unwrap().id, Id::Char(']')));
+    }
+
+    /// Nothing to name: no keycap, no US index, no character — no chord, and the
+    /// key goes to the child.
+    #[test]
+    fn a_key_without_any_name_is_no_chord() {
+        let k = KeyIn {
+            named: None,
+            character: None,
+            text: None,
+            digit: None,
+            keycap: None,
+            physical: None,
+            mods: ModifiersState::CONTROL,
+        };
+        assert!(k.chord().is_none());
     }
 
     /// Without a shortcut modifier the shifted character is the truth: the
-    /// user typing `{` (no chord matches it) is typing `{`.
+    /// user typing `{` (no chord matches it) is typing `{`. The keycap is not
+    /// consulted, which is what keeps a `shift+{` binding working.
     #[test]
     fn without_a_shortcut_the_character_wins() {
         let k = KeyIn {
@@ -6328,10 +6371,11 @@ mod chord_tests {
             character: Some("{"),
             text: Some("{"),
             digit: None,
+            keycap: Some('['),
             physical: Some('['),
             mods: ModifiersState::SHIFT,
         };
         let chord = k.chord().unwrap();
-        assert!(matches!(chord.id, tortty_core::keymap::Id::Char('{')));
+        assert!(matches!(chord.id, Id::Char('{')));
     }
 }

@@ -2,6 +2,13 @@
 
 Concise history of past activities. A maximum of 5 lines per activity.
 
+## 2026-11-26 — the chord is named by the keycap of the layout, not by the US index
+
+- Measured on ABNT2 with the new `tools/show-keys`: the key printed `[` arrives as `Char("{")` with `ctrl+shift` and as the US index `BracketRight` — `winit`'s `physical` is a position index whose names are American, so a chord matched by it is a US-only chord. The tool is a crate of its own (`winit` alone, no `tortty-core`, no config) and prints `phys`, `logical`, `unshift`, `text`, `mods` and `loc` per key press.
+- `unshift` is `key_without_modifiers` (xkbcommon's level-0 keysym): it said `[`. That is now a capability of the seam — `platform::keycap` — because the extension trait is platform-specific; Linux and macOS answer it, Windows has no such extension and returns `None`.
+- `KeyIn::chord` prefers the keycap under `Ctrl`/`Alt`/`Super`, and the US index became the fallback (dead keys, Windows, multi-character results). Without a shortcut modifier nothing changed: the produced character is still the truth, so a `shift+{` binding keeps working.
+- Three tests: the keycap wins over the US index, without a keycap the index is the name, and no name at all yields no chord. `docs/CONFIG.md` states the rule, `docs/DEBUG.md` documents the tool.
+
 ## 2026-11-26 — the cursor becomes a widget, and copy-mode owns it
 
 - `chrome::Cursor` is **one** cursor with two owners: `program(metrics, term, shape)` (the grid cell the child writes to) and `at(metrics, anchor, scrolled, view_off, shape)` (an absolute anchor, for a mode that takes it over). Both return the same rectangle for the same cell, so the painter has one path; `Frame.cursor` replaced the program-cursor branch inside `build_cursor`, and the shape resolution (`CSI 6 q` before the config's `cursor_shape`) moved to the app.

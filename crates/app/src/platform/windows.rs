@@ -358,3 +358,12 @@ pub fn default_shell() -> String {
 
 /// There is no X error guard: the Xlib protocol does not exist here.
 pub fn install_error_guard() {}
+
+/// The keycap of the layout is not available: `winit`'s
+/// `KeyEventExtModifierSupplement` is not implemented on Windows, so the shortcut
+/// table names the key by its US index there (the fallback in `KeyIn::chord`).
+/// The reason is the missing extension, not a policy.
+#[must_use]
+pub fn keycap(_ev: &winit::event::KeyEvent) -> Option<char> {
+    None
+}
