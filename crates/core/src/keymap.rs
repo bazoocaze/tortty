@@ -169,6 +169,8 @@ pub enum Action {
     ViewScrollback,
     /// The last command's output on the clipboard (`B78`).
     CopyOutput,
+    /// The last command's output, frozen, in a viewer tab (`B79`).
+    ViewOutput,
     /// 1..=10, where 10 is the tenth (`alt+0`).
     SelectTab(u8),
     SelectWorkspace(u8),
@@ -198,6 +200,7 @@ impl Action {
         ("search", Action::Search),
         ("view_scrollback", Action::ViewScrollback),
         ("copy_output", Action::CopyOutput),
+        ("view_output", Action::ViewOutput),
         ("select_tab", Action::SelectTab(0)),
         ("select_workspace", Action::SelectWorkspace(0)),
         ("ws_prev", Action::WsPrev),

@@ -82,6 +82,7 @@ right f1`…`f24`.
 | `search` | the search bar over the scrollback (`M-D`), `Ctrl+Shift+F` |
 | `view_scrollback` | the scrollback of the tab, frozen, in a viewer tab — `Ctrl+Shift+O`; the pager is `$PAGER` (as is, plain text) or our `less -R` with the colours of the output |
 | `copy_output` | the last command's output on the clipboard — `Ctrl+Shift+Y`; the `OSC 133` marks name the range (`C`…`D`), so the shell has to send them (`B39`'s snippet) |
+| `view_output` | the last command's output alone, frozen, in a viewer tab — `Ctrl+Shift+Alt+O`; the same range as `copy_output`, the same viewer contract as `view_scrollback` |
 | `select_tab N` / `select_workspace N` | `N` is 1..10, where 10 is key `0` |
 | `ws_prev` / `ws_next` / `ws_move_up` / `ws_move_down` | walk and carry the workspace |
 

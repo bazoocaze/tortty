@@ -2,6 +2,12 @@
 
 Concise history of past activities. A maximum of 5 lines per activity.
 
+## 2026-11-27 — the command's output alone in its own viewer
+
+- `B79` closed. `view_output` (`Ctrl+Shift+Alt+O`, factory): the same range `copy_output` takes (`C`…`D`, or to the last line alive while the command runs), dumped by the same walk, handed to the same primitive (`B81`) — the work of this one was only the seed and the chord, as the backlog had promised.
+- The walk behind `snapshot`/`dump` learned a range: `dump_span(t, span, colour)` walks the span's absolute rows and nothing else — before and after stay out, the colour contract is the same one.
+- One new core test (the span dump takes only the range, colour/plain both); the keymap gains `view_output`.
+
 ## 2026-11-27 — the last command's output on the clipboard
 
 - `B78` closed. `copy_output` (`Ctrl+Shift+Y`, factory): the range the `OSC 133` marks already name — from the last `C` to the `D` that follows it, or to the last line alive while the command still runs — extracted with the same road the selection takes (`span_text`: soft wrap whole, trailing padding trimmed) and set on `CLIPBOARD` **and** `PRIMARY`.

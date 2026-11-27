@@ -18,6 +18,8 @@ use crate::cell::{
     UL_DOUBLE, UL_NONE, UL_SINGLE,
 };
 use crate::color::Color;
+use crate::grid::Row;
+use crate::select::Span;
 use crate::term::Term;
 
 /// The pen as SGR sees it: colors and attributes, no link.
@@ -134,24 +136,23 @@ pub fn dump(t: &Term, colour: bool) -> Vec<u8> {
     picture(t, colour, "\n").into_bytes()
 }
 
-/// The one walk both readers share: every row of history and screen, trimmed
-/// of padding, clusters and links whole, pen changes emitted only when `colour`.
-fn picture(t: &Term, colour: bool, sep: &str) -> String {
+/// One command's output as text to read (`B79`): the rows of `span`, the same
+/// walk and the same colour contract as [`dump`].
+pub fn dump_span(t: &Term, span: &Span, colour: bool) -> Vec<u8> {
+    let (lo, hi) = (span.a.line.min(span.b.line), span.a.line.max(span.b.line));
+    let rows = (lo..=hi).filter_map(|l| t.abs_row(l));
+    walk(t, rows, colour, "\n").into_bytes()
+}
+
+/// The one walk both readers share: every row handed over, trimmed of padding,
+/// clusters and links whole, pen changes emitted only when `colour`.
+fn walk<'a>(t: &'a Term, rows: impl Iterator<Item = &'a Row>, colour: bool, sep: &str) -> String {
     let mut out = String::new();
     let mut pen = Pen::default();
     let mut link: u16 = 0;
     let mut prev_wrapped = false;
     let mut first = true;
-    // the history and then the screen: the app's own reading order, and the
-    // same one `visible_rows` uses
-    // decoration is not content (`B48`): the marker the terminal writes to
-    // separate a restored picture from the new run stays out of the picture
-    for row in t
-        .scrollback
-        .iter()
-        .chain(t.primary().iter())
-        .filter(|r| !r.chrome)
-    {
+    for row in rows {
         if !first && !prev_wrapped {
             out.push_str(sep);
         }
@@ -212,9 +213,23 @@ fn picture(t: &Term, colour: bool, sep: &str) -> String {
     out
 }
 
+/// The whole tab — history and screen, chrome rows out — as the walk sees it.
+fn picture(t: &Term, colour: bool, sep: &str) -> String {
+    walk(
+        t,
+        t.scrollback
+            .iter()
+            .chain(t.primary().iter())
+            .filter(|r| !r.chrome),
+        colour,
+        sep,
+    )
+}
+
 #[cfg(test)]
 mod checks_snapshot {
-    use super::{dump, snapshot};
+    use super::{dump, dump_span, snapshot};
+    use crate::select::Span;
     use crate::term::Term;
 
     /// Feed the same bytes twice, into two different widths.
@@ -404,5 +419,22 @@ mod checks_snapshot {
         let d = String::from_utf8_lossy(&dump(&t, true)).to_string();
         assert!(d.contains("line 0"), "the whole cap, not only the screen");
         assert!(d.contains("line 5"));
+    }
+
+    #[test]
+    fn the_span_dump_takes_only_the_range() {
+        let mut t = Term::new(20, 6);
+        t.feed(b"header\r\n\x1b[1;31merr one\x1b[0m\r\nerr two\r\ntail");
+        let span = Span::new(t.anchor_at(0, 1, 0), t.anchor_at(0, 2, 6));
+        let d = String::from_utf8_lossy(&dump_span(&t, &span, true)).to_string();
+        assert!(!d.contains("header"), "before the span stays out: {d:?}");
+        assert!(!d.contains("tail"), "after the span stays out: {d:?}");
+        assert!(d.contains("err one") && d.contains("err two"));
+        assert!(
+            d.contains("1;31"),
+            "the colour rides when the reader speaks SGR"
+        );
+        let p = String::from_utf8_lossy(&dump_span(&t, &span, false)).to_string();
+        assert!(!p.contains('\x1b'));
     }
 }

@@ -1853,6 +1853,7 @@ impl App {
             Action::OpenConfig => self.open_config(),
             Action::ViewScrollback => self.view_scrollback(),
             Action::CopyOutput => self.copy_output(),
+            Action::ViewOutput => self.view_output(),
             Action::ScrollPageUp => self.scroll_view(rows - 1),
             Action::ScrollPageDown => self.scroll_view(-(rows - 1)),
             // `Shift+Home` with nothing above does nothing: a key that moves
@@ -4578,6 +4579,26 @@ impl App {
         }
         self.clip.set(&txt);
         self.clip.set_primary(&txt);
+    }
+
+    /// `B79`: the last command's output alone, frozen in a viewer tab — the
+    /// same range `copy_output` takes, handed to the same primitive as the
+    /// scrollback viewer (`B81`). What is new is only the seed and the chord.
+    fn view_output(&mut self) {
+        let pager = platform::pager();
+        let bytes = self.tabs[self.active]
+            .term
+            .output_span()
+            .map(|s| self.tabs[self.active].term.dump_span(&s, pager.colours));
+        let Some(bytes) = bytes else {
+            self.toast(
+                "Output viewer",
+                "no command output to show (the shell sends no `OSC 133` marks, or the output fell out of the history)",
+                Severity::Warn,
+            );
+            return;
+        };
+        self.open_in_pager(&bytes, "output");
     }
 
     /// Switches tab (Alt+N). Out of range, does nothing.

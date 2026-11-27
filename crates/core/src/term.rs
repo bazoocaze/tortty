@@ -3564,6 +3564,12 @@ impl Term {
     pub fn dump(&self, colour: bool) -> Vec<u8> {
         crate::snapshot::dump(self, colour)
     }
+
+    /// One command's output as text to read (`B79`): the rows of `span`, the
+    /// same colour contract as [`Term::dump`].
+    pub fn dump_span(&self, span: &Span, colour: bool) -> Vec<u8> {
+        crate::snapshot::dump_span(self, span, colour)
+    }
 }
 
 #[inline]

@@ -402,16 +402,17 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   (at the ends the key does nothing). The list is capped at 512 marks per tab and
   a mark whose line fell out of the scrollback is dropped. The output **is** a
   range now: `copy_output` (`Ctrl+Shift+Y`) puts the last command's output on
-  the clipboard (`B78`) — the range runs from the last `C` to the `D` that
-  follows it (or to the last line alive, while the command still runs), and
-  stops before the next prompt. **limit:** the command in the tab label and
-  the redraw are still `B39`, and no shell ships a script that emits the marks
-  (the snippet is the reader's).
+  the clipboard (`B78`), and `view_output` (`Ctrl+Shift+Alt+O`) freezes it
+  alone in a viewer tab (`B79`) — the range runs from the last `C` to the `D`
+  that follows it (or to the last line alive, while the command still runs),
+  and stops before the next prompt. **limit:** the command in the tab label
+  and the redraw are still `B39`, and no shell ships a script that emits the
+  marks (the snippet is the reader's).
 - Shortcuts are a **table** (`map`/`unmap` in the config, `M-H`): `map
   ctrl+shift+y new_tab` re-binds, `unmap ctrl+shift+w` frees the chord so the
-  program sees the key again. Twenty-two actions (copy, paste, tab and workspace
+  program sees the key again. Twenty-three actions (copy, paste, tab and workspace
   open/close, prompt walk, config, the four scroll moves, search, the
-  scrollback viewer, the output yank,
+  scrollback viewer, the output yank, the output viewer,
   `select_tab`/`select_workspace` with a number, the workspace walk and carry).
   **The defaults are `map` lines in four files**, the same syntax you write: the
   common base holds the chords that mean the same thing everywhere
