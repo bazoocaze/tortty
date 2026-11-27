@@ -2,6 +2,17 @@
 
 Concise history of past activities. A maximum of 5 lines per activity.
 
+## 2026-11-26 — the pen reads back, and the documented separator is taken
+
+Two divergences the siblings reported (measured against the reference):
+the `DECRQSS` `m` reply compressed a palette colour beyond the bright eight
+into one impossible SGR number (`48;5;200` answered as `292` — not a valid
+SGR parameter, nothing can read it back); it now reports `38/48;5;n`, a form
+that plays back. And `XTGETTCAP` only took the separator encoded into the
+hex (`436F3B544E`); the documented form — a literal `;` between the hex
+names (`436F;544E`) — is accepted now too, and a token that is not hex no
+longer sinks the names beside it.
+
 ## 2026-11-25 — kitty notifications, phase one (B72)
 
 - `OSC 99` parses: `p=title`/`p=body` payloads (kept apart), chunked assembly under one `i` (`d=0` holds, `d=1` displays), base64 through the permissive engine (unpadded accepted), the payload caps of the spec (2048 plain / 4096 encoded, plus a cap on the assembled whole and on the pending map — an id that never finishes cannot rent memory forever), update in place by id through the notification list's own replace rule. Absent, `p` means title (the spec's quickstart). The lifecycle that needs no click is in: `p=close` retires the entry (and kills an assembly still held), `p=alive` replies with the ids still in the list, `p=?` answers `p=title,body:o=always` — the OSC family's first reply. The click side (`a=report`, `c=1`) stays in the backlog (`B72`, rewritten): it needs a click surface and the tab that owns the id. A `RIS` kills half-assembled chunks; delivered notifications survive it.

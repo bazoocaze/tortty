@@ -3005,13 +3005,16 @@ impl Term {
     }
 
     /// One colour as SGR parameters: the low eight on their classic numbers,
-    /// the high eight on the bright ones, truecolor on `38/48;2`. `Default`
-    /// contributes nothing — it is the absence of a setting, not a colour.
+    /// the high eight on the bright ones, the rest of the 256 palette on
+    /// `38/48;5;n` (a number a program can send back — a bare `292` is not a
+    /// valid SGR parameter), truecolor on `38/48;2`. `Default` contributes
+    /// nothing — it is the absence of a setting, not a colour.
     fn color_report(p: &mut Vec<String>, col: Color, base: u8, ext: u8) {
         match col {
             Color::Default => {},
             Color::Idx(n) if n < 8 => p.push((base + n).to_string()),
-            Color::Idx(n) => p.push((base + 60 + n - 8).to_string()),
+            Color::Idx(n) if n < 16 => p.push((base + 60 + n - 8).to_string()),
+            Color::Idx(n) => p.push(format!("{ext};5;{n}")),
             Color::Rgb(red, green, blue) => {
                 p.push(format!("{ext};2;{red};{green};{blue}"));
             },
@@ -3027,10 +3030,31 @@ impl Term {
     /// purpose: what a key sends depends on the keyboard flags in force
     /// (legacy vs kitty protocol), so a static answer would be a lie in two
     /// modes out of three — they get the negative like every unknown name.
+    ///
+    /// Two separator shapes are accepted: the documented one — a **literal
+    /// `;` between the hex-encoded names** (`436F;544E`) — and the one that
+    /// encodes the `;` into the hex itself (`436F3B544E`). The names come out
+    /// the same either way.
     fn dcs_xtgettcap(hex: &[u8], child_out: &mut Vec<u8>) {
-        let names = Self::hex_decode(hex).unwrap_or_default();
+        // each token decodes to bytes; the tokens are joined around a literal
+        // `;` — which is also what a hex-encoded `3B` becomes — so both
+        // separator shapes normalize to one flat list of names
+        let mut flat: Vec<u8> = Vec::new();
+        for token in hex.split(|&b| b == b';') {
+            if !flat.is_empty() {
+                flat.push(b';');
+            }
+            let Some(decoded) = Self::hex_decode(token) else {
+                // a token that is not hex is a name we cannot know: the
+                // unknown-name path (skipped, like every name not in the
+                // table) — the others still answer
+                continue;
+            };
+            flat.extend(decoded);
+        }
+        let names = flat.split(|&b| b == b';').filter(|n| !n.is_empty());
         let mut entries = Vec::new();
-        for name in names.split(|&b| b == b';') {
+        for name in names {
             let value = match name {
                 b"Co" => Some("256"),
                 b"TN" => Some("tortty"),
@@ -4104,6 +4128,54 @@ mod dcs_query_tests {
         // not hex at all: the negative, not a guess
         t.feed(b"\x1bP+qZZ\x1b\\");
         assert_eq!(t.take_child_out(), b"\x1bP0+r\x1b\\".to_vec());
+    }
+
+    /// The documented form (kitty's spec): the names are hex words and the
+    /// separator between them is a **literal** `;` — `436F;544E` asks `Co`
+    /// and `TN`. The hex-encoded separator (`3B`) stays accepted too.
+    #[test]
+    fn xtgettcap_takes_the_literal_separator_and_the_hex_one() {
+        let mut t = Term::new(20, 4);
+        // literal `;` between the names, the documented shape
+        t.feed(b"\x1bP+q436F;544E\x1b\\");
+        assert_eq!(
+            t.take_child_out(),
+            b"\x1bP1+r436F=323536;544E=746F72747479\x1b\\".to_vec()
+        );
+        // the same two names with the separator inside the hex
+        t.feed(b"\x1bP+q436F3B544E\x1b\\");
+        assert_eq!(
+            t.take_child_out(),
+            b"\x1bP1+r436F=323536;544E=746F72747479\x1b\\".to_vec()
+        );
+        // a token that is not hex does not sink the ones beside it
+        t.feed(b"\x1bP+q436F;ZZ;544E\x1b\\");
+        assert_eq!(
+            t.take_child_out(),
+            b"\x1bP1+r436F=323536;544E=746F72747479\x1b\\".to_vec()
+        );
+    }
+
+    /// A palette colour beyond the bright eight is reported as `38/48;5;n` —
+    /// a form the program can send back. A bare `292` is not a valid SGR
+    /// parameter: nothing reads it, nothing plays it back.
+    #[test]
+    fn decrqss_reports_palette_colours_in_a_form_that_can_be_read_back() {
+        let mut t = Term::new(20, 4);
+        t.feed(b"\x1b[38;5;200;48;5;100m");
+        t.feed(b"\x1bP$qm\x1b\\");
+        assert_eq!(
+            t.take_child_out(),
+            b"\x1bP1$r0;38;5;200;48;5;100m\x1b\\".to_vec()
+        );
+        // the bright eight keep their classic numbers
+        t.feed(b"\x1b[39;49;32;42m");
+        t.feed(b"\x1bP$qm\x1b\\");
+        assert_eq!(t.take_child_out(), b"\x1bP1$r0;32;42m\x1b\\".to_vec());
+        // and the high-bright eight (90..97 on fg) keep their own numbers
+        t.feed(b"\x1b[90;101m");
+        t.feed(b"\x1bP$qm\x1b\\");
+        assert_eq!(t.take_child_out(), b"\x1bP1$r0;90;101m\x1b\\".to_vec());
     }
 }
 
