@@ -88,7 +88,11 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   coordinates in pixels from the grid origin). The wheel handed to the child is
   press only — no protocol has a wheel release — and its **count follows the
   finger**: a detent is one notch, a touchpad fraction accumulates until it
-  completes one, and a direction change drops the remainder.
+  completes one, and a direction change drops the remainder. On the alternate
+  screen with no mouse mode the wheel becomes arrow keys instead (the xterm
+  `alternateScroll` rule, `B85`): `less` never asks for the mouse without
+  `--mouse`, and the history behind the alt screen is not what the user is
+  looking at — the alt-screen flip also puts the view back on the live screen.
 - Selection: drag with a 3 px threshold, double click for the word (a word ends
   only at whitespace, so a path comes out whole), triple click for the whole
   line — a soft-wrapped line included —, absolute anchor that survives scrolling

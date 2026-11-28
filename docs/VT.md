@@ -110,7 +110,7 @@ makes it a *DEC private* mode). `CSI ? n $ p` reports the state back.
 | `?6` | DECOM | origin mode: the cursor moves inside the scroll region and `CUP 1;1` is the region's first row |
 | `?7` | DECAWM | autowrap: a character past the last column goes to the next row. Off, it stays in the last column |
 | `?25` | DECTCEM | the cursor is visible |
-| `?47`, `?1047`, `?1049` | — | the alternate screen. `1049` also saves the cursor. The history is **kept** and the alternate screen's lines never enter it (`B63`) |
+| `?47`, `?1047`, `?1049` | — | the alternate screen. `1049` also saves the cursor. The history is **kept** and the alternate screen's lines never enter it (`B63`). The wheel with no mouse mode on the alt screen goes to the child as arrow keys — the xterm `alternateScroll` rule (`B85`): `less` never asks for `?1000` without `--mouse`, and the history behind the alt screen is not what the user is looking at |
 | `?1000` | — | mouse reporting: presses and releases |
 | `?1002` | — | mouse reporting: presses, releases and drags |
 | `?1003` | — | mouse reporting: every movement |

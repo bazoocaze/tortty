@@ -2,6 +2,12 @@
 
 Concise history of past activities. A maximum of 5 lines per activity.
 
+## 2026-11-27 — the wheel belongs to the pager on the alt screen (`B85`)
+
+- Measured under Xvfb, three facts: `less` without `--mouse` never asks for `?1000` (`mouse_mode == 0`), so no byte of the wheel reached the child; with `--mouse` the delivery path is proven good (5 clicks = 5 lines); and worse than reported — `view_off` was not reset when the alt screen opened, so `less` started with the view on the history behind it (the shell prompt, not the pager), and the wheel scrolled that history.
+- Two fixes, both app-side (the view is the app's, not the core's): `Tab::alt_flip` runs after every feed and any flip of the alt state — entering or leaving — puts `view_off` back on the live screen; and `on_wheel` on the alt screen without mouse mode sends arrow keys instead (`CSI A/B` honoring DECCKM via the same encoder as the keyboard, one per notch through the child's accumulator) — the xterm `alternateScroll` rule. Copy-mode is excepted: its wheel walks the history on purpose.
+- Verified at runtime under Xvfb: history scrolled to `view_off` 33, `less` opens and the view shows the pager (`001`); 20 wheel-downs walk to `026`, 5 wheel-ups back to `021`, `view_off` pinned at 0 throughout. Tests: the flip resets on both directions, and no flip touches nothing.
+
 ## 2026-11-27 — the inactive button gets a body, and the pointer a shade
 
 - The inactive tab/card had its colours on loan — label in the palette's slot 8, body indistinguishable from the bar's black. Now both are the chrome's: `INK_INACTIVE` is a fixed `#7f7f7f` (`mix`, the one step formula, also serves the toast and the menu), and the body is `color0` pulled 14% towards it — `#121212` on the defaults.

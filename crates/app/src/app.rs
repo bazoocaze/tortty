@@ -250,6 +250,17 @@ fn log_trace(term: &mut tortty_core::Term, who: &str) {
     }
 }
 
+/// B80: a line the program wrote under the selection drops the selection
+/// whole — copying text the screen no longer shows is the failure this closes.
+/// One copy for both feeds: the front tab and the parked one share the rule.
+fn drop_sel_under_writes(tab: &mut Tab) {
+    if let Some(span) = tab.sel {
+        if tab.term.lines_written_under(&span) {
+            tab.sel = None;
+        }
+    }
+}
+
 fn log_sync(tab: &mut Tab, who: &str, view_before: usize, now: std::time::Instant) {
     let view_now = tab.view_off;
     if let Some(t) = tab.term.sync_open() {
@@ -482,6 +493,19 @@ impl Tab {
         self.notifs_seen = self.term.notifs;
         if self.mark == Mark::UntilVisit {
             self.mark = Mark::Fading(now + FLASH_DUR);
+        }
+    }
+
+    /// B85: the view follows the screen. Entering the alternate screen stashes
+    /// the main grid, and the history behind it stops being what the user is
+    /// looking at; leaving takes the main screen back. Either flip puts the view
+    /// on the live screen — a `view_off` pointed at the other buffer's history
+    /// shows lines that are not there (measured 2026-11-27: `less` opened with
+    /// `view_off` 26 inherited from the history and the view sat on the shell
+    /// prompt behind the pager).
+    fn alt_flip(&mut self, alt_before: bool) {
+        if alt_before != self.term.in_alt_screen() {
+            self.view_off = 0;
         }
     }
 
@@ -2164,6 +2188,42 @@ impl App {
             }
             return;
         }
+        // B85: a child on the alternate screen without mouse mode (`less` never
+        // asks for `?1000` without `--mouse`) gets the wheel as arrow keys — the
+        // xterm `alternateScroll` rule, and arrows are what the pager reads
+        // natively. One arrow per notch: the same count a mouse-reporting child
+        // would receive. The history behind the alt screen is not what the user
+        // is looking at (measured 2026-11-27), so scrolling it would move a view
+        // that shows nothing; the horizontal wheel has no pager meaning and
+        // drops. Copy-mode is excepted: its wheel walks the history on purpose.
+        if self.copy.is_none() && self.tabs[self.active].term.in_alt_screen() {
+            let ch = self.renderer.as_ref().map_or(19.0, |r| r.fonts.ch);
+            let vy = match delta {
+                MouseScrollDelta::LineDelta(_, y) => y,
+                MouseScrollDelta::PixelDelta(p) => p.y as f32 / ch,
+            };
+            let n = self.child_wheel(vy, true);
+            if n > 0 {
+                let t = &self.tabs[self.active].term;
+                let bytes = crate::keys::encode_parts(
+                    Some(if vy > 0.0 {
+                        NamedKey::ArrowUp
+                    } else {
+                        NamedKey::ArrowDown
+                    }),
+                    None,
+                    None,
+                    ModifiersState::empty(),
+                    t.app_cursor,
+                    t.kbd_flags,
+                )
+                .unwrap_or_default();
+                for _ in 0..n {
+                    self.pty_write(&bytes);
+                }
+            }
+            return;
+        }
         // one notch is worth 3 lines; a trackpad
         // sends a fraction of a line per event and the rest accumulates in
         // `scroll_frac`
@@ -2703,18 +2763,13 @@ impl App {
                 let mark = self.parked[s].tabs[j].term.mark();
                 let t0 = std::time::Instant::now();
                 let view_before = self.parked[s].tabs[j].view_off;
+                let alt_before = self.parked[s].tabs[j].term.in_alt_screen();
                 let (now_ms, floor) = self.cmd_clock();
                 Self::sync_cmd_clock(&mut self.parked[s].tabs[j].term, now_ms, floor);
                 self.parked[s].tabs[j].term.clear_written();
                 self.parked[s].tabs[j].term.feed(&bytes);
-                // B80: a line the program wrote under the selection drops the
-                // selection whole — copying text the screen no longer shows is
-                // the failure this closes.
-                if let Some(span) = self.parked[s].tabs[j].sel {
-                    if self.parked[s].tabs[j].term.lines_written_under(&span) {
-                        self.parked[s].tabs[j].sel = None;
-                    }
-                }
+                self.parked[s].tabs[j].alt_flip(alt_before);
+                drop_sel_under_writes(&mut self.parked[s].tabs[j]);
                 if prof::enabled() {
                     prof::add_parse(t0.elapsed().as_nanos() as u64, bytes.len());
                 }
@@ -2812,18 +2867,13 @@ impl App {
             let mark = self.tabs[i].term.mark();
             let t0 = std::time::Instant::now();
             let view_before = self.tabs[i].view_off;
+            let alt_before = self.tabs[i].term.in_alt_screen();
             let (now_ms, floor) = self.cmd_clock();
             Self::sync_cmd_clock(&mut self.tabs[i].term, now_ms, floor);
             self.tabs[i].term.clear_written();
             self.tabs[i].term.feed(&bytes);
-            // B80: a line the program wrote under the selection drops the
-            // selection whole — copying text the screen no longer shows is the
-            // failure this closes.
-            if let Some(span) = self.tabs[i].sel {
-                if self.tabs[i].term.lines_written_under(&span) {
-                    self.tabs[i].sel = None;
-                }
-            }
+            self.tabs[i].alt_flip(alt_before);
+            drop_sel_under_writes(&mut self.tabs[i]);
             if prof::enabled() {
                 prof::add_parse(t0.elapsed().as_nanos() as u64, bytes.len());
             }
@@ -6046,6 +6096,32 @@ mod tests {
         assert_eq!(out.beeps, 0);
         assert_eq!(n.mark, Mark::None);
         assert!(n.term.notifications.is_empty(), "discarded");
+    }
+
+    /// `B85`: the alt-screen flip brings the view back to the live screen —
+    /// before the fix, `less` opened with `view_off` inherited from the
+    /// history and the view sat on the shell prompt behind the pager.
+    #[test]
+    fn the_alt_screen_flip_puts_the_view_back_on_the_live_screen() {
+        let mut t = Tab::new(20, 5);
+        t.view_off = 7;
+        t.term.feed(b"\x1b[?1049h");
+        t.alt_flip(false);
+        assert_eq!(t.view_off, 0, "entering the alt screen drops the offset");
+        t.term.feed(b"\x1b[?1049l");
+        t.alt_flip(true);
+        assert_eq!(t.view_off, 0, "leaving it does the same on the way back");
+    }
+
+    /// `B85`: a flip that did not happen touches nothing — the wheel and the
+    /// keys own the offset while the screen does not change hands.
+    #[test]
+    fn no_alt_flip_leaves_the_view_alone() {
+        let mut t = Tab::new(20, 5);
+        t.view_off = 4;
+        t.term.feed(b"\x1b[?1049h");
+        t.alt_flip(true); // was already on
+        assert_eq!(t.view_off, 4, "no flip, no reset");
     }
 
     /// `RIS` after a notification must still pump: the counters only move
