@@ -91,9 +91,10 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
   coordinates in pixels from the grid origin). The wheel handed to the child is
   press only — no protocol has a wheel release — and its **count follows the
   finger**: a detent is one notch, a touchpad fraction accumulates until it
-  completes one, and a direction change drops the remainder. One unit of travel
-  pays 3 lines everywhere ours to spend — scrollback and the alt-screen arrows
-  alike (`B86`); a mouse-reporting child gets 1 press per notch (its protocol
+  completes one, and a direction change drops the remainder. The scroll is
+  ours to spend and pays per unit of travel: the detent 3 lines (D4), the
+  touchpad 4 (owner's measured choice, `B86`) — scrollback and alt-screen
+  arrows alike; a mouse-reporting child gets 1 press per notch (its protocol
   counts presses, it does not measure speed). On the alternate screen with no
   mouse mode the wheel becomes arrow keys instead (the xterm
   `alternateScroll` rule, `B85`): `less` never asks for the mouse without

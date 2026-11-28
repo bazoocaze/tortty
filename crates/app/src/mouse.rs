@@ -150,11 +150,12 @@ pub fn encode(ev: Ev, proto: Proto) -> Vec<u8> {
 }
 
 /// Lines of scroll one wheel event is worth, before the whole-line rounding
-/// the caller accumulates (`B86`): a unit of finger travel pays 3 — the detent
-/// whole, the touchpad fraction by share — and the detent's press/release twin
-/// (~1 ms later, same direction) is dropped. Because the accumulation happens
-/// in lines and not in notches, a small movement still reaches one line: the
-/// fraction the finger asked for is not rounded up to a 3-line step.
+/// the caller accumulates (`B86`): the detent is whole and pays the D4's 3
+/// lines (its press/release twin, ~1 ms later and same direction, is dropped);
+/// a touchpad travel pays its own factor per unit (`TOUCHPAD_LINES`). Because
+/// the accumulation happens in lines and not in notches, a small movement
+/// still reaches one line: the fraction the finger asked for is not rounded
+/// up to a multi-line step.
 // an exact compare on purpose: winit turns the wheel buttons into exactly
 // ±1.0, and a touchpad never lands there
 #[allow(clippy::float_cmp)]
@@ -169,9 +170,16 @@ pub fn scroll_lines(pair: &mut Option<(std::time::Instant, i8)>, travel: f32) ->
         if repeated {
             return 0.0;
         }
+        // the wheel notch: the D4 factor — the touchpad's own factor is below
+        return travel * 3.0;
     }
-    travel * 3.0
+    travel * TOUCHPAD_LINES
 }
+
+/// Lines of scroll one unit of touchpad travel is worth. Measured choice of
+/// the owner (2026-11-27): the family band was 150-250 lines per swipe with
+/// 3 and 4 landed inside it and felt right — the detent keeps the D4's 3.
+const TOUCHPAD_LINES: f32 = 4.0;
 
 /// Notches the finger asked for, from its travel.
 ///
@@ -254,7 +262,7 @@ mod tests {
     }
 
     #[test]
-    fn a_unit_of_finger_travel_pays_three_lines_and_a_small_move_reaches_one() {
+    fn the_detent_pays_three_the_touchpad_its_own_factor_and_a_small_move_reaches_one() {
         // the detent's press/release twin is dropped (X11 delivers both, ~1 ms
         // apart): one notch, not two — so a wheel click pays 3, not 6
         let mut pair = None;
@@ -267,16 +275,21 @@ mod tests {
         );
         assert_eq!(scroll_lines(&mut pair, 0.0), 0.0);
         // a touchpad fraction (B86): a share of the unit, worth its share of
-        // the 3 — accumulated by the caller until it completes a whole line
-        assert_eq!(scroll_lines(&mut pair, 0.2), 0.6);
-        assert_eq!(scroll_lines(&mut pair, -0.1), -0.3);
-        // three small moves of 0.25 reach lines: nothing rounds them up to
-        // a 3-line step (the granularity regression the owner caught)
+        // the experiment factor — accumulated by the caller until it completes
+        // a whole line
+        assert_eq!(scroll_lines(&mut pair, 0.2), 0.2 * TOUCHPAD_LINES);
+        assert_eq!(scroll_lines(&mut pair, -0.1), -0.1 * TOUCHPAD_LINES);
+        // three small moves accumulate: nothing rounds them up to a 3-line
+        // step (the granularity regression the owner caught)
         let mut frac = 0.0;
         for _ in 0..3 {
             frac += scroll_lines(&mut pair, 0.25);
         }
-        assert_eq!(frac, 2.25, "small movements accumulate, line by line");
+        assert_eq!(
+            frac,
+            0.75 * TOUCHPAD_LINES,
+            "small movements accumulate, line by line"
+        );
     }
 
     fn ev(button: u8, col: usize, row: usize) -> Ev {
