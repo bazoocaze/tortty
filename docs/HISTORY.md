@@ -2,6 +2,12 @@
 
 Concise history of past activities. A maximum of 5 lines per activity.
 
+## 2026-11-27 — a unit of finger travel pays 3 lines everywhere (`B86`)
+
+- The owner's swipe measured tortty at ~60 lines against the family's 150-250 (mate ~200, kitty ~250, java/python ~150). The code explained the outlier: the touchpad arrives as fractions of a unit, and the 3× factor only ever paid for the exact detent — a fraction passed 1:1 (the python sibling pays `scroll_view(3 * n)` for the same fractions; the java one lands at 3 because AWT delivers discrete detents).
+- Fix: the 3× extends to the fractional deltas — one unit of travel buys 3 lines on the scrollback and 3 arrows on the alt screen (the pager matches the history under the same finger); the mouse-reporting child keeps 1 press per notch, a protocol count (`B40`), not a speed. `wheel_lines` died in the move: the scrollback branch now runs the same `wheel_notches` accumulator every other path uses, which also closed a pre-existing hole — it was the only path without the press/release pair dedup, and a real wheel click paid 6 lines there and 3 everywhere else (measured click by click under Xvfb: 6, 12, 18… before; 3, 6, 9… after).
+- Runtime: scrollback and alt screen both at 3.0 lines/click; the owner's ~60-unit swipe now lands ≈180 lines, in the family band.
+
 ## 2026-11-27 — the wheel belongs to the pager on the alt screen (`B85`)
 
 - Measured under Xvfb, three facts: `less` without `--mouse` never asks for `?1000` (`mouse_mode == 0`), so no byte of the wheel reached the child; with `--mouse` the delivery path is proven good (5 clicks = 5 lines); and worse than reported — `view_off` was not reset when the alt screen opened, so `less` started with the view on the history behind it (the shell prompt, not the pager), and the wheel scrolled that history.

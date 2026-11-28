@@ -149,24 +149,6 @@ pub fn encode(ev: Ev, proto: Proto) -> Vec<u8> {
     out
 }
 
-/// Lines scrolled by one axis of a `MouseScrollDelta::LineDelta`.
-///
-/// A wheel notch arrives as exactly ±1.0 and is worth 3 lines (D4). A touchpad
-/// arrives as a *fraction* of a line — the X11
-/// smooth valuators divided by the scroll increment — and there the fraction is
-/// the distance the finger asked for, so it is kept as sent (the rest
-/// accumulates in `scroll_frac`).
-// an exact compare on purpose: winit turns the wheel buttons into exactly ±1.0,
-// and a touchpad never lands there
-#[allow(clippy::float_cmp)]
-pub fn wheel_lines(v: f32) -> f32 {
-    if v.abs() == 1.0 {
-        v * 3.0
-    } else {
-        v
-    }
-}
-
 /// Notches the finger asked for, from its travel.
 ///
 /// Every surface where we own the wheel needs a *count*, and one event is not
@@ -248,15 +230,19 @@ mod tests {
     }
 
     #[test]
-    fn a_wheel_notch_is_three_lines_and_a_touchpad_fraction_is_kept() {
-        // wheel notch: the buttons 4/5 of X11 arrive as exactly ±1.0
-        assert_eq!(wheel_lines(1.0), 3.0);
-        assert_eq!(wheel_lines(-1.0), -3.0);
-        assert_eq!(wheel_lines(0.0), 0.0);
-        // touchpad: the fraction is the distance, and the tab accumulates it
-        assert_eq!(wheel_lines(0.4), 0.4);
-        assert_eq!(wheel_lines(-0.7), -0.7);
-        assert_eq!(wheel_lines(2.5), 2.5);
+    fn a_unit_of_finger_travel_completes_one_notch_however_it_is_sliced() {
+        // B86: the unit pays 3 lines at the call site (scrollback, and one
+        // arrow per notch ×3 on the alt screen); what `notches` owns is the
+        // count — a detent whole, a touchpad travel sliced in events
+        let mut frac = 0.0;
+        let mut n = 0;
+        for event in [0.3, 0.4, 0.3, 0.5, 0.5] {
+            n += notches(&mut frac, event);
+        }
+        assert_eq!(n, 2, "2.0 units of travel = 2 notches, like a detent pair");
+        // a detent arrives whole and pays at once
+        let mut frac = 0.0;
+        assert_eq!(notches(&mut frac, 1.0), 1);
     }
 
     fn ev(button: u8, col: usize, row: usize) -> Ev {

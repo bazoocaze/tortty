@@ -2202,7 +2202,12 @@ impl App {
                 MouseScrollDelta::LineDelta(_, y) => y,
                 MouseScrollDelta::PixelDelta(p) => p.y as f32 / ch,
             };
-            let n = self.child_wheel(vy, true);
+            let n = self.child_wheel(vy, true) * 3;
+            // B86: a travel unit pays the same 3 lines the scrollback pays —
+            // one arrow per unit made the pager 3× slower than the history
+            // under the same finger (measured 2026-11-27: 10 vs 23 lines).
+            // The mouse-reporting child above keeps 1 press per notch: that is
+            // a protocol count (`B40`), not a speed.
             if n > 0 {
                 let t = &self.tabs[self.active].term;
                 let bytes = crate::keys::encode_parts(
@@ -2224,22 +2229,24 @@ impl App {
             }
             return;
         }
-        // one notch is worth 3 lines; a trackpad
-        // sends a fraction of a line per event and the rest accumulates in
-        // `scroll_frac`
+        // one unit of finger travel is worth 3 lines (`B86`) — detent or
+        // fraction alike — and the detent's press/release pair is one notch,
+        // not two: the same dedup every other wheel path runs (X11 delivers it
+        // twice, ~1 ms apart; without it a real wheel click paid 6 lines here
+        // and 3 everywhere else)
+        let ch = self.renderer.as_ref().map_or(19.0, |r| r.fonts.ch);
         let lines = match delta {
-            MouseScrollDelta::LineDelta(_, y) => crate::mouse::wheel_lines(y),
-            MouseScrollDelta::PixelDelta(p) => {
-                let ch = self.renderer.as_ref().map_or(19.0, |r| r.fonts.ch);
-                p.y as f32 / ch
-            },
+            MouseScrollDelta::LineDelta(_, y) => y,
+            MouseScrollDelta::PixelDelta(p) => p.y as f32 / ch,
         };
-        self.tabs[self.active].scroll_frac += lines;
-        let n = self.tabs[self.active].scroll_frac.trunc();
-        self.tabs[self.active].scroll_frac -= n;
-        if n != 0.0 {
+        let n = Self::wheel_notches(
+            &mut self.tabs[self.active].scroll_frac,
+            &mut self.wheel_pair,
+            lines,
+        );
+        if n != 0 {
             // wheel up (positive delta) goes into the history
-            self.scroll_view(n as i64);
+            self.scroll_view(i64::from(n) * 3);
         }
     }
 
@@ -2248,15 +2255,16 @@ impl App {
     /// A detent — exactly ±1.0, which is what the X11 wheel buttons become — is
     /// one notch, and X11 delivers it twice (press and release, same direction,
     /// ~1 ms apart), so the second half is dropped. A touchpad fraction is
-    /// carried in `frac` until it completes a detent of travel: one event is not
-    /// one notch (`B40` for the child, and the same rule on the bar).
+    /// carried in `frac` until it completes a unit of travel: one event is not
+    /// one notch (`B40` for the child, `B86` for the scrollback — the last
+    /// path without this dedup paid the pair twice).
     fn wheel_notches(
         frac: &mut f32,
         pair: &mut Option<(std::time::Instant, i8)>,
         lines: f32,
     ) -> i32 {
-        // the same exact compare that `mouse::wheel_lines` documents: a detent
-        // is exactly ±1.0 and a touchpad never lands there
+        // an exact compare on purpose: winit turns the wheel buttons into
+        // exactly ±1.0 and a touchpad never lands there
         #[allow(clippy::float_cmp)]
         let detent = lines.abs() == 1.0;
         if !detent {
