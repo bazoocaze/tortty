@@ -2672,6 +2672,13 @@ impl App {
     /// click cannot land on a bar that is not on screen.
     fn scrollbar(&self) -> Option<crate::chrome::Scrollbar> {
         let t = self.tabs.get(self.active)?;
+        // B85: on the alt screen the history behind is not the view — the bar
+        // would stand over a scroll that goes nowhere (the alt screen's lines
+        // never enter it either). Copy-mode is excepted: its wheel walks the
+        // history on purpose.
+        if t.term.in_alt_screen() && self.copy.is_none() {
+            return None;
+        }
         crate::chrome::Scrollbar::new(t.term.scrollback.len(), t.term.rows, t.view_off)
     }
 
@@ -3329,6 +3336,7 @@ impl App {
             sidebar: sidebar.as_deref(),
             cards_off: self.card_off,
             links: self.mods.control_key(),
+            copy: self.copy.is_some(),
             search: search.as_ref(),
             menu: menu.as_ref(),
         };

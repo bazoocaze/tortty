@@ -1834,6 +1834,13 @@ impl Renderer {
         else {
             return;
         };
+        // B85: on the alt screen the history behind is not the view — the bar
+        // would stand over a scroll that goes nowhere (the alt screen's lines
+        // never enter it either). Copy-mode is excepted: its wheel walks the
+        // history on purpose.
+        if f.term.in_alt_screen() && !f.copy {
+            return;
+        }
         let (track, thumb) = sb.parts(f.metrics);
         let ink = self.color(Color::Default, self.fg);
         self.push_rect(
@@ -1866,6 +1873,7 @@ impl Renderer {
             sidebar,
             cards_off,
             links,
+            copy: _,
             search,
             menu,
             metrics,
@@ -2938,6 +2946,9 @@ pub struct Frame<'a> {
     pub cards_off: usize,
     /// Ctrl is held: the `OSC 8` links underline themselves.
     pub links: bool,
+    /// Copy-mode owns the view: its wheel walks the history on purpose, so the
+    /// scrollbar stays even on the alt screen (`B85`).
+    pub copy: bool,
     /// The scrollback search (`M-D`): the matches in **view rows**, plus the bar.
     pub search: Option<&'a SearchView>,
     /// The grid's context menu (`M-V`), when it is open.

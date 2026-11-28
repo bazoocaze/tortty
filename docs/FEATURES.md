@@ -59,7 +59,10 @@ Numbers are [`BENCHMARKS.md`](BENCHMARKS.md); configuration keys are
 - Scrollback with a configurable cap ([`CONFIG.md`](CONFIG.md)) and an 8 px
   scrollbar on the grid's right edge: it appears only when there is history, the
   thumb is the share of the buffer the view shows, a click jumps and a drag walks
-  it — strip, thumb and the press target are one geometry (`chrome::Scrollbar`). Output moves the view so the line being read stays put — inside a `?2026`
+  it — strip, thumb and the press target are one geometry (`chrome::Scrollbar`).
+  On the alternate screen the bar hides — the history behind is not the view
+  (`B85`) — and copy-mode keeps it, because its wheel walks that history on
+  purpose. Output moves the view so the line being read stays put — inside a `?2026`
   window too, when all the window does is write; a window that redraws the
   screen (`ED 2`/`ED 3`/cursor home) and a `clear` (`ED 3`) do not drag the
   reader. **limit:** no search (`M-D`).
