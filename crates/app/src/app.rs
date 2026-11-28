@@ -2202,14 +2202,17 @@ impl App {
                 MouseScrollDelta::LineDelta(_, y) => y,
                 MouseScrollDelta::PixelDelta(p) => p.y as f32 / ch,
             };
-            let n = self.child_wheel(vy, true) * 3;
             // B86: a travel unit pays the same 3 lines the scrollback pays —
-            // one arrow per unit made the pager 3× slower than the history
-            // under the same finger (measured 2026-11-27: 10 vs 23 lines).
-            // The mouse-reporting child above keeps 1 press per notch: that is
-            // a protocol count (`B40`), not a speed.
-            if n > 0 {
-                let t = &self.tabs[self.active].term;
+            // one arrow per line, accumulated the same smooth way, so a small
+            // movement still reaches one line of the pager. The
+            // mouse-reporting child above keeps 1 press per notch: that is a
+            // protocol count (`B40`), not a speed.
+            let t = &mut self.tabs[self.active];
+            t.scroll_frac += crate::mouse::scroll_lines(&mut self.wheel_pair, vy);
+            let n = t.scroll_frac.trunc();
+            t.scroll_frac -= n;
+            if n != 0.0 {
+                let (app_cursor, kbd_flags) = (t.term.app_cursor, t.term.kbd_flags);
                 let bytes = crate::keys::encode_parts(
                     Some(if vy > 0.0 {
                         NamedKey::ArrowUp
@@ -2219,11 +2222,11 @@ impl App {
                     None,
                     None,
                     ModifiersState::empty(),
-                    t.app_cursor,
-                    t.kbd_flags,
+                    app_cursor,
+                    kbd_flags,
                 )
                 .unwrap_or_default();
-                for _ in 0..n {
+                for _ in 0..n.abs() as i32 {
                     self.pty_write(&bytes);
                 }
             }
@@ -2233,20 +2236,20 @@ impl App {
         // fraction alike — and the detent's press/release pair is one notch,
         // not two: the same dedup every other wheel path runs (X11 delivers it
         // twice, ~1 ms apart; without it a real wheel click paid 6 lines here
-        // and 3 everywhere else)
+        // and 3 everywhere else). The accumulation is in whole lines, not in
+        // notches: a small movement still reaches one line.
         let ch = self.renderer.as_ref().map_or(19.0, |r| r.fonts.ch);
-        let lines = match delta {
+        let travel = match delta {
             MouseScrollDelta::LineDelta(_, y) => y,
             MouseScrollDelta::PixelDelta(p) => p.y as f32 / ch,
         };
-        let n = Self::wheel_notches(
-            &mut self.tabs[self.active].scroll_frac,
-            &mut self.wheel_pair,
-            lines,
-        );
-        if n != 0 {
+        self.tabs[self.active].scroll_frac +=
+            crate::mouse::scroll_lines(&mut self.wheel_pair, travel);
+        let n = self.tabs[self.active].scroll_frac.trunc();
+        self.tabs[self.active].scroll_frac -= n;
+        if n != 0.0 {
             // wheel up (positive delta) goes into the history
-            self.scroll_view(i64::from(n) * 3);
+            self.scroll_view(n as i64);
         }
     }
 

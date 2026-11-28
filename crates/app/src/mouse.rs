@@ -149,6 +149,30 @@ pub fn encode(ev: Ev, proto: Proto) -> Vec<u8> {
     out
 }
 
+/// Lines of scroll one wheel event is worth, before the whole-line rounding
+/// the caller accumulates (`B86`): a unit of finger travel pays 3 — the detent
+/// whole, the touchpad fraction by share — and the detent's press/release twin
+/// (~1 ms later, same direction) is dropped. Because the accumulation happens
+/// in lines and not in notches, a small movement still reaches one line: the
+/// fraction the finger asked for is not rounded up to a 3-line step.
+// an exact compare on purpose: winit turns the wheel buttons into exactly
+// ±1.0, and a touchpad never lands there
+#[allow(clippy::float_cmp)]
+pub fn scroll_lines(pair: &mut Option<(std::time::Instant, i8)>, travel: f32) -> f32 {
+    if travel.abs() == 1.0 {
+        let dir: i8 = if travel > 0.0 { 1 } else { -1 };
+        let now = std::time::Instant::now();
+        let repeated = pair.is_some_and(|(when, previous)| {
+            previous == dir && now.duration_since(when).as_millis() < 10
+        });
+        *pair = Some((now, dir));
+        if repeated {
+            return 0.0;
+        }
+    }
+    travel * 3.0
+}
+
 /// Notches the finger asked for, from its travel.
 ///
 /// Every surface where we own the wheel needs a *count*, and one event is not
@@ -230,19 +254,29 @@ mod tests {
     }
 
     #[test]
-    fn a_unit_of_finger_travel_completes_one_notch_however_it_is_sliced() {
-        // B86: the unit pays 3 lines at the call site (scrollback, and one
-        // arrow per notch ×3 on the alt screen); what `notches` owns is the
-        // count — a detent whole, a touchpad travel sliced in events
+    fn a_unit_of_finger_travel_pays_three_lines_and_a_small_move_reaches_one() {
+        // the detent's press/release twin is dropped (X11 delivers both, ~1 ms
+        // apart): one notch, not two — so a wheel click pays 3, not 6
+        let mut pair = None;
+        assert_eq!(scroll_lines(&mut pair, 1.0), 3.0);
+        assert_eq!(scroll_lines(&mut pair, 1.0), 0.0, "the twin is dropped");
+        assert_eq!(
+            scroll_lines(&mut pair, -1.0),
+            -3.0,
+            "the other direction passes"
+        );
+        assert_eq!(scroll_lines(&mut pair, 0.0), 0.0);
+        // a touchpad fraction (B86): a share of the unit, worth its share of
+        // the 3 — accumulated by the caller until it completes a whole line
+        assert_eq!(scroll_lines(&mut pair, 0.2), 0.6);
+        assert_eq!(scroll_lines(&mut pair, -0.1), -0.3);
+        // three small moves of 0.25 reach lines: nothing rounds them up to
+        // a 3-line step (the granularity regression the owner caught)
         let mut frac = 0.0;
-        let mut n = 0;
-        for event in [0.3, 0.4, 0.3, 0.5, 0.5] {
-            n += notches(&mut frac, event);
+        for _ in 0..3 {
+            frac += scroll_lines(&mut pair, 0.25);
         }
-        assert_eq!(n, 2, "2.0 units of travel = 2 notches, like a detent pair");
-        // a detent arrives whole and pays at once
-        let mut frac = 0.0;
-        assert_eq!(notches(&mut frac, 1.0), 1);
+        assert_eq!(frac, 2.25, "small movements accumulate, line by line");
     }
 
     fn ev(button: u8, col: usize, row: usize) -> Ev {
